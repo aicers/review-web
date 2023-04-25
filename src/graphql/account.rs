@@ -523,8 +523,8 @@ pub fn reset_admin_password(store: &Store) -> anyhow::Result<()> {
 ///
 /// This function returns an error if it fails to generate random bytes for password.
 fn initial_credential() -> anyhow::Result<(String, Vec<u8>)> {
-    const INITIAL_ADMINISTRATOR_ID: &str = "admin";
-    const INITIAL_ADMINISTRATOR_PASSWORD: &str = "admin";
+    const INITIAL_ADMINISTRATOR_ID: &str = "aiweb";
+    const INITIAL_ADMINISTRATOR_PASSWORD: &str = "aiweb";
 
     let salted_password = SaltedPassword::new(INITIAL_ADMINISTRATOR_PASSWORD)?;
 
