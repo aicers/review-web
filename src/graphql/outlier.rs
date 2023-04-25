@@ -111,7 +111,7 @@ impl OutlierQuery {
 
         super::load_with_filter(
             &map,
-            |node| if node.saved { Some(node) } else { None },
+            |node| Some(node),
             after,
             before,
             first,
