@@ -77,8 +77,8 @@ impl OutlierQuery {
         .await
     }
 
-    /// A list of outliers, grouped by clustering time. Within each group, the outliers are sorted
-    /// by their distance to the cluster centers, with
+    /// A list of saved outliers, grouped by clustering time. Within each group,
+    /// the outliers are sorted by their distance to the cluster centers.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
      .or(RoleGuard::new(Role::SecurityAdministrator))
      .or(RoleGuard::new(Role::SecurityManager))
@@ -93,35 +93,70 @@ impl OutlierQuery {
         before: Option<String>,
         first: Option<usize>,
         last: Option<usize>,
-    ) -> Result<Connection<String, RankedOutlier, SavedOutlierTotalCount, EmptyFields>> {
-        use bincode::Options;
-        let model_id: i32 = model_id.as_str().parse()?;
-        let timestamp = time.map(|t| t.timestamp_nanos());
-
-        let prefix = if let Some(timestamp) = timestamp {
-            bincode::DefaultOptions::new().serialize(&(model_id, timestamp))?
-        } else {
-            bincode::DefaultOptions::new().serialize(&model_id)?
-        };
-
-        let map = ctx
-            .data::<Arc<Store>>()?
-            .outlier_map()
-            .into_prefix_map(&prefix);
-
-        super::load_with_filter(
-            &map,
-            |node| if node.saved { Some(node) } else { None },
-            after,
-            before,
-            first,
-            last,
-            SavedOutlierTotalCount {
-                model_id,
-                timestamp,
-            },
-        )
+    ) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
+        let filter = |node: RankedOutlier| if node.saved { Some(node) } else { None };
+        load_outliers(ctx, model_id, time, after, before, first, last, filter).await
     }
+
+    /// A list of outliers, grouped by clustering time. Within each group,
+    /// the outliers are sorted by their distance to the cluster centers.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+     .or(RoleGuard::new(Role::SecurityAdministrator))
+     .or(RoleGuard::new(Role::SecurityManager))
+     .or(RoleGuard::new(Role::SecurityMonitor))")]
+    #[allow(clippy::too_many_arguments)]
+    async fn ranked_outliers(
+        &self,
+        ctx: &Context<'_>,
+        model_id: ID,
+        time: Option<NaiveDateTime>,
+        after: Option<String>,
+        before: Option<String>,
+        first: Option<usize>,
+        last: Option<usize>,
+    ) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
+        let filter = Some;
+        load_outliers(ctx, model_id, time, after, before, first, last, filter).await
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn load_outliers(
+    ctx: &Context<'_>,
+    model_id: ID,
+    time: Option<NaiveDateTime>,
+    after: Option<String>,
+    before: Option<String>,
+    first: Option<usize>,
+    last: Option<usize>,
+    filter: fn(RankedOutlier) -> Option<RankedOutlier>,
+) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
+    let model_id: i32 = model_id.as_str().parse()?;
+    let timestamp = time.map(|t| t.timestamp_nanos());
+
+    let prefix = if let Some(timestamp) = timestamp {
+        bincode::DefaultOptions::new().serialize(&(model_id, timestamp))?
+    } else {
+        bincode::DefaultOptions::new().serialize(&model_id)?
+    };
+
+    let map = ctx
+        .data::<Arc<Store>>()?
+        .outlier_map()
+        .into_prefix_map(&prefix);
+
+    super::load_with_filter(
+        &map,
+        filter,
+        after,
+        before,
+        first,
+        last,
+        RankedOutlierTotalCount {
+            model_id,
+            timestamp,
+        },
+    )
 }
 
 #[derive(Debug, SimpleObject)]
@@ -175,13 +210,13 @@ impl From<PreserveOutliersInput> for RankedOutlierKey {
     }
 }
 
-struct SavedOutlierTotalCount {
+struct RankedOutlierTotalCount {
     model_id: i32,
     timestamp: Option<i64>,
 }
 
 #[Object]
-impl SavedOutlierTotalCount {
+impl RankedOutlierTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
         use review_database::IterableMap;

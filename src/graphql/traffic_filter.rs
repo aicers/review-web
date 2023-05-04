@@ -149,6 +149,7 @@ impl TrafficFilter {
 
     /// The traffic filter rules.
     async fn rules(&self) -> Vec<String> {
+        #[allow(clippy::type_complexity)] // allowable and even clearer for this case
         let mut rules: Vec<(IpNet, Option<Vec<u16>>, Option<Vec<u16>>)> = self.inner.rules();
         rules.sort_by(|a, b| a.0.cmp(&b.0));
         rules

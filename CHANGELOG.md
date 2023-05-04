@@ -7,6 +7,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.4.0] - 2023-05-04
 
+### Added
+
+- Add `rankedOutliers`
+
 ### Channged
 
 - Updated `review-database` to 0.7.1.
