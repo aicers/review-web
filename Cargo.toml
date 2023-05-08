@@ -38,3 +38,7 @@ vinum = { git = "https://github.com/vinesystems/vinum.git", tag = "1.0.3" }
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[[examples]]
+name = "minireview"
