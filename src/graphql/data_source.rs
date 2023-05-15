@@ -187,6 +187,11 @@ impl DataSource {
     async fn description(&self) -> &str {
         &self.inner.description
     }
+
+    /// The kind of the data source.
+    async fn kind(&self) -> Option<&str> {
+        self.inner.kind.as_deref()
+    }
 }
 
 impl From<database::DataSource> for DataSource {
