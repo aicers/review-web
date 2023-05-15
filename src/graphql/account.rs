@@ -262,7 +262,6 @@ impl AccountMutation {
             insert_token(store, &token, &username)?;
 
             Ok(AuthPayload {
-                username,
                 token,
                 expiration_time,
             })
@@ -299,7 +298,6 @@ impl AccountMutation {
             Err(e.into())
         } else {
             Ok(AuthPayload {
-                username,
                 token: new_token,
                 expiration_time,
             })
@@ -421,7 +419,6 @@ fn strings_to_ipaddrs(ipaddrs: &[String]) -> Result<Vec<IpAddr>, AddrParseError>
 
 #[derive(SimpleObject)]
 struct AuthPayload {
-    username: String,
     token: String,
     expiration_time: NaiveDateTime,
 }
@@ -554,6 +551,8 @@ fn initial_credential() -> anyhow::Result<types::Account> {
 
 #[cfg(test)]
 mod tests {
+    use async_graphql::Value;
+
     use crate::graphql::TestSchema;
 
     #[tokio::test]
@@ -607,12 +606,22 @@ mod tests {
             .execute(
                 r#"mutation {
                     signIn(username: "admin", password: "admin") {
-                        username
+                        token
                     }
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{signIn: {username: "admin"}}"#);
+
+        // should return "{signIn { token: ... }}"
+        let Value::Object(retval) = res.data else {
+            panic!("unexpected response: {:?}", res);
+        };
+        assert_eq!(retval.len(), 1);
+        let Value::Object(map) = retval.get("signIn").unwrap() else {
+            panic!("unexpected response: {:?}", retval);
+        };
+        assert_eq!(map.len(), 1);
+        assert!(map.contains_key("token"));
 
         let res = schema
             .execute(
