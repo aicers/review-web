@@ -112,16 +112,15 @@ impl TrafficFilterMutation {
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
         let mut res = Vec::new();
         for agent in &agents {
-            if let Some(tf) = database::TrafficFilter::get(store, agent)? {
-                if let Err(e) = agent_manager
-                    .update_traffic_filter_rules(agent, &tf.rules())
-                    .await
-                {
-                    res.push(format!("{agent}: update request failed. {e:?}"));
-                } else {
-                    database::TrafficFilter::update_time(store, agent)?;
-                    res.push(format!("{agent}: {} rules are updated.", tf.len()));
-                }
+            let rules = database::TrafficFilter::get(store, agent)?.map_or(vec![], |tf| tf.rules());
+            if let Err(e) = agent_manager
+                .update_traffic_filter_rules(agent, &rules)
+                .await
+            {
+                res.push(format!("{agent}: update request failed. {e:?}"));
+            } else {
+                database::TrafficFilter::update_time(store, agent)?;
+                res.push(format!("{agent}: {} rules are updated.", rules.len()));
             }
         }
         Ok(res)
@@ -208,7 +207,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     insertTrafficFilterRules(
-                        agent: "c2@moon"
+                        agent: "moon"
                         network: "172.30.1.0/24"
                         tcpPorts: [80, 8080]
                     )
@@ -221,7 +220,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     insertTrafficFilterRules(
-                        agent: "c2@moon"
+                        agent: "moon"
                         network: "192.168.0.0/16"
                         tcpPorts: [80, 8000, 8080]
                     )
@@ -234,7 +233,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     insertTrafficFilterRules(
-                        agent: "c1@sun"
+                        agent: "sun"
                         network: "0.0.0.0/0"
                         udpPorts: [53]
                     )
@@ -247,7 +246,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     updateTrafficFilterRules(
-                        agent: "c1@sun"
+                        agent: "sun"
                         network: "0.0.0.0/0"
                         udpPorts: [37, 53]
                         description: "drop NTP, DNS UDP ports"
@@ -269,7 +268,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{trafficFilterList: [{agent: "c1@sun",rules: ["0.0.0.0/0\t-\t37,53"]},{agent: "c2@moon",rules: ["172.30.1.0/24\t80,8080\t-","192.168.0.0/16\t80,8000,8080\t-"]}]}"#
+            r#"{trafficFilterList: [{agent: "moon",rules: ["172.30.1.0/24\t80,8080\t-","192.168.0.0/16\t80,8000,8080\t-"]},{agent: "sun",rules: ["0.0.0.0/0\t-\t37,53"]}]}"#
         );
     }
 
@@ -281,7 +280,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     insertTrafficFilterRules(
-                        agent: "c2@moon"
+                        agent: "moon"
                         network: "172.30.1.0/24"
                         tcpPorts: [80, 8080]
                     )
@@ -294,7 +293,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     insertTrafficFilterRules(
-                        agent: "c2@moon"
+                        agent: "moon"
                         network: "0.0.0.0/0"
                         udpPorts: [37, 53]
                         description: "drop NTP, DNS UDP ports"
@@ -309,7 +308,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     removeTrafficFilterRules(
-                        agent: "c2@moon"
+                        agent: "moon"
                         networks: ["0.0.0.0/0"]
                     )
                 }"#,
@@ -321,7 +320,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     clearTrafficFilterRules(
-                        agent: "c2@moon"
+                        agent: "moon"
                     )
                 }"#,
             )

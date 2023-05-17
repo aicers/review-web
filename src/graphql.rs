@@ -69,7 +69,7 @@ pub trait AgentManager: Send + Sync {
     async fn send_and_recv(&self, key: &str, msg: &[u8]) -> Result<Vec<u8>, anyhow::Error>;
     async fn update_traffic_filter_rules(
         &self,
-        key: &str,
+        host: &str,
         rules: &[(IpNet, Option<Vec<u16>>, Option<Vec<u16>>)],
     ) -> Result<(), anyhow::Error>;
 }
