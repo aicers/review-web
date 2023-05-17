@@ -5,6 +5,13 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Expand `HttpThreat` fields to use all of it's original fields and
+  add `matched_to` field to contain the matched patterns.
+
 ## [0.7.0] - 2023-05-16
 
 ### Changed

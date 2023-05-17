@@ -1,6 +1,6 @@
 [package]
 name = "review-web"
-version = "0.7.0"
+version = "0.8.0-alpha.1"
 edition = "2021"
 
 [dependencies]
@@ -23,7 +23,7 @@ oinq = { git = "https://github.com/petabi/oinq.git", tag = "0.7.0" }
 reqwest = { version = "0.11", default-features = false, features = [
   "rustls-tls-native-roots",
 ] }
-review-database = { git = "https://github.com/petabi/review-database.git", tag = "0.10.1" }
+review-database = { git = "https://github.com/petabi/review-database.git", rev = "10332d3" }
 roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.2.0" }
 rustls = "0.21"
 rustls-native-certs = "0.6"

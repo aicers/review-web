@@ -348,12 +348,80 @@ impl HttpThreat {
         self.inner.proto
     }
 
+    async fn method(&self) -> &str {
+        &self.inner.method
+    }
+
     async fn host(&self) -> &str {
         &self.inner.host
     }
 
-    async fn content(&self) -> &str {
-        &self.inner.content
+    async fn content(&self) -> String {
+        format!(
+            "{} {} {} {} {} {}",
+            self.inner.method,
+            self.inner.host,
+            self.inner.uri,
+            self.inner.referer,
+            self.inner.status_code,
+            self.inner.user_agent
+        )
+    }
+
+    async fn uri(&self) -> &str {
+        &self.inner.uri
+    }
+
+    async fn referer(&self) -> &str {
+        &self.inner.referer
+    }
+
+    async fn version(&self) -> &str {
+        &self.inner.version
+    }
+
+    async fn user_agent(&self) -> &str {
+        &self.inner.user_agent
+    }
+
+    async fn request_len(&self) -> usize {
+        self.inner.request_len
+    }
+
+    async fn response_len(&self) -> usize {
+        self.inner.response_len
+    }
+
+    async fn status_code(&self) -> u16 {
+        self.inner.status_code
+    }
+
+    async fn status_msg(&self) -> &str {
+        &self.inner.status_msg
+    }
+
+    async fn username(&self) -> &str {
+        &self.inner.username
+    }
+
+    async fn password(&self) -> &str {
+        &self.inner.password
+    }
+
+    async fn cookie(&self) -> &str {
+        &self.inner.cookie
+    }
+
+    async fn content_encoding(&self) -> &str {
+        &self.inner.content_encoding
+    }
+
+    async fn content_type(&self) -> &str {
+        &self.inner.content_type
+    }
+
+    async fn cache_control(&self) -> &str {
+        &self.inner.cache_control
     }
 
     async fn db_name(&self) -> &str {
@@ -362,6 +430,10 @@ impl HttpThreat {
 
     async fn rule_id(&self) -> u32 {
         self.inner.rule_id
+    }
+
+    async fn matched_to(&self) -> &str {
+        &self.inner.matched_to
     }
 
     async fn cluster_id(&self) -> usize {
