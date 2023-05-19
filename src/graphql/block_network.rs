@@ -1,13 +1,13 @@
 use super::{
     customer::{HostNetworkGroup, HostNetworkGroupInput},
-    Role, RoleGuard,
+    BoxedAgentManager, Role, RoleGuard,
 };
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     Context, InputObject, Object, Result, ID,
 };
 use bincode::Options;
-use review_database::{self as database, Indexable, Indexed, IndexedMapUpdate, Store};
+use review_database::{self as database, Indexable, Indexed, IndexedMapUpdate, IterableMap, Store};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -112,6 +112,19 @@ impl BlockNetworkMutation {
         let map = db.block_network_map();
         map.update(i, &old, &new)?;
         Ok(id)
+    }
+
+    /// Broadcast the block networks to all Hogs.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    async fn apply_block_networks(&self, ctx: &Context<'_>) -> Result<Vec<String>> {
+        let db = ctx.data::<Arc<Store>>()?;
+        let serialized_networks = bincode::serialize(&get_block_networks(db)?)?;
+        let agent_manager = ctx.data::<BoxedAgentManager>()?;
+        agent_manager
+            .broadcast_block_networks(&serialized_networks)
+            .await
+            .map_err(Into::into)
     }
 }
 
@@ -230,6 +243,27 @@ fn load(
 ) -> Result<Connection<String, BlockNetwork, BlockNetworkTotalCount, EmptyFields>> {
     let map = ctx.data::<Arc<Store>>()?.block_network_map();
     super::load(&map, after, before, first, last, BlockNetworkTotalCount)
+}
+
+/// Returns the block network list.
+///
+/// # Errors
+///
+/// Returns an error if the block network database could not be retrieved.
+pub fn get_block_networks(db: &Arc<Store>) -> Result<database::HostNetworkGroup> {
+    let map = db.block_network_map();
+    let mut hosts = vec![];
+    let mut networks = vec![];
+    let mut ip_ranges = vec![];
+    for (_key, value) in map.iter_forward()? {
+        let block_network = bincode::DefaultOptions::new()
+            .deserialize::<BlockNetwork>(value.as_ref())
+            .map_err(|_| "invalid value in database")?;
+        hosts.extend(block_network.networks.hosts());
+        networks.extend(block_network.networks.networks());
+        ip_ranges.extend(block_network.networks.ip_ranges().to_vec());
+    }
+    Ok(database::HostNetworkGroup::new(hosts, networks, ip_ranges))
 }
 
 #[cfg(test)]

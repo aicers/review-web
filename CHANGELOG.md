@@ -12,6 +12,16 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - The `DomainGenerationAlgorithm` event in our `GraphQL` API query now includes
   a confidence field. This field will allow users to access and gauge the
   predictive certainty of the output.
+- Add function to broadcast `internal/allow/block networks` to all Hogs.
+  - `Internal networks` is the networks of customer assigned to review node.
+  - When new node with review is inserted, the customer networks of the node
+    is broadcasted.
+  - When the customer of review node is changed, the networks of new customer
+    is broadcasted.
+  - When the customer networks of review node is changed, the changed networks
+    is broadcasted.
+  - `Internal networks` includes all of the `Intranet`, `Extranet`, `Gateway`
+    addresses of customer.
 
 ## [0.9.0] - 2023-05-22
 

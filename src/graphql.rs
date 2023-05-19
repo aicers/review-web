@@ -33,8 +33,11 @@ mod traffic_filter;
 mod triage;
 mod trusted_domain;
 
+pub use self::allow_network::get_allow_networks;
+pub use self::block_network::get_block_networks;
 pub use self::cert::ParsedCertificate;
-pub use self::node::get_node_settings;
+pub use self::customer::get_customer_networks;
+pub use self::node::{get_customer_id_of_review_host, get_node_settings};
 use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
     Context, EmptySubscription, Guard, MergedObject, ObjectType, OutputType, Result,
@@ -63,6 +66,18 @@ pub(super) type Schema = async_graphql::Schema<Query, Mutation, EmptySubscriptio
 pub trait AgentManager: Send + Sync {
     async fn broadcast_to_crusher(&self, message: &[u8]) -> Result<(), anyhow::Error>;
     async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error>;
+    async fn broadcast_internal_networks(
+        &self,
+        _networks: &[u8],
+    ) -> Result<Vec<String>, anyhow::Error>;
+    async fn broadcast_allow_networks(
+        &self,
+        _networks: &[u8],
+    ) -> Result<Vec<String>, anyhow::Error>;
+    async fn broadcast_block_networks(
+        &self,
+        _networks: &[u8],
+    ) -> Result<Vec<String>, anyhow::Error>;
     async fn online_apps_by_host_id(
         &self,
     ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error>;
@@ -476,6 +491,28 @@ impl AgentManager for MockAgentManager {
     }
     async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
         unimplemented!()
+    }
+    async fn broadcast_internal_networks(
+        &self,
+        _networks: &[u8],
+    ) -> Result<Vec<String>, anyhow::Error> {
+        Ok(vec!["hog@hostA".to_string()])
+    }
+    async fn broadcast_allow_networks(
+        &self,
+        _networks: &[u8],
+    ) -> Result<Vec<String>, anyhow::Error> {
+        Ok(vec!["hog@hostA".to_string(), "hog@hostB".to_string()])
+    }
+    async fn broadcast_block_networks(
+        &self,
+        _networks: &[u8],
+    ) -> Result<Vec<String>, anyhow::Error> {
+        Ok(vec![
+            "hog@hostA".to_string(),
+            "hog@hostB".to_string(),
+            "hog@hostC".to_string(),
+        ])
     }
     async fn online_apps_by_host_id(
         &self,

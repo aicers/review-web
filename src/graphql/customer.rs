@@ -1,4 +1,4 @@
-use super::{Role, RoleGuard};
+use super::{get_customer_id_of_review_host, BoxedAgentManager, Role, RoleGuard};
 use anyhow::Context as AnyhowContext;
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
@@ -15,6 +15,7 @@ use std::{
     convert::{TryFrom, TryInto},
     sync::Arc,
 };
+use tracing::error;
 
 #[derive(Default)]
 pub(super) struct CustomerQuery;
@@ -107,36 +108,58 @@ impl CustomerMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
-        let db = ctx.data::<Arc<Store>>()?;
-        let map = db.customer_map();
-        let network_map = db.network_map();
+        let (registered_customer_is_removed, removed) = {
+            let db = ctx.data::<Arc<Store>>()?;
+            let map = db.customer_map();
+            let network_map = db.network_map();
 
-        let mut removed = Vec::<String>::with_capacity(ids.len());
-        for id in ids {
-            let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-            let key = map.deactivate(i)?;
+            let customer_id = get_customer_id_of_review_host(db).ok().flatten();
+            let mut registered_customer_is_removed = false;
+            let mut removed = Vec::<String>::with_capacity(ids.len());
+            for id in ids {
+                let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
+                let key = map.deactivate(i)?;
 
-            for (key, value) in network_map
-                .iter_forward()
-                .map_err(|_| "failed to read networks")?
-            {
-                let mut entry =
-                    database::NetworkEntry::from_key_value(key.as_ref(), value.as_ref())
-                        .map_err(|_| "invalid network in database")?;
-                if entry.delete_customer(i) {
-                    network_map
-                        .overwrite(&entry)
-                        .map_err(|_| "failed to update some networks")?;
+                for (key, value) in network_map
+                    .iter_forward()
+                    .map_err(|_| "failed to read networks")?
+                {
+                    let mut entry =
+                        database::NetworkEntry::from_key_value(key.as_ref(), value.as_ref())
+                            .map_err(|_| "invalid network in database")?;
+                    if entry.delete_customer(i) {
+                        network_map
+                            .overwrite(&entry)
+                            .map_err(|_| "failed to update some networks")?;
+                    }
+                }
+                map.clear_inactive().ok();
+
+                let name = match String::from_utf8(key) {
+                    Ok(key) => key,
+                    Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
+                };
+                removed.push(name);
+
+                if customer_id == Some(i) {
+                    registered_customer_is_removed = true;
                 }
             }
-            map.clear_inactive().ok();
 
-            let name = match String::from_utf8(key) {
-                Ok(key) => key,
-                Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
-            };
-            removed.push(name);
+            (registered_customer_is_removed, removed)
+        };
+
+        if registered_customer_is_removed {
+            if let Err(e) = broadcast_customer_networks(
+                ctx,
+                &database::HostNetworkGroup::new(vec![], vec![], vec![]),
+            )
+            .await
+            {
+                error!("failed to broadcast internal networks. {e:?}");
+            }
         }
+
         Ok(removed)
     }
 
@@ -150,10 +173,39 @@ impl CustomerMutation {
         new: CustomerUpdateInput,
     ) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
+        let changed_networks = {
+            let db = ctx.data::<Arc<Store>>()?;
+            let map = db.customer_map();
+            map.update(i, &old, &new)?;
 
-        let db = ctx.data::<Arc<Store>>()?;
-        let map = db.customer_map();
-        map.update(i, &old, &new)?;
+            let mut hosts = vec![];
+            let mut networks = vec![];
+            let mut ip_ranges = vec![];
+            if let Some(new_networks) = new.networks {
+                let customer_id = get_customer_id_of_review_host(db).ok().flatten();
+                if customer_id == Some(i) {
+                    for nn in new_networks {
+                        if let Ok(v) = database::HostNetworkGroup::try_from(nn.network_group) {
+                            hosts.extend(v.hosts());
+                            networks.extend(v.networks());
+                            ip_ranges.extend(v.ip_ranges().to_vec());
+                        }
+                    }
+                    Some(database::HostNetworkGroup::new(hosts, networks, ip_ranges))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(networks) = changed_networks {
+            if let Err(e) = broadcast_customer_networks(ctx, &networks).await {
+                error!("failed to broadcast internal networks. {e:?}");
+            }
+        }
+
         Ok(id)
     }
 }
@@ -277,7 +329,7 @@ impl PartialEq<database::HostNetworkGroup> for HostNetworkGroupInput {
         }
 
         for h in &self.hosts {
-            let Ok(addr) = h.parse()else {
+            let Ok(addr) = h.parse() else {
                 return false;
             };
             if !rhs.contains_host(addr) {
@@ -487,6 +539,44 @@ fn load(
         database::Customer,
         CustomerTotalCount,
     >(&map, after, before, first, last, CustomerTotalCount)
+}
+
+/// Returns the customer network list.
+///
+/// # Errors
+///
+/// Returns an error if the customer database could not be retrieved.
+pub fn get_customer_networks(
+    db: &Arc<Store>,
+    customer_id: u32,
+) -> Result<database::HostNetworkGroup> {
+    let map = db.customer_map();
+    let mut hosts = vec![];
+    let mut networks = vec![];
+    let mut ip_ranges = vec![];
+    if let Some(value) = map.get_by_id(customer_id)? {
+        let customer = bincode::DefaultOptions::new()
+            .deserialize::<database::Customer>(value.as_ref())
+            .map_err(|_| "invalid value in database")?;
+        customer.networks.iter().for_each(|net| {
+            hosts.extend(net.network_group.hosts());
+            networks.extend(net.network_group.networks());
+            ip_ranges.extend(net.network_group.ip_ranges().to_vec());
+        });
+    }
+    Ok(database::HostNetworkGroup::new(hosts, networks, ip_ranges))
+}
+
+pub async fn broadcast_customer_networks(
+    ctx: &Context<'_>,
+    networks: &database::HostNetworkGroup,
+) -> Result<Vec<String>> {
+    let networks = bincode::serialize(&networks)?;
+    let agent_manager = ctx.data::<BoxedAgentManager>()?;
+    agent_manager
+        .broadcast_internal_networks(&networks)
+        .await
+        .map_err(Into::into)
 }
 
 #[cfg(test)]

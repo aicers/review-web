@@ -1,13 +1,13 @@
 use super::{
     customer::{HostNetworkGroup, HostNetworkGroupInput},
-    Role, RoleGuard,
+    BoxedAgentManager, Role, RoleGuard,
 };
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     Context, InputObject, Object, Result, ID,
 };
 use bincode::Options;
-use review_database::{self as database, Indexable, Indexed, IndexedMapUpdate, Store};
+use review_database::{self as database, Indexable, Indexed, IndexedMapUpdate, IterableMap, Store};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -112,6 +112,19 @@ impl AllowNetworkMutation {
         let map = db.allow_network_map();
         map.update(i, &old, &new)?;
         Ok(id)
+    }
+
+    /// Broadcast the allowed networks to all Hogs.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    async fn apply_allow_networks(&self, ctx: &Context<'_>) -> Result<Vec<String>> {
+        let db = ctx.data::<Arc<Store>>()?;
+        let serialized_networks = bincode::serialize(&get_allow_networks(db)?)?;
+        let agent_manager = ctx.data::<BoxedAgentManager>()?;
+        agent_manager
+            .broadcast_allow_networks(&serialized_networks)
+            .await
+            .map_err(Into::into)
     }
 }
 
@@ -230,6 +243,27 @@ fn load(
 ) -> Result<Connection<String, AllowNetwork, AllowNetworkTotalCount, EmptyFields>> {
     let map = ctx.data::<Arc<Store>>()?.allow_network_map();
     super::load(&map, after, before, first, last, AllowNetworkTotalCount)
+}
+
+/// Returns the allow network list.
+///
+/// # Errors
+///
+/// Returns an error if the allow network database could not be retrieved.
+pub fn get_allow_networks(db: &Arc<Store>) -> Result<database::HostNetworkGroup> {
+    let map = db.allow_network_map();
+    let mut hosts = vec![];
+    let mut networks = vec![];
+    let mut ip_ranges = vec![];
+    for (_key, value) in map.iter_forward()? {
+        let allow_network = bincode::DefaultOptions::new()
+            .deserialize::<AllowNetwork>(value.as_ref())
+            .map_err(|_| "invalid value in database")?;
+        hosts.extend(allow_network.networks.hosts());
+        networks.extend(allow_network.networks.networks());
+        ip_ranges.extend(allow_network.networks.ip_ranges().to_vec());
+    }
+    Ok(database::HostNetworkGroup::new(hosts, networks, ip_ranges))
 }
 
 #[cfg(test)]

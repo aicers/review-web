@@ -68,6 +68,17 @@ impl AgentManager for Manager {
         bail!("Not supported")
     }
 
+    async fn broadcast_internal_networks(&self, _networks: &[u8]) -> Result<Vec<String>, Error> {
+        bail!("Not supported")
+    }
+    async fn broadcast_allow_networks(&self, _networks: &[u8]) -> Result<Vec<String>, Error> {
+        bail!("Not supported")
+    }
+
+    async fn broadcast_block_networks(&self, _networks: &[u8]) -> Result<Vec<String>, Error> {
+        bail!("Not supported")
+    }
+
     async fn online_apps_by_host_id(
         &self,
     ) -> Result<HashMap<String, Vec<(String, String)>>, Error> {

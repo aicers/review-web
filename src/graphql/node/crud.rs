@@ -1,5 +1,7 @@
 #![allow(clippy::fn_params_excessive_bools)]
 
+use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks};
+
 use super::{
     super::{Role, RoleGuard},
     Nic, NicInput, Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, PortNumber,
@@ -17,6 +19,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
 };
+use tracing::error;
 
 #[Object]
 impl NodeQuery {
@@ -106,111 +109,122 @@ impl NodeMutation {
 
         hog: bool,
     ) -> Result<ID> {
-        let db = ctx.data::<Arc<Store>>()?;
-        let map = db.node_map();
-        let customer_id = customer_id
-            .as_str()
-            .parse::<u32>()
-            .map_err(|_| "invalid customer ID")?;
-        let mut new_nics = Vec::<Nic>::with_capacity(nics.len());
-        for n in nics {
-            new_nics.push(n.try_into().map_err(|_| "invalid IP address: nic")?);
-        }
-        let original_count = new_nics.len();
-        new_nics.sort_by(|a, b| a.name.cmp(&b.name));
-        new_nics.dedup_by(|a, b| a.name == b.name);
-        if new_nics.len() != original_count {
-            return Err("duplicate network interface name".into());
-        }
-        let allow_access_from = if let Some(allow_access_from) = allow_access_from {
-            let mut new_allow = Vec::<IpAddr>::new();
-            for ip in allow_access_from {
-                new_allow.push(
+        let (id, customer_id, review) = {
+            let db = ctx.data::<Arc<Store>>()?;
+            let map = db.node_map();
+            let customer_id = customer_id
+                .as_str()
+                .parse::<u32>()
+                .map_err(|_| "invalid customer ID")?;
+            let mut new_nics = Vec::<Nic>::with_capacity(nics.len());
+            for n in nics {
+                new_nics.push(n.try_into().map_err(|_| "invalid IP address: nic")?);
+            }
+            let original_count = new_nics.len();
+            new_nics.sort_by(|a, b| a.name.cmp(&b.name));
+            new_nics.dedup_by(|a, b| a.name == b.name);
+            if new_nics.len() != original_count {
+                return Err("duplicate network interface name".into());
+            }
+            let allow_access_from = if let Some(allow_access_from) = allow_access_from {
+                let mut new_allow = Vec::<IpAddr>::new();
+                for ip in allow_access_from {
+                    new_allow.push(
+                        ip.as_str()
+                            .parse::<IpAddr>()
+                            .map_err(|_| "invalid IP address: access")?,
+                    );
+                }
+                new_allow.sort_unstable();
+                new_allow.dedup();
+                Some(new_allow)
+            } else {
+                None
+            };
+            let review_id = if let Some(id) = review_id {
+                Some(id.parse::<u32>().map_err(|_| "invalid review ID")?)
+            } else {
+                None
+            };
+            let dns_server_ip = if let Some(ip) = dns_server_ip {
+                Some(
                     ip.as_str()
                         .parse::<IpAddr>()
-                        .map_err(|_| "invalid IP address: access")?,
-                );
+                        .map_err(|_| "invalid IP address: dns server")?,
+                )
+            } else {
+                None
+            };
+            let syslog_server_ip = if let Some(ip) = syslog_server_ip {
+                Some(
+                    ip.as_str()
+                        .parse::<IpAddr>()
+                        .map_err(|_| "invalid IP address: syslog server")?,
+                )
+            } else {
+                None
+            };
+            let ntp_server_ip = if let Some(ip) = ntp_server_ip {
+                Some(
+                    ip.as_str()
+                        .parse::<IpAddr>()
+                        .map_err(|_| "invalid IP address: ntp server")?,
+                )
+            } else {
+                None
+            };
+            let value = Node {
+                id: u32::MAX,
+                customer_id,
+                name,
+                description,
+                hostname,
+                nics: new_nics,
+                disk_usage_limit,
+                allow_access_from,
+
+                review_id,
+
+                ssh_port,
+                dns_server_ip,
+                dns_server_port,
+                syslog_server_ip,
+                syslog_server_port,
+
+                review,
+                review_nics,
+                review_port,
+                review_web_port,
+                ntp_server_ip,
+                ntp_server_port,
+
+                piglet,
+
+                giganto,
+                giganto_ingestion_nics,
+                giganto_ingestion_port,
+                giganto_publish_nics,
+                giganto_publish_port,
+                giganto_graphql_nics,
+                giganto_graphql_port,
+
+                reconverge,
+
+                hog,
+
+                creation_time: Utc::now(),
+            };
+            let id = map.insert(value)?;
+            (id, customer_id, review)
+        };
+        if review {
+            let db = ctx.data::<Arc<Store>>()?;
+            if let Ok(networks) = get_customer_networks(db, customer_id) {
+                if let Err(e) = broadcast_customer_networks(ctx, &networks).await {
+                    error!("failed to broadcast internal networks. {e:?}");
+                }
             }
-            new_allow.sort_unstable();
-            new_allow.dedup();
-            Some(new_allow)
-        } else {
-            None
-        };
-        let review_id = if let Some(id) = review_id {
-            Some(id.parse::<u32>().map_err(|_| "invalid review ID")?)
-        } else {
-            None
-        };
-        let dns_server_ip = if let Some(ip) = dns_server_ip {
-            Some(
-                ip.as_str()
-                    .parse::<IpAddr>()
-                    .map_err(|_| "invalid IP address: dns server")?,
-            )
-        } else {
-            None
-        };
-        let syslog_server_ip = if let Some(ip) = syslog_server_ip {
-            Some(
-                ip.as_str()
-                    .parse::<IpAddr>()
-                    .map_err(|_| "invalid IP address: syslog server")?,
-            )
-        } else {
-            None
-        };
-        let ntp_server_ip = if let Some(ip) = ntp_server_ip {
-            Some(
-                ip.as_str()
-                    .parse::<IpAddr>()
-                    .map_err(|_| "invalid IP address: ntp server")?,
-            )
-        } else {
-            None
-        };
-        let value = Node {
-            id: u32::MAX,
-            customer_id,
-            name,
-            description,
-            hostname,
-            nics: new_nics,
-            disk_usage_limit,
-            allow_access_from,
-
-            review_id,
-
-            ssh_port,
-            dns_server_ip,
-            dns_server_port,
-            syslog_server_ip,
-            syslog_server_port,
-
-            review,
-            review_nics,
-            review_port,
-            review_web_port,
-            ntp_server_ip,
-            ntp_server_port,
-
-            piglet,
-
-            giganto,
-            giganto_ingestion_nics,
-            giganto_ingestion_port,
-            giganto_publish_nics,
-            giganto_publish_port,
-            giganto_graphql_nics,
-            giganto_graphql_port,
-
-            reconverge,
-
-            hog,
-
-            creation_time: Utc::now(),
-        };
-        let id = map.insert(value)?;
+        }
         Ok(ID(id.to_string()))
     }
 
@@ -250,11 +264,31 @@ impl NodeMutation {
         old: NodeInput,
         new: NodeInput,
     ) -> Result<ID> {
-        let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
+        let (review, customer_is_changed, customer_id) = {
+            let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
-        let db = ctx.data::<Arc<Store>>()?;
-        let map = db.node_map();
-        map.update(i, &old, &new)?;
+            let db = ctx.data::<Arc<Store>>()?;
+            let map = db.node_map();
+            map.update(i, &old, &new)?;
+
+            (
+                new.review,
+                new.customer_id != old.customer_id,
+                new.customer_id,
+            )
+        };
+
+        if review && customer_is_changed {
+            if let Ok(customer_id) = customer_id.as_str().parse::<u32>() {
+                let db = ctx.data::<Arc<Store>>()?;
+                if let Ok(networks) = get_customer_networks(db, customer_id) {
+                    if let Err(e) = broadcast_customer_networks(ctx, &networks).await {
+                        error!("failed to broadcast internal networks. {e:?}");
+                    }
+                }
+            }
+        }
+
         Ok(id)
     }
 }
@@ -382,4 +416,23 @@ fn get_sockaddr(nics: &[Nic], target: &Option<Vec<String>>, port: PortNumber) ->
         }
     }
     ret
+}
+
+/// Returns the customer id of review node.
+///
+/// # Errors
+///
+/// Returns an error if the node settings could not be retrieved.
+#[allow(clippy::module_name_repetitions)]
+pub fn get_customer_id_of_review_host(db: &Arc<Store>) -> Result<Option<u32>> {
+    let map = db.node_map();
+    for (_key, value) in map.iter_forward()? {
+        let node = bincode::DefaultOptions::new()
+            .deserialize::<Node>(value.as_ref())
+            .map_err(|_| "invalid value in database")?;
+        if node.review {
+            return Ok(Some(node.customer_id));
+        }
+    }
+    Ok(None)
 }

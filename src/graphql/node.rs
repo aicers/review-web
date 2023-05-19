@@ -6,7 +6,7 @@ mod status;
 use async_graphql::{types::ID, ComplexObject, Context, InputObject, Object, Result, SimpleObject};
 use bincode::Options;
 use chrono::{DateTime, Utc};
-pub use crud::get_node_settings;
+pub use crud::{get_customer_id_of_review_host, get_node_settings};
 use input::NodeInput;
 use ipnet::Ipv4Net;
 use review_database::{Indexable, Indexed, Store};
