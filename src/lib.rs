@@ -3,13 +3,16 @@ pub mod auth;
 pub mod graphql;
 
 use crate::auth::{validate_token, AuthError};
-use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
-use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
+use async_graphql::{
+    http::{playground_source, GraphQLPlaygroundConfig},
+    Data,
+};
+use async_graphql_axum::{GraphQLProtocol, GraphQLRequest, GraphQLResponse, GraphQLWebSocket};
 use axum::{
-    extract::{rejection::TypedHeaderRejection, Extension, TypedHeader},
+    extract::{rejection::TypedHeaderRejection, Extension, TypedHeader, WebSocketUpgrade},
     headers::authorization::{Authorization, Bearer},
-    response::{Html, IntoResponse},
-    routing::{get, get_service, post},
+    response::{Html, IntoResponse, Response},
+    routing::{get, get_service},
     Json, Router,
 };
 use graphql::AgentManager;
@@ -78,7 +81,7 @@ where
             );
 
             let mut router = Router::new()
-                .route("/graphql", post(graphql_handler))
+                .route("/graphql", get(graphql_ws_handler).post(graphql_handler))
                 .route(
                     "/graphql/playground",
                     get(graphql_playground).post(graphql_handler),
@@ -163,9 +166,9 @@ async fn graceful_shutdown(handle: axum_server::Handle, notify: Arc<Notify>) {
 
 #[allow(clippy::unused_async)]
 async fn graphql_playground() -> Result<impl IntoResponse, Error> {
-    Ok(Html(playground_source(GraphQLPlaygroundConfig::new(
-        "/graphql",
-    ))))
+    Ok(Html(playground_source(
+        GraphQLPlaygroundConfig::new("/graphql").subscription_endpoint("/graphql"),
+    )))
 }
 
 async fn graphql_handler(
@@ -186,6 +189,36 @@ async fn graphql_handler(
         }
         Err(_e) => Ok(schema.execute(request).await.into()),
     }
+}
+
+#[allow(clippy::unused_async)]
+async fn graphql_ws_handler(
+    Extension(schema): Extension<graphql::Schema>,
+    Extension(store): Extension<Arc<Store>>,
+    protocol: GraphQLProtocol,
+    websocket: WebSocketUpgrade,
+) -> Response {
+    websocket
+        .protocols(["graphql-ws"])
+        .on_upgrade(move |socket| {
+            GraphQLWebSocket::new(socket, schema.clone(), protocol)
+                .on_connection_init(|value| async move {
+                    #[derive(serde::Deserialize)]
+                    struct AuthData {
+                        #[serde(rename = "Authorization")]
+                        auth: String,
+                    }
+                    let auth_data = serde_json::from_value::<AuthData>(value)?;
+                    let mut data = Data::default();
+                    if let Some(token) = auth_data.auth.split_ascii_whitespace().last() {
+                        let (username, role) = validate_token(&store, token)?;
+                        data.insert(role);
+                        data.insert(username);
+                    }
+                    Ok(data)
+                })
+                .serve()
+        })
 }
 
 #[derive(thiserror::Error, Debug)]

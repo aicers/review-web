@@ -1,6 +1,6 @@
 [package]
 name = "review-web"
-version = "0.9.1"
+version = "0.9.2-alpha.1"
 edition = "2021"
 
 [dependencies]
@@ -13,6 +13,8 @@ axum-server = { version = "0.5", features = ["tls-rustls"] }
 bincode = "1"
 chrono = { version = "0.4", default_features = false, features = ["serde"] }
 data-encoding = "2"
+futures = "0.3"
+futures-util = "0.3"
 http = "0.2"
 ip2location = "0.4.2"
 ipnet = { version = "2", features = ["serde"] }

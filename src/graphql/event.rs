@@ -10,10 +10,14 @@ use super::{
 use anyhow::{anyhow, bail, Context as AnyhowContext};
 use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
-    Context, InputObject, Object, Result, Union, ID,
+    Context, InputObject, Object, Result, Subscription, Union, ID,
 };
 use bincode::Options;
 use chrono::{DateTime, Utc};
+use database::EventKind;
+use futures::channel::mpsc::{unbounded, UnboundedSender};
+use futures_util::stream::Stream;
+use num_traits::FromPrimitive;
 use review_database::{
     self as database, find_ip_country,
     types::{Endpoint, EventCategory, FromKeyValue, HostNetworkGroup},
@@ -25,12 +29,126 @@ use std::{
     num::NonZeroU8,
     sync::{Arc, Mutex},
 };
-use tracing::warn;
+use tokio::time;
+use tracing::{error, warn};
 
 const DEFAULT_CONNECTION_SIZE: usize = 100;
+const DEFAULT_EVENT_FETCH_TIME: u64 = 20;
+const ADD_TIME_FOR_NEXT_COMPARE: i64 = 1;
+
+#[derive(Default)]
+pub(super) struct EventStream;
 
 #[derive(Default)]
 pub(super) struct EventQuery;
+
+#[Subscription]
+impl EventStream {
+    /// A stream of events with timestamp on.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityManager))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
+    async fn event_stream(
+        &self,
+        ctx: &Context<'_>,
+        start: DateTime<Utc>,
+        fetch_interval: Option<u64>,
+    ) -> Result<impl Stream<Item = Event>> {
+        let store = ctx.data::<Arc<Store>>()?.clone();
+        let fetch_time = if let Some(fetch_time) = fetch_interval {
+            fetch_time
+        } else {
+            DEFAULT_EVENT_FETCH_TIME
+        };
+        let (tx, rx) = unbounded();
+        tokio::spawn(async move {
+            if let Err(e) = fetch_events(store, start.timestamp_nanos(), tx, fetch_time).await {
+                error!("{e:?}");
+            }
+        });
+        Ok(rx)
+    }
+}
+
+async fn fetch_events(
+    db: Arc<Store>,
+    start_time: i64,
+    tx: UnboundedSender<Event>,
+    fecth_time: u64,
+) -> Result<()> {
+    let mut itv = time::interval(time::Duration::from_secs(fecth_time));
+    let mut dns_covert_time = start_time;
+    let mut http_threat_time = start_time;
+    let mut rdp_brute_time = start_time;
+    let mut repeat_http_time = start_time;
+    let mut tor_time = start_time;
+    let mut dga_time = start_time;
+
+    loop {
+        itv.tick().await;
+
+        // Select the minimum time for DB search
+        let start = dns_covert_time.min(
+            http_threat_time.min(rdp_brute_time.min(repeat_http_time.min(tor_time.min(dga_time)))),
+        );
+
+        // Fetch event iterator based on time
+        let start = i128::from(start) << 64;
+        let events = db.events();
+        let iter = events.iter_from(start, Direction::Forward);
+
+        // Check for new data per event and send events that meet the conditions
+        for event in iter {
+            let (key, value) = event.map_err(|e| format!("Failed to read EventDb: {e:?}"))?;
+            let event_time = i64::try_from(key >> 64)?;
+            let kind = (key & 0xffff_ffff_0000_0000) >> 32;
+            let Some(event_kind) = EventKind::from_i128(kind) else {
+                return Err(anyhow!("Failed to convert event_kind: Invalid Event key").into());
+            };
+
+            match event_kind {
+                EventKind::DnsCovertChannel => {
+                    if event_time >= dns_covert_time {
+                        tx.unbounded_send(value.into())?;
+                        dns_covert_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::HttpThreat => {
+                    if event_time >= http_threat_time {
+                        tx.unbounded_send(value.into())?;
+                        http_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::RdpBruteForce => {
+                    if event_time >= rdp_brute_time {
+                        tx.unbounded_send(value.into())?;
+                        rdp_brute_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::RepeatedHttpSessions => {
+                    if event_time >= repeat_http_time {
+                        tx.unbounded_send(value.into())?;
+                        repeat_http_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::TorConnection => {
+                    if event_time >= tor_time {
+                        tx.unbounded_send(value.into())?;
+                        tor_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::DomainGenerationAlgorithm => {
+                    if event_time >= dga_time {
+                        tx.unbounded_send(value.into())?;
+                        dga_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::Log => continue,
+            }
+        }
+    }
+}
 
 #[Object]
 impl EventQuery {
@@ -1300,6 +1418,7 @@ fn iter_to_events(
 mod tests {
     use crate::graphql::TestSchema;
     use chrono::{DateTime, NaiveDate, Utc};
+    use futures_util::StreamExt;
     use review_database::{event::DnsEventFields, EventKind, EventMessage};
     use std::net::Ipv4Addr;
 
@@ -1651,6 +1770,49 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.3"}}]}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn event_stream() {
+        let schema = TestSchema::new().await;
+        let db = schema.event_database();
+        let ts1 = NaiveDate::from_ymd_opt(2018, 1, 26)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(ts1, 1, 2)).unwrap();
+        let ts2 = NaiveDate::from_ymd_opt(2018, 1, 27)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(ts2, 3, 4)).unwrap();
+        let ts3 = NaiveDate::from_ymd_opt(2018, 1, 28)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(ts3, 5, 6)).unwrap();
+        let query = r#"
+        subscription {
+            eventStream(start:"2018-01-28T00:00:00.000000000Z"){
+              __typename
+              ... on DnsCovertChannel{
+                srcAddr,
+              }
+            }
+        }
+        "#;
+        let mut stream = schema.execute_stream(&query).await;
+        let res = stream.next().await;
+        assert_eq!(
+            res.unwrap().data.to_string(),
+            r#"{eventStream: {__typename: "DnsCovertChannel",srcAddr: "0.0.0.5"}}"#
         );
     }
 }

@@ -40,7 +40,7 @@ pub use self::customer::get_customer_networks;
 pub use self::node::{get_customer_id_of_review_host, get_node_settings};
 use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
-    Context, EmptySubscription, Guard, MergedObject, ObjectType, OutputType, Result,
+    Context, Guard, MergedObject, MergedSubscription, ObjectType, OutputType, Result,
 };
 use async_trait::async_trait;
 use chrono::Duration;
@@ -60,7 +60,7 @@ use tokio::sync::Notify;
 use vinum::signal;
 
 /// GraphQL schema type.
-pub(super) type Schema = async_graphql::Schema<Query, Mutation, EmptySubscription>;
+pub(super) type Schema = async_graphql::Schema<Query, Mutation, Subscription>;
 
 #[async_trait]
 pub trait AgentManager: Send + Sync {
@@ -135,12 +135,16 @@ where
     B: AgentManager + 'static,
 {
     let agent_manager: BoxedAgentManager = Box::new(agent_manager);
-    let mut builder = Schema::build(Query::default(), Mutation::default(), EmptySubscription)
-        .data(db)
-        .data(store)
-        .data(agent_manager)
-        .data(cert_manager)
-        .data(cert_reload_handle);
+    let mut builder = Schema::build(
+        Query::default(),
+        Mutation::default(),
+        Subscription::default(),
+    )
+    .data(db)
+    .data(store)
+    .data(agent_manager)
+    .data(cert_manager)
+    .data(cert_reload_handle);
     if let Some(ip_locator) = ip_locator {
         builder = builder.data(ip_locator);
     }
@@ -216,6 +220,10 @@ pub(super) struct Mutation(
     traffic_filter::TrafficFilterMutation,
     allow_network::AllowNetworkMutation,
 );
+
+/// A set of subscription defined in the schema.
+#[derive(MergedSubscription, Default)]
+pub(super) struct Subscription(event::EventStream);
 
 #[derive(Debug)]
 pub struct ParseEnumError;
@@ -551,7 +559,7 @@ impl TestSchema {
         let schema = Schema::build(
             Query::default(),
             Mutation::default(),
-            async_graphql::EmptySubscription,
+            Subscription::default(),
         )
         .data(agent_manager)
         .data(store.clone())
@@ -573,5 +581,14 @@ impl TestSchema {
         self.schema
             .execute(request.data(Role::SystemAdministrator))
             .await
+    }
+
+    async fn execute_stream(
+        &self,
+        subscription: &str,
+    ) -> impl futures_util::Stream<Item = async_graphql::Response> {
+        let request: async_graphql::Request = subscription.into();
+        self.schema
+            .execute_stream(request.data(Role::SystemAdministrator))
     }
 }

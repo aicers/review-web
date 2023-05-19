@@ -20,6 +20,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     security issues, we are now logging failed sign-in attempts. This includes
     the user identification (if applicable) and the reason for failure (e.g.,
     incorrect password, non-existent user ID, etc.).
+- Added `eventstream` Graphql API to fetch events periodically.
+  - Based on the `start` time, look for events in `EventDb` that meet the
+    criteria and stream them.
+  - After a period of time, look up the `EventDb` again, find the newly
+    added events, stream them, and keep repeating.
 
 ## [0.9.1] - 2023-05-25
 
