@@ -17,6 +17,7 @@ use std::{
     net::{AddrParseError, IpAddr},
     sync::Arc,
 };
+use tracing::info;
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Serialize, SimpleObject)]
@@ -245,22 +246,26 @@ impl AccountMutation {
     ) -> Result<AuthPayload> {
         let store = ctx.data::<Arc<Store>>()?;
         let account_map = store.account_map();
-        let mut account = account_map
-            .get(&username)?
-            .ok_or_else::<async_graphql::Error, _>(|| "incorrect username or password".into())?;
 
-        if account.verify_password(&password) {
-            let (token, expiration_time) =
-                create_token(account.username.clone(), account.role.to_string())?;
-            account.update_last_signin_time();
-            account_map.put(&account)?;
-            insert_token(store, &token, &username)?;
+        if let Some(mut account) = account_map.get(&username)? {
+            if account.verify_password(&password) {
+                let (token, expiration_time) =
+                    create_token(account.username.clone(), account.role.to_string())?;
+                account.update_last_signin_time();
+                account_map.put(&account)?;
+                insert_token(store, &token, &username)?;
 
-            Ok(AuthPayload {
-                token,
-                expiration_time,
-            })
+                info!("{} signed in", username);
+                Ok(AuthPayload {
+                    token,
+                    expiration_time,
+                })
+            } else {
+                info!("wrong password for {username}");
+                Err("incorrect username or password".into())
+            }
         } else {
+            info!("{username} is not a valid username");
             Err("incorrect username or password".into())
         }
     }
@@ -273,6 +278,9 @@ impl AccountMutation {
     async fn sign_out(&self, ctx: &Context<'_>, token: String) -> Result<String> {
         let store = ctx.data::<Arc<Store>>()?;
         revoke_token(store, &token)?;
+        let decoded_token = decode_token(&token)?;
+        let username = decoded_token.sub;
+        info!("{username} signed out");
         Ok(token)
     }
 
