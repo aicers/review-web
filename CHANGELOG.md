@@ -12,16 +12,37 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - The `DomainGenerationAlgorithm` event in our `GraphQL` API query now includes
   a confidence field. This field will allow users to access and gauge the
   predictive certainty of the output.
-- Add function to broadcast `internal/allow/block networks` to all Hogs.
-  - `Internal networks` is the networks of customer assigned to review node.
-  - When new node with review is inserted, the customer networks of the node
-    is broadcasted.
-  - When the customer of review node is changed, the networks of new customer
-    is broadcasted.
-  - When the customer networks of review node is changed, the changed networks
-    is broadcasted.
-  - `Internal networks` includes all of the `Intranet`, `Extranet`, `Gateway`
-    addresses of customer.
+- `AgentManager` trait has been extended with three new methods.
+  - `broadcast_internal_networks`: This method is responsible for broadcasting
+    the customer's network details, including intranet, extranet, and gateway
+    IP addresses to clients.
+  - `broadcast_allow_networks`: This method sends the IP addresses that are
+    always accepted as benign to the clients.
+  - `broadcast_block_networks`: This method broadcasts the IP addresses that
+    are always considered suspicious.
+- Four new functions have been added to the `graphql` module to assist with the
+  implementation of the `AgentManager` trait:
+  - `graphql::get_allow_networks`: Fetches the list of IP addresses that are
+    always accepted as benign.
+  - `graphql::get_block_networks`: Fetches the list of IP addresses that are
+    always considered suspicious.
+  - `graphql::get_customer_networks`: Gets the customer's network details,
+    including intranet, extranet, and gateway IP addresses.
+  - `get_customer_id_of_review_host`: Returns the customer ID associated with
+    the review host.
+- Two new GraphQL API methods have been added:
+  - `applyAllowNetworks`: Applies the list of IP addresses that are always
+    accepted as benign.
+  - `applyBlockNetworks`: Applies the list of IP addresses that are always
+    considered suspicious.
+
+### Changed
+
+- The behavior when a new node is added or the customer of a node is changed,
+  has been updated to broadcast the customer networks of the node.
+- If the customer networks of a node are updated, the changes are now
+  broadcast. This provides an additional layer of communication to keep the
+  system up-to-date with changes.
 
 ## [0.9.0] - 2023-05-22
 
