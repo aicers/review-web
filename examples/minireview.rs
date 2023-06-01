@@ -1,12 +1,13 @@
 use anyhow::{anyhow, bail, Context, Error, Result};
 use async_trait::async_trait;
+use chrono::NaiveTime;
 use config::{Environment, File};
 use futures::{
     future::{self, Either},
     pin_mut,
 };
 use ipnet::IpNet;
-use review_database::{migrate_data_dir, Database, Store};
+use review_database::{backup::BackupConfig, migrate_data_dir, Database, Store};
 use review_web::{self as web, graphql::AgentManager, CertManager};
 use serde::Deserialize;
 use std::{
@@ -16,10 +17,11 @@ use std::{
     path::{Path, PathBuf},
     process::exit,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use tokio::{
     signal::unix::{signal, SignalKind},
-    sync::Notify,
+    sync::{mpsc, Notify, RwLock},
 };
 use tracing::{error, info, metadata::LevelFilter};
 use tracing_appender::non_blocking::WorkerGuard;
@@ -101,6 +103,9 @@ impl AgentManager for Manager {
 const DEFAULT_DATABASE_URL: &str = "postgres://review@localhost/review";
 const DEFAULT_SERVER: &str = "localhost";
 const DEFAULT_LOG_PATH: &str = "/data/logs/apps";
+const DEFAULT_NUM_OF_BACKUPS: u32 = 5;
+const DEFAULT_BACKUP_TIME: &str = "23:59:59"; // format: "%H:%M:%S"
+const DEFAULT_BACKUP_DURATION: i16 = 1; // unit: day
 
 pub struct Config {
     data_dir: PathBuf,
@@ -113,6 +118,11 @@ pub struct Config {
     key: PathBuf,
     ca_certs: Vec<PathBuf>,
     ip2location: Option<PathBuf>,
+    database_dir: PathBuf,
+    database_container: String,
+    num_of_backups_to_keep: u32,
+    backup_schedule: (Duration, Duration),
+    cfg_path: PathBuf,
     reverse_proxies: Vec<review_web::archive::Config>,
 }
 
@@ -128,6 +138,12 @@ struct ConfigParser {
     key: PathBuf,
     ca_certs: Option<Vec<PathBuf>>,
     ip2location: Option<PathBuf>,
+    database_dir: PathBuf,
+    database_container: String,
+    num_of_backups_to_keep: u32,
+    backup_time: String,
+    backup_duration: u16,
+    cfg_path: PathBuf,
     archive: Option<review_web::archive::Config>,
     reverse_proxies: Option<Vec<review_web::archive::Config>>,
 }
@@ -150,9 +166,23 @@ impl Config {
             .set_default("log_dir", DEFAULT_LOG_PATH)
             .context("cannot set the default log path")?
             .set_default("htdocs_dir", env::current_dir()?.join("htdocs").to_str())
-            .context("cannot set the default web directory")?;
+            .context("cannot set the default web directory")?
+            .set_default("database_dir", env::current_dir()?.join("AICE_DB").to_str())
+            .context("cannot set the default database directory")?
+            .set_default("database_container", "aice_db")
+            .context("cannot set the default database container")?
+            .set_default("num_of_backups_to_keep", DEFAULT_NUM_OF_BACKUPS)
+            .context("cannot set the default num of backups")?
+            .set_default("backup_time", DEFAULT_BACKUP_TIME)
+            .context("cannot set the default backup schedule time")?
+            .set_default("backup_duration", DEFAULT_BACKUP_DURATION)
+            .context("cannot set the default backup scheudule time")?
+            .set_default("cfg_path", env::current_dir()?.join("config.toml").to_str())
+            .context("cannot set the default config file name")?;
         let config: ConfigParser = if let Some(path) = path {
-            builder.add_source(File::with_name(path))
+            builder
+                .add_source(File::with_name(path))
+                .set_override("cfg_path", path)?
         } else {
             builder
         }
@@ -171,6 +201,13 @@ impl Config {
             reverse_proxies
         };
 
+        let backup_schedule = {
+            let time = NaiveTime::parse_from_str(&config.backup_time, "%H:%M:%S")?;
+            let duration = Duration::from_secs(u64::from(config.backup_duration) * 24 * 60 * 60);
+            let init = backup_initial(time, duration)?;
+            (init, duration)
+        };
+
         Ok(Self {
             data_dir: config.data_dir,
             backup_dir: config.backup_dir,
@@ -182,6 +219,11 @@ impl Config {
             key: config.key,
             ca_certs: config.ca_certs.unwrap_or_default(),
             ip2location: config.ip2location,
+            database_dir: config.database_dir,
+            database_container: config.database_container,
+            num_of_backups_to_keep: config.num_of_backups_to_keep,
+            backup_schedule,
+            cfg_path: config.cfg_path,
             reverse_proxies,
         })
     }
@@ -230,8 +272,35 @@ impl Config {
     }
 
     #[must_use]
+    pub fn database_dir(&self) -> &Path {
+        self.database_dir.as_ref()
+    }
+
+    #[must_use]
+    pub fn database_container(&self) -> &str {
+        &self.database_container
+    }
+
+    #[must_use]
+    pub fn num_of_backups_to_keep(&self) -> u32 {
+        self.num_of_backups_to_keep
+    }
+
+    #[must_use]
     pub(crate) fn reverse_proxies(&self) -> Vec<review_web::archive::Config> {
         self.reverse_proxies.clone()
+    }
+}
+
+pub fn backup_initial(time: NaiveTime, duration: Duration) -> Result<Duration> {
+    use chrono::Utc;
+    let now = Utc::now();
+    let schedule = now.date_naive().and_time(time) - now.date_naive().and_time(now.time());
+
+    if schedule.num_seconds() > 0 {
+        Ok(schedule.to_std()?)
+    } else {
+        Ok((schedule + chrono::Duration::from_std(duration)?).to_std()?)
     }
 }
 
@@ -283,7 +352,6 @@ async fn run(config: Config) -> Result<Arc<Notify>> {
     };
     let agent_manager = Manager {};
     let cert_reload_handle = Arc::new(Notify::new());
-
     let web_config = web::ServerConfig {
         addr: config.graphql_srv_addr(),
         document_root: config.htdocs_dir().to_owned(),
@@ -296,8 +364,33 @@ async fn run(config: Config) -> Result<Arc<Notify>> {
             .collect(),
         reverse_proxies: config.reverse_proxies(),
     };
-    let web_srv_shutdown_handle =
-        web::serve(web_config, db, store, ip_locator, agent_manager).await;
+
+    let backup_cfg = BackupConfig::builder()
+        .backup_path(config.backup_dir())
+        .container(config.database_container())
+        .num_of_backup(config.num_of_backups_to_keep())
+        .database_dir(config.database_dir())?
+        .database_url(config.database_url())?
+        .build();
+    let backup_cfg = Arc::new(RwLock::new(backup_cfg));
+    let (sender, mut receiver) = mpsc::channel::<(Duration, Duration)>(1);
+    info!("init backup schedule:{:?}", config.backup_schedule);
+    tokio::spawn(async move {
+        while let Some((init, duration)) = receiver.recv().await {
+            info!("change backup schedule:{init:?}/{duration:?}");
+        }
+    });
+    let web_srv_shutdown_handle = web::serve(
+        web_config,
+        db,
+        store,
+        ip_locator,
+        agent_manager,
+        backup_cfg,
+        config.cfg_path,
+        sender,
+    )
+    .await;
 
     Ok(web_srv_shutdown_handle)
 }

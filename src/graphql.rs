@@ -47,6 +47,7 @@ use chrono::Duration;
 use data_encoding::BASE64;
 use ipnet::IpNet;
 use num_traits::ToPrimitive;
+use review_database::backup::BackupConfig;
 use review_database::{
     self as database, types::FromKeyValue, Database, Direction, IterableMap, Role, Store,
 };
@@ -56,7 +57,8 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use tokio::sync::Notify;
+use tokio::sync::mpsc::Sender;
+use tokio::sync::{Notify, RwLock};
 use vinum::signal;
 
 /// GraphQL schema type.
@@ -123,6 +125,7 @@ pub trait CertManager: Send + Sync {
 ///
 /// The connection pool is stored in `async_graphql::Context` and passed to
 /// every GraphQL API function.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn schema<B>(
     db: Database,
     store: Arc<Store>,
@@ -130,6 +133,9 @@ pub(super) fn schema<B>(
     ip_locator: Option<Arc<Mutex<ip2location::DB>>>,
     cert_manager: Arc<dyn CertManager>,
     cert_reload_handle: Arc<Notify>,
+    db_backup_cfg: Arc<RwLock<BackupConfig>>,
+    cfg_path: PathBuf,
+    sender: Sender<(std::time::Duration, std::time::Duration)>,
 ) -> Schema
 where
     B: AgentManager + 'static,
@@ -144,7 +150,11 @@ where
     .data(store)
     .data(agent_manager)
     .data(cert_manager)
-    .data(cert_reload_handle);
+    .data(cert_reload_handle)
+    .data(db_backup_cfg)
+    .data(cfg_path)
+    .data(sender);
+
     if let Some(ip_locator) = ip_locator {
         builder = builder.data(ip_locator);
     }
@@ -160,6 +170,7 @@ pub(super) struct Query(
     cluster::ClusterQuery,
     customer::CustomerQuery,
     data_source::DataSourceQuery,
+    db_management::DbManagementQuery,
     event::EventQuery,
     event::EventGroupQuery,
     filter::FilterQuery,

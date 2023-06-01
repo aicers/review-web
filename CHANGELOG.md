@@ -5,6 +5,29 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `backup_list` Graphql API to generate backup list information.
+- Added `backup_config`/`set_backup_config` Graphql API to read/apply backup
+  config.
+  - `backup_config`: This function returns the maximum number of backups that
+    can be kept and the backup scheduler settings.
+  - `set_backup_config`: This function passes in the maximum number of backups
+    that can be kept and a backup schedule.
+    if `num_of_backups_to_keep` is passed, re-organize backups based on that
+    value. if `backup_time`/`backup_duration` is passed, it will be sent over an
+    internal channel. On the receiving channel side, the existing schedule must
+    be aborted and re-run with the received schedule.
+
+### Changed
+
+- Modify `backup` mutation to support postgresql.
+- Rename `restore_from_latest_backup` to `restore_from_backup` and modify the
+  functions accordingly. We don't need the `latest restore` function because
+  we select one of the `backup list` in the UI and restore it.
+
 ## [0.11.0] - 2023-06-08
 
 ### Added

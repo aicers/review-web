@@ -17,6 +17,7 @@ use axum::{
 };
 use graphql::AgentManager;
 pub use graphql::CertManager;
+use review_database::backup::BackupConfig;
 use review_database::{Database, Store};
 use rustls::{Certificate, ClientConfig, RootCertStore};
 use serde_json::json;
@@ -26,8 +27,12 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::Duration,
 };
-use tokio::{sync::Notify, task::JoinHandle};
+use tokio::{
+    sync::{mpsc::Sender, Notify, RwLock},
+    task::JoinHandle,
+};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing::error;
 
@@ -46,12 +51,16 @@ pub struct ServerConfig {
 /// # Panics
 ///
 /// Panics if binding to the address fails.
+#[allow(clippy::too_many_arguments)]
 pub async fn serve<A>(
     config: ServerConfig,
     db: Database,
     store: Arc<Store>,
     ip_locator: Option<Arc<Mutex<ip2location::DB>>>,
     agent_manager: A,
+    db_backup_cfg: Arc<RwLock<BackupConfig>>,
+    cfg_path: PathBuf,
+    sender: Sender<(Duration, Duration)>,
 ) -> Arc<Notify>
 where
     A: AgentManager + 'static,
@@ -66,6 +75,9 @@ where
         ip_locator,
         config.cert_manager.clone(),
         config.cert_reload_handle.clone(),
+        db_backup_cfg,
+        cfg_path,
+        sender,
     );
     let web_srv_shutdown_handle = Arc::new(Notify::new());
     let shutdown_handle = web_srv_shutdown_handle.clone();
@@ -158,8 +170,6 @@ pub(crate) fn client<P: AsRef<std::path::Path>>(ca_certs: &[P]) -> Option<reqwes
 }
 
 async fn graceful_shutdown(handle: axum_server::Handle, notify: Arc<Notify>) {
-    use std::time::Duration;
-
     notify.notified().await;
     handle.graceful_shutdown(Some(Duration::from_secs(1)));
 }

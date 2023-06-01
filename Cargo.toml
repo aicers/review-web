@@ -22,10 +22,11 @@ jsonwebtoken = "8"
 lazy_static = "1"
 num-traits = "0.2"
 oinq = { git = "https://github.com/petabi/oinq.git", tag = "0.8.1" }
+regex = "1"
 reqwest = { version = "0.11", default-features = false, features = [
   "rustls-tls-native-roots",
 ] }
-review-database = { git = "https://github.com/petabi/review-database.git", tag = "0.14.0" }
+review-database = { git ="https://github.com/kimhanbeom/review-database.git", rev ="b536cfa"}
 roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.2.0" }
 rustls = "0.21"
 rustls-native-certs = "0.6"
@@ -34,6 +35,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
 tokio = "1"
+toml_edit = "0.19"
 tower-http = { version = "0.4", features = ["fs", "trace"] }
 tracing = "0.1"
 vinum = { git = "https://github.com/vinesystems/vinum.git", tag = "1.0.3" }
