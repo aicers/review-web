@@ -571,7 +571,7 @@ pub async fn broadcast_customer_networks(
     ctx: &Context<'_>,
     networks: &database::HostNetworkGroup,
 ) -> Result<Vec<String>> {
-    let networks = bincode::serialize(&networks)?;
+    let networks = bincode::DefaultOptions::new().serialize(&networks)?;
     let agent_manager = ctx.data::<BoxedAgentManager>()?;
     agent_manager
         .broadcast_internal_networks(&networks)

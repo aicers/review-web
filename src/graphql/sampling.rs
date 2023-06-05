@@ -328,6 +328,7 @@ impl SamplingPolicyMutation {
             if let Err(e) = agents.broadcast_to_crusher(&msg).await {
                 // Change policy to mutable so that user can retry
                 let old = SamplingPolicyInput::try_from(pol)?;
+                #[allow(clippy::redundant_clone)]
                 let mut new = old.clone();
                 new.immutable = false;
                 let db = ctx.data::<Arc<Store>>()?;

@@ -119,7 +119,8 @@ impl AllowNetworkMutation {
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_allow_networks(&self, ctx: &Context<'_>) -> Result<Vec<String>> {
         let db = ctx.data::<Arc<Store>>()?;
-        let serialized_networks = bincode::serialize(&get_allow_networks(db)?)?;
+        let serialized_networks =
+            bincode::DefaultOptions::new().serialize(&get_allow_networks(db)?)?;
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
         agent_manager
             .broadcast_allow_networks(&serialized_networks)
