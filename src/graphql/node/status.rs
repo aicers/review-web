@@ -7,6 +7,7 @@ use async_graphql::{
     Context, Object, Result,
 };
 use bincode::Options;
+use chrono::Utc;
 use oinq::RequestCode;
 use review_database::Store;
 use roxy::ResourceUsage;
@@ -51,16 +52,19 @@ async fn load(
         .iter()
         .filter_map(|(h, a)| a.first().map(move |(k, _)| (h.clone(), k.clone())))
         .collect::<Vec<(String, String)>>();
-    let code: u32 = RequestCode::ResourceUsage.into();
-    let msg = bincode::serialize(&code)?;
+    let resource_code: u32 = RequestCode::ResourceUsage.into();
+    let resource_msg = bincode::serialize(&resource_code)?;
+    let ping_code: u32 = RequestCode::EchoRequest.into();
+    let ping_msg = bincode::serialize(&ping_code)?;
     let mut usages: HashMap<String, ResourceUsage> = HashMap::new();
+    let mut ping: HashMap<String, i64> = HashMap::new();
     for (_, key) in hostname_key {
-        if let Ok(response) = agents.send_and_recv(&key, &msg).await {
+        if let Ok(response) = agents.send_and_recv(&key, &resource_msg).await {
             if let Ok(Ok((hostname, ru))) = bincode::DefaultOptions::new()
                 .deserialize::<Result<(String, ResourceUsage), &str>>(&response)
             {
                 usages.insert(
-                    hostname,
+                    hostname.clone(),
                     ResourceUsage {
                         cpu_usage: ru.cpu_usage,
                         total_memory: ru.total_memory,
@@ -69,6 +73,17 @@ async fn load(
                         used_disk_space: ru.used_disk_space,
                     },
                 );
+
+                let start = Utc::now().timestamp_micros();
+                if let Ok(response) = agents.send_and_recv(&key, &ping_msg).await {
+                    let end = Utc::now().timestamp_micros();
+                    if bincode::DefaultOptions::new()
+                        .deserialize::<Result<(), &str>>(&response)
+                        .is_ok()
+                    {
+                        ping.insert(hostname, end - start);
+                    };
+                }
             }
         }
     }
@@ -97,9 +112,12 @@ async fn load(
                 used_memory,
                 total_disk_space,
                 used_disk_space,
-            ) = if let (Some(modules), Some(usage)) =
-                (apps.get(&ev.hostname), usages.get(&ev.hostname))
-            {
+                ping,
+            ) = if let (Some(modules), Some(usage), Some(ping)) = (
+                apps.get(&ev.hostname),
+                usages.get(&ev.hostname),
+                ping.get(&ev.hostname),
+            ) {
                 let module_names = modules
                     .iter()
                     .map(|(_, m)| m.clone())
@@ -122,6 +140,7 @@ async fn load(
                     Some(usage.used_memory),
                     Some(usage.total_disk_space),
                     Some(usage.used_disk_space),
+                    Some(*ping),
                 )
             } else if !review_hostname.is_empty() && review_hostname == ev.hostname {
                 (
@@ -135,9 +154,12 @@ async fn load(
                     Some(review_usage.used_memory),
                     Some(review_usage.total_disk_space),
                     Some(review_usage.used_disk_space),
+                    None,
                 )
             } else {
-                (None, None, None, None, None, None, None, None, None, None)
+                (
+                    None, None, None, None, None, None, None, None, None, None, None,
+                )
             };
             Edge::new(
                 k,
@@ -149,6 +171,7 @@ async fn load(
                     used_memory,
                     total_disk_space,
                     used_disk_space,
+                    ping,
                     review,
                     piglet,
                     giganto,

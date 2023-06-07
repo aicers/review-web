@@ -302,6 +302,10 @@ impl DnsCovertChannel {
         &self.inner.source
     }
 
+    async fn session_end_time(&self) -> DateTime<Utc> {
+        self.inner.session_end_time
+    }
+
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
@@ -358,6 +362,50 @@ impl DnsCovertChannel {
 
     async fn query(&self) -> &str {
         &self.inner.query
+    }
+
+    async fn answer(&self) -> Vec<String> {
+        self.inner.answer.clone()
+    }
+
+    async fn trans_id(&self) -> u16 {
+        self.inner.trans_id
+    }
+
+    async fn rtt(&self) -> i64 {
+        self.inner.rtt
+    }
+
+    async fn qclass(&self) -> u16 {
+        self.inner.qclass
+    }
+
+    async fn qtype(&self) -> u16 {
+        self.inner.qtype
+    }
+
+    async fn rcode(&self) -> u16 {
+        self.inner.rcode
+    }
+
+    async fn aa_flag(&self) -> bool {
+        self.inner.aa_flag
+    }
+
+    async fn tc_flag(&self) -> bool {
+        self.inner.tc_flag
+    }
+
+    async fn rd_flag(&self) -> bool {
+        self.inner.rd_flag
+    }
+
+    async fn ra_flag(&self) -> bool {
+        self.inner.ra_flag
+    }
+
+    async fn ttl(&self) -> Vec<i32> {
+        self.inner.ttl.clone()
     }
 
     async fn confidence(&self) -> f32 {
@@ -741,6 +789,10 @@ impl TorConnection {
         &self.inner.source
     }
 
+    async fn session_end_time(&self) -> DateTime<Utc> {
+        self.inner.session_end_time
+    }
+
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
@@ -793,6 +845,70 @@ impl TorConnection {
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let map = ctx.data::<Arc<Store>>()?.network_map();
         find_ip_network(&map, self.inner.dst_addr)
+    }
+
+    async fn host(&self) -> &str {
+        &self.inner.host
+    }
+
+    async fn method(&self) -> &str {
+        &self.inner.method
+    }
+
+    async fn uri(&self) -> &str {
+        &self.inner.uri
+    }
+
+    async fn referer(&self) -> &str {
+        &self.inner.referrer
+    }
+
+    async fn version(&self) -> &str {
+        &self.inner.version
+    }
+
+    async fn user_agent(&self) -> &str {
+        &self.inner.user_agent
+    }
+
+    async fn request_len(&self) -> usize {
+        self.inner.request_len
+    }
+
+    async fn response_len(&self) -> usize {
+        self.inner.response_len
+    }
+
+    async fn status_code(&self) -> u16 {
+        self.inner.status_code
+    }
+
+    async fn status_msg(&self) -> &str {
+        &self.inner.status_msg
+    }
+
+    async fn username(&self) -> &str {
+        &self.inner.username
+    }
+
+    async fn password(&self) -> &str {
+        &self.inner.password
+    }
+
+    async fn cookie(&self) -> &str {
+        &self.inner.cookie
+    }
+
+    async fn content_encoding(&self) -> &str {
+        &self.inner.content_encoding
+    }
+
+    async fn content_type(&self) -> &str {
+        &self.inner.content_type
+    }
+
+    async fn cache_control(&self) -> &str {
+        &self.inner.cache_control
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {

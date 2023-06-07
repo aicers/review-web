@@ -235,6 +235,9 @@ pub(super) struct NodeStatus {
     /// The total disk space in bytes that is currently used.
     used_disk_space: Option<u64>,
 
+    /// The ping value for a specific node.
+    ping: Option<i64>,
+
     /// Whether review is online or not.
     review: Option<bool>,
 
@@ -268,6 +271,7 @@ impl NodeStatus {
         used_memory: Option<u64>,
         total_disk_space: Option<u64>,
         used_disk_space: Option<u64>,
+        ping: Option<i64>,
         review: Option<bool>,
         piglet: Option<bool>,
         giganto: Option<bool>,
@@ -282,6 +286,7 @@ impl NodeStatus {
             used_memory,
             total_disk_space,
             used_disk_space,
+            ping,
             review,
             piglet,
             giganto,
