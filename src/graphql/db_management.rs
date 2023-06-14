@@ -13,7 +13,6 @@ impl DbManagementMutation {
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn backup(&self, ctx: &Context<'_>, num_of_backups_to_keep: u32) -> Result<bool> {
         let store = ctx.data::<Arc<RwLock<Store>>>()?;
-
         Ok(backup::create(store, false, num_of_backups_to_keep)
             .await
             .is_ok())
@@ -23,9 +22,7 @@ impl DbManagementMutation {
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn restore_from_latest_backup(&self, ctx: &Context<'_>) -> Result<bool> {
         let store = ctx.data::<Arc<RwLock<Store>>>()?;
-
         backup::restore(store, None).await?;
-
         Ok(true)
     }
 }

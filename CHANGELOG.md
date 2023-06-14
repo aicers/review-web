@@ -5,6 +5,18 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- five new GraphQL API methods have been added:
+  - `trusted_user_agent_list`: Get the trusted user agent list.
+  - `insert_trusted_user_agents`: Insert the trusted user agents.
+  - `remove_trusted_user_agents`: Delete the trusted user agents.
+  - `update_trusted_user_agent`: Update the trusted user agent.
+  - `apply_trusted_user_agent`: Apply a list of trusted user agent to the all
+    `hog` associated with `REview`.
+
 ## [0.13.1] - 2023-06-16
 
 ### Fixed

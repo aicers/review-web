@@ -68,9 +68,14 @@ impl AgentManager for Manager {
         bail!("Not supported")
     }
 
+    async fn broadcast_trusted_user_agent_list(&self, _list: &[u8]) -> Result<(), anyhow::Error> {
+        bail!("Not supported")
+    }
+
     async fn broadcast_internal_networks(&self, _networks: &[u8]) -> Result<Vec<String>, Error> {
         bail!("Not supported")
     }
+
     async fn broadcast_allow_networks(&self, _networks: &[u8]) -> Result<Vec<String>, Error> {
         bail!("Not supported")
     }

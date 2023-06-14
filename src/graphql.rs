@@ -32,6 +32,7 @@ mod tor_exit_node;
 mod traffic_filter;
 mod triage;
 mod trusted_domain;
+mod trusted_user_agent;
 
 pub use self::allow_network::get_allow_networks;
 pub use self::block_network::get_block_networks;
@@ -78,6 +79,7 @@ pub trait AgentManager: Send + Sync {
         &self,
         _networks: &[u8],
     ) -> Result<Vec<String>, anyhow::Error>;
+    async fn broadcast_trusted_user_agent_list(&self, _list: &[u8]) -> Result<(), anyhow::Error>;
     async fn online_apps_by_host_id(
         &self,
     ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error>;
@@ -184,6 +186,7 @@ pub(super) struct Query(
     trusted_domain::TrustedDomainQuery,
     traffic_filter::TrafficFilterQuery,
     allow_network::AllowNetworkQuery,
+    trusted_user_agent::UserAgentQuery,
 );
 
 /// A set of mutations defined in the schema.
@@ -219,6 +222,7 @@ pub(super) struct Mutation(
     trusted_domain::TrustedDomainMutation,
     traffic_filter::TrafficFilterMutation,
     allow_network::AllowNetworkMutation,
+    trusted_user_agent::UserAgentMutation,
 );
 
 /// A set of subscription defined in the schema.
@@ -502,6 +506,9 @@ impl AgentManager for MockAgentManager {
         unimplemented!()
     }
     async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
+        unimplemented!()
+    }
+    async fn broadcast_trusted_user_agent_list(&self, _list: &[u8]) -> Result<(), anyhow::Error> {
         unimplemented!()
     }
     async fn broadcast_internal_networks(
