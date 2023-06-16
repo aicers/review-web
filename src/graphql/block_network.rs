@@ -121,7 +121,8 @@ impl BlockNetworkMutation {
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_block_networks(&self, ctx: &Context<'_>) -> Result<Vec<String>> {
         let db = super::get_store(ctx).await?;
-        let serialized_networks = bincode::serialize(&get_block_networks(&db)?)?;
+        let serialized_networks =
+            bincode::DefaultOptions::new().serialize(&get_block_networks(&db)?)?;
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
         agent_manager
             .broadcast_block_networks(&serialized_networks)
