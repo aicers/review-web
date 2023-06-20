@@ -724,8 +724,8 @@ impl RepeatedHttpSessions {
         self.inner.src_addr.to_string()
     }
 
-    async fn src_port(&self) -> String {
-        self.inner.src_port.to_string()
+    async fn src_port(&self) -> u16 {
+        self.inner.src_port
     }
 
     /// The two-letter country code of the source IP address. `"XX"` if the
@@ -751,8 +751,8 @@ impl RepeatedHttpSessions {
         self.inner.dst_addr.to_string()
     }
 
-    async fn dst_port(&self) -> String {
-        self.inner.dst_port.to_string()
+    async fn dst_port(&self) -> u16 {
+        self.inner.dst_port
     }
 
     async fn proto(&self) -> u8 {
@@ -814,8 +814,8 @@ impl TorConnection {
         self.inner.src_addr.to_string()
     }
 
-    async fn src_port(&self) -> String {
-        self.inner.src_port.to_string()
+    async fn src_port(&self) -> u16 {
+        self.inner.src_port
     }
 
     /// The two-letter country code of the source IP address. `"XX"` if the
@@ -841,8 +841,8 @@ impl TorConnection {
         self.inner.dst_addr.to_string()
     }
 
-    async fn dst_port(&self) -> String {
-        self.inner.dst_port.to_string()
+    async fn dst_port(&self) -> u16 {
+        self.inner.dst_port
     }
 
     async fn proto(&self) -> u8 {

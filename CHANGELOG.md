@@ -17,6 +17,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   - `apply_trusted_user_agent`: Apply a list of trusted user agent to the all
     `hog` associated with `REview`.
 
+### Changed
+
+- Modify the type of `port` to `u16` of `TorConnection` and `RepeatedHttpSessions`.
+
 ## [0.13.1] - 2023-06-16
 
 ### Fixed
