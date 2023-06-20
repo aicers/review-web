@@ -8,7 +8,6 @@ use bincode::Options;
 use chrono::{DateTime, Utc};
 use database::types::FromKeyValue;
 use review_database::{self as database, IterableMap, Store};
-use std::sync::Arc;
 
 #[derive(Default)]
 pub(super) struct UserAgentQuery;
@@ -33,7 +32,7 @@ impl UserAgentQuery {
             before,
             first,
             last,
-            |after, before, first, last| async move { load(ctx, after, before, first, last) },
+            |after, before, first, last| async move { load(ctx, after, before, first, last).await },
         )
         .await
     }
@@ -52,7 +51,8 @@ impl UserAgentMutation {
         ctx: &Context<'_>,
         user_agents: Vec<String>,
     ) -> Result<bool> {
-        let map = ctx.data::<Arc<Store>>()?.trusted_user_agent_map();
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.trusted_user_agent_map();
         for user_agent in user_agents {
             map.put(user_agent.as_bytes(), Utc::now().to_string().as_bytes())?;
         }
@@ -67,7 +67,8 @@ impl UserAgentMutation {
         ctx: &Context<'_>,
         user_agents: Vec<String>,
     ) -> Result<bool> {
-        let map = ctx.data::<Arc<Store>>()?.trusted_user_agent_map();
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.trusted_user_agent_map();
         for user_agent in user_agents {
             map.delete(user_agent.as_bytes())?;
         }
@@ -83,7 +84,8 @@ impl UserAgentMutation {
         old: String,
         new: String,
     ) -> Result<bool> {
-        let map = ctx.data::<Arc<Store>>()?.trusted_user_agent_map();
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.trusted_user_agent_map();
         let old_timestamp = map.get(old.as_bytes())?.unwrap();
         let new_timestamp = Utc::now().to_string();
         map.update(
@@ -97,8 +99,8 @@ impl UserAgentMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_trusted_user_agent(&self, ctx: &Context<'_>) -> Result<bool> {
-        let db = ctx.data::<Arc<Store>>()?;
-        let list = get_trusted_user_agent_list(db)?;
+        let store = crate::graphql::get_store(ctx).await?;
+        let list = get_trusted_user_agent_list(&store)?;
         let serialized_user_agent = bincode::DefaultOptions::new().serialize(&list)?;
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
         agent_manager
@@ -135,7 +137,8 @@ struct TrustedUserAgentTotalCount;
 impl TrustedUserAgentTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        let map = ctx.data::<Arc<Store>>()?.trusted_user_agent_map();
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.trusted_user_agent_map();
         let count = map.iter_forward()?.count();
         Ok(count)
     }
@@ -146,7 +149,7 @@ impl TrustedUserAgentTotalCount {
 /// # Errors
 ///
 /// Returns an error if the user agent list database could not be retrieved.
-pub fn get_trusted_user_agent_list(db: &Arc<Store>) -> Result<Vec<String>> {
+pub fn get_trusted_user_agent_list(db: &Store) -> Result<Vec<String>> {
     let map = db.trusted_user_agent_map();
     let mut user_agent_list = vec![];
     for (key, _value) in map.iter_forward()? {
@@ -156,13 +159,14 @@ pub fn get_trusted_user_agent_list(db: &Arc<Store>) -> Result<Vec<String>> {
     Ok(user_agent_list)
 }
 
-fn load(
+async fn load(
     ctx: &Context<'_>,
     after: Option<String>,
     before: Option<String>,
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<String, TrustedUserAgent, TrustedUserAgentTotalCount, EmptyFields>> {
-    let map = ctx.data::<Arc<Store>>()?.trusted_user_agent_map();
+    let store = crate::graphql::get_store(ctx).await?;
+    let map = store.trusted_user_agent_map();
     super::load(&map, after, before, first, last, TrustedUserAgentTotalCount)
 }

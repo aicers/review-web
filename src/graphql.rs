@@ -39,6 +39,7 @@ pub use self::block_network::get_block_networks;
 pub use self::cert::ParsedCertificate;
 pub use self::customer::get_customer_networks;
 pub use self::node::{get_customer_id_of_review_host, get_node_settings};
+pub use self::trusted_user_agent::get_trusted_user_agent_list;
 use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
     Context, Guard, MergedObject, MergedSubscription, ObjectType, OutputType, Result,
