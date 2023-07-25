@@ -759,28 +759,28 @@ impl RdpBruteForce {
         self.inner.time
     }
 
-    async fn source(&self) -> &str {
-        &self.inner.source
-    }
-
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
 
-    async fn src_port(&self) -> u16 {
-        self.inner.src_port
-    }
-
-    async fn dst_addr(&self) -> String {
-        self.inner.dst_addr.to_string()
-    }
-
-    async fn dst_port(&self) -> u16 {
-        self.inner.dst_port
-    }
-
     async fn proto(&self) -> u8 {
         self.inner.proto
+    }
+
+    async fn dst_addrs(&self) -> Vec<String> {
+        self.inner
+            .dst_addrs
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    async fn start_time(&self) -> DateTime<Utc> {
+        self.inner.start_time
+    }
+
+    async fn last_time(&self) -> DateTime<Utc> {
+        self.inner.last_time
     }
 
     /// The two-letter country code of the source IP address. `"XX"` if the
@@ -1218,10 +1218,6 @@ struct FtpBruteForce {
 impl FtpBruteForce {
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
-    }
-
-    async fn source(&self) -> &str {
-        &self.inner.source
     }
 
     async fn src_addr(&self) -> String {
@@ -1904,10 +1900,6 @@ struct LdapBruteForce {
 impl LdapBruteForce {
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
-    }
-
-    async fn source(&self) -> &str {
-        &self.inner.source
     }
 
     async fn src_addr(&self) -> String {
