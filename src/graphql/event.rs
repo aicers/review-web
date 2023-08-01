@@ -19,7 +19,9 @@ use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures_util::stream::Stream;
 use num_traits::FromPrimitive;
 use review_database::{
-    self as database, find_ip_country,
+    self as database,
+    event::RecordType,
+    find_ip_country,
     types::{Endpoint, EventCategory, FromKeyValue, HostNetworkGroup},
     Direction, EventFilter, EventIterator, IndexedMap, IndexedMultimap, IterableMap, Store,
 };
@@ -97,21 +99,43 @@ async fn fetch_events(
     let mut non_browser_time = start_time;
     let mut external_ddos_time = start_time;
     let mut cryptocurrency_time = start_time;
+    let mut block_list_conn_time = start_time;
+    let mut block_list_dns_time = start_time;
 
     loop {
         itv.tick().await;
 
         // Select the minimum time for DB search
-        let start =
-            dns_covert_time.min(
-                http_threat_time.min(rdp_brute_time.min(repeat_http_time.min(tor_time.min(
-                    dga_time.min(ftp_brute_time.min(ftp_plain_time.min(port_scan_time.min(
-                        multi_host_time.min(ldap_brute_time.min(ldap_plain_time.min(
-                            non_browser_time.min(external_ddos_time.min(cryptocurrency_time)),
-                        ))),
-                    )))),
-                )))),
-            );
+        let start = dns_covert_time.min(
+            http_threat_time.min(
+                rdp_brute_time.min(
+                    repeat_http_time.min(
+                        tor_time.min(
+                            dga_time.min(
+                                ftp_brute_time.min(
+                                    ftp_plain_time.min(
+                                        port_scan_time.min(
+                                            multi_host_time.min(
+                                                ldap_brute_time.min(
+                                                    ldap_plain_time.min(
+                                                        non_browser_time.min(
+                                                            external_ddos_time
+                                                                .min(cryptocurrency_time)
+                                                                .min(block_list_conn_time)
+                                                                .min(block_list_dns_time),
+                                                        ),
+                                                    ),
+                                                ),
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        );
 
         // Fetch event iterator based on time
         let start = i128::from(start) << 64;
@@ -218,6 +242,18 @@ async fn fetch_events(
                         cryptocurrency_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
+                EventKind::BlockListConn => {
+                    if event_time >= block_list_conn_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_conn_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::BlockListDns => {
+                    if event_time >= block_list_dns_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_dns_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
                 EventKind::Log => continue,
             }
         }
@@ -312,6 +348,10 @@ enum Event {
 
     /// An event that occurs when it is determined that there is a connection to a cryptocurrency mining network
     CryptocurrencyMiningPool(CryptocurrencyMiningPool),
+
+    BlockListConn(BlockListConn),
+
+    BlockListDns(BlockListDns),
 }
 
 impl From<database::Event> for Event {
@@ -338,6 +378,10 @@ impl From<database::Event> for Event {
             database::Event::CryptocurrencyMiningPool(event) => {
                 Event::CryptocurrencyMiningPool(event.into())
             }
+            database::Event::BlockList(record_type) => match record_type {
+                RecordType::Conn(event) => Event::BlockListConn(event.into()),
+                RecordType::Dns(event) => Event::BlockListDns(event.into()),
+            },
         }
     }
 }
@@ -2234,6 +2278,254 @@ impl CryptocurrencyMiningPool {
 
 impl From<database::CryptocurrencyMiningPool> for CryptocurrencyMiningPool {
     fn from(inner: database::CryptocurrencyMiningPool) -> Self {
+        Self { inner }
+    }
+}
+
+struct BlockListConn {
+    inner: database::BlockListConn,
+}
+
+#[Object]
+impl BlockListConn {
+    async fn time(&self) -> DateTime<Utc> {
+        self.inner.time
+    }
+
+    async fn source(&self) -> &str {
+        &self.inner.source
+    }
+
+    async fn src_addr(&self) -> String {
+        self.inner.src_addr.to_string()
+    }
+
+    /// The two-letter country code of the source IP address. `"XX"` if the
+    /// location of the address is not known, and `"ZZ"` if the location
+    /// database is unavailable.
+    async fn src_country(&self, ctx: &Context<'_>) -> String {
+        country_code(ctx, self.inner.src_addr)
+    }
+
+    async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.customer_map();
+        find_ip_customer(&map, self.inner.src_addr)
+    }
+
+    async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.network_map();
+        find_ip_network(&map, self.inner.src_addr)
+    }
+
+    async fn src_port(&self) -> u16 {
+        self.inner.src_port
+    }
+
+    async fn dst_addr(&self) -> String {
+        self.inner.dst_addr.to_string()
+    }
+
+    /// The two-letter country code of the destination IP address. `"XX"` if the
+    /// location of the address is not known, and `"ZZ"` if the location
+    /// database is unavailable.
+    async fn dst_country(&self, ctx: &Context<'_>) -> String {
+        country_code(ctx, self.inner.dst_addr)
+    }
+
+    async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.customer_map();
+        find_ip_customer(&map, self.inner.dst_addr)
+    }
+
+    async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.network_map();
+        find_ip_network(&map, self.inner.dst_addr)
+    }
+
+    async fn dst_port(&self) -> u16 {
+        self.inner.dst_port
+    }
+
+    async fn proto(&self) -> u8 {
+        self.inner.proto
+    }
+
+    async fn duration(&self) -> i64 {
+        self.inner.duration
+    }
+
+    async fn service(&self) -> String {
+        self.inner.service.clone()
+    }
+
+    async fn orig_bytes(&self) -> u64 {
+        self.inner.orig_bytes
+    }
+
+    async fn resp_bytes(&self) -> u64 {
+        self.inner.resp_bytes
+    }
+
+    async fn orig_pkts(&self) -> u64 {
+        self.inner.orig_pkts
+    }
+
+    async fn resp_pkts(&self) -> u64 {
+        self.inner.resp_pkts
+    }
+
+    async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
+        self.inner
+            .triage_scores
+            .as_ref()
+            .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
+    }
+}
+
+impl From<database::BlockListConn> for BlockListConn {
+    fn from(inner: database::BlockListConn) -> Self {
+        Self { inner }
+    }
+}
+
+struct BlockListDns {
+    inner: database::BlockListDns,
+}
+
+#[Object]
+impl BlockListDns {
+    async fn time(&self) -> DateTime<Utc> {
+        self.inner.time
+    }
+
+    async fn source(&self) -> &str {
+        &self.inner.source
+    }
+
+    async fn src_addr(&self) -> String {
+        self.inner.src_addr.to_string()
+    }
+
+    /// The two-letter country code of the source IP address. `"XX"` if the
+    /// location of the address is not known, and `"ZZ"` if the location
+    /// database is unavailable.
+    async fn src_country(&self, ctx: &Context<'_>) -> String {
+        country_code(ctx, self.inner.src_addr)
+    }
+
+    async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.customer_map();
+        find_ip_customer(&map, self.inner.src_addr)
+    }
+
+    async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.network_map();
+        find_ip_network(&map, self.inner.src_addr)
+    }
+
+    async fn src_port(&self) -> u16 {
+        self.inner.src_port
+    }
+
+    async fn dst_addr(&self) -> String {
+        self.inner.dst_addr.to_string()
+    }
+
+    /// The two-letter country code of the destination IP address. `"XX"` if the
+    /// location of the address is not known, and `"ZZ"` if the location
+    /// database is unavailable.
+    async fn dst_country(&self, ctx: &Context<'_>) -> String {
+        country_code(ctx, self.inner.dst_addr)
+    }
+
+    async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.customer_map();
+        find_ip_customer(&map, self.inner.dst_addr)
+    }
+
+    async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.network_map();
+        find_ip_network(&map, self.inner.dst_addr)
+    }
+
+    async fn dst_port(&self) -> u16 {
+        self.inner.dst_port
+    }
+
+    async fn proto(&self) -> u8 {
+        self.inner.proto
+    }
+
+    async fn last_time(&self) -> i64 {
+        self.inner.last_time
+    }
+
+    async fn query(&self) -> &str {
+        &self.inner.query
+    }
+
+    async fn answer(&self) -> Vec<String> {
+        self.inner.answer.clone()
+    }
+
+    async fn trans_id(&self) -> u16 {
+        self.inner.trans_id
+    }
+
+    async fn rtt(&self) -> i64 {
+        self.inner.rtt
+    }
+
+    async fn qclass(&self) -> u16 {
+        self.inner.qclass
+    }
+
+    async fn qtype(&self) -> u16 {
+        self.inner.qtype
+    }
+
+    async fn rcode(&self) -> u16 {
+        self.inner.rcode
+    }
+
+    async fn aa_flag(&self) -> bool {
+        self.inner.aa_flag
+    }
+
+    async fn tc_flag(&self) -> bool {
+        self.inner.tc_flag
+    }
+
+    async fn rd_flag(&self) -> bool {
+        self.inner.rd_flag
+    }
+
+    async fn ra_flag(&self) -> bool {
+        self.inner.ra_flag
+    }
+
+    async fn ttl(&self) -> Vec<i32> {
+        self.inner.ttl.clone()
+    }
+
+    async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
+        self.inner
+            .triage_scores
+            .as_ref()
+            .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
+    }
+}
+
+impl From<database::BlockListDns> for BlockListDns {
+    fn from(inner: database::BlockListDns) -> Self {
         Self { inner }
     }
 }
