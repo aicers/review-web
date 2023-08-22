@@ -5,7 +5,7 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.14.2] - 2023-08-22
 
 ### Added
 
@@ -17,6 +17,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Modified `FtpBruteForce`, `LdapBruteForce`, `RdpBruteForce` events to align
   with the event fields provided.
+- Updated review-database to 0.17.1.
 
 ## [0.14.1] - 2023-07-06
 
@@ -270,7 +271,7 @@ across our system.
 
 - An initial version.
 
-[Unreleased]: https://github.com/petabi/review-web/compare/0.14.1...main
+[0.14.2]: https://github.com/petabi/review-web/compare/0.14.1...0.14.2
 [0.14.1]: https://github.com/petabi/review-web/compare/0.14.0...0.14.1
 [0.14.0]: https://github.com/petabi/review-web/compare/0.13.1...0.14.0
 [0.13.1]: https://github.com/petabi/review-web/compare/0.12.0...0.13.1
