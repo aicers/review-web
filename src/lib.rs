@@ -49,7 +49,7 @@ pub struct ServerConfig {
 /// # Panics
 ///
 /// Panics if binding to the address fails.
-pub async fn serve<A>(
+pub fn serve<A>(
     config: ServerConfig,
     db: Database,
     store: Arc<RwLock<Store>>,

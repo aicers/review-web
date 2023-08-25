@@ -835,7 +835,7 @@ fn linear_regression(x_values: &[f64], y_values: &[f64]) -> (f64, f64, f64) {
     }
 
     let mut t_ss = 0.;
-    for &y in y_values.iter() {
+    for &y in y_values {
         let dev = y - y_mean;
         t_ss += dev * dev;
     }
