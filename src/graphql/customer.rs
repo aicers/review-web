@@ -49,7 +49,7 @@ impl CustomerQuery {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         let Some(value) = map.get_by_id(i)? else {
-            return Err("no such customer".into())
+            return Err("no such customer".into());
         };
         Ok(Customer {
             inner: bincode::DefaultOptions::new()

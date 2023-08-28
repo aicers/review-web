@@ -302,8 +302,7 @@ async fn run(config: Config) -> Result<Arc<Notify>> {
             .collect(),
         reverse_proxies: config.reverse_proxies(),
     };
-    let web_srv_shutdown_handle =
-        web::serve(web_config, db, store, ip_locator, agent_manager).await;
+    let web_srv_shutdown_handle = web::serve(web_config, db, store, ip_locator, agent_manager);
 
     Ok(web_srv_shutdown_handle)
 }

@@ -380,7 +380,9 @@ where
         }
 
         let cursor = BASE64.encode(&k);
-        let Some(node) = filter(NI::from_key_value(&k, &v)?.into()) else {continue;};
+        let Some(node) = filter(NI::from_key_value(&k, &v)?.into()) else {
+            continue;
+        };
 
         nodes.push((cursor, node));
         exceeded = nodes.len() > len;

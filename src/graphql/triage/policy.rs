@@ -57,8 +57,8 @@ impl TriagePolicyQuery {
 
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_policy_map();
-        let Some(value) =  map.get_by_id(i)? else {
-            return Err("no such triage policy".into())
+        let Some(value) = map.get_by_id(i)? else {
+            return Err("no such triage policy".into());
         };
         Ok(TriagePolicy {
             inner: bincode::DefaultOptions::new()

@@ -358,7 +358,7 @@ async fn validate_policy(ctx: &Context<'_>, policy: &str, kind: database::DataTy
             let store = crate::graphql::get_store(ctx).await?;
             let map = store.sampling_policy_map();
             let Some(_value) = map.get_by_id(policy)? else {
-                return Err("no such sampling policy".into())
+                return Err("no such sampling policy".into());
             };
             Ok(())
         }

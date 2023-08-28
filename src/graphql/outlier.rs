@@ -1,13 +1,20 @@
-use super::{model::Model, slicing, Role, RoleGuard};
+use super::{always_true, model::Model, Role, RoleGuard, DEFAULT_CONNECTION_SIZE};
+use anyhow::anyhow;
 use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
     types::ID,
-    ComplexObject, Context, InputObject, Object, Result, SimpleObject,
+    ComplexObject, Context, InputObject, Object, ObjectType, OutputType, Result, SimpleObject,
 };
 use bincode::Options;
 use chrono::{offset::LocalResult, DateTime, NaiveDateTime, TimeZone, Utc};
+use data_encoding::BASE64;
 use num_traits::ToPrimitive;
-use review_database::{types::FromKeyValue, Database};
+use review_database::{types::FromKeyValue, Database, Direction, IterableMap};
+use serde::Deserialize;
+use std::cmp;
+
+pub const TIMESTAMP_SIZE: usize = 8;
+const DEFAULT_OUTLIER_SIZE: usize = 50;
 
 #[derive(Default)]
 pub(super) struct OutlierMutation;
@@ -63,13 +70,14 @@ impl OutlierQuery {
         last: Option<i32>,
     ) -> Result<Connection<String, Outlier, OutlierTotalCount, EmptyFields>> {
         let model = model.as_str().parse()?;
+        let filter = Some;
         query(
             after,
             before,
             first,
             last,
             |after, before, first, last| async move {
-                load(ctx, model, after, before, first, last).await
+                load(ctx, model, after, before, first, last, filter).await
             },
         )
         .await
@@ -237,17 +245,52 @@ impl RankedOutlierTotalCount {
     }
 }
 
-#[derive(Debug, SimpleObject)]
+#[derive(Debug, Deserialize, SimpleObject)]
 #[graphql(complex)]
 pub(super) struct Outlier {
     #[graphql(skip)]
-    pub(super) id: i32,
-    // pub(super) raw_event: Vec<u8>,
+    pub(super) id: i64, //timestamp
     #[graphql(skip)]
     pub(super) events: Vec<i64>,
     pub(super) size: i64,
-    #[graphql(skip)]
     pub(super) model_id: i32,
+}
+
+pub trait FromKeys: Sized {
+    /// Creates a new instance from the given keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the key or value cannot be deserialized.
+    fn from_keys(keys: &[Box<[u8]>]) -> Result<Self>;
+}
+
+impl FromKeys for Outlier {
+    fn from_keys(keys: &[Box<[u8]>]) -> Result<Self> {
+        let size = i64::try_from(keys.len())?;
+        let mut events: Vec<i64> = Vec::new();
+        let keys: Vec<_> = keys.iter().take(DEFAULT_OUTLIER_SIZE).collect();
+
+        let Some(first_key) = keys.first() else {
+            return Err(anyhow!("Failed to read outlier's first key").into());
+        };
+        let (model_id, timestamp, _, event, _) =
+            bincode::DefaultOptions::new().deserialize::<RankedOutlierKey>(first_key)?;
+        events.push(event);
+
+        for key in keys {
+            let (_, _, _, event, _) =
+                bincode::DefaultOptions::new().deserialize::<RankedOutlierKey>(key)?;
+            events.push(event);
+        }
+        events.sort_unstable();
+        Ok(Self {
+            id: timestamp,
+            events,
+            size,
+            model_id,
+        })
+    }
 }
 
 #[ComplexObject]
@@ -278,47 +321,217 @@ struct OutlierTotalCount {
 impl OutlierTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<i64> {
-        let db = ctx.data::<Database>()?;
-        Ok(db.count_outliers(self.model_id).await?)
+        let prefix = bincode::DefaultOptions::new().serialize(&self.model_id)?;
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.outlier_map().into_prefix_map(&prefix);
+        let mut iter = map.iter_forward()?;
+        let mut total_cnt = 0;
+        let mut outlier_group = Vec::new();
+
+        if let Some((first_k, _)) = iter.next() {
+            let mut outlier_group_key = get_ts_nano_from_key(&first_k)?;
+            outlier_group.push(first_k);
+            for (k, _) in iter {
+                let current_group_key = get_ts_nano_from_key(&k)?;
+                if outlier_group_key == current_group_key {
+                    outlier_group.push(k);
+                    continue;
+                }
+                if Outlier::from_keys(&outlier_group).is_ok() {
+                    total_cnt += 1;
+                }
+                outlier_group.clear();
+                outlier_group.push(k);
+                outlier_group_key = current_group_key;
+            }
+        }
+
+        if !outlier_group.is_empty() && Outlier::from_keys(&outlier_group).is_ok() {
+            total_cnt += 1;
+        }
+        Ok(total_cnt)
     }
 }
 
 async fn load(
     ctx: &Context<'_>,
-    model: i32,
+    model_id: i32,
     after: Option<String>,
     before: Option<String>,
     first: Option<usize>,
     last: Option<usize>,
+    filter: fn(Outlier) -> Option<Outlier>,
 ) -> Result<Connection<String, Outlier, OutlierTotalCount, EmptyFields>> {
-    let after = slicing::decode_cursor(&after)?;
-    let before = slicing::decode_cursor(&before)?;
-    let is_first = first.is_some();
-    let limit = slicing::limit(first, last)?;
-    let db = ctx.data::<Database>()?;
-    let rows = db
-        .load_outliers(model, &after, &before, is_first, limit)
-        .await?;
+    let prefix = bincode::DefaultOptions::new().serialize(&model_id)?;
+    let store = crate::graphql::get_store(ctx).await?;
+    let map = store.outlier_map().into_prefix_map(&prefix);
 
-    let (rows, has_previous, has_next) = slicing::page_info(is_first, limit, rows);
-    let mut connection = Connection::with_additional_fields(
-        has_previous,
-        has_next,
-        OutlierTotalCount { model_id: model },
-    );
-    connection.edges.extend(rows.into_iter().map(|o| {
-        let cursor = slicing::encode_cursor(o.id, o.size);
-        Edge::new(
-            cursor,
-            Outlier {
-                id: o.id,
-                events: o.event_ids,
-                size: o.size,
-                model_id: o.model_id,
-            },
-        )
-    }));
+    load_with_all_outlier(
+        &map,
+        after,
+        before,
+        first,
+        last,
+        filter,
+        OutlierTotalCount { model_id },
+    )
+}
+
+fn load_with_all_outlier<'m, M, I, N, NI, T>(
+    map: &'m M,
+    after: Option<String>,
+    before: Option<String>,
+    first: Option<usize>,
+    last: Option<usize>,
+    filter: fn(N) -> Option<N>,
+    total_count: T,
+) -> Result<Connection<String, N, T, EmptyFields>>
+where
+    M: IterableMap<'m, I>,
+    I: Iterator<Item = (Box<[u8]>, Box<[u8]>)> + 'm,
+    N: From<NI> + OutputType,
+    NI: FromKeys,
+    T: ObjectType,
+{
+    let (nodes, has_previous, has_next) =
+        load_nodes_with_all_outlier(map, after, before, first, last, filter)?;
+
+    let mut connection = Connection::with_additional_fields(has_previous, has_next, total_count);
+    connection
+        .edges
+        .extend(nodes.into_iter().map(|(k, ev)| Edge::new(k, ev)));
     Ok(connection)
+}
+
+#[allow(clippy::type_complexity)] // since this is called within `load` only
+fn load_nodes_with_all_outlier<'m, M, I, N, NI>(
+    map: &'m M,
+    after: Option<String>,
+    before: Option<String>,
+    first: Option<usize>,
+    last: Option<usize>,
+    filter: fn(N) -> Option<N>,
+) -> Result<(Vec<(String, N)>, bool, bool)>
+where
+    M: IterableMap<'m, I>,
+    I: Iterator<Item = (Box<[u8]>, Box<[u8]>)> + 'm,
+    N: From<NI> + OutputType,
+    NI: FromKeys,
+{
+    if let Some(last) = last {
+        let iter = if let Some(before) = before {
+            let end = latest_outlier_key(&before)?;
+            map.iter_from(&end, Direction::Reverse)?
+        } else {
+            map.iter_backward()?
+        };
+
+        let (nodes, has_more) = if let Some(after) = after {
+            let to = earliest_outlier_key(&after)?;
+            iter_to_nodes_with_outlier(iter, &to, cmp::Ordering::is_ge, last, filter, true)
+        } else {
+            iter_to_nodes_with_outlier(iter, &[], always_true, last, filter, true)
+        }?;
+        Ok((nodes, has_more, false))
+    } else {
+        let first = first.unwrap_or(DEFAULT_CONNECTION_SIZE);
+        let iter = if let Some(after) = after {
+            let start = earliest_outlier_key(&after)?;
+            map.iter_from(&start, Direction::Forward)?
+        } else {
+            map.iter_forward()?
+        };
+
+        let (nodes, has_more) = if let Some(before) = before {
+            let to = latest_outlier_key(&before)?;
+            iter_to_nodes_with_outlier(iter, &to, cmp::Ordering::is_le, first, filter, false)
+        } else {
+            iter_to_nodes_with_outlier(iter, &[], always_true, first, filter, false)
+        }?;
+        Ok((nodes, false, has_more))
+    }
+}
+
+fn iter_to_nodes_with_outlier<I, N, NI>(
+    mut iter: I,
+    to: &[u8],
+    cond: fn(cmp::Ordering) -> bool,
+    len: usize,
+    filter: fn(N) -> Option<N>,
+    is_reverse: bool,
+) -> Result<(Vec<(String, N)>, bool)>
+where
+    I: Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
+    N: From<NI>,
+    NI: FromKeys,
+{
+    let mut nodes = Vec::new();
+    let mut exceeded = false;
+    let mut outlier_group = Vec::new();
+
+    if let Some((first_k, _)) = iter.next() {
+        if !(cond)(first_k.as_ref().cmp(to)) {
+            return Ok((nodes, exceeded));
+        }
+        let mut outlier_group_key = get_ts_nano_from_key(&first_k)?;
+        let encoded_key = BASE64.encode(&first_k);
+        let (mut start_cursor, mut end_cursor) = (encoded_key.clone(), encoded_key);
+        outlier_group.push(first_k);
+
+        for (k, _) in iter {
+            if !(cond)(k.as_ref().cmp(to)) {
+                break;
+            }
+            let current_group_key = get_ts_nano_from_key(&k)?;
+            if outlier_group_key == current_group_key {
+                end_cursor = BASE64.encode(&k);
+                outlier_group.push(k);
+                continue;
+            }
+
+            if is_reverse {
+                (start_cursor, end_cursor) = (end_cursor, start_cursor);
+                outlier_group.reverse();
+            }
+
+            let Some(node) = filter(NI::from_keys(&outlier_group)?.into()) else {
+                let encoded_key = BASE64.encode(&k);
+                (start_cursor, end_cursor) = (encoded_key.clone(), encoded_key);
+                outlier_group.clear();
+                outlier_group.push(k);
+                outlier_group_key = current_group_key;
+                continue;
+            };
+
+            nodes.push((format!("{start_cursor}:{end_cursor}"), node));
+            exceeded = nodes.len() > len;
+            if exceeded {
+                outlier_group.clear();
+                break;
+            }
+
+            let encoded_key = BASE64.encode(&k);
+            (start_cursor, end_cursor) = (encoded_key.clone(), encoded_key);
+            outlier_group.clear();
+            outlier_group.push(k);
+            outlier_group_key = current_group_key;
+        }
+
+        if !outlier_group.is_empty() {
+            if is_reverse {
+                (start_cursor, end_cursor) = (end_cursor, start_cursor);
+                outlier_group.reverse();
+            }
+            if let Some(node) = filter(NI::from_keys(&outlier_group)?.into()) {
+                nodes.push((format!("{start_cursor}:{end_cursor}"), node));
+            }
+        }
+    }
+
+    if exceeded {
+        nodes.pop();
+    }
+    Ok((nodes, exceeded))
 }
 
 pub(crate) fn datetime_from_ts_nano(time: i64) -> Option<DateTime<Utc>> {
@@ -331,4 +544,45 @@ pub(crate) fn datetime_from_ts_nano(time: i64) -> Option<DateTime<Utc>> {
     } else {
         None
     }
+}
+
+pub fn get_ts_nano_from_key(key: &[u8]) -> Result<i64, anyhow::Error> {
+    if key.len() > TIMESTAMP_SIZE {
+        let (_, ts_nano, _, _, _) =
+            bincode::DefaultOptions::new().deserialize::<RankedOutlierKey>(key)?;
+        return Ok(ts_nano);
+    }
+    Err(anyhow!("invalid database key length"))
+}
+
+fn earliest_outlier_key(after: &str) -> Result<Vec<u8>> {
+    let Some((_, last_k)) = after.split_once(':') else {
+        return Err(anyhow!("Failed to parse outlier's after key").into());
+    };
+
+    let mut start = BASE64
+        .decode(last_k.as_bytes())
+        .map_err(|_| "invalid cursor `after`")?;
+    start.push(0);
+    Ok(start)
+}
+
+fn latest_outlier_key(before: &str) -> Result<Vec<u8>> {
+    let Some((start_k, _)) = before.split_once(':') else {
+        return Err(anyhow!("Failed to parse outlier's before key").into());
+    };
+
+    let mut end = BASE64
+        .decode(start_k.as_bytes())
+        .map_err(|_| "invalid cursor `before`")?;
+    let last_byte = if let Some(b) = end.last_mut() {
+        *b
+    } else {
+        return Err("invalid cursor `before`".into());
+    };
+    end.pop();
+    if last_byte > 0 {
+        end.push(last_byte - 1);
+    }
+    Ok(end)
 }

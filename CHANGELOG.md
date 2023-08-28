@@ -10,6 +10,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Refactor the event processing code by separating it into protocol files.
+- Modify outlier query to read outlier events from Rocks db.
 
 ## [0.14.2] - 2023-08-22
 

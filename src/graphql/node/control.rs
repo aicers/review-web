@@ -28,11 +28,12 @@ impl NodeControlMutation {
             let code: u32 = RequestCode::Reboot.into();
             let msg = bincode::serialize(&code)?;
             let response = agents.send_and_recv(key, &msg).await?;
-            let Ok(response) = bincode::DefaultOptions::new()
-                .deserialize::<Result<(), &str>>(&response) else {
-                    // Since the node turns off, deserialization fails.
-                    return Ok(hostname);
-                };
+            let Ok(response) =
+                bincode::DefaultOptions::new().deserialize::<Result<(), &str>>(&response)
+            else {
+                // Since the node turns off, deserialization fails.
+                return Ok(hostname);
+            };
             response.map_or_else(
                 |e| Err(format!("unable to reboot the system: {e}").into()),
                 |_| Ok(hostname),

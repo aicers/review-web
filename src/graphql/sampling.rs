@@ -174,7 +174,7 @@ impl SamplingPolicyQuery {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.sampling_policy_map();
         let Some(value) = map.get_by_id(i)? else {
-            return Err("no such sampling policy".into())
+            return Err("no such sampling policy".into());
         };
         Ok(bincode::DefaultOptions::new()
             .deserialize(value.as_ref())
