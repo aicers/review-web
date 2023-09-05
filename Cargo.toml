@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1"
-async-graphql = { version = "5", features = ["chrono"] }
-async-graphql-axum = "5"
+async-graphql = { version = "6", features = ["chrono"] }
+async-graphql-axum = "6"
 async-trait = "0.1"
 axum = { version = "0.6", features = ["headers", "macros"] }
 axum-server = { version = "0.5", features = ["tls-rustls"] }
@@ -21,12 +21,12 @@ ipnet = { version = "2", features = ["serde"] }
 jsonwebtoken = "8"
 lazy_static = "1"
 num-traits = "0.2"
-oinq = { git = "https://github.com/petabi/oinq.git", tag = "0.8.2" }
+oinq = { git = "https://github.com/petabi/oinq.git", tag = "0.9.1" }
 reqwest = { version = "0.11", default-features = false, features = [
   "rustls-tls-native-roots",
 ] }
 review-database = { git = "https://github.com/petabi/review-database.git", tag = "0.17.1" }
-roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.2.0" }
+roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.2.1" }
 rustls = "0.21"
 rustls-native-certs = "0.6"
 rustls-pemfile = "1.0"

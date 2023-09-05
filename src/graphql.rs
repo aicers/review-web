@@ -188,6 +188,7 @@ pub(super) struct Query(
     traffic_filter::TrafficFilterQuery,
     allow_network::AllowNetworkQuery,
     trusted_user_agent::UserAgentQuery,
+    node::ProcessListQuery,
 );
 
 /// A set of mutations defined in the schema.

@@ -1,15 +1,17 @@
 mod control;
 mod crud;
 mod input;
+mod process;
 mod status;
 
 use async_graphql::{types::ID, ComplexObject, Context, InputObject, Object, Result, SimpleObject};
 use bincode::Options;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 pub use crud::{get_customer_id_of_review_host, get_node_settings};
 use input::NodeInput;
 use ipnet::Ipv4Net;
 use review_database::{Indexable, Indexed};
+use roxy::Process as RoxyProcess;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, SocketAddr};
 
@@ -26,6 +28,9 @@ pub(super) struct NodeStatusQuery;
 
 #[derive(Default)]
 pub(super) struct NodeControlMutation;
+
+#[derive(Default)]
+pub(super) struct ProcessListQuery;
 
 #[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
 #[graphql(complex)]
@@ -344,6 +349,27 @@ pub struct ServerAddress {
     web_addr: SocketAddr,
     rpc_addr: SocketAddr,
     pub_addr: SocketAddr,
+}
+
+#[derive(Clone, Deserialize, Serialize, SimpleObject)]
+pub struct Process {
+    pub user: String,
+    pub cpu_usage: String,
+    pub mem_usage: String,
+    pub start_time: DateTime<Utc>,
+    pub command: String,
+}
+
+impl From<RoxyProcess> for Process {
+    fn from(value: RoxyProcess) -> Self {
+        Self {
+            user: value.user,
+            cpu_usage: value.cpu_usage.to_string(),
+            mem_usage: value.mem_usage.to_string(),
+            start_time: Utc.timestamp_nanos(value.start_time),
+            command: value.command,
+        }
+    }
 }
 
 #[cfg(test)]
