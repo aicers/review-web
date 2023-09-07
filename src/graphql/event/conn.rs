@@ -135,28 +135,22 @@ impl MultiHostPortScan {
     /// The two-letter country code of the destination IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn dst_country(&self, ctx: &Context<'_>) -> String {
-        country_code(
-            ctx,
-            *self
-                .inner
-                .dst_addrs
-                .get(0)
-                .expect("has value with internal network"),
-        )
+    async fn dst_countries(&self, ctx: &Context<'_>) -> Vec<String> {
+        self.inner
+            .dst_addrs
+            .iter()
+            .map(|dst_addr| country_code(ctx, *dst_addr))
+            .collect()
     }
 
-    async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
+    async fn dst_customers(&self, ctx: &Context<'_>) -> Result<Vec<Option<Customer>>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
-        find_ip_customer(
-            &map,
-            *self
-                .inner
-                .dst_addrs
-                .get(0)
-                .expect("has value with internal network"),
-        )
+        let mut customers = vec![];
+        for dst_addr in &self.inner.dst_addrs {
+            customers.push(find_ip_customer(&map, *dst_addr)?);
+        }
+        Ok(customers)
     }
 
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
@@ -223,28 +217,22 @@ impl ExternalDdos {
     /// The two-letter country code of the source IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn src_country(&self, ctx: &Context<'_>) -> String {
-        country_code(
-            ctx,
-            *self
-                .inner
-                .src_addrs
-                .get(0)
-                .expect("has value with internal network"),
-        )
+    async fn src_countries(&self, ctx: &Context<'_>) -> Vec<String> {
+        self.inner
+            .src_addrs
+            .iter()
+            .map(|src_addr| country_code(ctx, *src_addr))
+            .collect()
     }
 
-    async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
+    async fn src_customers(&self, ctx: &Context<'_>) -> Result<Vec<Option<Customer>>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
-        find_ip_customer(
-            &map,
-            *self
-                .inner
-                .src_addrs
-                .get(0)
-                .expect("has value with internal network"),
-        )
+        let mut customers = vec![];
+        for src_addr in &self.inner.src_addrs {
+            customers.push(find_ip_customer(&map, *src_addr)?);
+        }
+        Ok(customers)
     }
 
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {

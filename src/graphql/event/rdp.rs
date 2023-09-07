@@ -31,6 +31,27 @@ impl RdpBruteForce {
             .collect()
     }
 
+    /// The two-letter country code of the destination IP address. `"XX"` if the
+    /// location of the address is not known, and `"ZZ"` if the location
+    /// database is unavailable.
+    async fn dst_countries(&self, ctx: &Context<'_>) -> Vec<String> {
+        self.inner
+            .dst_addrs
+            .iter()
+            .map(|dst_addr| country_code(ctx, *dst_addr))
+            .collect()
+    }
+
+    async fn dst_customers(&self, ctx: &Context<'_>) -> Result<Vec<Option<Customer>>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.customer_map();
+        let mut customers = vec![];
+        for dst_addr in &self.inner.dst_addrs {
+            customers.push(find_ip_customer(&map, *dst_addr)?);
+        }
+        Ok(customers)
+    }
+
     async fn start_time(&self) -> DateTime<Utc> {
         self.inner.start_time
     }

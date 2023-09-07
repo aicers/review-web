@@ -11,6 +11,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Added `processList` graphql query to get the host's list of processes.
 
+### Fix
+
+- Fix to provide multiple `country codes`/`Customers` for events with multiple
+  `addresses`. (`RdpBruteForce`, `MultiHostPortScan`, `ExternalDdos`)
+
 ## [0.14.3] - 2023-09-04
 
 ### Changed
@@ -284,25 +289,25 @@ across our system.
 
 - An initial version.
 
-[Unreleased]: https://github.com/petabi/review-web/compare/0.14.3...main
-[0.14.3]: https://github.com/petabi/review-web/compare/0.14.2...0.14.3
-[0.14.2]: https://github.com/petabi/review-web/compare/0.14.1...0.14.2
-[0.14.1]: https://github.com/petabi/review-web/compare/0.14.0...0.14.1
-[0.14.0]: https://github.com/petabi/review-web/compare/0.13.1...0.14.0
-[0.13.1]: https://github.com/petabi/review-web/compare/0.12.0...0.13.1
-[0.13.0]: https://github.com/petabi/review-web/compare/0.12.0...0.13.0
-[0.12.0]: https://github.com/petabi/review-web/compare/0.11.0...0.12.0
-[0.11.0]: https://github.com/petabi/review-web/compare/0.10.0...0.11.0
-[0.10.0]: https://github.com/petabi/review-web/compare/0.9.1...0.10.0
-[0.9.1]: https://github.com/petabi/review-web/compare/0.9.0...0.9.1
-[0.9.0]: https://github.com/petabi/review-web/compare/0.8.1...0.9.0
-[0.8.1]: https://github.com/petabi/review-web/compare/0.8.0...0.8.1
-[0.8.0]: https://github.com/petabi/review-web/compare/0.7.0...0.8.0
-[0.7.0]: https://github.com/petabi/review-web/compare/0.6.0...0.7.0
-[0.6.0]: https://github.com/petabi/review-web/compare/0.5.0...0.6.0
-[0.5.0]: https://github.com/petabi/review-web/compare/0.4.1...0.5.0
-[0.4.1]: https://github.com/petabi/review-web/compare/0.4.0...0.4.1
-[0.4.0]: https://github.com/petabi/review-web/compare/0.3.0...0.4.0
-[0.3.0]: https://github.com/petabi/review-web/compare/0.2.0...0.3.0
-[0.2.0]: https://github.com/petabi/review-web/compare/0.1.0...0.2.0
-[0.1.0]: https://github.com/petabi/review-web/tree/0.1.0
+[Unreleased]: https://github.com/aicers/review-web/compare/0.14.3...main
+[0.14.3]: https://github.com/aicers/review-web/compare/0.14.2...0.14.3
+[0.14.2]: https://github.com/aicers/review-web/compare/0.14.1...0.14.2
+[0.14.1]: https://github.com/aicers/review-web/compare/0.14.0...0.14.1
+[0.14.0]: https://github.com/aicers/review-web/compare/0.13.1...0.14.0
+[0.13.1]: https://github.com/aicers/review-web/compare/0.12.0...0.13.1
+[0.13.0]: https://github.com/aicers/review-web/compare/0.12.0...0.13.0
+[0.12.0]: https://github.com/aicers/review-web/compare/0.11.0...0.12.0
+[0.11.0]: https://github.com/aicers/review-web/compare/0.10.0...0.11.0
+[0.10.0]: https://github.com/aicers/review-web/compare/0.9.1...0.10.0
+[0.9.1]: https://github.com/aicers/review-web/compare/0.9.0...0.9.1
+[0.9.0]: https://github.com/aicers/review-web/compare/0.8.1...0.9.0
+[0.8.1]: https://github.com/aicers/review-web/compare/0.8.0...0.8.1
+[0.8.0]: https://github.com/aicers/review-web/compare/0.7.0...0.8.0
+[0.7.0]: https://github.com/aicers/review-web/compare/0.6.0...0.7.0
+[0.6.0]: https://github.com/aicers/review-web/compare/0.5.0...0.6.0
+[0.5.0]: https://github.com/aicers/review-web/compare/0.4.1...0.5.0
+[0.4.1]: https://github.com/aicers/review-web/compare/0.4.0...0.4.1
+[0.4.0]: https://github.com/aicers/review-web/compare/0.3.0...0.4.0
+[0.3.0]: https://github.com/aicers/review-web/compare/0.2.0...0.3.0
+[0.2.0]: https://github.com/aicers/review-web/compare/0.1.0...0.2.0
+[0.1.0]: https://github.com/aicers/review-web/tree/0.1.0
