@@ -121,14 +121,14 @@ where
             let cert_reload = config.cert_reload_handle.notified();
 
             tokio::select! {
-                _ = wait_shutdown => {
+                () = wait_shutdown => {
                     info!("Shutting down Web server");
                     notify_shutdown.notify_one();
                     shutdown_completed.notified().await;
                     web_srv_shutdown_handle.notify_one();
                     return Ok(());
                 },
-                _ = cert_reload => {
+                () = cert_reload => {
                     info!("Restarting Web server to reload certificates");
                     notify_shutdown.notify_one();
                     shutdown_completed.notified().await;

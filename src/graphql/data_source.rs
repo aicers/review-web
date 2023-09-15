@@ -79,7 +79,7 @@ impl TryFrom<DataSourceInsertInput> for database::DataSource {
             server_name,
             address,
             data_type,
-            source: input.source.unwrap_or(String::new()),
+            source: input.source.unwrap_or_default(),
             kind: input.kind,
             description: input.description,
         })

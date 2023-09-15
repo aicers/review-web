@@ -10,6 +10,20 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Added `processList` graphql query to get the host's list of processes.
+- Add block list event.
+  - DceRpc: `BlockListDceRpc`
+  - Ftp: `BlockListFtp`
+  - Http: `BlockListHttp`
+  - Kerberos: `BlockListKerberos`
+  - Ldap: `BlockListLdap`
+  - Mqtt: `BlockListMqtt`
+  - Nfs: `BlockListNfs`
+  - Ntlm: `BlockListNtlm`
+  - Rdp: `BlockListRdp`
+  - Smb: `BlockListSmb`
+  - Smtp: `BlockListSmtp`
+  - Ssh: `BlockListSsh`
+  - tls: `BlockListTls`
 
 ### Changed
 

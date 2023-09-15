@@ -72,7 +72,7 @@ impl TidbMutation {
         let mut removed = Vec::with_capacity(names.len());
         for name in names {
             match database::Tidb::remove(&store, &name) {
-                Ok(_) => removed.push(name),
+                Ok(()) => removed.push(name),
                 Err(e) => return Err(format!("{e:?}").into()),
             };
         }

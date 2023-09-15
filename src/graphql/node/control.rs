@@ -36,7 +36,7 @@ impl NodeControlMutation {
             };
             response.map_or_else(
                 |e| Err(format!("unable to reboot the system: {e}").into()),
-                |_| Ok(hostname),
+                |()| Ok(hostname),
             )
         }
     }

@@ -1,18 +1,30 @@
 mod conn;
+mod dcerpc;
 mod dns;
 mod ftp;
 mod group;
 mod http;
+mod kerberos;
 mod ldap;
+mod mqtt;
+mod nfs;
+mod ntlm;
 mod rdp;
+mod smb;
+mod smtp;
+mod ssh;
+mod tls;
 
 pub(super) use self::group::EventGroupQuery;
 use self::{
     conn::BlockListConn, conn::ExternalDdos, conn::MultiHostPortScan, conn::PortScan,
-    dns::BlockListDns, dns::CryptocurrencyMiningPool, dns::DnsCovertChannel, ftp::FtpBruteForce,
-    ftp::FtpPlainText, http::DomainGenerationAlgorithm, http::HttpThreat, http::NonBrowser,
-    http::RepeatedHttpSessions, http::TorConnection, ldap::LdapBruteForce, ldap::LdapPlainText,
-    rdp::RdpBruteForce,
+    dcerpc::BlockListDceRpc, dns::BlockListDns, dns::CryptocurrencyMiningPool,
+    dns::DnsCovertChannel, ftp::BlockListFtp, ftp::FtpBruteForce, ftp::FtpPlainText,
+    http::BlockListHttp, http::DomainGenerationAlgorithm, http::HttpThreat, http::NonBrowser,
+    http::RepeatedHttpSessions, http::TorConnection, kerberos::BlockListKerberos,
+    ldap::BlockListLdap, ldap::LdapBruteForce, ldap::LdapPlainText, mqtt::BlockListMqtt,
+    nfs::BlockListNfs, ntlm::BlockListNtlm, rdp::BlockListRdp, rdp::RdpBruteForce,
+    smb::BlockListSmb, smtp::BlockListSmtp, ssh::BlockListSsh, tls::BlockListTls,
 };
 use super::{
     customer::{Customer, HostNetworkGroupInput},
@@ -120,41 +132,54 @@ async fn fetch_events(
     let mut cryptocurrency_time = start_time;
     let mut block_list_conn_time = start_time;
     let mut block_list_dns_time = start_time;
+    let mut block_list_dcerpc_time = start_time;
+    let mut block_list_ftp_time = start_time;
+    let mut block_list_http_time = start_time;
+    let mut block_list_kerberos_time = start_time;
+    let mut block_list_ldap_time = start_time;
+    let mut block_list_mqtt_time = start_time;
+    let mut block_list_nfs_time = start_time;
+    let mut block_list_ntlm_time = start_time;
+    let mut block_list_rdp_time = start_time;
+    let mut block_list_smb_time = start_time;
+    let mut block_list_smtp_time = start_time;
+    let mut block_list_ssh_time = start_time;
+    let mut block_list_tls_time = start_time;
 
     loop {
         itv.tick().await;
 
         // Select the minimum time for DB search
-        let start = dns_covert_time.min(
-            http_threat_time.min(
-                rdp_brute_time.min(
-                    repeat_http_time.min(
-                        tor_time.min(
-                            dga_time.min(
-                                ftp_brute_time.min(
-                                    ftp_plain_time.min(
-                                        port_scan_time.min(
-                                            multi_host_time.min(
-                                                ldap_brute_time.min(
-                                                    ldap_plain_time.min(
-                                                        non_browser_time.min(
-                                                            external_ddos_time
-                                                                .min(cryptocurrency_time)
-                                                                .min(block_list_conn_time)
-                                                                .min(block_list_dns_time),
-                                                        ),
-                                                    ),
-                                                ),
-                                            ),
-                                        ),
-                                    ),
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
-            ),
-        );
+        let start = dns_covert_time
+            .min(http_threat_time)
+            .min(rdp_brute_time)
+            .min(repeat_http_time)
+            .min(tor_time)
+            .min(dga_time)
+            .min(ftp_brute_time)
+            .min(ftp_plain_time)
+            .min(port_scan_time)
+            .min(multi_host_time)
+            .min(ldap_brute_time)
+            .min(ldap_plain_time)
+            .min(non_browser_time)
+            .min(external_ddos_time)
+            .min(cryptocurrency_time)
+            .min(block_list_conn_time)
+            .min(block_list_dns_time)
+            .min(block_list_dcerpc_time)
+            .min(block_list_ftp_time)
+            .min(block_list_http_time)
+            .min(block_list_kerberos_time)
+            .min(block_list_ldap_time)
+            .min(block_list_mqtt_time)
+            .min(block_list_nfs_time)
+            .min(block_list_ntlm_time)
+            .min(block_list_rdp_time)
+            .min(block_list_smb_time)
+            .min(block_list_smtp_time)
+            .min(block_list_ssh_time)
+            .min(block_list_tls_time);
 
         // Fetch event iterator based on time
         let start = i128::from(start) << 64;
@@ -273,6 +298,84 @@ async fn fetch_events(
                         block_list_dns_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
+                EventKind::BlockListDceRpc => {
+                    if event_time >= block_list_dcerpc_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_dcerpc_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::BlockListFtp => {
+                    if event_time >= block_list_ftp_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_ftp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::BlockListHttp => {
+                    if event_time >= block_list_http_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_http_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::BlockListKerberos => {
+                    if event_time >= block_list_kerberos_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_kerberos_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::BlockListLdap => {
+                    if event_time >= block_list_ldap_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_ldap_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::BlockListMqtt => {
+                    if event_time >= block_list_mqtt_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_mqtt_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::BlockListNfs => {
+                    if event_time >= block_list_nfs_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_nfs_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::BlockListNtlm => {
+                    if event_time >= block_list_ntlm_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_ntlm_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::BlockListRdp => {
+                    if event_time >= block_list_rdp_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_rdp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::BlockListSmb => {
+                    if event_time >= block_list_smb_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_smb_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::BlockListSmtp => {
+                    if event_time >= block_list_smtp_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_smtp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::BlockListSsh => {
+                    if event_time >= block_list_ssh_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_ssh_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::BlockListTls => {
+                    if event_time >= block_list_tls_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_tls_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
                 EventKind::Log => continue,
             }
         }
@@ -371,6 +474,32 @@ enum Event {
     BlockListConn(BlockListConn),
 
     BlockListDns(BlockListDns),
+
+    BlockListDceRpc(BlockListDceRpc),
+
+    BlockListFtp(BlockListFtp),
+
+    BlockListHttp(BlockListHttp),
+
+    BlockListKerberos(BlockListKerberos),
+
+    BlockListLdap(BlockListLdap),
+
+    BlockListMqtt(BlockListMqtt),
+
+    BlockListNfs(BlockListNfs),
+
+    BlockListNtlm(BlockListNtlm),
+
+    BlockListRdp(BlockListRdp),
+
+    BlockListSmb(BlockListSmb),
+
+    BlockListSmtp(BlockListSmtp),
+
+    BlockListSsh(BlockListSsh),
+
+    BlockListTls(BlockListTls),
 }
 
 impl From<database::Event> for Event {
@@ -400,6 +529,19 @@ impl From<database::Event> for Event {
             database::Event::BlockList(record_type) => match record_type {
                 RecordType::Conn(event) => Event::BlockListConn(event.into()),
                 RecordType::Dns(event) => Event::BlockListDns(event.into()),
+                RecordType::DceRpc(event) => Event::BlockListDceRpc(event.into()),
+                RecordType::Ftp(event) => Event::BlockListFtp(event.into()),
+                RecordType::Http(event) => Event::BlockListHttp(event.into()),
+                RecordType::Kerberos(event) => Event::BlockListKerberos(event.into()),
+                RecordType::Ldap(event) => Event::BlockListLdap(event.into()),
+                RecordType::Mqtt(event) => Event::BlockListMqtt(event.into()),
+                RecordType::Nfs(event) => Event::BlockListNfs(event.into()),
+                RecordType::Ntlm(event) => Event::BlockListNtlm(event.into()),
+                RecordType::Rdp(event) => Event::BlockListRdp(event.into()),
+                RecordType::Smb(event) => Event::BlockListSmb(event.into()),
+                RecordType::Smtp(event) => Event::BlockListSmtp(event.into()),
+                RecordType::Ssh(event) => Event::BlockListSsh(event.into()),
+                RecordType::Tls(event) => Event::BlockListTls(event.into()),
             },
         }
     }
