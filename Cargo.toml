@@ -1,6 +1,6 @@
 [package]
 name = "review-web"
-version = "0.14.4-alpha.1"
+version = "0.14.4"
 edition = "2021"
 
 [dependencies]
@@ -18,7 +18,7 @@ futures-util = "0.3"
 http = "0.2"
 ip2location = "0.4.2"
 ipnet = { version = "2", features = ["serde"] }
-jsonwebtoken = "8"
+jsonwebtoken = "9"
 lazy_static = "1"
 num-traits = "0.2"
 oinq = { git = "https://github.com/petabi/oinq.git", tag = "0.9.1" }
