@@ -5,6 +5,19 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.5] - 2023-11-02
+
+### Changed
+
+- Modified Ranked Outliers graphql query to take in a SearchFilter with
+  distance range and time range
+
+### Added
+
+- Added new method for Ranked Outliers `load_ranked_outliers_with_filter`,
+  `load_nodes_with_search_filter`, and `iter_through_search_filter_nodes`
+  to load Ranked Outliers depending on new Search Filter.
+
 ## [0.14.4] - 2023-10-19
 
 ### Added
@@ -307,6 +320,7 @@ across our system.
 
 - An initial version.
 
+[0.14.5]: https://github.com/aicers/review-web/compare/0.14.4...0.14.5
 [0.14.4]: https://github.com/aicers/review-web/compare/0.14.3...0.14.4
 [0.14.3]: https://github.com/aicers/review-web/compare/0.14.2...0.14.3
 [0.14.2]: https://github.com/aicers/review-web/compare/0.14.1...0.14.2
