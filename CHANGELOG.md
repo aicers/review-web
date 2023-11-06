@@ -10,6 +10,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Change the type of `id` in `ranked_outlier`/`saved_outlier` queries to `StringNumber`.
+- Modified Ranked Outliers graphql query to take in a SearchFilter with
+  `tag` and `remark`
 
 ## [0.14.5] - 2023-11-02
 

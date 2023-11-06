@@ -11,16 +11,17 @@ use review_database::{
 };
 use serde::{Deserialize, Serialize};
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Deserialize, Serialize, SimpleObject)]
 #[graphql(complex)]
-pub(super) struct TriageResponse {
+pub struct TriageResponse {
     #[graphql(skip)]
     id: u32,
     key: Vec<u8>,
     source: String,
     time: DateTime<Utc>,
-    tag_ids: Vec<u32>,
-    remarks: String,
+    pub tag_ids: Vec<u32>,
+    pub remarks: String,
     creation_time: DateTime<Utc>,
     last_modified_time: DateTime<Utc>,
 }
@@ -134,7 +135,7 @@ async fn load(
     >(&map, after, before, first, last, TriageResponseTotalCount)
 }
 
-fn key(source: &str, time: DateTime<Utc>) -> Vec<u8> {
+pub fn key(source: &str, time: DateTime<Utc>) -> Vec<u8> {
     let mut key = Vec::new();
     key.extend_from_slice(source.as_bytes());
     key.extend_from_slice(&time.timestamp_nanos_opt().unwrap_or_default().to_be_bytes());

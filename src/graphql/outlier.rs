@@ -1,4 +1,9 @@
-use super::{always_true, model::ModelDigest, Role, RoleGuard, DEFAULT_CONNECTION_SIZE};
+use super::{
+    always_true,
+    model::ModelDigest,
+    triage::response::{key, TriageResponse},
+    Role, RoleGuard, DEFAULT_CONNECTION_SIZE,
+};
 use crate::graphql::{earliest_key, latest_key};
 use anyhow::anyhow;
 use async_graphql::{
@@ -73,6 +78,8 @@ pub struct OutlierDistanceRange {
 pub struct SearchFilterInput {
     pub time: Option<OutlierTimeRange>,
     distance: Option<OutlierDistanceRange>,
+    tag: Option<String>,
+    remark: Option<String>,
 }
 
 #[Object]
@@ -632,9 +639,19 @@ async fn load_ranked_outliers_with_filter(
 
     let store = crate::graphql::get_store(ctx).await?;
     let map = store.outlier_map().into_prefix_map(&prefix);
+    let remarks_map = store.triage_response_map();
+    let tags_map = store.event_tag_set();
 
-    let (nodes, has_previous, has_next) =
-        load_nodes_with_search_filter(&map, &filter, after, before, first, last)?;
+    let (nodes, has_previous, has_next) = load_nodes_with_search_filter(
+        &map,
+        &remarks_map,
+        &tags_map,
+        &filter,
+        after,
+        before,
+        first,
+        last,
+    )?;
 
     let mut connection = Connection::with_additional_fields(
         has_previous,
@@ -650,9 +667,11 @@ async fn load_ranked_outliers_with_filter(
     Ok(connection)
 }
 
-#[allow(clippy::type_complexity)] // since this is called within `load` only
+#[allow(clippy::type_complexity, clippy::too_many_arguments)] // since this is called within `load` only
 fn load_nodes_with_search_filter<'m, M, I>(
     map: &'m M,
+    remarks_map: &review_database::IndexedMap<'_>,
+    tags_map: &review_database::IndexedSet<'_>,
     filter: &Option<SearchFilterInput>,
     after: Option<String>,
     before: Option<String>,
@@ -673,9 +692,25 @@ where
 
         let (nodes, has_more) = if let Some(after) = after {
             let to = earliest_key(&after)?;
-            iter_through_search_filter_nodes(iter, &to, cmp::Ordering::is_ge, filter, last)
+            iter_through_search_filter_nodes(
+                iter,
+                remarks_map,
+                tags_map,
+                &to,
+                cmp::Ordering::is_ge,
+                filter,
+                last,
+            )
         } else {
-            iter_through_search_filter_nodes(iter, &[], always_true, filter, last)
+            iter_through_search_filter_nodes(
+                iter,
+                remarks_map,
+                tags_map,
+                &[],
+                always_true,
+                filter,
+                last,
+            )
         }?;
         Ok((nodes, has_more, false))
     } else {
@@ -689,16 +724,35 @@ where
 
         let (nodes, has_more) = if let Some(before) = before {
             let to = latest_key(&before)?;
-            iter_through_search_filter_nodes(iter, &to, cmp::Ordering::is_le, filter, first)
+            iter_through_search_filter_nodes(
+                iter,
+                remarks_map,
+                tags_map,
+                &to,
+                cmp::Ordering::is_le,
+                filter,
+                first,
+            )
         } else {
-            iter_through_search_filter_nodes(iter, &[], always_true, filter, first)
+            iter_through_search_filter_nodes(
+                iter,
+                remarks_map,
+                tags_map,
+                &[],
+                always_true,
+                filter,
+                first,
+            )
         }?;
         Ok((nodes, false, has_more))
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn iter_through_search_filter_nodes<I>(
     iter: I,
+    remarks_map: &review_database::IndexedMap<'_>,
+    tags_map: &review_database::IndexedSet<'_>,
     to: &[u8],
     cond: fn(cmp::Ordering) -> bool,
     filter: &Option<SearchFilterInput>,
@@ -709,6 +763,29 @@ where
 {
     let mut nodes = Vec::new();
     let mut exceeded = false;
+
+    let tag_id_list = if let Some(filter) = filter {
+        if let Some(tag) = &filter.tag {
+            let index = tags_map.index()?;
+            let tag_ids: Vec<u32> = index
+                .iter()
+                .filter(|(_, name)| {
+                    let name = String::from_utf8_lossy(name).into_owned();
+                    name.contains(tag)
+                })
+                .map(|(id, _)| id)
+                .collect();
+            if tag_ids.is_empty() {
+                return Ok((nodes, exceeded));
+            }
+            Some(tag_ids)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     for (k, v) in iter {
         if !(cond)(k.as_ref().cmp(to)) {
             break;
@@ -720,6 +797,26 @@ where
         };
 
         if let Some(filter) = filter {
+            if filter.remark.is_some() || tag_id_list.is_some() {
+                let key = key(&node.source, Utc.timestamp_nanos(node.id.0));
+                if let Some(value) = remarks_map.get_by_key(&key)? {
+                    let value: TriageResponse = bincode::DefaultOptions::new()
+                        .deserialize(value.as_ref())
+                        .map_err(|_| "invalid value in database")?;
+                    if let Some(remark) = &filter.remark {
+                        if !value.remarks.contains(remark) {
+                            continue;
+                        }
+                    }
+                    if let Some(tag_ids) = &tag_id_list {
+                        if !tag_ids.iter().any(|tag| value.tag_ids.contains(tag)) {
+                            continue;
+                        }
+                    }
+                } else {
+                    continue;
+                }
+            }
             if let Some(time) = &filter.time {
                 if let Some(start) = time.start {
                     if let Some(end) = time.end {
