@@ -1,8 +1,8 @@
-use super::{NicInput, Node, PortNumber};
-use anyhow::{bail, Context as AnyhowContext};
+use super::{Node, PortNumber}; //NicInput
+use anyhow::Context as AnyhowContext; //bail
 use async_graphql::{types::ID, InputObject, Result};
 use review_database::IndexedMapUpdate;
-use std::net::IpAddr;
+use std::{collections::HashMap, net::IpAddr};
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, InputObject)]
@@ -12,38 +12,50 @@ pub(super) struct NodeInput {
     pub customer_id: ID,
     pub description: String,
     pub hostname: String,
-    pub nics: Vec<NicInput>,
-    pub disk_usage_limit: Option<f32>,
-    pub allow_access_from: Option<Vec<String>>,
-
-    pub review_id: Option<ID>,
-
-    pub ssh_port: PortNumber,
-    pub dns_server_ip: Option<String>,
-    pub dns_server_port: Option<PortNumber>,
-    pub syslog_server_ip: Option<String>,
-    pub syslog_server_port: Option<PortNumber>,
 
     pub review: bool,
-    pub review_nics: Option<Vec<String>>,
     pub review_port: Option<PortNumber>,
     pub review_web_port: Option<PortNumber>,
-    pub ntp_server_ip: Option<String>,
-    pub ntp_server_port: Option<PortNumber>,
 
     pub piglet: bool,
+    pub piglet_giganto_ip: Option<String>,
+    pub piglet_giganto_port: Option<PortNumber>,
+    pub piglet_review_ip: Option<String>,
+    pub piglet_review_port: Option<PortNumber>,
+    pub save_packets: bool,
+    pub http: bool,
+    pub office: bool,
+    pub exe: bool,
+    pub pdf: bool,
+    pub html: bool,
+    pub txt: bool,
+    pub smtp_eml: bool,
+    pub ftp: bool,
 
     pub giganto: bool,
-    pub giganto_ingestion_nics: Option<Vec<String>>,
+    pub giganto_ingestion_ip: Option<String>,
     pub giganto_ingestion_port: Option<PortNumber>,
-    pub giganto_publish_nics: Option<Vec<String>>,
+    pub giganto_publish_ip: Option<String>,
     pub giganto_publish_port: Option<PortNumber>,
-    pub giganto_graphql_nics: Option<Vec<String>>,
+    pub giganto_graphql_ip: Option<String>,
     pub giganto_graphql_port: Option<PortNumber>,
+    pub retention_period: Option<u16>,
 
     pub reconverge: bool,
+    pub reconverge_review_ip: Option<String>,
+    pub reconverge_review_port: Option<PortNumber>,
+    pub reconverge_giganto_ip: Option<String>,
+    pub reconverge_giganto_port: Option<PortNumber>,
 
     pub hog: bool,
+    pub hog_review_ip: Option<String>,
+    pub hog_review_port: Option<PortNumber>,
+    pub hog_giganto_ip: Option<String>,
+    pub hog_giganto_port: Option<PortNumber>,
+    pub protocols: bool,
+    pub protocol_list: HashMap<String, bool>,
+    pub sensors: bool,
+    pub sensor_list: HashMap<String, bool>,
 }
 
 impl IndexedMapUpdate for NodeInput {
@@ -66,91 +78,91 @@ impl IndexedMapUpdate for NodeInput {
         value.description.push_str(&self.description);
         value.hostname.clear();
         value.hostname.push_str(&self.hostname);
-        value.nics.clear();
-        for n in &self.nics {
-            value
-                .nics
-                .push(n.try_into().context("invalid IP address: nic")?);
-        }
-        let original_count = value.nics.len();
-        value.nics.sort_by(|a, b| a.name.cmp(&b.name));
-        value.nics.dedup_by(|a, b| a.name == b.name);
-        if value.nics.len() != original_count {
-            bail!("duplicate network interface name");
-        }
-        value.disk_usage_limit = self.disk_usage_limit;
-        if let Some(allow_access_from) = self.allow_access_from.as_ref() {
-            let mut allow = Vec::<IpAddr>::with_capacity(allow_access_from.len());
-            for ip in allow_access_from {
-                allow.push(ip.parse::<IpAddr>().context("invalid IP address: access")?);
-            }
-            allow.sort_unstable();
-            allow.dedup();
-            value.allow_access_from = Some(allow);
-        } else {
-            value.allow_access_from = None;
-        }
-
-        // review server
-        value.review_id = if let Some(id) = self.review_id.as_ref() {
-            Some(id.parse::<u32>().context("invalid review ID")?)
-        } else {
-            None
-        };
-
-        // communication
-        value.ssh_port = self.ssh_port;
-        value.dns_server_ip = if let Some(ip) = self.dns_server_ip.as_deref() {
-            Some(
-                ip.parse::<IpAddr>()
-                    .context("invalid IP address: dns server")?,
-            )
-        } else {
-            None
-        };
-        value.dns_server_port = self.dns_server_port;
-        value.syslog_server_ip = if let Some(ip) = self.syslog_server_ip.as_deref() {
-            Some(
-                ip.parse::<IpAddr>()
-                    .context("invalid IP address: syslog server")?,
-            )
-        } else {
-            None
-        };
-        value.syslog_server_port = self.syslog_server_port;
 
         // review
         value.review = self.review;
-        value.review_nics = self.review_nics.clone();
         value.review_port = self.review_port;
         value.review_web_port = self.review_web_port;
-        value.ntp_server_ip = if let Some(ip) = self.ntp_server_ip.as_deref() {
-            Some(
-                ip.parse::<IpAddr>()
-                    .context("invalid IP address: ntp server")?,
-            )
-        } else {
-            None
-        };
-        value.ntp_server_port = self.ntp_server_port;
 
         // piglet
         value.piglet = self.piglet;
+        value.piglet_giganto_ip = if let Some(ip) = self.piglet_giganto_ip.as_deref() {
+            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
+        } else {
+            None
+        };
+        value.piglet_giganto_port = self.piglet_giganto_port;
+        value.piglet_review_ip = if let Some(ip) = self.piglet_review_ip.as_deref() {
+            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
+        } else {
+            None
+        };
+        value.piglet_review_port = self.piglet_review_port;
+        value.save_packets = self.save_packets;
+        value.http = self.http;
+        value.office = self.office;
+        value.exe = self.exe;
+        value.pdf = self.pdf;
+        value.html = self.html;
+        value.txt = self.txt;
+        value.smtp_eml = self.smtp_eml;
+        value.ftp = self.ftp;
 
         // giganto
         value.giganto = self.giganto;
-        value.giganto_ingestion_nics = self.giganto_ingestion_nics.clone();
+        value.giganto_ingestion_ip = if let Some(ip) = self.giganto_ingestion_ip.as_deref() {
+            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
+        } else {
+            None
+        };
         value.giganto_ingestion_port = self.giganto_ingestion_port;
-        value.giganto_publish_nics = self.giganto_publish_nics.clone();
+        value.giganto_publish_ip = if let Some(ip) = self.giganto_publish_ip.as_deref() {
+            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
+        } else {
+            None
+        };
         value.giganto_publish_port = self.giganto_publish_port;
-        value.giganto_graphql_nics = self.giganto_graphql_nics.clone();
+        value.giganto_graphql_ip = if let Some(ip) = self.giganto_graphql_ip.as_deref() {
+            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
+        } else {
+            None
+        };
         value.giganto_graphql_port = self.giganto_graphql_port;
+        value.retention_period = self.retention_period;
 
         // reconverge
         value.reconverge = self.reconverge;
+        value.reconverge_review_ip = if let Some(ip) = self.reconverge_review_ip.as_deref() {
+            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
+        } else {
+            None
+        };
+        value.reconverge_review_port = self.reconverge_review_port;
+        value.reconverge_giganto_ip = if let Some(ip) = self.reconverge_giganto_ip.as_deref() {
+            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
+        } else {
+            None
+        };
+        value.reconverge_giganto_port = self.reconverge_giganto_port;
 
         // hog
         value.hog = self.hog;
+        value.hog_review_ip = if let Some(ip) = self.hog_review_ip.as_deref() {
+            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
+        } else {
+            None
+        };
+        value.hog_review_port = self.hog_review_port;
+        value.hog_giganto_ip = if let Some(ip) = self.hog_giganto_ip.as_deref() {
+            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
+        } else {
+            None
+        };
+        value.hog_giganto_port = self.hog_giganto_port;
+        value.protocols = self.protocols;
+        value.protocol_list = self.protocol_list.clone();
+        value.sensors = self.sensors;
+        value.sensor_list = self.sensor_list.clone();
 
         Ok(value)
     }
@@ -174,89 +186,9 @@ impl IndexedMapUpdate for NodeInput {
         if self.hostname != value.hostname {
             return false;
         }
-        if self.nics.len() != value.nics.len() {
-            return false;
-        }
-        if !self
-            .nics
-            .iter()
-            .zip(value.nics.iter())
-            .all(|(lhs, rhs)| lhs == rhs)
-        {
-            return false;
-        }
-        if self.disk_usage_limit != value.disk_usage_limit {
-            return false;
-        }
-        if let (Some(v), Some(value_allow_access_from)) =
-            (self.allow_access_from.as_ref(), &value.allow_access_from)
-        {
-            if v.len() != value_allow_access_from.len() {
-                return false;
-            }
-            if !v
-                .iter()
-                .zip(value_allow_access_from.iter())
-                .all(|(lhs, rhs)| lhs.parse::<IpAddr>().map_or(true, |lhs| lhs == *rhs))
-            {
-                return false;
-            }
-        } else if self.allow_access_from.is_some() || value.allow_access_from.is_some() {
-            return false;
-        }
-
-        // review server
-        let same_review_id = match (self.review_id.as_ref(), value.review_id.as_ref()) {
-            (Some(self_id), Some(value_id)) => self_id
-                .parse::<u32>()
-                .map_or(false, |self_id| self_id == *value_id),
-            (None, None) => true,
-            _ => false,
-        };
-        if !same_review_id {
-            return false;
-        }
-
-        // communication
-        if self.ssh_port != value.ssh_port {
-            return false;
-        }
-        if let (Some(ip_self), Some(ip_value)) =
-            (self.dns_server_ip.as_deref(), value.dns_server_ip)
-        {
-            if ip_self
-                .parse::<IpAddr>()
-                .map_or(true, |ip_self| ip_self != ip_value)
-            {
-                return false;
-            }
-        } else if self.dns_server_ip.is_some() || value.dns_server_ip.is_some() {
-            return false;
-        }
-        if self.dns_server_port != value.dns_server_port {
-            return false;
-        }
-        if let (Some(ip_self), Some(ip_value)) =
-            (self.syslog_server_ip.as_deref(), value.syslog_server_ip)
-        {
-            if ip_self
-                .parse::<IpAddr>()
-                .map_or(true, |ip_self| ip_self != ip_value)
-            {
-                return false;
-            }
-        } else if self.syslog_server_ip.is_some() || value.syslog_server_ip.is_some() {
-            return false;
-        }
-        if self.syslog_server_port != value.syslog_server_port {
-            return false;
-        }
 
         // review
         if self.review != value.review {
-            return false;
-        }
-        if !nics_eq(self.review_nics.as_ref(), value.review_nics.as_ref()) {
             return false;
         }
         if self.review_port != value.review_port {
@@ -265,8 +197,13 @@ impl IndexedMapUpdate for NodeInput {
         if self.review_web_port != value.review_web_port {
             return false;
         }
+
+        // piglet
+        if self.piglet != value.piglet {
+            return false;
+        }
         if let (Some(ip_self), Some(ip_value)) =
-            (self.ntp_server_ip.as_deref(), value.ntp_server_ip)
+            (self.piglet_giganto_ip.as_deref(), value.piglet_giganto_ip)
         {
             if ip_self
                 .parse::<IpAddr>()
@@ -274,15 +211,52 @@ impl IndexedMapUpdate for NodeInput {
             {
                 return false;
             }
-        } else if self.ntp_server_ip.is_some() || value.ntp_server_ip.is_some() {
+        } else if self.piglet_giganto_ip.is_some() || value.piglet_giganto_ip.is_some() {
             return false;
         }
-        if self.ntp_server_port != value.ntp_server_port {
+        if self.piglet_giganto_port != value.piglet_giganto_port {
             return false;
         }
-
-        // piglet
-        if self.piglet != value.piglet {
+        if let (Some(ip_self), Some(ip_value)) =
+            (self.piglet_review_ip.as_deref(), value.piglet_review_ip)
+        {
+            if ip_self
+                .parse::<IpAddr>()
+                .map_or(true, |ip_self| ip_self != ip_value)
+            {
+                return false;
+            }
+        } else if self.piglet_review_ip.is_some() || value.piglet_review_ip.is_some() {
+            return false;
+        }
+        if self.piglet_review_port != value.piglet_review_port {
+            return false;
+        }
+        if self.save_packets != value.save_packets {
+            return false;
+        }
+        if self.http != value.http {
+            return false;
+        }
+        if self.office != value.office {
+            return false;
+        }
+        if self.exe != value.exe {
+            return false;
+        }
+        if self.pdf != value.pdf {
+            return false;
+        }
+        if self.html != value.html {
+            return false;
+        }
+        if self.txt != value.txt {
+            return false;
+        }
+        if self.smtp_eml != value.smtp_eml {
+            return false;
+        }
+        if self.ftp != value.ftp {
             return false;
         }
 
@@ -290,31 +264,53 @@ impl IndexedMapUpdate for NodeInput {
         if self.giganto != value.giganto {
             return false;
         }
-        if !nics_eq(
-            self.giganto_ingestion_nics.as_ref(),
-            value.giganto_ingestion_nics.as_ref(),
+        if let (Some(ip_self), Some(ip_value)) = (
+            self.giganto_ingestion_ip.as_deref(),
+            value.giganto_ingestion_ip,
         ) {
+            if ip_self
+                .parse::<IpAddr>()
+                .map_or(true, |ip_self| ip_self != ip_value)
+            {
+                return false;
+            }
+        } else if self.giganto_ingestion_ip.is_some() || value.giganto_ingestion_ip.is_some() {
             return false;
         }
         if self.giganto_ingestion_port != value.giganto_ingestion_port {
             return false;
         }
-        if !nics_eq(
-            self.giganto_publish_nics.as_ref(),
-            value.giganto_publish_nics.as_ref(),
-        ) {
+        if let (Some(ip_self), Some(ip_value)) =
+            (self.giganto_publish_ip.as_deref(), value.giganto_publish_ip)
+        {
+            if ip_self
+                .parse::<IpAddr>()
+                .map_or(true, |ip_self| ip_self != ip_value)
+            {
+                return false;
+            }
+        } else if self.giganto_publish_ip.is_some() || value.giganto_publish_ip.is_some() {
             return false;
         }
         if self.giganto_publish_port != value.giganto_publish_port {
             return false;
         }
-        if !nics_eq(
-            self.giganto_graphql_nics.as_ref(),
-            value.giganto_graphql_nics.as_ref(),
-        ) {
+        if let (Some(ip_self), Some(ip_value)) =
+            (self.giganto_graphql_ip.as_deref(), value.giganto_graphql_ip)
+        {
+            if ip_self
+                .parse::<IpAddr>()
+                .map_or(true, |ip_self| ip_self != ip_value)
+            {
+                return false;
+            }
+        } else if self.giganto_graphql_ip.is_some() || value.giganto_graphql_ip.is_some() {
             return false;
         }
         if self.giganto_graphql_port != value.giganto_graphql_port {
+            return false;
+        }
+        if self.retention_period != value.retention_period {
             return false;
         }
 
@@ -322,25 +318,86 @@ impl IndexedMapUpdate for NodeInput {
         if self.reconverge != value.reconverge {
             return false;
         }
+        if let (Some(ip_self), Some(ip_value)) = (
+            self.reconverge_review_ip.as_deref(),
+            value.reconverge_review_ip,
+        ) {
+            if ip_self
+                .parse::<IpAddr>()
+                .map_or(true, |ip_self| ip_self != ip_value)
+            {
+                return false;
+            }
+        } else if self.reconverge_review_ip.is_some() || value.reconverge_review_ip.is_some() {
+            return false;
+        }
+        if self.reconverge_review_port != value.reconverge_review_port {
+            return false;
+        }
+        if let (Some(ip_self), Some(ip_value)) = (
+            self.reconverge_giganto_ip.as_deref(),
+            value.reconverge_giganto_ip,
+        ) {
+            if ip_self
+                .parse::<IpAddr>()
+                .map_or(true, |ip_self| ip_self != ip_value)
+            {
+                return false;
+            }
+        } else if self.reconverge_giganto_ip.is_some() || value.reconverge_giganto_ip.is_some() {
+            return false;
+        }
+        if self.reconverge_giganto_port != value.reconverge_giganto_port {
+            return false;
+        }
 
         // hog
         if self.hog != value.hog {
             return false;
         }
+        if let (Some(ip_self), Some(ip_value)) =
+            (self.hog_review_ip.as_deref(), value.hog_review_ip)
+        {
+            if ip_self
+                .parse::<IpAddr>()
+                .map_or(true, |ip_self| ip_self != ip_value)
+            {
+                return false;
+            }
+        } else if self.hog_review_ip.is_some() || value.hog_review_ip.is_some() {
+            return false;
+        }
+        if self.hog_review_port != value.hog_review_port {
+            return false;
+        }
+        if let (Some(ip_self), Some(ip_value)) =
+            (self.hog_giganto_ip.as_deref(), value.hog_giganto_ip)
+        {
+            if ip_self
+                .parse::<IpAddr>()
+                .map_or(true, |ip_self| ip_self != ip_value)
+            {
+                return false;
+            }
+        } else if self.hog_giganto_ip.is_some() || value.hog_giganto_ip.is_some() {
+            return false;
+        }
+        if self.hog_giganto_port != value.hog_giganto_port {
+            return false;
+        }
+        if self.protocols != value.protocols {
+            return false;
+        }
+        if self.protocol_list != value.protocol_list {
+            return false;
+        }
+        if self.sensors != value.sensors {
+            return false;
+        }
+        if self.sensor_list != value.sensor_list {
+            return false;
+        }
 
         true
-    }
-}
-
-fn nics_eq(lhs: Option<&Vec<String>>, rhs: Option<&Vec<String>>) -> bool {
-    match (lhs, rhs) {
-        (None, None) => true,
-        (Some(l), Some(r)) => {
-            let (mut l, mut r) = (l.clone(), r.clone());
-            l.sort_unstable();
-            r.sort_unstable();
-            l == r
-        }
-        _ => false,
     }
 }

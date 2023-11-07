@@ -4,8 +4,8 @@ use crate::graphql::{customer::broadcast_customer_networks, get_customer_network
 
 use super::{
     super::{Role, RoleGuard},
-    Nic, NicInput, Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, PortNumber,
-    ServerAddress, Setting,
+    Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, PortNumber, ServerAddress,
+    ServerPort, Setting,
 };
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
@@ -15,7 +15,10 @@ use async_graphql::{
 use bincode::Options;
 use chrono::Utc;
 use review_database::{Indexed, IterableMap, Store};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+};
 use tracing::error;
 
 #[Object]
@@ -72,147 +75,195 @@ impl NodeMutation {
         customer_id: ID,
         description: String,
         hostname: String,
-        nics: Vec<NicInput>,
-        disk_usage_limit: Option<f32>,
-        allow_access_from: Option<Vec<String>>,
-
-        review_id: Option<ID>,
-
-        // TODO: change to "ssh_port: Option<PortNumber>"
-        ssh_port: PortNumber,
-        dns_server_ip: Option<String>,
-        dns_server_port: Option<PortNumber>,
-        syslog_server_ip: Option<String>,
-        syslog_server_port: Option<PortNumber>,
 
         review: bool,
-        review_nics: Option<Vec<String>>,
         review_port: Option<PortNumber>,
         review_web_port: Option<PortNumber>,
-        ntp_server_ip: Option<String>,
-        ntp_server_port: Option<PortNumber>,
 
         piglet: bool,
+        piglet_giganto_ip: Option<String>,
+        piglet_giganto_port: Option<PortNumber>,
+        piglet_review_ip: Option<String>,
+        piglet_review_port: Option<PortNumber>,
+        save_packets: bool,
+        http: bool,
+        office: bool,
+        exe: bool,
+        pdf: bool,
+        html: bool,
+        txt: bool,
+        smtp_eml: bool,
+        ftp: bool,
 
         giganto: bool,
-        giganto_ingestion_nics: Option<Vec<String>>,
+        giganto_ingestion_ip: Option<String>,
         giganto_ingestion_port: Option<PortNumber>,
-        giganto_publish_nics: Option<Vec<String>>,
+        giganto_publish_ip: Option<String>,
         giganto_publish_port: Option<PortNumber>,
-        giganto_graphql_nics: Option<Vec<String>>,
+        giganto_graphql_ip: Option<String>,
         giganto_graphql_port: Option<PortNumber>,
+        retention_period: Option<u16>,
 
         reconverge: bool,
+        reconverge_review_ip: Option<String>,
+        reconverge_review_port: Option<PortNumber>,
+        reconverge_giganto_ip: Option<String>,
+        reconverge_giganto_port: Option<PortNumber>,
 
         hog: bool,
+        hog_review_ip: Option<String>,
+        hog_review_port: Option<PortNumber>,
+        hog_giganto_ip: Option<String>,
+        hog_giganto_port: Option<PortNumber>,
+        protocols: bool,
+        protocol_list: HashMap<String, bool>,
+        sensors: bool,
+        sensor_list: HashMap<String, bool>,
     ) -> Result<ID> {
-        let (id, customer_id, review) = {
+        let (id, customer_id) = {
             let store = crate::graphql::get_store(ctx).await?;
             let map = store.node_map();
             let customer_id = customer_id
                 .as_str()
                 .parse::<u32>()
                 .map_err(|_| "invalid customer ID")?;
-            let mut new_nics = Vec::<Nic>::with_capacity(nics.len());
-            for n in nics {
-                new_nics.push(n.try_into().map_err(|_| "invalid IP address: nic")?);
-            }
-            let original_count = new_nics.len();
-            new_nics.sort_by(|a, b| a.name.cmp(&b.name));
-            new_nics.dedup_by(|a, b| a.name == b.name);
-            if new_nics.len() != original_count {
-                return Err("duplicate network interface name".into());
-            }
-            let allow_access_from = if let Some(allow_access_from) = allow_access_from {
-                let mut new_allow = Vec::<IpAddr>::new();
-                for ip in allow_access_from {
-                    new_allow.push(
-                        ip.as_str()
-                            .parse::<IpAddr>()
-                            .map_err(|_| "invalid IP address: access")?,
-                    );
-                }
-                new_allow.sort_unstable();
-                new_allow.dedup();
-                Some(new_allow)
-            } else {
-                None
-            };
-            let review_id = if let Some(id) = review_id {
-                Some(id.parse::<u32>().map_err(|_| "invalid review ID")?)
-            } else {
-                None
-            };
-            let dns_server_ip = if let Some(ip) = dns_server_ip {
+            let piglet_giganto_ip = if let Some(ip) = piglet_giganto_ip {
                 Some(
                     ip.as_str()
                         .parse::<IpAddr>()
-                        .map_err(|_| "invalid IP address: dns server")?,
+                        .map_err(|_| "invalid IP address: storage")?,
                 )
             } else {
                 None
             };
-            let syslog_server_ip = if let Some(ip) = syslog_server_ip {
+            let piglet_review_ip = if let Some(ip) = piglet_review_ip {
                 Some(
                     ip.as_str()
                         .parse::<IpAddr>()
-                        .map_err(|_| "invalid IP address: syslog server")?,
+                        .map_err(|_| "invalid IP address: administration")?,
                 )
             } else {
                 None
             };
-            let ntp_server_ip = if let Some(ip) = ntp_server_ip {
+            let giganto_ingestion_ip = if let Some(ip) = giganto_ingestion_ip {
                 Some(
                     ip.as_str()
                         .parse::<IpAddr>()
-                        .map_err(|_| "invalid IP address: ntp server")?,
+                        .map_err(|_| "invalid IP address: receiving")?,
                 )
             } else {
                 None
             };
+            let giganto_publish_ip = if let Some(ip) = giganto_publish_ip {
+                Some(
+                    ip.as_str()
+                        .parse::<IpAddr>()
+                        .map_err(|_| "invalid IP address: sending")?,
+                )
+            } else {
+                None
+            };
+            let giganto_graphql_ip = if let Some(ip) = giganto_graphql_ip {
+                Some(
+                    ip.as_str()
+                        .parse::<IpAddr>()
+                        .map_err(|_| "invalid IP address: web")?,
+                )
+            } else {
+                None
+            };
+            let reconverge_review_ip = if let Some(ip) = reconverge_review_ip {
+                Some(
+                    ip.as_str()
+                        .parse::<IpAddr>()
+                        .map_err(|_| "invalid IP address: administration")?,
+                )
+            } else {
+                None
+            };
+            let reconverge_giganto_ip = if let Some(ip) = reconverge_giganto_ip {
+                Some(
+                    ip.as_str()
+                        .parse::<IpAddr>()
+                        .map_err(|_| "invalid IP address: storage")?,
+                )
+            } else {
+                None
+            };
+            let hog_review_ip = if let Some(ip) = hog_review_ip {
+                Some(
+                    ip.as_str()
+                        .parse::<IpAddr>()
+                        .map_err(|_| "invalid IP address: administration")?,
+                )
+            } else {
+                None
+            };
+            let hog_giganto_ip = if let Some(ip) = hog_giganto_ip {
+                Some(
+                    ip.as_str()
+                        .parse::<IpAddr>()
+                        .map_err(|_| "invalid IP address: storage")?,
+                )
+            } else {
+                None
+            };
+
             let value = Node {
                 id: u32::MAX,
                 customer_id,
                 name,
                 description,
                 hostname,
-                nics: new_nics,
-                disk_usage_limit,
-                allow_access_from,
-
-                review_id,
-
-                ssh_port,
-                dns_server_ip,
-                dns_server_port,
-                syslog_server_ip,
-                syslog_server_port,
 
                 review,
-                review_nics,
                 review_port,
                 review_web_port,
-                ntp_server_ip,
-                ntp_server_port,
 
                 piglet,
+                piglet_giganto_ip,
+                piglet_giganto_port,
+                piglet_review_ip,
+                piglet_review_port,
+                save_packets,
+                http,
+                office,
+                exe,
+                pdf,
+                html,
+                txt,
+                smtp_eml,
+                ftp,
 
                 giganto,
-                giganto_ingestion_nics,
+                giganto_ingestion_ip,
                 giganto_ingestion_port,
-                giganto_publish_nics,
+                giganto_publish_ip,
                 giganto_publish_port,
-                giganto_graphql_nics,
+                giganto_graphql_ip,
                 giganto_graphql_port,
+                retention_period,
 
                 reconverge,
+                reconverge_review_ip,
+                reconverge_review_port,
+                reconverge_giganto_ip,
+                reconverge_giganto_port,
 
                 hog,
+                hog_review_ip,
+                hog_review_port,
+                hog_giganto_ip,
+                hog_giganto_port,
+                protocols,
+                protocol_list,
+                sensors,
+                sensor_list,
 
                 creation_time: Utc::now(),
             };
             let id = map.insert(value)?;
-            (id, customer_id, review)
+            (id, customer_id)
         };
         if review {
             let store = crate::graphql::get_store(ctx).await?;
@@ -256,7 +307,7 @@ impl NodeMutation {
     /// Updates the given node, returning the node ID that was updated.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
-    async fn replace_node(
+    async fn update_node(
         &self,
         ctx: &Context<'_>,
         id: ID,
@@ -318,104 +369,103 @@ pub fn get_node_settings(db: &Store) -> Result<Vec<Setting>> {
             .deserialize::<Node>(value.as_ref())
             .map_err(|_| "invalid value in database")?;
 
-        let accesslist = node.allow_access_from.clone();
+        let piglet: Option<ServerAddress> = if node.piglet {
+            Some(ServerAddress {
+                web_addr: None,
+                rpc_addr: Some(SocketAddr::new(
+                    node.piglet_review_ip
+                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+                    node.piglet_review_port.unwrap_or_default(),
+                )),
+                pub_addr: Some(SocketAddr::new(
+                    node.piglet_giganto_ip
+                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+                    node.piglet_giganto_port.unwrap_or_default(),
+                )),
+                ing_addr: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)),
+            })
+        } else {
+            None
+        };
         let giganto = if node.giganto {
             Some(ServerAddress {
-                web_addr: get_sockaddr(
-                    &node.nics,
-                    &node.giganto_graphql_nics,
+                web_addr: Some(SocketAddr::new(
+                    node.giganto_graphql_ip
+                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
                     node.giganto_graphql_port.unwrap_or_default(),
-                ),
-                rpc_addr: get_sockaddr(
-                    &node.nics,
-                    &node.giganto_ingestion_nics,
-                    node.giganto_ingestion_port.unwrap_or_default(),
-                ),
-                pub_addr: get_sockaddr(
-                    &node.nics,
-                    &node.giganto_publish_nics,
+                )),
+                rpc_addr: None,
+                pub_addr: Some(SocketAddr::new(
+                    node.giganto_publish_ip
+                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
                     node.giganto_publish_port.unwrap_or_default(),
-                ),
+                )),
+                ing_addr: Some(SocketAddr::new(
+                    node.giganto_ingestion_ip
+                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+                    node.giganto_ingestion_port.unwrap_or_default(),
+                )),
             })
         } else {
             None
         };
-        let ntp = if let Some(ntp_server_ip) = node.ntp_server_ip {
-            Some(SocketAddr::new(
-                ntp_server_ip,
-                node.ntp_server_port.unwrap_or_default(),
-            ))
-        } else {
-            None
-        };
+
         let review = if node.review {
-            Some(ServerAddress {
-                web_addr: get_sockaddr(
-                    &node.nics,
-                    &node.review_nics,
-                    node.review_web_port.unwrap_or_default(),
-                ),
-                rpc_addr: get_sockaddr(
-                    &node.nics,
-                    &node.review_nics,
-                    node.review_port.unwrap_or_default(),
-                ),
-                pub_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+            Some(ServerPort {
+                rpc_port: node.review_port.unwrap_or_default(),
+                web_port: node.review_web_port.unwrap_or_default(),
             })
         } else {
             None
         };
-        let ssh = if node.ssh_port > 0 {
-            Some(node.ssh_port)
+        let reconverge = if node.reconverge {
+            Some(ServerAddress {
+                web_addr: None,
+                rpc_addr: Some(SocketAddr::new(
+                    node.reconverge_review_ip
+                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+                    node.reconverge_review_port.unwrap_or_default(),
+                )),
+                pub_addr: Some(SocketAddr::new(
+                    node.reconverge_giganto_ip
+                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+                    node.reconverge_giganto_port.unwrap_or_default(),
+                )),
+                ing_addr: None,
+            })
         } else {
             None
         };
-        // TODO: multiple syslog servers should be configurable.
-        let syslog = if let Some(syslog_server_ip) = node.syslog_server_ip {
-            Some(vec![(
-                true,
-                SocketAddr::new(
-                    syslog_server_ip,
-                    node.syslog_server_port.unwrap_or_default(),
-                ),
-            )])
+        let hog = if node.hog {
+            Some(ServerAddress {
+                web_addr: None,
+                rpc_addr: Some(SocketAddr::new(
+                    node.hog_review_ip
+                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+                    node.hog_review_port.unwrap_or_default(),
+                )),
+                pub_addr: Some(SocketAddr::new(
+                    node.hog_giganto_ip
+                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+                    node.hog_giganto_port.unwrap_or_default(),
+                )),
+                ing_addr: None,
+            })
         } else {
             None
         };
 
         output.push(Setting {
             name: node.hostname,
-            nics: node.nics,
-            accesslist,
-            disklimit: node.disk_usage_limit.unwrap_or_default(),
+            piglet,
             giganto,
-            hog: node.hog,
-            ntp,
-            piglet: node.piglet,
-            reconverge: node.reconverge,
+            hog,
+            reconverge,
             review,
-            ssh,
-            syslog,
         });
     }
 
     Ok(output)
-}
-
-// if target has multiple values, it assumes that the server address was chosen as 0.0.0.0 address
-fn get_sockaddr(nics: &[Nic], target: &Option<Vec<String>>, port: PortNumber) -> SocketAddr {
-    let mut ret = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
-    if let Some(target_nics) = &target {
-        if target_nics.len() == 1 {
-            if let Some(first) = target_nics.first() {
-                ret = nics.iter().find(|nic| &nic.name == first).map_or(
-                    SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
-                    |nic| SocketAddr::new(IpAddr::V4(nic.interface.addr()), port),
-                );
-            }
-        }
-    }
-    ret
 }
 
 /// Returns the customer id of review node.

@@ -13,7 +13,10 @@ use ipnet::Ipv4Net;
 use review_database::{Indexable, Indexed};
 use roxy::Process as RoxyProcess;
 use serde::{Deserialize, Serialize};
-use std::net::{IpAddr, SocketAddr};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+};
 
 pub type PortNumber = u16;
 
@@ -109,43 +112,59 @@ pub(super) struct Node {
     customer_id: u32,
     description: String,
     pub(super) hostname: String,
-    nics: Vec<Nic>,
-    disk_usage_limit: Option<f32>,
-    #[graphql(skip)]
-    allow_access_from: Option<Vec<IpAddr>>,
-
-    #[graphql(skip)]
-    review_id: Option<u32>,
-
-    ssh_port: PortNumber,
-    #[graphql(skip)]
-    dns_server_ip: Option<IpAddr>,
-    dns_server_port: Option<PortNumber>,
-    #[graphql(skip)]
-    syslog_server_ip: Option<IpAddr>,
-    syslog_server_port: Option<PortNumber>,
 
     review: bool,
-    review_nics: Option<Vec<String>>,
     review_port: Option<PortNumber>,
     review_web_port: Option<PortNumber>,
-    #[graphql(skip)]
-    ntp_server_ip: Option<IpAddr>,
-    ntp_server_port: Option<PortNumber>,
 
     piglet: bool,
-
+    #[graphql(skip)]
+    piglet_giganto_ip: Option<IpAddr>,
+    piglet_giganto_port: Option<PortNumber>,
+    #[graphql(skip)]
+    piglet_review_ip: Option<IpAddr>,
+    piglet_review_port: Option<PortNumber>,
+    save_packets: bool,
+    http: bool,
+    office: bool,
+    exe: bool,
+    pdf: bool,
+    html: bool,
+    txt: bool,
+    smtp_eml: bool,
+    ftp: bool,
     giganto: bool,
-    giganto_ingestion_nics: Option<Vec<String>>,
+    #[graphql(skip)]
+    giganto_ingestion_ip: Option<IpAddr>,
     giganto_ingestion_port: Option<PortNumber>,
-    giganto_publish_nics: Option<Vec<String>>,
+    #[graphql(skip)]
+    giganto_publish_ip: Option<IpAddr>,
     giganto_publish_port: Option<PortNumber>,
-    giganto_graphql_nics: Option<Vec<String>>,
+    #[graphql(skip)]
+    giganto_graphql_ip: Option<IpAddr>,
     giganto_graphql_port: Option<PortNumber>,
+    retention_period: Option<u16>,
 
     reconverge: bool,
+    #[graphql(skip)]
+    reconverge_review_ip: Option<IpAddr>,
+    reconverge_review_port: Option<PortNumber>,
+    #[graphql(skip)]
+    reconverge_giganto_ip: Option<IpAddr>,
+    reconverge_giganto_port: Option<PortNumber>,
 
     hog: bool,
+    #[graphql(skip)]
+    hog_review_ip: Option<IpAddr>,
+    hog_review_port: Option<PortNumber>,
+    #[graphql(skip)]
+    hog_giganto_ip: Option<IpAddr>,
+    hog_giganto_port: Option<PortNumber>,
+    protocols: bool,
+    protocol_list: HashMap<String, bool>,
+
+    sensors: bool,
+    sensor_list: HashMap<String, bool>,
 
     creation_time: DateTime<Utc>,
 }
@@ -160,29 +179,32 @@ impl Node {
         ID(self.customer_id.to_string())
     }
 
-    async fn allow_access_from(&self) -> Option<Vec<String>> {
-        self.allow_access_from.as_ref().map(|allow| {
-            allow
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<String>>()
-        })
+    async fn piglet_giganto_ip(&self) -> Option<String> {
+        self.piglet_giganto_ip.as_ref().map(ToString::to_string)
     }
-
-    async fn review_id(&self) -> Option<ID> {
-        self.review_id.map(|id| ID(id.to_string()))
+    async fn piglet_review_ip(&self) -> Option<String> {
+        self.piglet_review_ip.as_ref().map(ToString::to_string)
     }
-
-    async fn ntp_server_ip(&self) -> Option<String> {
-        self.ntp_server_ip.as_ref().map(ToString::to_string)
+    async fn giganto_ingestion_ip(&self) -> Option<String> {
+        self.giganto_ingestion_ip.as_ref().map(ToString::to_string)
     }
-
-    async fn dns_server_ip(&self) -> Option<String> {
-        self.dns_server_ip.as_ref().map(ToString::to_string)
+    async fn giganto_publish_ip(&self) -> Option<String> {
+        self.giganto_publish_ip.as_ref().map(ToString::to_string)
     }
-
-    async fn syslog_server_ip(&self) -> Option<String> {
-        self.syslog_server_ip.as_ref().map(ToString::to_string)
+    async fn giganto_graphql_ip(&self) -> Option<String> {
+        self.giganto_graphql_ip.as_ref().map(ToString::to_string)
+    }
+    async fn reconverge_review_ip(&self) -> Option<String> {
+        self.reconverge_review_ip.as_ref().map(ToString::to_string)
+    }
+    async fn reconverge_giganto_ip(&self) -> Option<String> {
+        self.reconverge_giganto_ip.as_ref().map(ToString::to_string)
+    }
+    async fn hog_review_ip(&self) -> Option<String> {
+        self.hog_review_ip.as_ref().map(ToString::to_string)
+    }
+    async fn hog_giganto_ip(&self) -> Option<String> {
+        self.hog_giganto_ip.as_ref().map(ToString::to_string)
     }
 }
 
@@ -328,27 +350,30 @@ impl Indexable for NodeStatus {
 #[derive(Serialize)]
 pub struct Setting {
     name: String,
-    nics: Vec<Nic>,
-    accesslist: Option<Vec<IpAddr>>,
-    disklimit: f32,
+    // ingest, publish address of Piglet. web_addr is not used
+    piglet: Option<ServerAddress>,
     // graphql, ingest, publish address of Giganto
     giganto: Option<ServerAddress>,
-    hog: bool,
-    ntp: Option<SocketAddr>,
-    piglet: bool,
-    reconverge: bool,
+    // ingest, publish address of Hog. web_addr is not used
+    hog: Option<ServerAddress>,
+    // ingest, publish address of REconverge. web_addr is not used
+    reconverge: Option<ServerAddress>,
     // rpc, web address of REview. pub_addr is not used
-    review: Option<ServerAddress>,
-    ssh: Option<PortNumber>,
-    // True for UDP, False for TCP
-    syslog: Option<Vec<(bool, SocketAddr)>>,
+    review: Option<ServerPort>,
 }
 
 #[derive(Serialize)]
 pub struct ServerAddress {
-    web_addr: SocketAddr,
-    rpc_addr: SocketAddr,
-    pub_addr: SocketAddr,
+    web_addr: Option<SocketAddr>,
+    rpc_addr: Option<SocketAddr>,
+    pub_addr: Option<SocketAddr>,
+    ing_addr: Option<SocketAddr>,
+}
+
+#[derive(Serialize)]
+pub struct ServerPort {
+    rpc_port: PortNumber,
+    web_port: PortNumber,
 }
 
 #[derive(Clone, Deserialize, Serialize, SimpleObject)]
@@ -392,20 +417,45 @@ mod tests {
                         customerId: 0,
                         description: "This is the admin node running review.",
                         hostname: "admin.aice-security.com",
-                        nics: [{
-                            name: "eth0",
-                            interface: "192.168.0.1/24",
-                            gateway: "192.168.0.254"
-                        }],
-                        sshPort: 22,
                         review: true,
-                        reviewNics: ["eth0"],
                         reviewPort: 38390,
-                        reviewWebPort: 38391,
+                        reviewWebPort: 8443,
                         piglet: false,
+                        pigletGigantoIp: null,
+                        pigletGigantoPort: null,
+                        pigletReviewIp: null,
+                        pigletReviewPort: null,
+                        savePackets: false,
+                        http: false,
+                        office: false,
+                        exe: false,
+                        pdf: false,
+                        html: false,
+                        txt: false,
+                        smtpEml: false,
+                        ftp: false,
                         giganto: false,
+                        gigantoIngestionIp: null,
+                        gigantoIngestionPort: null,
+                        gigantoPublishIp: null,
+                        gigantoPublishPort: null,
+                        gigantoGraphqlIp: null,
+                        gigantoGraphqlPort: null,
+                        retentionPeriod: null,
                         reconverge: false,
-                        hog: false
+                        reconvergeReviewIp: null,
+                        reconvergeReviewPort: null,
+                        reconvergeGigantoIp: null,
+                        reconvergeGigantoPort: null,
+                        hog: false,
+                        hogReviewIp: null,
+                        hogReviewPort: null,
+                        hogGigantoIp: null,
+                        hogGigantoPort: null,
+                        protocols: false,
+                        protocolList: {},
+                        sensors: false,
+                        sensorList: {},
                     )
                 }"#,
             )
@@ -415,53 +465,103 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                    replaceNode(
+                    updateNode(
                         id: "0"
                         old: {
                             name: "admin node",
                             customerId: 0,
                             description: "This is the admin node running review.",
                             hostname: "admin.aice-security.com",
-                            nics: [{
-                                name: "eth0",
-                                interface: "192.168.0.1/24",
-                                gateway: "192.168.0.254"
-                            }],
-                            sshPort: 22,
                             review: true,
-                            reviewNics: ["eth0"],
                             reviewPort: 38390,
-                            reviewWebPort: 38391,
+                            reviewWebPort: 8443,
                             piglet: false,
+                            pigletGigantoIp: null,
+                            pigletGigantoPort: null,
+                            pigletReviewIp: null,
+                            pigletReviewPort: null,
+                            savePackets: false,
+                            http: false,
+                            office: false,
+                            exe: false,
+                            pdf: false,
+                            html: false,
+                            txt: false,
+                            smtpEml: false,
+                            ftp: false,
                             giganto: false,
+                            gigantoIngestionIp: null,
+                            gigantoIngestionPort: null,
+                            gigantoPublishIp: null,
+                            gigantoPublishPort: null,
+                            gigantoGraphqlIp: null,
+                            gigantoGraphqlPort: null,
+                            retentionPeriod: null,
                             reconverge: false,
-                            hog: false
+                            reconvergeReviewIp: null,
+                            reconvergeReviewPort: null,
+                            reconvergeGigantoIp: null,
+                            reconvergeGigantoPort: null,
+                            hog: false,
+                            hogReviewIp: null,
+                            hogReviewPort: null,
+                            hogGigantoIp: null,
+                            hogGigantoPort: null,
+                            protocols: false,
+                            protocolList: {},
+                            sensors: false,
+                            sensorList: {},
                         },
                         new: {
                             name: "AdminNode",
                             customerId: 0,
                             description: "This is the admin node running review.",
                             hostname: "admin.aice-security.com",
-                            nics: [{
-                                name: "eth0",
-                                interface: "192.168.0.1/24",
-                                gateway: "192.168.0.254"
-                            }],
-                            sshPort: 23,
                             review: true,
-                            reviewNics: ["eth0"],
                             reviewPort: 38391,
-                            reviewWebPort: 38392,
+                            reviewWebPort: 8443,
                             piglet: false,
+                            pigletGigantoIp: null,
+                            pigletGigantoPort: null,
+                            pigletReviewIp: null,
+                            pigletReviewPort: null,
+                            savePackets: false,
+                            http: false,
+                            office: false,
+                            exe: false,
+                            pdf: false,
+                            html: false,
+                            txt: false,
+                            smtpEml: false,
+                            ftp: false,
                             giganto: false,
+                            gigantoIngestionIp: null,
+                            gigantoIngestionPort: null,
+                            gigantoPublishIp: null,
+                            gigantoPublishPort: null,
+                            gigantoGraphqlIp: null,
+                            gigantoGraphqlPort: null,
+                            retentionPeriod: null,
                             reconverge: false,
-                            hog: false
+                            reconvergeReviewIp: null,
+                            reconvergeReviewPort: null,
+                            reconvergeGigantoIp: null,
+                            reconvergeGigantoPort: null,
+                            hog: false,
+                            hogReviewIp: null,
+                            hogReviewPort: null,
+                            hogGigantoIp: null,
+                            hogGigantoPort: null,
+                            protocols: false,
+                            protocolList: {},
+                            sensors: false,
+                            sensorList: {},
                         }
                     )
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{replaceNode: "0"}"#);
+        assert_eq!(res.data.to_string(), r#"{updateNode: "0"}"#);
 
         let res = schema
             .execute(
