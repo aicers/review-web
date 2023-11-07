@@ -3,7 +3,7 @@ use crate::graphql::{earliest_key, latest_key};
 use anyhow::anyhow;
 use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
-    types::ID,
+    types::{StringNumber, ID},
     ComplexObject, Context, InputObject, Object, ObjectType, OutputType, Result, SimpleObject,
 };
 use bincode::Options;
@@ -188,7 +188,7 @@ async fn load_outliers(
 
 #[derive(Debug, SimpleObject)]
 pub(super) struct RankedOutlier {
-    id: i64,
+    id: StringNumber<i64>,
     model_id: i32,
     timestamp: i64,
     rank: i64,

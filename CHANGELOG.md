@@ -5,6 +5,12 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Change the type of `id` in `ranked_outlier`/`saved_outlier` queries to `StringNumber`.
+
 ## [0.14.5] - 2023-11-02
 
 ### Changed
@@ -320,6 +326,7 @@ across our system.
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.14.5...main
 [0.14.5]: https://github.com/aicers/review-web/compare/0.14.4...0.14.5
 [0.14.4]: https://github.com/aicers/review-web/compare/0.14.3...0.14.4
 [0.14.3]: https://github.com/aicers/review-web/compare/0.14.2...0.14.3
