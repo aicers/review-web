@@ -1,11 +1,11 @@
 [package]
 name = "review-web"
-version = "0.15.0-alpha.1"
+version = "0.15.0"
 edition = "2021"
 
 [dependencies]
 anyhow = "1"
-async-graphql = { version = "6", features = ["chrono", "string_number"] }
+async-graphql = { version = "6", features = ["chrono"] }
 async-graphql-axum = "6"
 async-trait = "0.1"
 axum = { version = "0.6", features = ["headers", "macros"] }

@@ -5,13 +5,20 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.15.0] - 2023-11-15
 
 ### Changed
 
 - Change the type of `id` in `ranked_outlier`/`saved_outlier` queries to `StringNumber`.
 - Modified Ranked Outliers graphql query to take in a SearchFilter with
   `tag` and `remark`
+- Change the distance search conditions for `ranked outliers`.
+  - Start only: Search for outliers with the same distance value
+  - Start/End: Search for outliers with distance values in the range.
+- Change the data type of the `id` in the `RankedOutlier` structure from `StringNumber`
+  to `ID`.
+- Change the part about `RankedOutlierTotalCount` to count the total count differently
+  depending on whether it is `saved_outliers` or `ranked_outliers`.
 
 ## [0.14.5] - 2023-11-02
 
@@ -328,7 +335,7 @@ across our system.
 
 - An initial version.
 
-[Unreleased]: https://github.com/aicers/review-web/compare/0.14.5...main
+[0.15.0]: https://github.com/aicers/review-web/compare/0.14.5...0.15.0
 [0.14.5]: https://github.com/aicers/review-web/compare/0.14.4...0.14.5
 [0.14.4]: https://github.com/aicers/review-web/compare/0.14.3...0.14.4
 [0.14.3]: https://github.com/aicers/review-web/compare/0.14.2...0.14.3

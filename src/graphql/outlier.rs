@@ -8,7 +8,7 @@ use crate::graphql::{earliest_key, latest_key};
 use anyhow::anyhow;
 use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
-    types::{StringNumber, ID},
+    types::ID,
     ComplexObject, Context, InputObject, Object, ObjectType, OutputType, Result, SimpleObject,
 };
 use bincode::Options;
@@ -22,6 +22,7 @@ use std::cmp;
 
 pub const TIMESTAMP_SIZE: usize = 8;
 const DEFAULT_OUTLIER_SIZE: usize = 50;
+const DISTANCE_EPSILON: f64 = 0.1;
 
 #[derive(Default)]
 pub(super) struct OutlierMutation;
@@ -189,19 +190,29 @@ async fn load_outliers(
         RankedOutlierTotalCount {
             model_id,
             timestamp,
+            check_saved: true,
         },
     )
 }
 
 #[derive(Debug, SimpleObject)]
+#[graphql(complex)]
 pub(super) struct RankedOutlier {
-    id: StringNumber<i64>,
+    #[graphql(skip)]
+    id: i64,
     model_id: i32,
     timestamp: i64,
     rank: i64,
     source: String,
     distance: f64,
     saved: bool,
+}
+
+#[ComplexObject]
+impl RankedOutlier {
+    async fn id(&self) -> ID {
+        ID(self.id.to_string())
+    }
 }
 
 impl FromKeyValue for RankedOutlier {
@@ -247,6 +258,7 @@ impl From<PreserveOutliersInput> for RankedOutlierKey {
 struct RankedOutlierTotalCount {
     model_id: i32,
     timestamp: Option<i64>,
+    check_saved: bool,
 }
 
 #[Object]
@@ -262,15 +274,18 @@ impl RankedOutlierTotalCount {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.outlier_map().into_prefix_map(&prefix);
 
-        let count = map
-            .iter_forward()?
-            .filter(|(_k, v)| {
+        let iter = map.iter_forward()?;
+        let count = if self.check_saved {
+            iter.filter(|(_k, v)| {
                 let (_, saved): RankedOutlierValue = bincode::DefaultOptions::new()
                     .deserialize(v)
                     .unwrap_or_default();
                 saved
             })
-            .count();
+            .count()
+        } else {
+            iter.count()
+        };
         Ok(count)
     }
 }
@@ -659,6 +674,7 @@ async fn load_ranked_outliers_with_filter(
         RankedOutlierTotalCount {
             model_id,
             timestamp,
+            check_saved: false,
         },
     );
     connection
@@ -798,7 +814,7 @@ where
 
         if let Some(filter) = filter {
             if filter.remark.is_some() || tag_id_list.is_some() {
-                let key = key(&node.source, Utc.timestamp_nanos(node.id.0));
+                let key = key(&node.source, Utc.timestamp_nanos(node.id));
                 if let Some(value) = remarks_map.get_by_key(&key)? {
                     let value: TriageResponse = bincode::DefaultOptions::new()
                         .deserialize(value.as_ref())
@@ -841,7 +857,7 @@ where
                         if node.distance < start || node.distance > end {
                             continue;
                         }
-                    } else if node.distance < start {
+                    } else if (node.distance - start).abs() > DISTANCE_EPSILON {
                         continue;
                     }
                 }
