@@ -41,6 +41,8 @@ vinum = { git = "https://github.com/vinesystems/vinum.git", tag = "1.0.3" }
 [dev-dependencies]
 config = { version = "0.13", features = ["toml"], default-features = false }
 futures = "0.3"
+humantime = "2.1"
+humantime-serde = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "signal"] }
 tracing-appender = "0.2"

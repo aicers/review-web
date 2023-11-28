@@ -15,6 +15,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     `Model`'s id. If not first fetch, generate iterator since the last fetched key.
   - Stream through the `RankedOutlier` iterator, and repeat the behavior after a
     period of time.
+- Add retain options to minireview.
 
 ### Changed
 

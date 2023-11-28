@@ -16,6 +16,7 @@ use std::{
     path::{Path, PathBuf},
     process::exit,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use tokio::{
     signal::unix::{signal, SignalKind},
@@ -106,12 +107,18 @@ impl AgentManager for Manager {
 const DEFAULT_DATABASE_URL: &str = "postgres://review@localhost/review";
 const DEFAULT_SERVER: &str = "localhost";
 const DEFAULT_LOG_PATH: &str = "/data/logs/apps";
+const DEFAULT_EXPORT_PATH: &str = "/data/exports";
+const DEFAULT_DB_RETENTION_PERIOD: &str = "6m";
+const DEFAULT_STAT_RETENTION_PERIOD: &str = "10d";
 
 pub struct Config {
     data_dir: PathBuf,
     backup_dir: PathBuf,
     log_dir: PathBuf,
     htdocs_dir: PathBuf,
+    export_dir: PathBuf,
+    db_retention: Duration,
+    stat_retention: Duration,
     database_url: String,
     graphql_srv_addr: SocketAddr,
     cert: PathBuf,
@@ -127,6 +134,11 @@ struct ConfigParser {
     backup_dir: PathBuf,
     log_dir: PathBuf,
     htdocs_dir: PathBuf,
+    export_dir: PathBuf,
+    #[serde(with = "humantime_serde")]
+    db_retention: Duration,
+    #[serde(with = "humantime_serde")]
+    stat_retention: Duration,
     database_url: String,
     graphql_srv_addr: String,
     cert: PathBuf,
@@ -155,7 +167,13 @@ impl Config {
             .set_default("log_dir", DEFAULT_LOG_PATH)
             .context("cannot set the default log path")?
             .set_default("htdocs_dir", env::current_dir()?.join("htdocs").to_str())
-            .context("cannot set the default web directory")?;
+            .context("cannot set the default web directory")?
+            .set_default("export_dir", DEFAULT_EXPORT_PATH)
+            .context("cannot set the default export directory")?
+            .set_default("db_retention", DEFAULT_DB_RETENTION_PERIOD)
+            .context("cannot set the default db retention")?
+            .set_default("stat_retention", DEFAULT_STAT_RETENTION_PERIOD)
+            .context("cannot set the default statistic retention")?;
         let config: ConfigParser = if let Some(path) = path {
             builder.add_source(File::with_name(path))
         } else {
@@ -181,6 +199,9 @@ impl Config {
             backup_dir: config.backup_dir,
             log_dir: config.log_dir,
             htdocs_dir: config.htdocs_dir,
+            export_dir: config.export_dir,
+            db_retention: config.db_retention,
+            stat_retention: config.stat_retention,
             database_url: config.database_url,
             graphql_srv_addr,
             cert: config.cert,
@@ -209,6 +230,21 @@ impl Config {
     #[must_use]
     pub fn htdocs_dir(&self) -> &Path {
         self.htdocs_dir.as_ref()
+    }
+
+    #[must_use]
+    pub fn export_dir(&self) -> &Path {
+        self.export_dir.as_ref()
+    }
+
+    #[must_use]
+    pub fn db_retention(&self) -> Duration {
+        self.db_retention
+    }
+
+    #[must_use]
+    pub fn stat_retention(&self) -> Duration {
+        self.stat_retention
     }
 
     #[must_use]

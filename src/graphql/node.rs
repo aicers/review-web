@@ -362,6 +362,7 @@ pub struct Setting {
     review: Option<ServerPort>,
 }
 
+#[allow(clippy::struct_field_names)]
 #[derive(Serialize)]
 pub struct ServerAddress {
     web_addr: Option<SocketAddr>,
