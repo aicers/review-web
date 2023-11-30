@@ -5,6 +5,17 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `ranked_outlier_stream` Graphql API to fetch `RankedOutlier` periodically.
+  - Gets the id of the currently stored `Model`.
+  - Generate a `RankedOutlier` iterator corresponding to the prefix of the
+    `Model`'s id. If not first fetch, generate iterator since the last fetched key.
+  - Stream through the `RankedOutlier` iterator, and repeat the behavior after a
+    period of time.
+
 ## [0.15.0] - 2023-11-15
 
 ### Changed

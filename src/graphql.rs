@@ -229,7 +229,7 @@ pub(super) struct Mutation(
 
 /// A set of subscription defined in the schema.
 #[derive(MergedSubscription, Default)]
-pub(super) struct Subscription(event::EventStream);
+pub(super) struct Subscription(event::EventStream, outlier::OutlierStream);
 
 #[derive(Debug)]
 pub struct ParseEnumError;
