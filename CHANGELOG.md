@@ -10,6 +10,12 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Add new `WindowsThreat` event message for Windows Sysmon events.
+- Added `ranked_outlier_stream` Graphql API to fetch `RankedOutlier` periodically.
+  - Gets the id of the currently stored `Model`.
+  - Generate a `RankedOutlier` iterator corresponding to the prefix of the
+    `Model`'s id. If not first fetch, generate iterator since the last fetched key.
+  - Stream through the `RankedOutlier` iterator, and repeat the behavior after a
+    period of time.
 
 ## [0.15.0] - 2023-11-15
 

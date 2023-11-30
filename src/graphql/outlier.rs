@@ -10,19 +10,111 @@ use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
     types::ID,
     ComplexObject, Context, InputObject, Object, ObjectType, OutputType, Result, SimpleObject,
+    Subscription,
 };
 use bincode::Options;
 use chrono::{offset::LocalResult, DateTime, NaiveDateTime, TimeZone, Utc};
 use data_encoding::BASE64;
+use futures::channel::mpsc::{unbounded, UnboundedSender};
+use futures_util::stream::Stream;
 use num_traits::ToPrimitive;
-use review_database::{types::FromKeyValue, Database, Direction, IterableMap};
+use review_database::{types::FromKeyValue, Database, Direction, IterableMap, Store};
 use serde::Deserialize;
 use serde::Serialize;
-use std::cmp;
+use std::{cmp, collections::HashMap, sync::Arc};
+use tokio::{sync::RwLock, time};
+use tracing::error;
 
 pub const TIMESTAMP_SIZE: usize = 8;
 const DEFAULT_OUTLIER_SIZE: usize = 50;
 const DISTANCE_EPSILON: f64 = 0.1;
+const DEFAULT_RANKED_OUTLIER_FETCH_TIME: u64 = 60;
+const MAX_MODEL_LIST_SIZE: usize = 100;
+
+#[derive(Default)]
+pub(super) struct OutlierStream;
+
+#[Subscription]
+impl OutlierStream {
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityManager))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
+    async fn ranked_outlier_stream(
+        &self,
+        ctx: &Context<'_>,
+        start: DateTime<Utc>,
+        fetch_interval: Option<u64>,
+    ) -> Result<impl Stream<Item = RankedOutlier>> {
+        let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
+        let db = ctx.data::<Database>()?.clone();
+        let fetch_time = fetch_interval.unwrap_or(DEFAULT_RANKED_OUTLIER_FETCH_TIME);
+        let (tx, rx) = unbounded();
+        tokio::spawn(async move {
+            if let Err(e) = fetch_ranked_outliers(
+                db,
+                store,
+                start.timestamp_nanos_opt().unwrap_or_default(),
+                tx,
+                fetch_time,
+            )
+            .await
+            {
+                error!("{e:?}");
+            }
+        });
+        Ok(rx)
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+async fn fetch_ranked_outliers(
+    db: Database,
+    store: Arc<RwLock<Store>>,
+    start_time: i64,
+    tx: UnboundedSender<RankedOutlier>,
+    fetch_time: u64,
+) -> Result<()> {
+    let mut itv = time::interval(time::Duration::from_secs(fetch_time));
+    let mut latest_fetched_key: HashMap<i32, Vec<u8>> = HashMap::new();
+
+    loop {
+        itv.tick().await;
+
+        // Read current model's ids
+        let rows = db
+            .load_models(&None, &None, true, MAX_MODEL_LIST_SIZE)
+            .await?;
+        let model_ids: Vec<i32> = rows.iter().map(|row| row.id).collect();
+
+        // Search for ranked outliers by model.
+        for model_id in model_ids {
+            let prefix = bincode::DefaultOptions::new().serialize(&(model_id))?;
+            let store = store.read().await;
+            let map = store.outlier_map().into_prefix_map(&prefix);
+            let (iter, is_first_fetch) = if let Some(cursor) = latest_fetched_key.get(&model_id) {
+                (map.iter_from(cursor, Direction::Forward)?, false)
+            } else {
+                (map.iter_forward()?, true)
+            };
+
+            let mut model_cursor = Vec::new();
+            for (k, v) in iter {
+                if let Some(value) = RankedOutlier::from_key_value(&k, &v)?.into() {
+                    if is_first_fetch && value.timestamp < start_time {
+                        continue;
+                    }
+                    model_cursor = k.to_vec();
+                    tx.unbounded_send(value)?;
+                };
+            }
+            if !model_cursor.is_empty() {
+                model_cursor.push(0);
+                latest_fetched_key.insert(model_id, model_cursor);
+            }
+        }
+    }
+}
 
 #[derive(Default)]
 pub(super) struct OutlierMutation;
