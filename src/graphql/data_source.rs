@@ -49,8 +49,8 @@ pub(super) struct DataSourceInsertInput {
 }
 
 impl DataSourceInsertInput {
-    const DEFAULT_DATA_SOURCE_ADDRESS: &str = "127.0.0.1:38371";
-    const DEFAULT_SERVER_NAME: &str = "localhost";
+    const DEFAULT_DATA_SOURCE_ADDRESS: &'static str = "127.0.0.1:38371";
+    const DEFAULT_SERVER_NAME: &'static str = "localhost";
 }
 
 impl TryFrom<DataSourceInsertInput> for database::DataSource {

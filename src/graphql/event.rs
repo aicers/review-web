@@ -13,6 +13,7 @@ mod rdp;
 mod smb;
 mod smtp;
 mod ssh;
+mod sysmon;
 mod tls;
 
 pub(super) use self::group::EventGroupQuery;
@@ -24,7 +25,8 @@ use self::{
     http::RepeatedHttpSessions, http::TorConnection, kerberos::BlockListKerberos,
     ldap::BlockListLdap, ldap::LdapBruteForce, ldap::LdapPlainText, mqtt::BlockListMqtt,
     nfs::BlockListNfs, ntlm::BlockListNtlm, rdp::BlockListRdp, rdp::RdpBruteForce,
-    smb::BlockListSmb, smtp::BlockListSmtp, ssh::BlockListSsh, tls::BlockListTls,
+    smb::BlockListSmb, smtp::BlockListSmtp, ssh::BlockListSsh, sysmon::WindowsThreat,
+    tls::BlockListTls,
 };
 use super::{
     customer::{Customer, HostNetworkGroupInput},
@@ -145,6 +147,7 @@ async fn fetch_events(
     let mut block_list_smtp_time = start_time;
     let mut block_list_ssh_time = start_time;
     let mut block_list_tls_time = start_time;
+    let mut windows_threat_time = start_time;
 
     loop {
         itv.tick().await;
@@ -179,7 +182,8 @@ async fn fetch_events(
             .min(block_list_smb_time)
             .min(block_list_smtp_time)
             .min(block_list_ssh_time)
-            .min(block_list_tls_time);
+            .min(block_list_tls_time)
+            .min(windows_threat_time);
 
         // Fetch event iterator based on time
         let start = i128::from(start) << 64;
@@ -376,6 +380,12 @@ async fn fetch_events(
                         block_list_tls_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
+                EventKind::WindowsThreat => {
+                    if event_time >= windows_threat_time {
+                        tx.unbounded_send(value.into())?;
+                        windows_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
                 EventKind::Log => continue,
             }
         }
@@ -500,6 +510,8 @@ enum Event {
     BlockListSsh(BlockListSsh),
 
     BlockListTls(BlockListTls),
+
+    WindowsThreat(WindowsThreat),
 }
 
 impl From<database::Event> for Event {
@@ -543,6 +555,7 @@ impl From<database::Event> for Event {
                 RecordType::Ssh(event) => Event::BlockListSsh(event.into()),
                 RecordType::Tls(event) => Event::BlockListTls(event.into()),
             },
+            database::Event::WindowsThreat(event) => Event::WindowsThreat(event.into()),
         }
     }
 }
