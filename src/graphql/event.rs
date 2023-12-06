@@ -37,13 +37,14 @@ use super::{
 use anyhow::{anyhow, bail, Context as AnyhowContext};
 use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
-    Context, InputObject, Object, Result, Subscription, Union, ID,
+    Context, InputObject, Object, Result, SimpleObject, Subscription, Union, ID,
 };
 use bincode::Options;
 use chrono::{DateTime, Utc};
+use database::EventMessage;
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures_util::stream::Stream;
-use num_traits::FromPrimitive;
+use num_traits::{FromPrimitive, ToPrimitive};
 use review_database::{
     self as database,
     event::RecordType,
@@ -70,6 +71,9 @@ pub(super) struct EventStream;
 
 #[derive(Default)]
 pub(super) struct EventQuery;
+
+#[derive(Default)]
+pub(super) struct EventMutation;
 
 #[Subscription]
 impl EventStream {
@@ -419,6 +423,72 @@ impl EventQuery {
         )
         .await
     }
+
+    /// A list of events with timestamp on or after `start` and before `end`.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+    .or(RoleGuard::new(Role::SecurityAdministrator))
+    .or(RoleGuard::new(Role::SecurityManager))
+    .or(RoleGuard::new(Role::SecurityMonitor))")]
+    async fn event_list_with_triage(
+        &self,
+        ctx: &Context<'_>,
+        filter: EventListWithTriageFilterInput,
+        after: Option<String>,
+        before: Option<String>,
+        first: Option<i32>,
+        last: Option<i32>,
+    ) -> Result<Connection<String, EventWithTriage, EventTotalCount, EmptyFields>> {
+        query(
+            after,
+            before,
+            first,
+            last,
+            |after, before, first, last| async move {
+                load_with_triage(ctx, &filter, after, before, first, last).await
+            },
+        )
+        .await
+    }
+}
+
+#[Object]
+impl EventMutation {
+    /// A list of events with timestamp on or after `start` and before `end`.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+    .or(RoleGuard::new(Role::SecurityAdministrator))
+    .or(RoleGuard::new(Role::SecurityManager))
+    .or(RoleGuard::new(Role::SecurityMonitor))")]
+    async fn insert_event_with_triage(
+        &self,
+        ctx: &Context<'_>,
+        time: DateTime<Utc>,
+        event_kind: i32,
+        fields: Vec<u8>,
+        triage_result: Option<String>,
+    ) -> Result<String> {
+        use tokio::sync::RwLock;
+        let store = ctx.data::<Arc<RwLock<Store>>>()?;
+        let store = store.read().await;
+        let event_db = store.events();
+        let map = store.triage_map();
+
+        let Some(kind) = EventKind::from_i32(event_kind) else {
+            return Err(anyhow!("Failed to convert event_kind: Invalid Event key").into());
+        };
+        let event_message = EventMessage { time, kind, fields };
+        if let Err(e) = event_db.put(&event_message) {
+            error!("{:?}", e);
+        }
+
+        if let Some(result) = triage_result {
+            let key = i128::from(time.timestamp_nanos_opt().unwrap_or_default()) << 64
+                | event_kind.to_i128().expect("should not exceed i128::MAX") << 32;
+            let value = bincode::DefaultOptions::new().serialize(&result)?;
+            map.insert(&key.to_be_bytes(), &value)?;
+        }
+
+        Ok("done".to_string())
+    }
 }
 
 /// An endpoint of a network flow. One of `predefined`, `side`, and `custom` is
@@ -429,6 +499,12 @@ pub(super) struct EndpointInput {
     pub(super) direction: Option<TrafficDirection>,
     pub(super) predefined: Option<ID>,
     pub(super) custom: Option<HostNetworkGroupInput>,
+}
+
+#[derive(SimpleObject)]
+pub(self) struct EventWithTriage {
+    pub event: Event,
+    pub triage_result: Option<String>,
 }
 
 /// An event to report.
@@ -572,6 +648,33 @@ struct EventListFilterInput {
     keywords: Option<Vec<String>>,
     network_tags: Option<Vec<ID>>,
     sensors: Option<Vec<ID>>,
+    os: Option<Vec<ID>>,
+    devices: Option<Vec<ID>>,
+    host_names: Option<Vec<String>>,
+    user_ids: Option<Vec<String>>,
+    user_names: Option<Vec<String>>,
+    user_departments: Option<Vec<String>>,
+    countries: Option<Vec<String>>,
+    categories: Option<Vec<u8>>,
+    levels: Option<Vec<u8>>,
+    kinds: Option<Vec<String>>,
+    learning_methods: Option<Vec<LearningMethod>>,
+    confidence: Option<f32>,
+    triage_policies: Option<Vec<ID>>,
+}
+
+#[derive(InputObject)]
+struct EventListWithTriageFilterInput {
+    start: Option<DateTime<Utc>>,
+    end: Option<DateTime<Utc>>,
+    customers: Option<Vec<ID>>,
+    endpoints: Option<Vec<EndpointInput>>,
+    directions: Option<Vec<FlowKind>>,
+    source: Option<String>,
+    destination: Option<String>,
+    keywords: Option<Vec<String>>,
+    network_tags: Option<Vec<ID>>,
+    sensors: Option<Vec<String>>,
     os: Option<Vec<ID>>,
     devices: Option<Vec<ID>>,
     host_names: Option<Vec<String>>,
@@ -821,6 +924,125 @@ fn from_filter_input(store: &Store, input: &EventListFilterInput) -> anyhow::Res
     ))
 }
 
+#[allow(clippy::too_many_lines)]
+fn from_triage_filter_input(
+    store: &Store,
+    input: &EventListWithTriageFilterInput,
+) -> anyhow::Result<EventFilter> {
+    let customers = if let Some(customers_input) = input.customers.as_deref() {
+        let map = store.customer_map();
+        Some(convert_customer_input(&map, customers_input)?)
+    } else {
+        None
+    };
+
+    let networks = if let Some(endpoints_input) = &input.endpoints {
+        let map = store.network_map();
+        Some(convert_endpoint_input(&map, endpoints_input)?)
+    } else {
+        None
+    };
+
+    let directions = if let Some(directions) = &input.directions {
+        let map = store.customer_map();
+        Some((directions.clone(), internal_customer_networks(&map)?))
+    } else {
+        None
+    };
+
+    let source = if let Some(addr) = &input.source {
+        Some(
+            addr.parse()
+                .map_err(|_| anyhow!("invalid source IP address"))?,
+        )
+    } else {
+        None
+    };
+
+    let destination = if let Some(addr) = &input.destination {
+        Some(
+            addr.parse()
+                .map_err(|_| anyhow!("invalid destination IP address"))?,
+        )
+    } else {
+        None
+    };
+
+    let countries = if let Some(countries_input) = &input.countries {
+        let mut countries = Vec::with_capacity(countries_input.len());
+        for country in countries_input {
+            countries.push(
+                country
+                    .as_bytes()
+                    .try_into()
+                    .context("invalid country code")?,
+            );
+        }
+        Some(countries)
+    } else {
+        None
+    };
+
+    let categories = if let Some(categories_input) = &input.categories {
+        let mut categories = Vec::with_capacity(categories_input.len());
+        for category in categories_input {
+            categories.push(EventCategory::try_from(*category).map_err(|e| anyhow!(e))?);
+        }
+        Some(categories)
+    } else {
+        None
+    };
+
+    let levels = if let Some(levels_input) = &input.levels {
+        let mut levels = Vec::with_capacity(levels_input.len());
+        for level in levels_input {
+            levels.push(NonZeroU8::new(*level).ok_or_else(|| anyhow!("invalid level"))?);
+        }
+        Some(levels)
+    } else {
+        None
+    };
+
+    let kinds = if let Some(kinds_input) = &input.kinds {
+        let mut kinds = Vec::with_capacity(kinds_input.len());
+        for kind in kinds_input {
+            kinds.push(kind.as_str().to_lowercase());
+        }
+        Some(kinds)
+    } else {
+        None
+    };
+
+    let sensors = input.sensors.clone();
+
+    let triage_policies = if let Some(triage_policies) = &input.triage_policies {
+        let map = store.triage_policy_map();
+        Some(convert_triage_input(&map, triage_policies)?)
+    } else {
+        None
+    };
+
+    Ok(EventFilter::new(
+        customers,
+        networks,
+        directions
+            .map(|(kinds, group)| (kinds.into_iter().map(Into::into).collect::<Vec<_>>(), group)),
+        source,
+        destination,
+        countries,
+        categories,
+        levels,
+        kinds,
+        input
+            .learning_methods
+            .as_ref()
+            .map(|v| v.iter().map(|v| (*v).into()).collect()),
+        sensors,
+        input.confidence,
+        triage_policies,
+    ))
+}
+
 fn convert_customer_input(
     map: &IndexedMap,
     customer_ids: &[ID],
@@ -941,6 +1163,53 @@ fn convert_triage_input(
     Ok(triage_policies)
 }
 
+async fn load_with_triage(
+    ctx: &Context<'_>,
+    filter: &EventListWithTriageFilterInput,
+    after: Option<String>,
+    before: Option<String>,
+    first: Option<usize>,
+    last: Option<usize>,
+) -> Result<Connection<String, EventWithTriage, EventTotalCount, EmptyFields>> {
+    let store = crate::graphql::get_store(ctx).await?;
+
+    let start = filter.start;
+    let end = filter.end;
+    let mut filter = from_triage_filter_input(&store, filter)?;
+    filter.moderate_kinds();
+    let db = store.events();
+    let (events, has_previous, has_next) = if let Some(last) = last {
+        let iter = db.iter_from(latest(end, before)?, Direction::Reverse);
+        let to = earliest(start, after)?;
+        let (events, has_more) =
+            iter_to_triage_events(ctx, iter, to, cmp::Ordering::is_ge, last, &filter)
+                .await
+                .map_err(|e| format!("{e}"))?;
+        (events.into_iter().rev().collect(), has_more, false)
+    } else {
+        let first = first.unwrap_or(DEFAULT_CONNECTION_SIZE);
+        let iter = db.iter_from(earliest(start, after)?, Direction::Forward);
+        let to = latest(end, before)?;
+        let (events, has_more) =
+            iter_to_triage_events(ctx, iter, to, cmp::Ordering::is_le, first, &filter)
+                .await
+                .map_err(|e| format!("{e}"))?;
+        (events, false, has_more)
+    };
+
+    let mut connection = Connection::with_additional_fields(
+        has_previous,
+        has_next,
+        EventTotalCount { start, end, filter },
+    );
+    connection.edges.extend(
+        events
+            .into_iter()
+            .map(|(k, ev)| Edge::new(k.to_string(), ev)),
+    );
+    Ok(connection)
+}
+
 async fn load(
     ctx: &Context<'_>,
     filter: &EventListFilterInput,
@@ -1041,6 +1310,77 @@ fn latest_before(before: &str) -> Result<i128> {
         return Err("invalid cursor `before`".into());
     }
     Ok(before - 1)
+}
+
+async fn iter_to_triage_events(
+    ctx: &Context<'_>,
+    iter: EventIterator<'_>,
+    to: i128,
+    cond: fn(cmp::Ordering) -> bool,
+    len: usize,
+    filter: &EventFilter,
+) -> anyhow::Result<(Vec<(i128, EventWithTriage)>, bool)> {
+    let mut events = Vec::new();
+    let mut exceeded = false;
+    let locator = if filter.has_country() {
+        if let Ok(mutex) = ctx.data::<Arc<Mutex<ip2location::DB>>>() {
+            Some(Arc::clone(mutex))
+        } else {
+            bail!("unable to locate IP address");
+        }
+    } else {
+        None
+    };
+
+    let Ok(store) = crate::graphql::get_store(ctx).await else {
+        bail!("Failed to get store");
+    };
+    let map = store.triage_map();
+
+    for item in iter {
+        let (key, mut event) = match item {
+            Ok(kv) => kv,
+            Err(e) => {
+                warn!("invalid event: {:?}", e);
+                continue;
+            }
+        };
+        if !(cond)(key.cmp(&to)) {
+            break;
+        }
+        let triage_score = {
+            let matches = event.matches(locator.clone(), filter)?;
+            if !matches.0 {
+                continue;
+            }
+            matches.1
+        };
+        if let Some(triage_score) = triage_score {
+            event.set_triage_scores(triage_score);
+        }
+
+        let triage_result = if let Some(data) = map.get(&key.to_be_bytes())? {
+            bincode::DefaultOptions::new()
+                .deserialize::<String>(data.as_ref())
+                .ok()
+        } else {
+            None
+        };
+        let event_with_triage = EventWithTriage {
+            event: event.into(),
+            triage_result,
+        };
+
+        events.push((key, event_with_triage));
+        exceeded = events.len() > len;
+        if exceeded {
+            break;
+        }
+    }
+    if exceeded {
+        events.pop();
+    }
+    Ok((events, exceeded))
 }
 
 fn iter_to_events(

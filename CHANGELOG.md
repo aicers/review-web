@@ -16,6 +16,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     `Model`'s id. If not first fetch, generate iterator since the last fetched key.
   - Stream through the `RankedOutlier` iterator, and repeat the behavior after a
     period of time.
+- Added `insert_triage_result` GraphQL API to store triage result.
+- Added `event_list_with_triage` GraphQL API that return with triage result.
+- Added `insert_event_with_triage` GraphQL API to store event and triage result.
+- Added `insert_central_ranked_outlier` GraphQL API to store `CentralRankedOutlier`.
+- Added `central_ranked_outliers` GraphQAL API to search `CentralRankedOutlier`.
 
 ## [0.15.0] - 2023-11-15
 

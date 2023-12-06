@@ -1,6 +1,6 @@
 use super::{
-    ConfidenceInput, PacketAttrInput, ResponseInput, TiInput, TriagePolicy, TriagePolicyInput,
-    TriagePolicyMutation, TriagePolicyQuery,
+    ConfidenceInput, PacketAttrInput, ResponseInput, TiInput, TriageMutation, TriagePolicy,
+    TriagePolicyInput, TriagePolicyMutation, TriagePolicyQuery,
 };
 use super::{Role, RoleGuard};
 use anyhow::anyhow;
@@ -9,8 +9,9 @@ use async_graphql::{
     Context, Object, Result, ID,
 };
 use bincode::Options;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use core::convert::TryInto;
+use num_traits::ToPrimitive;
 use review_database::{
     self as database, Indexed, IndexedMap, IndexedMapIterator, IndexedMapUpdate,
 };
@@ -266,5 +267,29 @@ impl IndexedMapUpdate for TriagePolicyInput {
             return false;
         }
         true
+    }
+}
+
+#[Object]
+impl TriageMutation {
+    /// Inserts a new triage policy, returning the ID of the new triage.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    async fn insert_triage_result(
+        &self,
+        ctx: &Context<'_>,
+        timestamp: DateTime<Utc>,
+        event_kind: i32,
+        triage_result: String,
+    ) -> Result<String> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.triage_map();
+
+        let key = i128::from(timestamp.timestamp_nanos_opt().unwrap_or_default()) << 64
+            | event_kind.to_i128().expect("should not exceed i128::MAX") << 32;
+
+        let value = bincode::DefaultOptions::new().serialize(&triage_result)?;
+        map.insert(&key.to_be_bytes(), &value)?;
+        Ok("done".to_string())
     }
 }

@@ -116,6 +116,82 @@ async fn fetch_ranked_outliers(
     }
 }
 
+#[derive(Debug, InputObject)]
+pub(super) struct InputCentralRankedOutlier {
+    pub code: String,
+    pub timestamp: String,
+    pub rank: i64,
+    pub id: String,
+    pub source: String,
+    pub distance: f64,
+    pub saved: bool,
+}
+
+#[derive(Debug, SimpleObject)]
+pub(super) struct CentralRankedOutlier {
+    pub code: String,
+    pub timestamp: String,
+    pub rank: i64,
+    pub id: String,
+    pub source: String,
+    pub distance: f64,
+    pub saved: bool,
+}
+
+type CentralRankedOutlierKey = (String, String, i64, String, String);
+type CentralRankedOutlierValue = (f64, bool);
+impl FromKeyValue for CentralRankedOutlier {
+    fn from_key_value(key: &[u8], value: &[u8]) -> anyhow::Result<Self> {
+        let (code, timestamp, rank, id, source) =
+            bincode::DefaultOptions::new().deserialize(key)?;
+        let (distance, saved) = bincode::DefaultOptions::new().deserialize(value)?;
+        Ok(Self {
+            code,
+            timestamp,
+            rank,
+            id,
+            source,
+            distance,
+            saved,
+        })
+    }
+}
+
+struct CentralRankedOutlierTotalCount {
+    code: String,
+    timestamp: Option<i64>,
+    check_saved: bool,
+}
+
+#[Object]
+impl CentralRankedOutlierTotalCount {
+    /// The total number of edges.
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+        use review_database::IterableMap;
+        let prefix = if let Some(timestamp) = self.timestamp {
+            bincode::DefaultOptions::new().serialize(&(self.code.clone(), timestamp.to_string()))?
+        } else {
+            bincode::DefaultOptions::new().serialize(&self.code)?
+        };
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.outlier_map().into_prefix_map(&prefix);
+
+        let iter = map.iter_forward()?;
+        let count = if self.check_saved {
+            iter.filter(|(_k, v)| {
+                let (_, saved): CentralRankedOutlierValue = bincode::DefaultOptions::new()
+                    .deserialize(v)
+                    .unwrap_or_default();
+                saved
+            })
+            .count()
+        } else {
+            iter.count()
+        };
+        Ok(count)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct OutlierMutation;
 
@@ -147,6 +223,30 @@ impl OutlierMutation {
         }
 
         Ok(updated.len())
+    }
+
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
+    async fn insert_central_ranked_outlier(
+        &self,
+        ctx: &Context<'_>,
+        input: InputCentralRankedOutlier,
+    ) -> Result<String> {
+        use bincode::Options;
+        let store = super::get_store(ctx).await?;
+        let map = store.outlier_map();
+
+        let key = bincode::DefaultOptions::new().serialize(&(
+            input.code,
+            input.timestamp,
+            input.rank,
+            input.id,
+            input.source,
+        ))?;
+        let value = bincode::DefaultOptions::new().serialize(&(input.distance, input.saved))?;
+        if let Err(e) = map.insert(&key, &value) {
+            return Err(anyhow!("Failed to insert outlier: {:?}", e).into());
+        }
+        Ok("Done".to_string())
     }
 }
 
@@ -246,6 +346,29 @@ impl OutlierQuery {
     ) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
         load_ranked_outliers_with_filter(ctx, model_id, time, after, before, first, last, filter)
             .await
+    }
+
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+     .or(RoleGuard::new(Role::SecurityAdministrator))
+     .or(RoleGuard::new(Role::SecurityManager))
+     .or(RoleGuard::new(Role::SecurityMonitor))")]
+    #[allow(clippy::too_many_arguments)]
+    async fn central_ranked_outliers(
+        &self,
+        ctx: &Context<'_>,
+        code: String,
+        time: Option<NaiveDateTime>,
+        after: Option<String>,
+        before: Option<String>,
+        first: Option<usize>,
+        last: Option<usize>,
+        filter: Option<SearchFilterInput>,
+    ) -> Result<Connection<String, CentralRankedOutlier, CentralRankedOutlierTotalCount, EmptyFields>>
+    {
+        load_central_ranked_outliers_with_filter(
+            ctx, code, time, after, before, first, last, filter,
+        )
+        .await
     }
 }
 
@@ -722,6 +845,256 @@ fn latest_outlier_key(before: &str) -> Result<Vec<u8>> {
         end.push(last_byte - 1);
     }
     Ok(end)
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)] // since this is called within `load` only
+async fn load_central_ranked_outliers_with_filter(
+    ctx: &Context<'_>,
+    code: String,
+    time: Option<NaiveDateTime>,
+    after: Option<String>,
+    before: Option<String>,
+    first: Option<usize>,
+    last: Option<usize>,
+    filter: Option<SearchFilterInput>,
+) -> Result<Connection<String, CentralRankedOutlier, CentralRankedOutlierTotalCount, EmptyFields>> {
+    let timestamp = time.map(|t| t.timestamp_nanos_opt().unwrap_or_default());
+
+    let prefix = if let Some(timestamp) = timestamp {
+        bincode::DefaultOptions::new().serialize(&(code.clone(), timestamp.to_string()))?
+    } else {
+        bincode::DefaultOptions::new().serialize(&code)?
+    };
+
+    let store = crate::graphql::get_store(ctx).await?;
+    let map = store.outlier_map().into_prefix_map(&prefix);
+    let remarks_map = store.triage_response_map();
+    let tags_map = store.event_tag_set();
+
+    let (nodes, has_previous, has_next) = load_central_nodes_with_search_filter(
+        &map,
+        &remarks_map,
+        &tags_map,
+        &filter,
+        after,
+        before,
+        first,
+        last,
+    )?;
+
+    let mut connection = Connection::with_additional_fields(
+        has_previous,
+        has_next,
+        CentralRankedOutlierTotalCount {
+            code,
+            timestamp,
+            check_saved: false,
+        },
+    );
+    connection
+        .edges
+        .extend(nodes.into_iter().map(|(k, ev)| Edge::new(k, ev)));
+    Ok(connection)
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)] // since this is called within `load` only
+fn load_central_nodes_with_search_filter<'m, M, I>(
+    map: &'m M,
+    remarks_map: &review_database::IndexedMap<'_>,
+    tags_map: &review_database::IndexedSet<'_>,
+    filter: &Option<SearchFilterInput>,
+    after: Option<String>,
+    before: Option<String>,
+    first: Option<usize>,
+    last: Option<usize>,
+) -> Result<(Vec<(String, CentralRankedOutlier)>, bool, bool)>
+where
+    M: IterableMap<'m, I>,
+    I: Iterator<Item = (Box<[u8]>, Box<[u8]>)> + 'm,
+{
+    if let Some(last) = last {
+        let iter = if let Some(before) = before {
+            let end = latest_key(&before)?;
+            map.iter_from(&end, Direction::Reverse)?
+        } else {
+            map.iter_backward()?
+        };
+
+        let (nodes, has_more) = if let Some(after) = after {
+            let to = earliest_key(&after)?;
+            iter_through_search_filter_central_nodes(
+                iter,
+                remarks_map,
+                tags_map,
+                &to,
+                cmp::Ordering::is_ge,
+                filter,
+                last,
+            )
+        } else {
+            iter_through_search_filter_central_nodes(
+                iter,
+                remarks_map,
+                tags_map,
+                &[],
+                always_true,
+                filter,
+                last,
+            )
+        }?;
+        Ok((nodes, has_more, false))
+    } else {
+        let first = first.unwrap_or(DEFAULT_CONNECTION_SIZE);
+        let iter = if let Some(after) = after {
+            let start = earliest_key(&after)?;
+            map.iter_from(&start, Direction::Forward)?
+        } else {
+            map.iter_forward()?
+        };
+
+        let (nodes, has_more) = if let Some(before) = before {
+            let to = latest_key(&before)?;
+            iter_through_search_filter_central_nodes(
+                iter,
+                remarks_map,
+                tags_map,
+                &to,
+                cmp::Ordering::is_le,
+                filter,
+                first,
+            )
+        } else {
+            iter_through_search_filter_central_nodes(
+                iter,
+                remarks_map,
+                tags_map,
+                &[],
+                always_true,
+                filter,
+                first,
+            )
+        }?;
+        Ok((nodes, false, has_more))
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn iter_through_search_filter_central_nodes<I>(
+    iter: I,
+    remarks_map: &review_database::IndexedMap<'_>,
+    tags_map: &review_database::IndexedSet<'_>,
+    to: &[u8],
+    cond: fn(cmp::Ordering) -> bool,
+    filter: &Option<SearchFilterInput>,
+    len: usize,
+) -> Result<(Vec<(String, CentralRankedOutlier)>, bool)>
+where
+    I: Iterator<Item = (Box<[u8]>, Box<[u8]>)>,
+{
+    let mut nodes = Vec::new();
+    let mut exceeded = false;
+
+    let tag_id_list = if let Some(filter) = filter {
+        if let Some(tag) = &filter.tag {
+            let index = tags_map.index()?;
+            let tag_ids: Vec<u32> = index
+                .iter()
+                .filter(|(_, name)| {
+                    let name = String::from_utf8_lossy(name).into_owned();
+                    name.contains(tag)
+                })
+                .map(|(id, _)| id)
+                .collect();
+            if tag_ids.is_empty() {
+                return Ok((nodes, exceeded));
+            }
+            Some(tag_ids)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    for (k, v) in iter {
+        if !(cond)(k.as_ref().cmp(to)) {
+            break;
+        }
+
+        let curser = BASE64.encode(&k);
+        let Some(node) = CentralRankedOutlier::from_key_value(&k, &v)?.into() else {
+            continue;
+        };
+
+        if let Some(filter) = filter {
+            if filter.remark.is_some() || tag_id_list.is_some() {
+                let key = key(&node.source, Utc.timestamp_nanos(node.id.parse::<i64>()?));
+                if let Some(value) = remarks_map.get_by_key(&key)? {
+                    let value: TriageResponse = bincode::DefaultOptions::new()
+                        .deserialize(value.as_ref())
+                        .map_err(|_| "invalid value in database")?;
+                    if let Some(remark) = &filter.remark {
+                        if !value.remarks.contains(remark) {
+                            continue;
+                        }
+                    }
+                    if let Some(tag_ids) = &tag_id_list {
+                        if !tag_ids.iter().any(|tag| value.tag_ids.contains(tag)) {
+                            continue;
+                        }
+                    }
+                } else {
+                    continue;
+                }
+            }
+            if let Some(time) = &filter.time {
+                if let Some(start) = time.start {
+                    if let Some(end) = time.end {
+                        if node.timestamp.parse::<i64>()?
+                            < start.timestamp_nanos_opt().unwrap_or_default()
+                            || node.timestamp.parse::<i64>()?
+                                > end.timestamp_nanos_opt().unwrap_or_default()
+                        {
+                            continue;
+                        }
+                    } else if node.timestamp.parse::<i64>()?
+                        < start.timestamp_nanos_opt().unwrap_or_default()
+                    {
+                        continue;
+                    }
+                } else if let Some(end) = time.end {
+                    if node.timestamp.parse::<i64>()?
+                        > end.timestamp_nanos_opt().unwrap_or_default()
+                    {
+                        continue;
+                    }
+                }
+            }
+
+            if let Some(distance) = &filter.distance {
+                if let Some(start) = distance.start {
+                    if let Some(end) = distance.end {
+                        if node.distance < start || node.distance > end {
+                            continue;
+                        }
+                    } else if (node.distance - start).abs() > DISTANCE_EPSILON {
+                        continue;
+                    }
+                }
+            }
+        }
+
+        nodes.push((curser, node));
+        exceeded = nodes.len() > len;
+        if exceeded {
+            break;
+        }
+    }
+
+    if exceeded {
+        nodes.pop();
+    }
+    Ok((nodes, exceeded))
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)] // since this is called within `load` only
