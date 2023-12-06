@@ -77,7 +77,7 @@ impl SemiModelMutation {
         let serialized_semi_model = bincode::DefaultOptions::new().serialize(&list)?;
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
         agent_manager
-            .broadcast_trusted_user_agent_list(&serialized_semi_model)
+            .broadcast_semi_model_list(&serialized_semi_model)
             .await?;
         Ok(true)
     }
