@@ -22,6 +22,7 @@ mod node;
 mod outlier;
 mod qualifier;
 mod sampling;
+mod semi_model;
 mod slicing;
 mod statistics;
 mod status;
@@ -81,6 +82,7 @@ pub trait AgentManager: Send + Sync {
         _networks: &[u8],
     ) -> Result<Vec<String>, anyhow::Error>;
     async fn broadcast_trusted_user_agent_list(&self, _list: &[u8]) -> Result<(), anyhow::Error>;
+    async fn broadcast_semi_model_list(&self, _list: &[u8]) -> Result<(), anyhow::Error>;
     async fn online_apps_by_host_id(
         &self,
     ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error>;
@@ -185,6 +187,7 @@ pub(super) struct Query(
     triage::TriagePolicyQuery,
     triage::TriageResponseQuery,
     trusted_domain::TrustedDomainQuery,
+    semi_model::SemiModelQuery,
     traffic_filter::TrafficFilterQuery,
     allow_network::AllowNetworkQuery,
     trusted_user_agent::UserAgentQuery,
@@ -224,6 +227,7 @@ pub(super) struct Mutation(
     triage::TriageResponseMutation,
     triage::TriageMutation,
     trusted_domain::TrustedDomainMutation,
+    semi_model::SemiModelMutation,
     traffic_filter::TrafficFilterMutation,
     allow_network::AllowNetworkMutation,
     trusted_user_agent::UserAgentMutation,
@@ -515,6 +519,9 @@ impl AgentManager for MockAgentManager {
         unimplemented!()
     }
     async fn broadcast_trusted_user_agent_list(&self, _list: &[u8]) -> Result<(), anyhow::Error> {
+        unimplemented!()
+    }
+    async fn broadcast_semi_model_list(&self, _list: &[u8]) -> Result<(), anyhow::Error> {
         unimplemented!()
     }
     async fn broadcast_internal_networks(
