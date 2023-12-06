@@ -688,6 +688,7 @@ struct EventListWithTriageFilterInput {
     learning_methods: Option<Vec<LearningMethod>>,
     confidence: Option<f32>,
     triage_policies: Option<Vec<ID>>,
+    agent_id: Option<String>,
 }
 
 struct TriageScore<'a> {
@@ -921,6 +922,7 @@ fn from_filter_input(store: &Store, input: &EventListFilterInput) -> anyhow::Res
         sensors,
         input.confidence,
         triage_policies,
+        None,
     ))
 }
 
@@ -1040,6 +1042,7 @@ fn from_triage_filter_input(
         sensors,
         input.confidence,
         triage_policies,
+        input.agent_id.clone(),
     ))
 }
 

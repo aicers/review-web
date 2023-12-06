@@ -21,6 +21,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Added `insert_event_with_triage` GraphQL API to store event and triage result.
 - Added `insert_central_ranked_outlier` GraphQL API to store `CentralRankedOutlier`.
 - Added `central_ranked_outliers` GraphQAL API to search `CentralRankedOutlier`.
+- Added `agent_id` for filtering agent id to `EventListWithTriageFilterInput`.
 
 ## [0.15.0] - 2023-11-15
 
