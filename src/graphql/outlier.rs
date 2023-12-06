@@ -138,7 +138,6 @@ pub(super) struct CentralRankedOutlier {
     pub saved: bool,
 }
 
-type CentralRankedOutlierKey = (String, String, i64, String, String);
 type CentralRankedOutlierValue = (f64, bool);
 impl FromKeyValue for CentralRankedOutlier {
     fn from_key_value(key: &[u8], value: &[u8]) -> anyhow::Result<Self> {

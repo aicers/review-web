@@ -110,7 +110,7 @@ impl SemiModelInfo {
             model_name: semi_model.model_name,
             model_version: semi_model.model_version,
             model_description: semi_model.model_description,
-            time: time,
+            time,
             model_data: semi_model.model_data,
         }
     }
@@ -118,7 +118,7 @@ impl SemiModelInfo {
 
 impl FromKeyValue for SemiModelInfo {
     fn from_key_value(_key: &[u8], value: &[u8]) -> Result<Self, anyhow::Error> {
-        let (semi_info, time) = bincode::deserialize::<SemiModelValue>(&value)?;
+        let (semi_info, time) = bincode::deserialize::<SemiModelValue>(value)?;
         Ok(SemiModelInfo::new(semi_info, time))
     }
 }
