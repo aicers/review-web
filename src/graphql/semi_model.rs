@@ -117,7 +117,7 @@ struct SemiModel {
 }
 
 #[derive(SimpleObject, Serialize)]
-struct SemiModelInfo {
+pub struct SemiModelInfo {
     model_type: i32,
     model_name: String,
     model_version: String,
@@ -164,7 +164,7 @@ impl SemiModelInfoTotalCount {
 /// # Errors
 ///
 /// Returns an error if semi supervised model database could not be retrieved.
-fn get_semi_model_list(db: &Store) -> Result<Vec<SemiModelInfo>> {
+pub fn get_semi_model_list(db: &Store) -> Result<Vec<SemiModelInfo>> {
     let map = db.semi_models_map();
     let mut semi_model_list = vec![];
     for (_, value) in map.iter_forward()? {
