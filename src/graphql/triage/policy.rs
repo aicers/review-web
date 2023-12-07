@@ -289,7 +289,7 @@ impl TriageMutation {
             | event_kind.to_i128().expect("should not exceed i128::MAX") << 32;
 
         let value = bincode::DefaultOptions::new().serialize(&triage_result)?;
-        map.insert(&key.to_be_bytes(), &value)?;
+        map.put(&key.to_be_bytes(), &value)?;
         Ok("done".to_string())
     }
 }

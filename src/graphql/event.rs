@@ -494,7 +494,7 @@ impl EventMutation {
             let key = i128::from(time.timestamp_nanos_opt().unwrap_or_default()) << 64
                 | event_kind.to_i128().expect("should not exceed i128::MAX") << 32;
             let value = bincode::DefaultOptions::new().serialize(&result)?;
-            map.insert(&key.to_be_bytes(), &value)?;
+            map.put(&key.to_be_bytes(), &value)?;
         }
 
         Ok("done".to_string())
