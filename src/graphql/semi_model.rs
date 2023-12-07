@@ -68,6 +68,29 @@ impl SemiModelMutation {
         Ok(true)
     }
 
+    /// Download semi-supervised models using model name , Returns true if the deletion was successful.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    async fn download_semi_models(
+        &self,
+        ctx: &Context<'_>,
+        input_models: Vec<SemiModel>,
+    ) -> Result<bool> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.semi_models_map();
+
+        let iter = map.iter_forward()?;
+        for (key, _) in iter {
+            map.delete(&key)?;
+        }
+        for model in input_models {
+            let key = model.model_name.clone();
+            let value = bincode::serialize::<SemiModelValue>(&(model, Utc::now()))?;
+            map.put(key.as_bytes(), &value)?;
+        }
+        Ok(true)
+    }
+
     /// Broadcast the semi-supervised model list to all Hogs.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
