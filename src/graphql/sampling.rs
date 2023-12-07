@@ -23,11 +23,14 @@ pub(super) struct SamplingPolicyMutation;
 #[derive(Clone, Copy, Eq, PartialEq, Enum, Deserialize, Serialize)]
 #[repr(u32)]
 pub(super) enum Interval {
-    FiveMinutes = 0,
-    TenMinutes = 1,
-    FifteenMinutes = 2,
-    ThirtyMinutes = 3,
-    OneHour = 4,
+    FifteenSeconds = 0,
+    ThirtySeconds = 1,
+    OneMinutes = 2,
+    FiveMinutes = 3,
+    TenMinutes = 4,
+    FifteenMinutes = 5,
+    ThirtyMinutes = 6,
+    OneHour = 7,
 }
 
 impl Default for Interval {
