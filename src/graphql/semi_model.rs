@@ -117,6 +117,7 @@ struct SemiModel {
 }
 
 #[derive(SimpleObject, Serialize)]
+#[allow(clippy::module_name_repetitions)]
 pub struct SemiModelInfo {
     model_type: i32,
     model_name: String,

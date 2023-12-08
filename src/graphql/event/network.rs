@@ -12,7 +12,7 @@ pub(super) struct NetworkThreat {
 #[Object]
 impl NetworkThreat {
     async fn time(&self) -> DateTime<Utc> {
-        self.inner.timestamp
+        self.inner.time
     }
 
     async fn source(&self) -> &str {

@@ -6,6 +6,7 @@ mod group;
 mod http;
 mod kerberos;
 mod ldap;
+mod log;
 mod mqtt;
 mod network;
 mod nfs;
@@ -24,10 +25,10 @@ use self::{
     dns::DnsCovertChannel, ftp::BlockListFtp, ftp::FtpBruteForce, ftp::FtpPlainText,
     http::BlockListHttp, http::DomainGenerationAlgorithm, http::HttpThreat, http::NonBrowser,
     http::RepeatedHttpSessions, http::TorConnection, kerberos::BlockListKerberos,
-    ldap::BlockListLdap, ldap::LdapBruteForce, ldap::LdapPlainText, mqtt::BlockListMqtt,
-    network::NetworkThreat, nfs::BlockListNfs, ntlm::BlockListNtlm, rdp::BlockListRdp,
-    rdp::RdpBruteForce, smb::BlockListSmb, smtp::BlockListSmtp, ssh::BlockListSsh,
-    sysmon::WindowsThreat, tls::BlockListTls,
+    ldap::BlockListLdap, ldap::LdapBruteForce, ldap::LdapPlainText, log::LogThreat,
+    mqtt::BlockListMqtt, network::NetworkThreat, nfs::BlockListNfs, ntlm::BlockListNtlm,
+    rdp::BlockListRdp, rdp::RdpBruteForce, smb::BlockListSmb, smtp::BlockListSmtp,
+    ssh::BlockListSsh, sysmon::WindowsThreat, tls::BlockListTls,
 };
 use super::{
     customer::{Customer, HostNetworkGroupInput},
@@ -154,6 +155,7 @@ async fn fetch_events(
     let mut block_list_tls_time = start_time;
     let mut windows_threat_time = start_time;
     let mut network_threat_time = start_time;
+    let mut misc_log_threat_time = start_time;
 
     loop {
         itv.tick().await;
@@ -190,7 +192,8 @@ async fn fetch_events(
             .min(block_list_ssh_time)
             .min(block_list_tls_time)
             .min(windows_threat_time)
-            .min(network_threat_time);
+            .min(network_threat_time)
+            .min(misc_log_threat_time);
 
         // Fetch event iterator based on time
         let start = i128::from(start) << 64;
@@ -399,8 +402,12 @@ async fn fetch_events(
                         network_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-
-                EventKind::Log => continue,
+                EventKind::LogThreat => {
+                    if event_time >= network_threat_time {
+                        tx.unbounded_send(value.into())?;
+                        misc_log_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
             }
         }
     }
@@ -600,6 +607,7 @@ enum Event {
     WindowsThreat(WindowsThreat),
 
     NetworkThreat(NetworkThreat),
+    LogThreat(LogThreat),
 }
 
 impl From<database::Event> for Event {
@@ -645,6 +653,7 @@ impl From<database::Event> for Event {
             },
             database::Event::WindowsThreat(event) => Event::WindowsThreat(event.into()),
             database::Event::NetworkThreat(event) => Event::NetworkThreat(event.into()),
+            database::Event::LogThreat(event) => Event::LogThreat(event.into()),
         }
     }
 }
