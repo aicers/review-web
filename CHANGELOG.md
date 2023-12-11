@@ -18,6 +18,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Changed `Node` fields.
 - Updated review-database to 0.21.0.
 - Updated `column_statistics` according to review-database 0.21.0
   - Removed `event_range` argument.
