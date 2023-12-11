@@ -45,6 +45,10 @@ pub(super) enum Period {
     SixHours = 0,
     TwelveHours = 1,
     OneDay = 2,
+    OneMonth = 3,
+    ThreeMonth = 4,
+    SixMonth = 5,
+    OneYear = 6,
 }
 
 impl Default for Period {
