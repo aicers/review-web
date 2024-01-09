@@ -17,13 +17,13 @@ use chrono::{offset::LocalResult, DateTime, NaiveDateTime, TimeZone, Utc};
 use data_encoding::BASE64;
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures_util::stream::Stream;
+use log_broker::{error, LogLocation};
 use num_traits::ToPrimitive;
 use review_database::{types::FromKeyValue, Database, Direction, IterableMap, Store};
 use serde::Deserialize;
 use serde::Serialize;
 use std::{cmp, collections::HashMap, sync::Arc};
 use tokio::{sync::RwLock, time};
-use tracing::error;
 
 pub const TIMESTAMP_SIZE: usize = 8;
 const DEFAULT_OUTLIER_SIZE: usize = 50;
@@ -60,7 +60,7 @@ impl OutlierStream {
             )
             .await
             {
-                error!("{e:?}");
+                error!(LogLocation::Both, "{e:?}");
             }
         });
         Ok(rx)

@@ -2,6 +2,7 @@ use super::{from_filter_input, EventListFilterInput};
 use crate::graphql::{Role, RoleGuard};
 use anyhow::Context as AnyhowContext;
 use async_graphql::{Context, Object, OutputType, Result, SimpleObject};
+use log_broker::{warn, LogLocation};
 use review_database::{
     self as database,
     types::{EventCategory, FromKeyValue},
@@ -12,7 +13,6 @@ use std::{
     num::NonZeroU8,
     sync::{Arc, Mutex},
 };
-use tracing::warn;
 
 #[derive(Default)]
 pub(in crate::graphql) struct EventGroupQuery;
@@ -263,7 +263,7 @@ impl EventGroupQuery {
             let (key, event) = match item {
                 Ok(kv) => kv,
                 Err(e) => {
-                    warn!("invalid event: {:?}", e);
+                    warn!(LogLocation::Both, "invalid event: {e:?}");
                     continue;
                 }
             };
@@ -338,7 +338,7 @@ async fn count_events<T>(
         let (key, event) = match item {
             Ok(kv) => kv,
             Err(e) => {
-                warn!("invalid event: {:?}", e);
+                warn!(LogLocation::Both, "invalid event: {e:?}");
                 continue;
             }
         };
@@ -398,7 +398,7 @@ async fn count_events_by_network(
         let (key, event) = match item {
             Ok(kv) => kv,
             Err(e) => {
-                warn!("invalid event: {:?}", e);
+                warn!(LogLocation::Both, "invalid event: {e:?}");
                 continue;
             }
         };

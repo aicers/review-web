@@ -7,12 +7,12 @@ use async_graphql::{
 };
 use bincode::Options;
 use chrono::{DateTime, Utc};
+use log_broker::{error, LogLocation};
 use review_database::{
     self as database, types::FromKeyValue, Indexed, IndexedMap, IndexedMapIterator,
     IndexedMapUpdate, IterableMap, Store,
 };
 use std::convert::{TryFrom, TryInto};
-use tracing::error;
 
 #[derive(Default)]
 pub(super) struct CustomerQuery;
@@ -153,7 +153,10 @@ impl CustomerMutation {
             )
             .await
             {
-                error!("failed to broadcast internal networks. {e:?}");
+                error!(
+                    LogLocation::Both,
+                    "failed to broadcast internal networks. {e:?}"
+                );
             }
         }
 
@@ -199,7 +202,10 @@ impl CustomerMutation {
 
         if let Some(networks) = changed_networks {
             if let Err(e) = broadcast_customer_networks(ctx, &networks).await {
-                error!("failed to broadcast internal networks. {e:?}");
+                error!(
+                    LogLocation::Both,
+                    "failed to broadcast internal networks. {e:?}"
+                );
             }
         }
 

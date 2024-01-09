@@ -41,6 +41,7 @@ use bincode::Options;
 use chrono::{DateTime, Utc};
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures_util::stream::Stream;
+use log_broker::{error, warn, LogLocation};
 use num_traits::FromPrimitive;
 use review_database::{
     self as database,
@@ -57,7 +58,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::time;
-use tracing::{error, warn};
 
 const DEFAULT_CONNECTION_SIZE: usize = 100;
 const DEFAULT_EVENT_FETCH_TIME: u64 = 20;
@@ -100,7 +100,7 @@ impl EventStream {
             )
             .await
             {
-                error!("{e:?}");
+                error!(LogLocation::Both, "{e:?}");
             }
         });
         Ok(rx)
@@ -671,7 +671,7 @@ impl EventTotalCount {
             let (key, event) = match item {
                 Ok(kv) => kv,
                 Err(e) => {
-                    warn!("invalid event: {:?}", e);
+                    warn!(LogLocation::Both, "invalid event: {e:?}");
                     continue;
                 }
             };
@@ -1054,7 +1054,7 @@ fn iter_to_events(
         let (key, mut event) = match item {
             Ok(kv) => kv,
             Err(e) => {
-                warn!("invalid event: {:?}", e);
+                warn!(LogLocation::Both, "invalid event: {e:?}");
                 continue;
             }
         };

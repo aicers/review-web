@@ -38,6 +38,8 @@ htdocs_dir = "/path/to/htdocs"              # path to a directory for web files
 ip2location = "/path/to/IP2LOCATON"         # path to a IP2LOCATION file
 key = "/path/to/key.pem"                    # path to a key file
 log_dir = "/path/to/log"                    # path to a log directory
+redis_log_addr = "127.0.0.1:6379"           # address to redis server
+redis_log_agent_id = "review@localhost"     # agent id to send log to redis server
 
 [[reverse_proxies]]
 base = "archive"                            # proxy name for Giganto

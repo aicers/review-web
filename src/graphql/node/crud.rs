@@ -14,12 +14,12 @@ use async_graphql::{
 };
 use bincode::Options;
 use chrono::Utc;
+use log_broker::{error, LogLocation};
 use review_database::{Indexed, IterableMap, Store};
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
-use tracing::error;
 
 #[Object]
 impl NodeQuery {
@@ -270,7 +270,10 @@ impl NodeMutation {
 
             if let Ok(networks) = get_customer_networks(&store, customer_id) {
                 if let Err(e) = broadcast_customer_networks(ctx, &networks).await {
-                    error!("failed to broadcast internal networks. {e:?}");
+                    error!(
+                        LogLocation::Both,
+                        "failed to broadcast internal networks. {e:?}"
+                    );
                 }
             }
         }
@@ -334,7 +337,10 @@ impl NodeMutation {
 
                 if let Ok(networks) = get_customer_networks(&store, customer_id) {
                     if let Err(e) = broadcast_customer_networks(ctx, &networks).await {
-                        error!("failed to broadcast internal networks. {e:?}");
+                        error!(
+                            LogLocation::Both,
+                            "failed to broadcast internal networks. {e:?}"
+                        );
                     }
                 }
             }

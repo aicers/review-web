@@ -6,6 +6,7 @@ use async_graphql::{
 };
 use bincode::Options;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use log_broker::{info, LogLocation};
 use review_database::{
     self as database,
     types::{self},
@@ -16,7 +17,6 @@ use std::{
     collections::HashSet,
     net::{AddrParseError, IpAddr},
 };
-use tracing::info;
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Serialize, SimpleObject)]
@@ -261,17 +261,17 @@ impl AccountMutation {
 
                 insert_token(&store, &token, &username)?;
 
-                info!("{} signed in", username);
+                info!(LogLocation::Both, "{username} signed in");
                 Ok(AuthPayload {
                     token,
                     expiration_time,
                 })
             } else {
-                info!("wrong password for {username}");
+                info!(LogLocation::Both, "wrong password for {username}");
                 Err("incorrect username or password".into())
             }
         } else {
-            info!("{username} is not a valid username");
+            info!(LogLocation::Both, "{username} is not a valid username");
             Err("incorrect username or password".into())
         }
     }
@@ -286,7 +286,7 @@ impl AccountMutation {
         revoke_token(&store, &token)?;
         let decoded_token = decode_token(&token)?;
         let username = decoded_token.sub;
-        info!("{username} signed out");
+        info!(LogLocation::Both, "{username} signed out");
         Ok(token)
     }
 

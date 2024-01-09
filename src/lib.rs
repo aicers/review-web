@@ -17,6 +17,7 @@ use axum::{
 };
 use graphql::AgentManager;
 pub use graphql::CertManager;
+use log_broker::{error, LogLocation};
 use review_database::{Database, Store};
 use rustls::{Certificate, ClientConfig, RootCertStore};
 use serde_json::json;
@@ -32,7 +33,6 @@ use tokio::{
     task::JoinHandle,
 };
 use tower_http::{services::ServeDir, trace::TraceLayer};
-use tracing::error;
 
 /// Parameters for a web server.
 pub struct ServerConfig {
@@ -60,7 +60,7 @@ where
     A: AgentManager + 'static,
 {
     use axum_server::{tls_rustls::RustlsConfig, Handle};
-    use tracing::info;
+    use log_broker::info;
 
     let schema = graphql::schema(
         db,
@@ -122,14 +122,14 @@ where
 
             tokio::select! {
                 () = wait_shutdown => {
-                    info!("Shutting down Web server");
+                    info!(LogLocation::Both, "Shutting down Web server");
                     notify_shutdown.notify_one();
                     shutdown_completed.notified().await;
                     web_srv_shutdown_handle.notify_one();
                     return Ok(());
                 },
                 () = cert_reload => {
-                    info!("Restarting Web server to reload certificates");
+                    info!(LogLocation::Both, "Restarting Web server to reload certificates");
                     notify_shutdown.notify_one();
                     shutdown_completed.notified().await;
                 },
@@ -137,11 +137,14 @@ where
         }
     });
 
-    tracing::info!("Starting Web Server");
+    info!(LogLocation::Both, "Starting Web Server");
     tokio::spawn(async {
         match server.await {
-            Ok(Err(e)) => error!("Web server died: {:?}", e),
-            Err(e) => error!("Web server task failed to execute to completion: {:?}", e),
+            Ok(Err(e)) => error!(LogLocation::Both, "Web server died: {e:?}"),
+            Err(e) => error!(
+                LogLocation::Both,
+                "Web server task failed to execute to completion: {e:?}"
+            ),
             _ => (),
         }
     });
@@ -326,7 +329,10 @@ fn build_client_config<P: AsRef<Path>>(
                     root_store.add(&rustls::Certificate(cert.0))?;
                 }
             }
-            Err(e) => tracing::error!("Could not load platform certificates: {:#}", e),
+            Err(e) => error!(
+                LogLocation::Both,
+                "Could not load platform certificates: {e:#}"
+            ),
         }
     }
     for root in root_ca {

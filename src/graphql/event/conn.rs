@@ -161,7 +161,7 @@ impl MultiHostPortScan {
             *self
                 .inner
                 .dst_addrs
-                .get(0)
+                .first()
                 .expect("has value with internal network"),
         )
     }
@@ -243,7 +243,7 @@ impl ExternalDdos {
             *self
                 .inner
                 .src_addrs
-                .get(0)
+                .first()
                 .expect("has value with internal network"),
         )
     }

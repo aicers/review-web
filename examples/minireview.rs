@@ -6,12 +6,13 @@ use futures::{
     pin_mut,
 };
 use ipnet::IpNet;
+use log_broker::{error, info, init_redis_connection, init_tracing, LogLocation};
 use review_database::{migrate_data_dir, Database, Store};
 use review_web::{self as web, graphql::AgentManager, CertManager};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
-    env, fs,
+    env,
     net::SocketAddr,
     path::{Path, PathBuf},
     process::exit,
@@ -20,11 +21,6 @@ use std::{
 use tokio::{
     signal::unix::{signal, SignalKind},
     sync::{Notify, RwLock},
-};
-use tracing::{error, info, metadata::LevelFilter};
-use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{
-    fmt, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
 };
 
 struct MiniCertManager {
@@ -119,6 +115,8 @@ pub struct Config {
     ca_certs: Vec<PathBuf>,
     ip2location: Option<PathBuf>,
     reverse_proxies: Vec<review_web::archive::Config>,
+    redis_log_addr: SocketAddr,
+    redis_log_agent_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -135,6 +133,8 @@ struct ConfigParser {
     ip2location: Option<PathBuf>,
     archive: Option<review_web::archive::Config>,
     reverse_proxies: Option<Vec<review_web::archive::Config>>,
+    redis_log_addr: String,
+    redis_log_agent_id: String,
 }
 
 impl Config {
@@ -167,6 +167,7 @@ impl Config {
         .try_deserialize()?;
 
         let graphql_srv_addr = config.graphql_srv_addr.parse()?;
+        let redis_log_addr = config.redis_log_addr.parse()?;
 
         let reverse_proxies = {
             let mut reverse_proxies = config.reverse_proxies.clone().unwrap_or_default();
@@ -188,6 +189,8 @@ impl Config {
             ca_certs: config.ca_certs.unwrap_or_default(),
             ip2location: config.ip2location,
             reverse_proxies,
+            redis_log_addr,
+            redis_log_agent_id: config.redis_log_agent_id,
         })
     }
 
@@ -238,25 +241,45 @@ impl Config {
     pub(crate) fn reverse_proxies(&self) -> Vec<review_web::archive::Config> {
         self.reverse_proxies.clone()
     }
+
+    #[must_use]
+    pub fn redis_log_addr(&self) -> SocketAddr {
+        self.redis_log_addr
+    }
+
+    #[must_use]
+    pub fn redis_log_agent_id(&self) -> &str {
+        &self.redis_log_agent_id
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = Config::load_config(parse().as_deref())?;
-    let _guard = init_tracing(config.log_dir());
+    let _guard = init_tracing(config.log_dir(), env!("CARGO_PKG_NAME"));
+
+    init_redis_connection(
+        config.redis_log_addr().ip(),
+        config.redis_log_addr().port(),
+        config.redis_log_agent_id().to_string(),
+    )
+    .await?;
 
     match run(config).await {
         Ok(web_srv_shutdown_handle) => {
             if let Err(e) = shutdown().await {
-                error!("Signal handling failed: {}", e);
+                error!(LogLocation::Both, "Signal handling failed: {e}");
             }
             web_srv_shutdown_handle.notify_one();
             web_srv_shutdown_handle.notified().await;
-            info!("exit");
+            info!(LogLocation::Both, "exit");
             Ok(())
         }
         Err(e) => {
-            error!("An error occurred while starting REview: {:#}", e);
+            error!(
+                LogLocation::Both,
+                "An error occurred while starting REview: {e:#}"
+            );
             std::process::exit(1);
         }
     }
@@ -356,36 +379,9 @@ async fn shutdown() -> Result<()> {
     pin_mut!(terminate, interrupt);
 
     match future::select(terminate, interrupt).await {
-        Either::Left(_) => info!("SIGTERM received"),
-        Either::Right(_) => info!("SIGINT received"),
+        Either::Left(_) => info!(LogLocation::Both, "SIGTERM received"),
+        Either::Right(_) => info!(LogLocation::Both, "SIGINT received"),
     }
 
     Ok(())
-}
-
-fn init_tracing(path: &Path) -> Result<WorkerGuard> {
-    if !path.exists() {
-        tracing_subscriber::fmt::init();
-        bail!("Path not found {path:?}");
-    }
-    let file_name = format!("{}.log", env!("CARGO_PKG_NAME"));
-    if fs::File::create(path.join(&file_name)).is_err() {
-        tracing_subscriber::fmt::init();
-        bail!("Cannot create file. {}/{file_name}", path.display());
-    }
-    let file_appender = tracing_appender::rolling::never(path, file_name);
-    let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
-    let layer_file = fmt::Layer::default()
-        .with_ansi(false)
-        .with_target(false)
-        .with_writer(file_writer)
-        .with_filter(EnvFilter::from_default_env().add_directive(LevelFilter::INFO.into()));
-    let layer_stdout = fmt::Layer::default()
-        .with_ansi(true)
-        .with_filter(EnvFilter::from_default_env());
-    tracing_subscriber::registry()
-        .with(layer_file)
-        .with(layer_stdout)
-        .init();
-    Ok(guard)
 }

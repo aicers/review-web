@@ -1,7 +1,7 @@
 use async_graphql::{Context, Object, Result, SimpleObject};
+use log_broker::{info, LogLocation};
 use std::sync::Arc;
 use tokio::sync::Notify;
-use tracing::info;
 
 use super::{CertManager, Role, RoleGuard};
 
@@ -30,7 +30,10 @@ impl CertMutation {
         cert: String,
         key: String,
     ) -> Result<CertificatePayload> {
-        info!("Received a request to update certificate and private key");
+        info!(
+            LogLocation::Both,
+            "Received a request to update certificate and private key"
+        );
 
         let cert_manager = ctx.data::<Arc<dyn CertManager>>()?;
         let parsed_certs = cert_manager.update_certificate(cert, key)?;

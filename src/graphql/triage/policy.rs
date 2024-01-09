@@ -3,14 +3,12 @@ use super::{
     TriagePolicyMutation, TriagePolicyQuery,
 };
 use super::{Role, RoleGuard};
-use anyhow::anyhow;
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     Context, Object, Result, ID,
 };
 use bincode::Options;
 use chrono::Utc;
-use core::convert::TryInto;
 use review_database::{
     self as database, Indexed, IndexedMap, IndexedMapIterator, IndexedMapUpdate,
 };
@@ -103,7 +101,7 @@ impl TriagePolicyMutation {
     ) -> Result<ID> {
         let mut packet_attr_convert: Vec<database::PacketAttr> = Vec::new();
         for p in &packet_attr {
-            packet_attr_convert.push(p.try_into()?);
+            packet_attr_convert.push(p.into());
         }
         packet_attr_convert.sort_unstable();
         let mut ti_db = ti_db.iter().map(Into::into).collect::<Vec<database::Ti>>();
@@ -202,7 +200,7 @@ impl IndexedMapUpdate for TriagePolicyInput {
         value.ti_db = ti_db;
         let mut packet_attr: Vec<database::PacketAttr> = Vec::new();
         for p in &self.packet_attr {
-            packet_attr.push(p.try_into().map_err(|e| anyhow!("{}", e))?);
+            packet_attr.push(p.into());
         }
         packet_attr.sort_unstable();
         value.packet_attr = packet_attr;
@@ -239,9 +237,7 @@ impl IndexedMapUpdate for TriagePolicyInput {
         }
         let mut packet_attr: Vec<database::PacketAttr> = Vec::new();
         for p in &self.packet_attr {
-            if let Ok(p) = p.try_into() {
-                packet_attr.push(p);
-            }
+            packet_attr.push(p.into());
         }
         packet_attr.sort_unstable();
         if packet_attr != value.packet_attr {

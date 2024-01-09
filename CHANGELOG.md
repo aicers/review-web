@@ -28,6 +28,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   - The timestamp is now added to the return value field `batch_ts`, representing
     the batch timestamp for the specified `Statistics`.
   - The returned `Statistics` are now sorted according to `batch_ts` and `column_index`.
+- Replaced `tracing` with `log-broker`
+  - To use `log-broker`, `redis_log_addr`, `redis_log_client_id` are required in
+    the configuration file.
 
 ## [0.15.0] - 2023-11-15
 
