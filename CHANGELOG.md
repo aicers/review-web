@@ -5,6 +5,29 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+- Added three new GraphQL API methods for triage:
+  - `insert_triage_result`:  This new method store triage result.
+  - `event_list_with_triage`: This new method return event with triage result.
+  - `insert_event_with_triage`: This new method store event and triage result.
+- Added two new GraphQL API methods for rio's ranked outlier:
+  - `insert_central_ranked_outlier`: This new method store `CentralRankedOutlier`.
+  - `central_ranked_outliers`: This new method search `CentralRankedOutlier`.
+- Added three new GraphQL API methods for semi-supervised model:
+  - `semi_model_list`: This new method returns a list of semi-supervised models.
+  - `insert_semi_model`: This new method insert the semi-supervised model into a
+    `semi models` table.
+  - `remove_semi_models`: This new method removes the semi-supervised model from
+    the `semi models` table.
+  - `apply_semi_model`: This new method broadcast the semi-supervised model list
+    to all hogs.
+  - `download_semi_models`: This new method update the `semi models` table with
+    the semi-supervised model downloaded to the relay server.
+- Added `agent_id` for filtering agent id to `EventListWithTriageFilterInput`.
+- Added new fields to the sampling policy's enum Interval.
+  (`FifteenSeconds`, `ThirtySeconds`, `OneMinutes`)
+
 ## [0.17.0] - 2024-01-19
 
 ### Added
