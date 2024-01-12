@@ -49,7 +49,7 @@ impl CategoryMutation {
     async fn add_category(&self, ctx: &Context<'_>, name: String) -> Result<ID> {
         let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
         let map = db.category_map();
-        let id = map.add(&name)?;
+        let id = map.insert(&name)?;
         Ok(ID(id.to_string()))
     }
 
