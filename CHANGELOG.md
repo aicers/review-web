@@ -5,6 +5,17 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added two new GraphQL API methods for backup:
+  - `backup_to_archive_file`:  This new function uses check points in rocksdb
+    to create a backup and returns the backup filename. The current form of
+    backup is unstable, so we will change to using the share_table_files option
+    of the backup engine in the future when it is supported.
+  - `list_archive_backups`: This new function returns a list of backups.
+
 ## [0.17.0] - 2024-01-19
 
 ### Added

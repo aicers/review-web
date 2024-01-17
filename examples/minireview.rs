@@ -6,7 +6,7 @@ use futures::{
     pin_mut,
 };
 use ipnet::IpNet;
-use review_database::{migrate_data_dir, Database, Store};
+use review_database::{backup::BackupConfig, migrate_data_dir, Database, Store};
 use review_web::{self as web, graphql::AgentManager, CertManager};
 use serde::Deserialize;
 use std::{
@@ -106,6 +106,7 @@ impl AgentManager for Manager {
 const DEFAULT_DATABASE_URL: &str = "postgres://review@localhost/review";
 const DEFAULT_SERVER: &str = "localhost";
 const DEFAULT_LOG_PATH: &str = "/data/logs/apps";
+const DEFAULT_ENV_PATH: &str = "/usr/bin:/bin";
 
 pub struct Config {
     data_dir: PathBuf,
@@ -118,6 +119,9 @@ pub struct Config {
     key: PathBuf,
     ca_certs: Vec<PathBuf>,
     ip2location: Option<PathBuf>,
+    database_dir: PathBuf,
+    database_container: String,
+    env_path: String,
     reverse_proxies: Vec<review_web::archive::Config>,
 }
 
@@ -133,6 +137,9 @@ struct ConfigParser {
     key: PathBuf,
     ca_certs: Option<Vec<PathBuf>>,
     ip2location: Option<PathBuf>,
+    database_dir: PathBuf,
+    database_container: String,
+    env_path: String,
     archive: Option<review_web::archive::Config>,
     reverse_proxies: Option<Vec<review_web::archive::Config>>,
 }
@@ -155,7 +162,13 @@ impl Config {
             .set_default("log_dir", DEFAULT_LOG_PATH)
             .context("cannot set the default log path")?
             .set_default("htdocs_dir", env::current_dir()?.join("htdocs").to_str())
-            .context("cannot set the default web directory")?;
+            .context("cannot set the default web directory")?
+            .set_default("database_dir", env::current_dir()?.join("AICE_DB").to_str())
+            .context("cannot set the default database directory")?
+            .set_default("database_container", "aice_db")
+            .context("cannot set the default database container")?
+            .set_default("env_path", DEFAULT_ENV_PATH)
+            .context("cannot set the default environment variable path.")?;
         let config: ConfigParser = if let Some(path) = path {
             builder.add_source(File::with_name(path))
         } else {
@@ -187,6 +200,9 @@ impl Config {
             key: config.key,
             ca_certs: config.ca_certs.unwrap_or_default(),
             ip2location: config.ip2location,
+            database_dir: config.database_dir,
+            database_container: config.database_container,
+            env_path: config.env_path,
             reverse_proxies,
         })
     }
@@ -217,6 +233,11 @@ impl Config {
     }
 
     #[must_use]
+    pub fn env_path(&self) -> &str {
+        &self.env_path
+    }
+
+    #[must_use]
     pub fn graphql_srv_addr(&self) -> SocketAddr {
         self.graphql_srv_addr
     }
@@ -232,6 +253,16 @@ impl Config {
     #[must_use]
     pub fn ip2location(&self) -> Option<&Path> {
         self.ip2location.as_deref()
+    }
+
+    #[must_use]
+    pub fn database_dir(&self) -> &Path {
+        self.database_dir.as_ref()
+    }
+
+    #[must_use]
+    pub fn database_container(&self) -> &str {
+        &self.database_container
     }
 
     #[must_use]
@@ -287,6 +318,7 @@ async fn run(config: Config) -> Result<Arc<Notify>> {
             .context("failed to connect to database")?;
         store
     };
+
     let agent_manager = Manager {};
     let cert_reload_handle = Arc::new(Notify::new());
 
@@ -302,7 +334,19 @@ async fn run(config: Config) -> Result<Arc<Notify>> {
             .collect(),
         reverse_proxies: config.reverse_proxies(),
     };
-    let web_srv_shutdown_handle = web::serve(web_config, db, store, ip_locator, agent_manager);
+
+    let backup_cfg = BackupConfig::builder()
+        .backup_path(config.backup_dir())
+        .container(config.database_container())
+        .database_dir(config.database_dir())?
+        .database_url(config.database_url())?
+        .env_path(config.env_path())
+        .build();
+
+    let backup_cfg = Arc::new(RwLock::new(backup_cfg));
+
+    let web_srv_shutdown_handle =
+        web::serve(web_config, db, store, ip_locator, agent_manager, backup_cfg);
 
     Ok(web_srv_shutdown_handle)
 }

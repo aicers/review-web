@@ -17,7 +17,7 @@ use axum::{
 };
 use graphql::AgentManager;
 pub use graphql::CertManager;
-use review_database::{Database, Store};
+use review_database::{backup::BackupConfig, Database, Store};
 use rustls::{Certificate, ClientConfig, RootCertStore};
 use serde_json::json;
 use std::{
@@ -55,6 +55,7 @@ pub fn serve<A>(
     store: Arc<RwLock<Store>>,
     ip_locator: Option<Arc<Mutex<ip2location::DB>>>,
     agent_manager: A,
+    db_backup_cfg: Arc<RwLock<BackupConfig>>,
 ) -> Arc<Notify>
 where
     A: AgentManager + 'static,
@@ -69,6 +70,7 @@ where
         ip_locator,
         config.cert_manager.clone(),
         config.cert_reload_handle.clone(),
+        db_backup_cfg,
     );
     let web_srv_shutdown_handle = Arc::new(Notify::new());
     let shutdown_handle = web_srv_shutdown_handle.clone();

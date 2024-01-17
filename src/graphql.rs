@@ -50,7 +50,8 @@ use data_encoding::BASE64;
 use ipnet::IpNet;
 use num_traits::ToPrimitive;
 use review_database::{
-    self as database, types::FromKeyValue, Database, Direction, IterableMap, Role, Store,
+    self as database, backup::BackupConfig, types::FromKeyValue, Database, Direction, IterableMap,
+    Role, Store,
 };
 use std::{
     cmp,
@@ -133,6 +134,7 @@ pub(super) fn schema<B>(
     ip_locator: Option<Arc<Mutex<ip2location::DB>>>,
     cert_manager: Arc<dyn CertManager>,
     cert_reload_handle: Arc<Notify>,
+    db_backup_cfg: Arc<RwLock<BackupConfig>>,
 ) -> Schema
 where
     B: AgentManager + 'static,
@@ -147,7 +149,8 @@ where
     .data(store)
     .data(agent_manager)
     .data(cert_manager)
-    .data(cert_reload_handle);
+    .data(cert_reload_handle)
+    .data(db_backup_cfg);
     if let Some(ip_locator) = ip_locator {
         builder = builder.data(ip_locator);
     }
@@ -163,6 +166,7 @@ pub(super) struct Query(
     cluster::ClusterQuery,
     customer::CustomerQuery,
     data_source::DataSourceQuery,
+    db_management::DbManagementQuery,
     event::EventQuery,
     event::EventGroupQuery,
     filter::FilterQuery,
