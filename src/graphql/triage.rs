@@ -19,6 +19,9 @@ pub(super) struct TriageResponseQuery;
 #[derive(Default)]
 pub(super) struct TriageResponseMutation;
 
+#[derive(Default)]
+pub(super) struct TriageMutation;
+
 pub(super) struct TriagePolicy {
     inner: database::TriagePolicy,
 }
