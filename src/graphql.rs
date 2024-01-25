@@ -421,6 +421,16 @@ fn latest_key(before: &str) -> Result<Vec<u8>> {
     Ok(end)
 }
 
+/// Decodes a cursor used in pagination.
+fn decode_cursor(cursor: &str) -> Option<String> {
+    String::from_utf8(BASE64.decode(cursor.as_bytes()).ok()?).ok()
+}
+
+/// Encodes a cursor used in pagination.
+fn encode_cursor(cursor: &str) -> String {
+    BASE64.encode(cursor.as_bytes())
+}
+
 fn always_true(_ordering: cmp::Ordering) -> bool {
     true
 }

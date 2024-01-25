@@ -1,7 +1,7 @@
 use super::RoleGuard;
 use crate::auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in};
 use async_graphql::{
-    connection::{query, Connection, EmptyFields},
+    connection::{query, Connection, Edge, EmptyFields},
     Context, Enum, InputObject, Object, Result, SimpleObject,
 };
 use bincode::Options;
@@ -9,14 +9,14 @@ use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use review_database::{
     self as database,
     types::{self},
-    IterableMap, MapIterator, Store, Table,
+    Direction, IterableMap, Store,
 };
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
     net::{AddrParseError, IpAddr},
 };
-use tracing::info;
+use tracing::{info, warn};
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Serialize, SimpleObject)]
@@ -484,7 +484,7 @@ impl AccountTotalCount {
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
-        let count = map.iter_forward()?.count();
+        let count = map.iter(Direction::Forward, None).count();
         Ok(count)
     }
 }
@@ -493,19 +493,100 @@ async fn load(
     ctx: &Context<'_>,
     after: Option<String>,
     before: Option<String>,
-    first: Option<usize>,
+    mut first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<String, Account, AccountTotalCount, EmptyFields>> {
     let store = crate::graphql::get_store(ctx).await?;
-    let map = store.account_map();
-    super::load::<'_, Table<types::Account>, MapIterator, Account, types::Account, AccountTotalCount>(
-        &map,
-        after,
-        before,
-        first,
-        last,
-        AccountTotalCount,
-    )
+    let table = store.account_map();
+
+    if first.is_some() && last.is_some() {
+        return Err("cannot provide both `first` and `last`".into());
+    }
+    if first.is_none() && last.is_none() {
+        first = Some(super::DEFAULT_CONNECTION_SIZE);
+    }
+
+    let after = if let Some(after) = after {
+        Some(super::decode_cursor(&after).ok_or("invalid cursor `after`")?)
+    } else {
+        None
+    };
+    let before = if let Some(before) = before {
+        Some(super::decode_cursor(&before).ok_or("invalid cursor `before`")?)
+    } else {
+        None
+    };
+
+    let (nodes, has_previous, has_next) = if let Some(first) = first {
+        let (nodes, has_more) = collect_edges(&table, Direction::Forward, after, before, first);
+        (nodes, false, has_more)
+    } else {
+        let Some(last) = last else { unreachable!() };
+        let (mut nodes, has_more) = collect_edges(&table, Direction::Reverse, before, after, last);
+        nodes.reverse();
+        (nodes, has_more, false)
+    };
+
+    for node in &nodes {
+        let Err(e) = node else { continue };
+        warn!("failed to load account: {}", e);
+        return Err("database error".into());
+    }
+
+    let mut connection =
+        Connection::with_additional_fields(has_previous, has_next, AccountTotalCount);
+    connection.edges.extend(nodes.into_iter().map(|node| {
+        let Ok(node) = node else { unreachable!() };
+        Edge::new(super::encode_cursor(&node.username), node.into())
+    }));
+    Ok(connection)
+}
+
+fn collect_edges(
+    table: &review_database::Table<'_, review_database::types::Account>,
+    dir: Direction,
+    from: Option<String>,
+    to: Option<String>,
+    count: usize,
+) -> (Vec<anyhow::Result<review_database::types::Account>>, bool) {
+    let edges: Box<dyn Iterator<Item = _>> = if let Some(cursor) = from {
+        let mut edges: Box<dyn Iterator<Item = _>> =
+            Box::new((*table).iter(dir, Some(&cursor)).skip_while(move |item| {
+                if let Ok(x) = item {
+                    x.username == cursor
+                } else {
+                    false
+                }
+            }));
+        if let Some(cursor) = to {
+            edges = Box::new(edges.take_while(move |item| {
+                if let Ok(x) = item {
+                    x.username < cursor
+                } else {
+                    false
+                }
+            }));
+        }
+        edges
+    } else {
+        let mut edges: Box<dyn Iterator<Item = _>> = Box::new(table.iter(dir, None));
+        if let Some(cursor) = to {
+            edges = Box::new(edges.take_while(move |item| {
+                if let Ok(x) = item {
+                    x.username < cursor
+                } else {
+                    false
+                }
+            }));
+        }
+        edges
+    };
+    let mut nodes = edges.take(count + 1).collect::<Vec<_>>();
+    let has_more = nodes.len() > count;
+    if has_more {
+        nodes.pop();
+    }
+    (nodes, has_more)
 }
 
 /// Sets the initial administrator password.
