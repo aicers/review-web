@@ -261,6 +261,9 @@ impl NodeMutation {
                 sensor_list,
 
                 creation_time: Utc::now(),
+
+                apply_target_id: None,
+                apply_in_progress: false,
             };
             let id = map.insert(value)?;
             (id, customer_id)

@@ -7,6 +7,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Add `apply_target_id` field to `Node` struct for reverting node status.
+- Add `apply_in_progress` field to `Node` struct for reverting node status.
+
 ### Fixed
 
 - We've resolved an issue in the GraphQL API where the ordering of edges was
@@ -192,24 +197,24 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Added new fields to the `Event` enum internal struct provided via GraphQL for
-enhanced `detect event filtering`. This will allow more detailed filtering
-capabilities in the GraphQL API.
+  enhanced `detect event filtering`. This will allow more detailed filtering
+  capabilities in the GraphQL API.
 - Introduced a `ping` field to `NodeStatus` struct, accessible via the
-`NodeStatusList` query. As part of this change, we updated the `status::load`
-function to include the `ping` field in the response of the `NodeStatusList`
-query. This enhancement allows users to retrieve the `ping` status of nodes
-using the GraphQL API.
+  `NodeStatusList` query. As part of this change, we updated the `status::load`
+  function to include the `ping` field in the response of the `NodeStatusList`
+  query. This enhancement allows users to retrieve the `ping` status of nodes
+  using the GraphQL API.
 - Updated the `status::load` function to include the `ping` field in the
-response of the `NodeStatusList` query. This change enables users to retrieve
-the `ping` status of nodes via the GraphQL API.
+  response of the `NodeStatusList` query. This change enables users to retrieve
+  the `ping` status of nodes via the GraphQL API.
 
 ### Changed
 
-- Modified serialization method in broadcasting of `internal networks,
-allow/block list`. The new implementation now uses
-`bincode::DefaultOptions::new().serialize()` instead of `bincode::serialize()`.
-This change is aimed at maintaining consistency with other serialized data
-across our system.
+- Modified serialization method in broadcasting of
+  `internal networks,allow/block list`. The new implementation now uses
+  `bincode::DefaultOptions::new().serialize()` instead of `bincode::serialize()`.
+  This change is aimed at maintaining consistency with other serialized data
+  across our system.
 
 ## [0.10.0] - 2023-05-31
 

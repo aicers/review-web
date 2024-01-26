@@ -167,6 +167,9 @@ pub(super) struct Node {
     sensor_list: HashMap<String, bool>,
 
     creation_time: DateTime<Utc>,
+
+    apply_target_id: Option<u32>,
+    apply_in_progress: bool,
 }
 
 #[ComplexObject]
