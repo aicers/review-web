@@ -182,7 +182,7 @@ impl Cluster {
         Ok(map.get(u32::try_from(self.category)?)?.into())
     }
 
-    async fn events(&self, _ctx: &Context<'_>) -> Result<Vec<DateTime<Utc>>> {
+    async fn events(&self) -> Result<Vec<DateTime<Utc>>> {
         Ok(self
             .events
             .iter()

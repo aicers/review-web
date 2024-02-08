@@ -436,7 +436,7 @@ impl Outlier {
         ID(self.id.to_string())
     }
 
-    async fn events(&self, _ctx: &Context<'_>) -> Result<Vec<DateTime<Utc>>> {
+    async fn events(&self) -> Result<Vec<DateTime<Utc>>> {
         Ok(self
             .events
             .iter()
