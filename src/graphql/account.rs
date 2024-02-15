@@ -73,7 +73,7 @@ impl AccountQuery {
     #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
         .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
     async fn signed_in_account_list(&self, ctx: &Context<'_>) -> Result<Vec<SignedInAccount>> {
-        use review_database::KeyValueIterable;
+        use review_database::Iterable;
         use std::collections::HashMap;
 
         let store = crate::graphql::get_store(ctx).await?;

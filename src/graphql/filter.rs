@@ -1,10 +1,8 @@
 use super::{customer::HostNetworkGroup, event::EndpointInput, Role, RoleGuard};
 use anyhow::{anyhow, Context as AnyhowContext};
 use async_graphql::{Context, Enum, InputObject, Object, Result, SimpleObject, ID};
-use bincode::Options;
 use review_database::{self as database};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Default)]
 pub(super) struct FilterQuery;
@@ -20,18 +18,7 @@ impl FilterQuery {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.filter_map();
         let username = ctx.data::<String>()?;
-        let mut filters = if let Some(value) = map.get(username.as_bytes())? {
-            bincode::DefaultOptions::new()
-                .deserialize::<HashMap<String, database::Filter>>(value.as_ref())
-                .map_err(|e| format!("corrupt filter entry for account \"{username}\": {e}"))?
-                .into_values()
-                .map(std::convert::Into::into)
-                .collect::<Vec<Filter>>()
-        } else {
-            return Ok(Vec::new());
-        };
-        filters.sort_unstable_by(|a, b| a.inner.name.cmp(&b.inner.name));
-        Ok(filters)
+        Ok(map.list(username)?.into_iter().map(Into::into).collect())
     }
 
     /// A filter for the given name.
@@ -43,14 +30,8 @@ impl FilterQuery {
         let db = crate::graphql::get_store(ctx).await?;
         let username = ctx.data::<String>()?;
         let map = db.filter_map();
-        let mut filters = if let Some(value) = map.get(username.as_bytes())? {
-            bincode::DefaultOptions::new()
-                .deserialize::<HashMap<String, database::Filter>>(value.as_ref())
-                .map_err(|e| format!("corrupt filter entry for account \"{username}\": {e}"))?
-        } else {
-            return Ok(None);
-        };
-        Ok(filters.remove(&name).map(Into::into))
+
+        Ok(map.get(username, &name)?.map(Into::into))
     }
 }
 
@@ -89,8 +70,7 @@ impl FilterMutation {
     ) -> Result<String> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.filter_map();
-        let account = ctx.data::<String>()?;
-        let codec = bincode::DefaultOptions::new();
+        let username = ctx.data::<String>()?;
         let endpoints = if let Some(endpoints_input) = endpoints {
             let mut endpoints = Vec::with_capacity(endpoints_input.len());
             for endpoint_input in endpoints_input {
@@ -101,7 +81,8 @@ impl FilterMutation {
         } else {
             None
         };
-        let new_filter = database::Filter {
+        let filter = database::Filter {
+            username: username.to_string(),
             name: name.clone(),
             directions: directions.map(|v| v.into_iter().map(Into::into).collect()),
             keywords,
@@ -125,24 +106,8 @@ impl FilterMutation {
             confidence,
         };
 
-        if let Some(old_value) = map.get(account.as_bytes())? {
-            let mut filters = codec
-                .deserialize::<HashMap<String, database::Filter>>(old_value.as_ref())
-                .map_err(|e| format!("corrupt filter entry for account \"{account}\": {e}"))?;
-            if filters.contains_key(&name) {
-                return Err(format!("filter \"{name}\" already exists").into());
-            }
-            filters.insert(name.clone(), new_filter);
-            let new_value = codec.serialize(&filters)?;
-            map.update(
-                (account.as_bytes(), old_value.as_ref()),
-                (account.as_bytes(), &new_value),
-            )?;
-        } else {
-            let mut filters = HashMap::new();
-            filters.insert(name.clone(), new_filter);
-            map.insert(account.as_bytes(), &codec.serialize(&filters)?)?;
-        };
+        map.insert(filter)?;
+
         Ok(name)
     }
 
@@ -160,22 +125,7 @@ impl FilterMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.filter_map();
         let username = ctx.data::<String>()?;
-        let codec = bincode::DefaultOptions::new();
-
-        let Some(old_value) = map.get(username.as_bytes())? else {
-            return Ok(names);
-        };
-        let mut filters = codec
-            .deserialize::<HashMap<String, database::Filter>>(old_value.as_ref())
-            .map_err(|e| format!("corrupt filter entry for account \"{username}\": {e}"))?;
-        for name in &names {
-            filters.remove(name);
-        }
-        let new_value = codec.serialize(&filters)?;
-        map.update(
-            (username.as_bytes(), old_value.as_ref()),
-            (username.as_bytes(), &new_value),
-        )?;
+        map.remove(username, names.iter().map(String::as_str))?;
         Ok(names)
     }
 
@@ -189,33 +139,24 @@ impl FilterMutation {
         old: FilterInput,
         new: FilterInput,
     ) -> Result<String> {
-        let new = database::Filter::try_from(new)?;
-
         let store = crate::graphql::get_store(ctx).await?;
-        let map = store.filter_map();
+        let table = store.filter_map();
         let username = ctx.data::<String>()?;
-        let codec = bincode::DefaultOptions::new();
 
-        let Some(old_value) = map.get(username.as_bytes())? else {
+        let mut new = database::Filter::try_from(new)?;
+        new.username = username.to_string();
+
+        let Some(old_filter) = table.get(username, &old.name)? else {
             return Err("no such filter".into());
         };
-        let mut filters = codec
-            .deserialize::<HashMap<String, database::Filter>>(old_value.as_ref())
-            .map_err(|e| format!("corrupt filter entry for account \"{username}\": {e}"))?;
-        let Some(old_filter) = filters.get(&old.name) else {
-            return Err("no such filter".into());
-        };
-        if old_filter != old {
+
+        if &old_filter != old {
             return Err("filter does not match".into());
         }
 
-        filters.remove(&old.name);
-        filters.insert(new.name.clone(), new);
-        let new_value = codec.serialize(&filters)?;
-        map.update(
-            (username.as_bytes(), old_value.as_ref()),
-            (username.as_bytes(), &new_value),
-        )?;
+        table.remove(username, std::iter::once(old.name.as_str()))?;
+        table.insert(new)?;
+
         Ok(old.name)
     }
 }
@@ -479,6 +420,7 @@ impl TryFrom<FilterInput> for database::Filter {
             None
         };
         Ok(Self {
+            username: String::new(),
             name: input.name,
             directions: input
                 .directions
