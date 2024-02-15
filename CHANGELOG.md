@@ -7,10 +7,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added
+### Changed
 
-- Add `apply_target_id` field to `Node` struct for reverting node status.
-- Add `apply_in_progress` field to `Node` struct for reverting node status.
+- `Node` struct now has `as_is` and `to_be` `NodeSetting`s to support 2-step
+  node setting save & apply. `NodeInput` accordingly has `as_is` and `to_be`.
 
 ### Fixed
 

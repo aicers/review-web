@@ -38,7 +38,7 @@ pub use self::allow_network::get_allow_networks;
 pub use self::block_network::get_block_networks;
 pub use self::cert::ParsedCertificate;
 pub use self::customer::get_customer_networks;
-pub use self::node::{get_customer_id_of_review_host, get_node_settings};
+pub use self::node::get_customer_id_of_review_host;
 pub use self::trusted_user_agent::get_trusted_user_agent_list;
 use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
@@ -83,7 +83,7 @@ pub trait AgentManager: Send + Sync {
     async fn broadcast_trusted_user_agent_list(&self, _list: &[u8]) -> Result<(), anyhow::Error>;
     async fn online_apps_by_host_id(
         &self,
-    ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error>;
+    ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error>; // (hostname, (agent_key, app_name))
     async fn send_and_recv(&self, key: &str, msg: &[u8]) -> Result<Vec<u8>, anyhow::Error>;
     async fn update_traffic_filter_rules(
         &self,

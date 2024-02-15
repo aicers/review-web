@@ -7,10 +7,10 @@ mod status;
 use async_graphql::{types::ID, ComplexObject, Context, InputObject, Object, Result, SimpleObject};
 use bincode::Options;
 use chrono::{DateTime, TimeZone, Utc};
-pub use crud::{get_customer_id_of_review_host, get_node_settings};
+pub use crud::get_customer_id_of_review_host;
 use input::NodeInput;
 use ipnet::Ipv4Net;
-use review_database::{Indexable, Indexed};
+use review_database::{Indexable, Indexed, IndexedMapUpdate};
 use roxy::Process as RoxyProcess;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -101,12 +101,10 @@ impl TryFrom<&NicInput> for Nic {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize, SimpleObject)]
+#[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
 #[graphql(complex)]
-#[allow(clippy::struct_excessive_bools)]
-pub(super) struct Node {
-    #[graphql(skip)]
-    id: u32,
+#[allow(clippy::struct_excessive_bools, clippy::module_name_repetitions)]
+pub struct NodeSetting {
     name: String,
     #[graphql(skip)]
     customer_id: u32,
@@ -133,6 +131,7 @@ pub(super) struct Node {
     txt: bool,
     smtp_eml: bool,
     ftp: bool,
+
     giganto: bool,
     #[graphql(skip)]
     giganto_ingestion_ip: Option<IpAddr>,
@@ -165,11 +164,32 @@ pub(super) struct Node {
 
     sensors: bool,
     sensor_list: HashMap<String, bool>,
+}
 
+#[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
+#[graphql(complex)]
+pub(super) struct Node {
+    #[graphql(skip)]
+    id: u32,
     creation_time: DateTime<Utc>,
+    pub as_is: Option<NodeSetting>,
+    pub to_be: Option<NodeSetting>,
+}
 
-    apply_target_id: Option<u32>,
-    apply_in_progress: bool,
+impl IndexedMapUpdate for Node {
+    type Entry = Self;
+
+    fn key(&self) -> Option<&[u8]> {
+        Some(Indexable::key(self))
+    }
+
+    fn apply(&self, _value: Self::Entry) -> anyhow::Result<Self::Entry> {
+        Ok(self.clone())
+    }
+
+    fn verify(&self, value: &Self::Entry) -> bool {
+        self == value
+    }
 }
 
 #[ComplexObject]
@@ -177,7 +197,32 @@ impl Node {
     async fn id(&self) -> ID {
         ID(self.id.to_string())
     }
+}
 
+impl Node {
+    fn as_is_hostname_or_fallback(&self) -> &str {
+        if let Some(as_is) = &self.as_is {
+            &as_is.hostname
+        } else if let Some(to_be) = &self.to_be {
+            &to_be.hostname
+        } else {
+            panic!("Both `as_is` and `to_be` are `None`");
+        }
+    }
+
+    fn as_is_name_or_fallback(&self) -> &str {
+        if let Some(as_is) = &self.as_is {
+            &as_is.name
+        } else if let Some(to_be) = &self.to_be {
+            &to_be.name
+        } else {
+            panic!("Both `as_is` and `to_be` are `None`");
+        }
+    }
+}
+
+#[ComplexObject]
+impl NodeSetting {
     async fn customer_id(&self) -> ID {
         ID(self.customer_id.to_string())
     }
@@ -224,7 +269,13 @@ impl NodeTotalCount {
 
 impl Indexable for Node {
     fn key(&self) -> &[u8] {
-        self.name.as_bytes()
+        if let Some(as_is) = &self.as_is {
+            as_is.name.as_bytes()
+        } else if let Some(to_be) = &self.to_be {
+            to_be.name.as_bytes()
+        } else {
+            panic!("Both `as_is` and `to_be` are `None`");
+        }
     }
 
     fn value(&self) -> Vec<u8> {

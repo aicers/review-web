@@ -932,11 +932,15 @@ fn convert_sensors(map: &IndexedMap, sensors: &[ID]) -> anyhow::Result<Vec<Strin
         let Some(value) = map.get_by_id(i)? else {
             bail!("no such sensor")
         };
-        let value: super::node::Node = codec
+        let node: super::node::Node = codec
             .deserialize(value.as_ref())
             .context("invalid value in database")?;
 
-        converted_sensors.push(value.hostname.clone());
+        if let Some(as_is) = node.as_is {
+            converted_sensors.push(as_is.hostname.clone());
+        } else {
+            bail!("node is not yet fully configured");
+        }
     }
     Ok(converted_sensors)
 }

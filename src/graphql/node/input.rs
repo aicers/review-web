@@ -1,13 +1,14 @@
-use super::{Node, PortNumber}; //NicInput
-use anyhow::Context as AnyhowContext; //bail
+use super::{Node, NodeSetting, PortNumber};
+use anyhow::Context as AnyhowContext;
 use async_graphql::{types::ID, InputObject, Result};
 use review_database::IndexedMapUpdate;
 use std::{collections::HashMap, net::IpAddr};
+use tracing::error;
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, InputObject)]
 #[allow(clippy::struct_excessive_bools)]
-pub(super) struct NodeInput {
+pub struct NodeSettingInput {
     pub name: String,
     pub customer_id: ID,
     pub description: String,
@@ -58,346 +59,163 @@ pub(super) struct NodeInput {
     pub sensor_list: HashMap<String, bool>,
 }
 
+impl PartialEq<NodeSetting> for NodeSettingInput {
+    fn eq(&self, other: &NodeSetting) -> bool {
+        self.name == other.name
+            && self.customer_id.as_str().parse::<u32>() == Ok(other.customer_id)
+            && self.description == other.description
+            && self.hostname == other.hostname
+            && self.review == other.review
+            && self.review_port == other.review_port
+            && self.review_web_port == other.review_web_port
+            && self.piglet == other.piglet
+            && parse_str_to_ip(self.piglet_giganto_ip.as_deref()) == other.piglet_giganto_ip
+            && self.piglet_giganto_port == other.piglet_giganto_port
+            && parse_str_to_ip(self.piglet_review_ip.as_deref()) == other.piglet_review_ip
+            && self.piglet_review_port == other.piglet_review_port
+            && self.save_packets == other.save_packets
+            && self.http == other.http
+            && self.office == other.office
+            && self.exe == other.exe
+            && self.pdf == other.pdf
+            && self.html == other.html
+            && self.txt == other.txt
+            && self.smtp_eml == other.smtp_eml
+            && self.ftp == other.ftp
+            && self.giganto == other.giganto
+            && parse_str_to_ip(self.giganto_ingestion_ip.as_deref()) == other.giganto_ingestion_ip
+            && self.giganto_ingestion_port == other.giganto_ingestion_port
+            && parse_str_to_ip(self.giganto_publish_ip.as_deref()) == other.giganto_publish_ip
+            && self.giganto_publish_port == other.giganto_publish_port
+            && parse_str_to_ip(self.giganto_graphql_ip.as_deref()) == other.giganto_graphql_ip
+            && self.giganto_graphql_port == other.giganto_graphql_port
+            && self.retention_period == other.retention_period
+            && self.reconverge == other.reconverge
+            && parse_str_to_ip(self.reconverge_review_ip.as_deref()) == other.reconverge_review_ip
+            && self.reconverge_review_port == other.reconverge_review_port
+            && parse_str_to_ip(self.reconverge_giganto_ip.as_deref()) == other.reconverge_giganto_ip
+            && self.reconverge_giganto_port == other.reconverge_giganto_port
+            && self.hog == other.hog
+            && parse_str_to_ip(self.hog_review_ip.as_deref()) == other.hog_review_ip
+            && self.hog_review_port == other.hog_review_port
+            && parse_str_to_ip(self.hog_giganto_ip.as_deref()) == other.hog_giganto_ip
+            && self.hog_giganto_port == other.hog_giganto_port
+            && self.protocols == other.protocols
+            && self.protocol_list == other.protocol_list
+            && self.sensors == other.sensors
+            && self.sensor_list == other.sensor_list
+    }
+}
+
+impl PartialEq<NodeSettingInput> for NodeSetting {
+    fn eq(&self, other: &NodeSettingInput) -> bool {
+        other.eq(self)
+    }
+}
+
+impl TryFrom<&NodeSettingInput> for NodeSetting {
+    type Error = anyhow::Error;
+
+    fn try_from(input: &NodeSettingInput) -> Result<Self, Self::Error> {
+        Ok(NodeSetting {
+            name: input.name.clone(),
+            customer_id: input.customer_id.parse().context("invalid customer ID")?,
+            description: input.description.clone(),
+            hostname: input.hostname.clone(),
+            review: input.review,
+            review_port: input.review_port,
+            review_web_port: input.review_web_port,
+            piglet: input.piglet,
+            piglet_giganto_ip: parse_str_to_ip(input.piglet_giganto_ip.as_deref()),
+            piglet_giganto_port: input.piglet_giganto_port,
+            piglet_review_ip: parse_str_to_ip(input.piglet_review_ip.as_deref()),
+            piglet_review_port: input.piglet_review_port,
+            save_packets: input.save_packets,
+            http: input.http,
+            office: input.office,
+            exe: input.exe,
+            pdf: input.pdf,
+            html: input.html,
+            txt: input.txt,
+            smtp_eml: input.smtp_eml,
+            ftp: input.ftp,
+            giganto: input.giganto,
+            giganto_ingestion_ip: parse_str_to_ip(input.giganto_ingestion_ip.as_deref()),
+            giganto_ingestion_port: input.giganto_ingestion_port,
+            giganto_publish_ip: parse_str_to_ip(input.giganto_publish_ip.as_deref()),
+            giganto_publish_port: input.giganto_publish_port,
+            giganto_graphql_ip: parse_str_to_ip(input.giganto_graphql_ip.as_deref()),
+            giganto_graphql_port: input.giganto_graphql_port,
+            retention_period: input.retention_period,
+            reconverge: input.reconverge,
+            reconverge_review_ip: parse_str_to_ip(input.reconverge_review_ip.as_deref()),
+            reconverge_review_port: input.reconverge_review_port,
+            reconverge_giganto_ip: parse_str_to_ip(input.reconverge_giganto_ip.as_deref()),
+            reconverge_giganto_port: input.reconverge_giganto_port,
+            hog: input.hog,
+            hog_review_ip: parse_str_to_ip(input.hog_review_ip.as_deref()),
+            hog_review_port: input.hog_review_port,
+            hog_giganto_ip: parse_str_to_ip(input.hog_giganto_ip.as_deref()),
+            hog_giganto_port: input.hog_giganto_port,
+            protocols: input.protocols,
+            protocol_list: input.protocol_list.clone(),
+            sensors: input.sensors,
+            sensor_list: input.sensor_list.clone(),
+        })
+    }
+}
+
+fn parse_str_to_ip(ip_str: Option<&str>) -> Option<IpAddr> {
+    ip_str.and_then(|ip_str| ip_str.parse::<IpAddr>().ok())
+}
+
+#[allow(clippy::module_name_repetitions)]
+#[derive(Clone, InputObject)]
+pub(super) struct NodeInput {
+    pub as_is: Option<NodeSettingInput>,
+    pub to_be: Option<NodeSettingInput>,
+}
+
 impl IndexedMapUpdate for NodeInput {
     type Entry = Node;
 
     fn key(&self) -> Option<&[u8]> {
-        Some(self.name.as_bytes())
+        if let Some(as_is) = &self.as_is {
+            Some(as_is.name.as_bytes())
+        } else if let Some(to_be) = &self.to_be {
+            Some(to_be.name.as_bytes())
+        } else {
+            error!("Both `as_is` and `to_be` are `None`");
+            None
+        }
     }
 
-    #[allow(clippy::too_many_lines)]
     fn apply(&self, mut value: Self::Entry) -> Result<Self::Entry, anyhow::Error> {
-        value.name.clear();
-        value.name.push_str(&self.name);
-        value.customer_id = self
-            .customer_id
-            .as_str()
-            .parse::<u32>()
-            .context("invalid customer ID")?;
-        value.description.clear();
-        value.description.push_str(&self.description);
-        value.hostname.clear();
-        value.hostname.push_str(&self.hostname);
-
-        // review
-        value.review = self.review;
-        value.review_port = self.review_port;
-        value.review_web_port = self.review_web_port;
-
-        // piglet
-        value.piglet = self.piglet;
-        value.piglet_giganto_ip = if let Some(ip) = self.piglet_giganto_ip.as_deref() {
-            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
-        } else {
-            None
-        };
-        value.piglet_giganto_port = self.piglet_giganto_port;
-        value.piglet_review_ip = if let Some(ip) = self.piglet_review_ip.as_deref() {
-            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
-        } else {
-            None
-        };
-        value.piglet_review_port = self.piglet_review_port;
-        value.save_packets = self.save_packets;
-        value.http = self.http;
-        value.office = self.office;
-        value.exe = self.exe;
-        value.pdf = self.pdf;
-        value.html = self.html;
-        value.txt = self.txt;
-        value.smtp_eml = self.smtp_eml;
-        value.ftp = self.ftp;
-
-        // giganto
-        value.giganto = self.giganto;
-        value.giganto_ingestion_ip = if let Some(ip) = self.giganto_ingestion_ip.as_deref() {
-            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
-        } else {
-            None
-        };
-        value.giganto_ingestion_port = self.giganto_ingestion_port;
-        value.giganto_publish_ip = if let Some(ip) = self.giganto_publish_ip.as_deref() {
-            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
-        } else {
-            None
-        };
-        value.giganto_publish_port = self.giganto_publish_port;
-        value.giganto_graphql_ip = if let Some(ip) = self.giganto_graphql_ip.as_deref() {
-            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
-        } else {
-            None
-        };
-        value.giganto_graphql_port = self.giganto_graphql_port;
-        value.retention_period = self.retention_period;
-
-        // reconverge
-        value.reconverge = self.reconverge;
-        value.reconverge_review_ip = if let Some(ip) = self.reconverge_review_ip.as_deref() {
-            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
-        } else {
-            None
-        };
-        value.reconverge_review_port = self.reconverge_review_port;
-        value.reconverge_giganto_ip = if let Some(ip) = self.reconverge_giganto_ip.as_deref() {
-            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
-        } else {
-            None
-        };
-        value.reconverge_giganto_port = self.reconverge_giganto_port;
-
-        // hog
-        value.hog = self.hog;
-        value.hog_review_ip = if let Some(ip) = self.hog_review_ip.as_deref() {
-            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
-        } else {
-            None
-        };
-        value.hog_review_port = self.hog_review_port;
-        value.hog_giganto_ip = if let Some(ip) = self.hog_giganto_ip.as_deref() {
-            Some(ip.parse::<IpAddr>().context("invalid IP address")?)
-        } else {
-            None
-        };
-        value.hog_giganto_port = self.hog_giganto_port;
-        value.protocols = self.protocols;
-        value.protocol_list = self.protocol_list.clone();
-        value.sensors = self.sensors;
-        value.sensor_list = self.sensor_list.clone();
-
+        match self.to_be.as_ref() {
+            Some(to_be) => {
+                let new_to_be = NodeSetting::try_from(to_be)?;
+                value.to_be = Some(new_to_be);
+            }
+            None => {
+                value.to_be = None;
+            }
+        }
         Ok(value)
     }
 
-    #[allow(clippy::too_many_lines)]
     fn verify(&self, value: &Self::Entry) -> bool {
-        if self.name != value.name {
-            return false;
-        }
-        if self
-            .customer_id
-            .as_str()
-            .parse::<u32>()
-            .map_or(true, |id| id != value.customer_id)
-        {
-            return false;
-        }
-        if self.description != value.description {
-            return false;
-        }
-        if self.hostname != value.hostname {
-            return false;
-        }
+        let as_is_matches = match (&self.as_is, &value.as_is) {
+            (Some(as_is), Some(value)) => as_is == value,
+            (Some(_), None) | (None, Some(_)) => false,
+            (None, None) => true,
+        };
 
-        // review
-        if self.review != value.review {
-            return false;
-        }
-        if self.review_port != value.review_port {
-            return false;
-        }
-        if self.review_web_port != value.review_web_port {
-            return false;
-        }
+        let to_be_matches = match (&self.to_be, &value.to_be) {
+            (Some(to_be), Some(value)) => to_be == value,
+            (Some(_), None) | (None, Some(_)) => false,
+            (None, None) => true,
+        };
 
-        // piglet
-        if self.piglet != value.piglet {
-            return false;
-        }
-        if let (Some(ip_self), Some(ip_value)) =
-            (self.piglet_giganto_ip.as_deref(), value.piglet_giganto_ip)
-        {
-            if ip_self
-                .parse::<IpAddr>()
-                .map_or(true, |ip_self| ip_self != ip_value)
-            {
-                return false;
-            }
-        } else if self.piglet_giganto_ip.is_some() || value.piglet_giganto_ip.is_some() {
-            return false;
-        }
-        if self.piglet_giganto_port != value.piglet_giganto_port {
-            return false;
-        }
-        if let (Some(ip_self), Some(ip_value)) =
-            (self.piglet_review_ip.as_deref(), value.piglet_review_ip)
-        {
-            if ip_self
-                .parse::<IpAddr>()
-                .map_or(true, |ip_self| ip_self != ip_value)
-            {
-                return false;
-            }
-        } else if self.piglet_review_ip.is_some() || value.piglet_review_ip.is_some() {
-            return false;
-        }
-        if self.piglet_review_port != value.piglet_review_port {
-            return false;
-        }
-        if self.save_packets != value.save_packets {
-            return false;
-        }
-        if self.http != value.http {
-            return false;
-        }
-        if self.office != value.office {
-            return false;
-        }
-        if self.exe != value.exe {
-            return false;
-        }
-        if self.pdf != value.pdf {
-            return false;
-        }
-        if self.html != value.html {
-            return false;
-        }
-        if self.txt != value.txt {
-            return false;
-        }
-        if self.smtp_eml != value.smtp_eml {
-            return false;
-        }
-        if self.ftp != value.ftp {
-            return false;
-        }
-
-        // giganto
-        if self.giganto != value.giganto {
-            return false;
-        }
-        if let (Some(ip_self), Some(ip_value)) = (
-            self.giganto_ingestion_ip.as_deref(),
-            value.giganto_ingestion_ip,
-        ) {
-            if ip_self
-                .parse::<IpAddr>()
-                .map_or(true, |ip_self| ip_self != ip_value)
-            {
-                return false;
-            }
-        } else if self.giganto_ingestion_ip.is_some() || value.giganto_ingestion_ip.is_some() {
-            return false;
-        }
-        if self.giganto_ingestion_port != value.giganto_ingestion_port {
-            return false;
-        }
-        if let (Some(ip_self), Some(ip_value)) =
-            (self.giganto_publish_ip.as_deref(), value.giganto_publish_ip)
-        {
-            if ip_self
-                .parse::<IpAddr>()
-                .map_or(true, |ip_self| ip_self != ip_value)
-            {
-                return false;
-            }
-        } else if self.giganto_publish_ip.is_some() || value.giganto_publish_ip.is_some() {
-            return false;
-        }
-        if self.giganto_publish_port != value.giganto_publish_port {
-            return false;
-        }
-        if let (Some(ip_self), Some(ip_value)) =
-            (self.giganto_graphql_ip.as_deref(), value.giganto_graphql_ip)
-        {
-            if ip_self
-                .parse::<IpAddr>()
-                .map_or(true, |ip_self| ip_self != ip_value)
-            {
-                return false;
-            }
-        } else if self.giganto_graphql_ip.is_some() || value.giganto_graphql_ip.is_some() {
-            return false;
-        }
-        if self.giganto_graphql_port != value.giganto_graphql_port {
-            return false;
-        }
-        if self.retention_period != value.retention_period {
-            return false;
-        }
-
-        // reconverge
-        if self.reconverge != value.reconverge {
-            return false;
-        }
-        if let (Some(ip_self), Some(ip_value)) = (
-            self.reconverge_review_ip.as_deref(),
-            value.reconverge_review_ip,
-        ) {
-            if ip_self
-                .parse::<IpAddr>()
-                .map_or(true, |ip_self| ip_self != ip_value)
-            {
-                return false;
-            }
-        } else if self.reconverge_review_ip.is_some() || value.reconverge_review_ip.is_some() {
-            return false;
-        }
-        if self.reconverge_review_port != value.reconverge_review_port {
-            return false;
-        }
-        if let (Some(ip_self), Some(ip_value)) = (
-            self.reconverge_giganto_ip.as_deref(),
-            value.reconverge_giganto_ip,
-        ) {
-            if ip_self
-                .parse::<IpAddr>()
-                .map_or(true, |ip_self| ip_self != ip_value)
-            {
-                return false;
-            }
-        } else if self.reconverge_giganto_ip.is_some() || value.reconverge_giganto_ip.is_some() {
-            return false;
-        }
-        if self.reconverge_giganto_port != value.reconverge_giganto_port {
-            return false;
-        }
-
-        // hog
-        if self.hog != value.hog {
-            return false;
-        }
-        if let (Some(ip_self), Some(ip_value)) =
-            (self.hog_review_ip.as_deref(), value.hog_review_ip)
-        {
-            if ip_self
-                .parse::<IpAddr>()
-                .map_or(true, |ip_self| ip_self != ip_value)
-            {
-                return false;
-            }
-        } else if self.hog_review_ip.is_some() || value.hog_review_ip.is_some() {
-            return false;
-        }
-        if self.hog_review_port != value.hog_review_port {
-            return false;
-        }
-        if let (Some(ip_self), Some(ip_value)) =
-            (self.hog_giganto_ip.as_deref(), value.hog_giganto_ip)
-        {
-            if ip_self
-                .parse::<IpAddr>()
-                .map_or(true, |ip_self| ip_self != ip_value)
-            {
-                return false;
-            }
-        } else if self.hog_giganto_ip.is_some() || value.hog_giganto_ip.is_some() {
-            return false;
-        }
-        if self.hog_giganto_port != value.hog_giganto_port {
-            return false;
-        }
-        if self.protocols != value.protocols {
-            return false;
-        }
-        if self.protocol_list != value.protocol_list {
-            return false;
-        }
-        if self.sensors != value.sensors {
-            return false;
-        }
-        if self.sensor_list != value.sensor_list {
-            return false;
-        }
-
-        true
+        as_is_matches && to_be_matches
     }
 }

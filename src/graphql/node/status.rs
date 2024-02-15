@@ -99,6 +99,8 @@ async fn load(
     connection
         .edges
         .extend(node_list.into_iter().map(move |(k, ev)| {
+            let hostname = ev.as_is_hostname_or_fallback();
+
             let (
                 review,
                 piglet,
@@ -111,11 +113,9 @@ async fn load(
                 total_disk_space,
                 used_disk_space,
                 ping,
-            ) = if let (Some(modules), Some(usage), Some(ping)) = (
-                apps.get(&ev.hostname),
-                usages.get(&ev.hostname),
-                ping.get(&ev.hostname),
-            ) {
+            ) = if let (Some(modules), Some(usage), Some(ping)) =
+                (apps.get(hostname), usages.get(hostname), ping.get(hostname))
+            {
                 let module_names = modules
                     .iter()
                     .map(|(_, m)| m.clone())
@@ -140,7 +140,7 @@ async fn load(
                     Some(usage.used_disk_space),
                     Some(*ping),
                 )
-            } else if !review_hostname.is_empty() && review_hostname == ev.hostname {
+            } else if !review_hostname.is_empty() && review_hostname == hostname {
                 (
                     Some(true),
                     None,
@@ -163,7 +163,7 @@ async fn load(
                 k,
                 NodeStatus::new(
                     ev.id,
-                    ev.name,
+                    ev.as_is_name_or_fallback().to_owned(),
                     cpu_usage,
                     total_memory,
                     used_memory,
