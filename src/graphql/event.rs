@@ -928,7 +928,11 @@ fn convert_sensors(map: &IndexedMap, sensors: &[ID]) -> anyhow::Result<Vec<Strin
             bail!("no such sensor")
         };
 
-        converted_sensors.push(node.hostname.clone());
+        if let Some(node_setting) = node.setting {
+            converted_sensors.push(node_setting.hostname.clone());
+        } else {
+            bail!("node is not yet fully configured");
+        }
     }
     Ok(converted_sensors)
 }

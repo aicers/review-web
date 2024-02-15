@@ -11,6 +11,7 @@ use chrono::Utc;
 use oinq::RequestCode;
 use roxy::ResourceUsage;
 use std::collections::{HashMap, HashSet};
+use tracing::error;
 
 #[Object]
 impl NodeStatusQuery {
@@ -102,7 +103,19 @@ async fn load(
         Connection::with_additional_fields(has_previous, has_next, NodeStatusTotalCount);
     connection
         .edges
-        .extend(node_list.into_iter().map(move |(k, ev)| {
+        .extend(node_list.into_iter().filter_map(move |(k, ev)| {
+            let hostname = if let Some(setting) = &ev.setting {
+                &setting.hostname
+            } else if let Some(setting_draft) = &ev.setting_draft {
+                &setting_draft.hostname
+            } else {
+                error!(
+                    "Both `setting` and `setting_draft` are `None`. Skipping current node {}",
+                    ev.id
+                );
+                return None;
+            };
+
             let (
                 review,
                 piglet,
@@ -115,11 +128,9 @@ async fn load(
                 total_disk_space,
                 used_disk_space,
                 ping,
-            ) = if let (Some(modules), Some(usage), Some(ping)) = (
-                apps.get(&ev.hostname),
-                usages.get(&ev.hostname),
-                ping.get(&ev.hostname),
-            ) {
+            ) = if let (Some(modules), Some(usage), Some(ping)) =
+                (apps.get(hostname), usages.get(hostname), ping.get(hostname))
+            {
                 let module_names = modules
                     .iter()
                     .map(|(_, m)| m.clone())
@@ -144,7 +155,7 @@ async fn load(
                     Some(usage.used_disk_space),
                     Some(*ping),
                 )
-            } else if !review_hostname.is_empty() && review_hostname == ev.hostname {
+            } else if !review_hostname.is_empty() && &review_hostname == hostname {
                 (
                     Some(true),
                     None,
@@ -163,7 +174,7 @@ async fn load(
                     None, None, None, None, None, None, None, None, None, None, None,
                 )
             };
-            Edge::new(
+            Some(Edge::new(
                 k,
                 NodeStatus::new(
                     ev.id,
@@ -180,7 +191,7 @@ async fn load(
                     reconverge,
                     hog,
                 ),
-            )
+            ))
         }));
     Ok(connection)
 }

@@ -16,6 +16,21 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   is less than one second.
 - `init_expiration_time` and `update_jwt_expires_in` take `u32` instead of `i64`
   for the expiration time argument.
+- `Node` struct now has `setting` and `setting_draft` of type `NodeSetting`, and
+  `name` and `name_draft`. `NodeInput` accordingly has changed to have
+  `setting`, `setting_draft`, `name`, and `name_draft`. Upon initial insertion
+  of `Node`, `name` must be provided, as it is used as the key of `Node` in the
+  database. `name_draft` and `setting_draft` are introduced to support 2-step
+  node-setting process, which is save & apply. `name_draft` and `setting_draft`
+  fields mean that the data are only saved to the database. Once those are
+  applied, the values are moved to `name`, and `setting`.
+  - `graphql::event::convert_sensors` uses `Node`'s `setting` value, to retrieve
+    the hostnames of the sensors. This function is called by GraphQL APIs of
+    `EventQuery` and `EventGroupQuery`.
+  - `node_status_list` API uses `hostname` from `Node`'s `setting` field, but in
+    case it is `None`, it resorts to using `setting_draft`.
+  - `graphql::node::crud::get_node_settings` uses `Node`'s `setting` value
+    first, but in case it is `None`, it resorts to using `setting_draft`.
 
 ### Removed
 

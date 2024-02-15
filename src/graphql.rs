@@ -103,8 +103,7 @@ pub trait AgentManager: Send + Sync {
 
     async fn online_apps_by_host_id(
         &self,
-    ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error>;
-
+    ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error>; // (hostname, (agent_key, app_name))
     async fn send_and_recv(&self, key: &str, msg: &[u8]) -> Result<Vec<u8>, anyhow::Error>;
 
     async fn broadcast_crusher_sampling_policy(
@@ -766,7 +765,7 @@ impl AgentManager for MockAgentManager {
         Ok(HashMap::new())
     }
     async fn send_and_recv(&self, _key: &str, _msg: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
-        unimplemented!()
+        Ok(vec![])
     }
 
     async fn broadcast_crusher_sampling_policy(

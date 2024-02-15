@@ -4,8 +4,8 @@ use crate::graphql::{customer::broadcast_customer_networks, get_customer_network
 
 use super::{
     super::{Role, RoleGuard},
-    Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, PortNumber, ServerAddress,
-    ServerPort, Setting,
+    Node, NodeInput, NodeMutation, NodeQuery, NodeSetting, NodeTotalCount, PortNumber,
+    ServerAddress, ServerPort, Setting,
 };
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
@@ -125,143 +125,89 @@ impl NodeMutation {
                 .as_str()
                 .parse::<u32>()
                 .map_err(|_| "invalid customer ID")?;
-            let piglet_giganto_ip = if let Some(ip) = piglet_giganto_ip {
-                Some(
-                    ip.as_str()
-                        .parse::<IpAddr>()
-                        .map_err(|_| "invalid IP address: storage")?,
-                )
-            } else {
-                None
-            };
-            let piglet_review_ip = if let Some(ip) = piglet_review_ip {
-                Some(
-                    ip.as_str()
-                        .parse::<IpAddr>()
-                        .map_err(|_| "invalid IP address: administration")?,
-                )
-            } else {
-                None
-            };
-            let giganto_ingestion_ip = if let Some(ip) = giganto_ingestion_ip {
-                Some(
-                    ip.as_str()
-                        .parse::<IpAddr>()
-                        .map_err(|_| "invalid IP address: receiving")?,
-                )
-            } else {
-                None
-            };
-            let giganto_publish_ip = if let Some(ip) = giganto_publish_ip {
-                Some(
-                    ip.as_str()
-                        .parse::<IpAddr>()
-                        .map_err(|_| "invalid IP address: sending")?,
-                )
-            } else {
-                None
-            };
-            let giganto_graphql_ip = if let Some(ip) = giganto_graphql_ip {
-                Some(
-                    ip.as_str()
-                        .parse::<IpAddr>()
-                        .map_err(|_| "invalid IP address: web")?,
-                )
-            } else {
-                None
-            };
-            let reconverge_review_ip = if let Some(ip) = reconverge_review_ip {
-                Some(
-                    ip.as_str()
-                        .parse::<IpAddr>()
-                        .map_err(|_| "invalid IP address: administration")?,
-                )
-            } else {
-                None
-            };
-            let reconverge_giganto_ip = if let Some(ip) = reconverge_giganto_ip {
-                Some(
-                    ip.as_str()
-                        .parse::<IpAddr>()
-                        .map_err(|_| "invalid IP address: storage")?,
-                )
-            } else {
-                None
-            };
-            let hog_review_ip = if let Some(ip) = hog_review_ip {
-                Some(
-                    ip.as_str()
-                        .parse::<IpAddr>()
-                        .map_err(|_| "invalid IP address: administration")?,
-                )
-            } else {
-                None
-            };
-            let hog_giganto_ip = if let Some(ip) = hog_giganto_ip {
-                Some(
-                    ip.as_str()
-                        .parse::<IpAddr>()
-                        .map_err(|_| "invalid IP address: storage")?,
-                )
-            } else {
-                None
-            };
 
             let value = Node {
                 id: u32::MAX,
-                customer_id,
                 name,
-                description,
-                hostname,
+                name_draft: None,
+                setting: None,
+                setting_draft: Some(NodeSetting {
+                    customer_id,
+                    description,
+                    hostname,
 
-                review,
-                review_port,
-                review_web_port,
+                    review,
+                    review_port,
+                    review_web_port,
 
-                piglet,
-                piglet_giganto_ip,
-                piglet_giganto_port,
-                piglet_review_ip,
-                piglet_review_port,
-                save_packets,
-                http,
-                office,
-                exe,
-                pdf,
-                html,
-                txt,
-                smtp_eml,
-                ftp,
+                    piglet,
+                    piglet_giganto_ip: parse_str_to_ip(
+                        piglet_giganto_ip.as_deref(),
+                        "invalid IP address: storage",
+                    )?,
+                    piglet_giganto_port,
+                    piglet_review_ip: parse_str_to_ip(
+                        piglet_review_ip.as_deref(),
+                        "invalid IP address: administration",
+                    )?,
+                    piglet_review_port,
+                    save_packets,
+                    http,
+                    office,
+                    exe,
+                    pdf,
+                    html,
+                    txt,
+                    smtp_eml,
+                    ftp,
 
-                giganto,
-                giganto_ingestion_ip,
-                giganto_ingestion_port,
-                giganto_publish_ip,
-                giganto_publish_port,
-                giganto_graphql_ip,
-                giganto_graphql_port,
-                retention_period,
+                    giganto,
+                    giganto_ingestion_ip: parse_str_to_ip(
+                        giganto_ingestion_ip.as_deref(),
+                        "invalid IP address: receiving",
+                    )?,
+                    giganto_ingestion_port,
+                    giganto_publish_ip: parse_str_to_ip(
+                        giganto_publish_ip.as_deref(),
+                        "invalid IP address: sending",
+                    )?,
+                    giganto_publish_port,
+                    giganto_graphql_ip: parse_str_to_ip(
+                        giganto_graphql_ip.as_deref(),
+                        "invalid IP address: web",
+                    )?,
+                    giganto_graphql_port,
+                    retention_period,
 
-                reconverge,
-                reconverge_review_ip,
-                reconverge_review_port,
-                reconverge_giganto_ip,
-                reconverge_giganto_port,
+                    reconverge,
+                    reconverge_review_ip: parse_str_to_ip(
+                        reconverge_review_ip.as_deref(),
+                        "invalid IP address: administration",
+                    )?,
+                    reconverge_review_port,
+                    reconverge_giganto_ip: parse_str_to_ip(
+                        reconverge_giganto_ip.as_deref(),
+                        "invalid IP address: storage",
+                    )?,
+                    reconverge_giganto_port,
 
-                hog,
-                hog_review_ip,
-                hog_review_port,
-                hog_giganto_ip,
-                hog_giganto_port,
-                protocols,
-                protocol_list,
-                sensors,
-                sensor_list,
-
+                    hog,
+                    hog_review_ip: parse_str_to_ip(
+                        hog_review_ip.as_deref(),
+                        "invalid IP address: administration",
+                    )?,
+                    hog_review_port,
+                    hog_giganto_ip: parse_str_to_ip(
+                        hog_giganto_ip.as_deref(),
+                        "invalid IP address: storage",
+                    )?,
+                    hog_giganto_port,
+                    protocols,
+                    protocol_list,
+                    sensors,
+                    sensor_list,
+                }),
                 creation_time: Utc::now(),
-
-                apply_target_id: None,
-                apply_in_progress: false,
             };
             let id = map.insert(value)?;
             (id, customer_id)
@@ -315,33 +261,42 @@ impl NodeMutation {
         old: NodeInput,
         new: NodeInput,
     ) -> Result<ID> {
-        let (review, customer_is_changed, customer_id) = {
-            let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-
-            let store = crate::graphql::get_store(ctx).await?;
-            let map = store.node_map();
-            map.update(i, &old, &new)?;
-
-            (
-                new.review,
-                new.customer_id != old.customer_id,
-                new.customer_id,
-            )
-        };
-
-        if review && customer_is_changed {
-            if let Ok(customer_id) = customer_id.as_str().parse::<u32>() {
-                let store = crate::graphql::get_store(ctx).await?;
-
-                if let Ok(networks) = get_customer_networks(&store, customer_id) {
-                    if let Err(e) = broadcast_customer_networks(ctx, &networks).await {
-                        error!("failed to broadcast internal networks. {e:?}");
-                    }
-                }
-            }
+        if !validate_update_input(&old, &new) {
+            return Err("Invalid combination of old and new values".into());
         }
 
+        let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.node_map();
+        map.update(i, &old, &new)?;
         Ok(id)
+    }
+}
+
+fn validate_update_input(old: &NodeInput, new: &NodeInput) -> bool {
+    matches!(
+        (
+            old.setting.as_ref(),
+            old.setting_draft.as_ref(),
+            new.setting.as_ref(),
+            new.setting_draft.as_ref(),
+        ),
+        (None, Some(_), None, Some(_))
+            | (Some(_), None, Some(_), Some(_))
+            | (Some(_), Some(_), Some(_), _)
+    )
+}
+
+fn parse_str_to_ip<'em>(
+    ip_str: Option<&str>,
+    error_message: &'em str,
+) -> Result<Option<IpAddr>, &'em str> {
+    match ip_str {
+        Some(ip_str) => ip_str
+            .parse::<IpAddr>()
+            .map(Some)
+            .map_err(|_| error_message),
+        None => Ok(None),
     }
 }
 
@@ -362,93 +317,108 @@ async fn load(
 /// # Errors
 ///
 /// Returns an error if the node settings could not be retrieved.
+#[allow(clippy::too_many_lines)]
 pub fn get_node_settings(db: &Store) -> Result<Vec<Setting>> {
     let map = db.node_map();
     let mut output = Vec::new();
     for (_key, value) in map.iter_forward()? {
-        let node = bincode::DefaultOptions::new()
+        let node: Node = bincode::DefaultOptions::new()
             .deserialize::<Node>(value.as_ref())
             .map_err(|_| "invalid value in database")?;
 
-        let piglet: Option<ServerAddress> = if node.piglet {
+        let node_setting = node
+            .setting
+            .or(node.setting_draft)
+            .ok_or("node is not yet fully configured")?;
+
+        let piglet: Option<ServerAddress> = if node_setting.piglet {
             Some(ServerAddress {
                 web: None,
                 rpc: Some(SocketAddr::new(
-                    node.piglet_review_ip
+                    node_setting
+                        .piglet_review_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node.piglet_review_port.unwrap_or_default(),
+                    node_setting.piglet_review_port.unwrap_or_default(),
                 )),
                 public: Some(SocketAddr::new(
-                    node.piglet_giganto_ip
+                    node_setting
+                        .piglet_giganto_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node.piglet_giganto_port.unwrap_or_default(),
+                    node_setting.piglet_giganto_port.unwrap_or_default(),
                 )),
                 ing: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)),
             })
         } else {
             None
         };
-        let giganto = if node.giganto {
+        let giganto = if node_setting.giganto {
             Some(ServerAddress {
                 web: Some(SocketAddr::new(
-                    node.giganto_graphql_ip
+                    node_setting
+                        .giganto_graphql_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node.giganto_graphql_port.unwrap_or_default(),
+                    node_setting.giganto_graphql_port.unwrap_or_default(),
                 )),
                 rpc: None,
                 public: Some(SocketAddr::new(
-                    node.giganto_publish_ip
+                    node_setting
+                        .giganto_publish_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node.giganto_publish_port.unwrap_or_default(),
+                    node_setting.giganto_publish_port.unwrap_or_default(),
                 )),
                 ing: Some(SocketAddr::new(
-                    node.giganto_ingestion_ip
+                    node_setting
+                        .giganto_ingestion_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node.giganto_ingestion_port.unwrap_or_default(),
+                    node_setting.giganto_ingestion_port.unwrap_or_default(),
                 )),
             })
         } else {
             None
         };
 
-        let review = if node.review {
+        let review = if node_setting.review {
             Some(ServerPort {
-                rpc_port: node.review_port.unwrap_or_default(),
-                web_port: node.review_web_port.unwrap_or_default(),
+                rpc_port: node_setting.review_port.unwrap_or_default(),
+                web_port: node_setting.review_web_port.unwrap_or_default(),
             })
         } else {
             None
         };
-        let reconverge = if node.reconverge {
+        let reconverge = if node_setting.reconverge {
             Some(ServerAddress {
                 web: None,
                 rpc: Some(SocketAddr::new(
-                    node.reconverge_review_ip
+                    node_setting
+                        .reconverge_review_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node.reconverge_review_port.unwrap_or_default(),
+                    node_setting.reconverge_review_port.unwrap_or_default(),
                 )),
                 public: Some(SocketAddr::new(
-                    node.reconverge_giganto_ip
+                    node_setting
+                        .reconverge_giganto_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node.reconverge_giganto_port.unwrap_or_default(),
+                    node_setting.reconverge_giganto_port.unwrap_or_default(),
                 )),
                 ing: None,
             })
         } else {
             None
         };
-        let hog = if node.hog {
+        let hog = if node_setting.hog {
             Some(ServerAddress {
                 web: None,
                 rpc: Some(SocketAddr::new(
-                    node.hog_review_ip
+                    node_setting
+                        .hog_review_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node.hog_review_port.unwrap_or_default(),
+                    node_setting.hog_review_port.unwrap_or_default(),
                 )),
                 public: Some(SocketAddr::new(
-                    node.hog_giganto_ip
+                    node_setting
+                        .hog_giganto_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node.hog_giganto_port.unwrap_or_default(),
+                    node_setting.hog_giganto_port.unwrap_or_default(),
                 )),
                 ing: None,
             })
@@ -457,7 +427,7 @@ pub fn get_node_settings(db: &Store) -> Result<Vec<Setting>> {
         };
 
         output.push(Setting {
-            name: node.hostname,
+            name: node_setting.hostname,
             piglet,
             giganto,
             hog,
@@ -481,9 +451,395 @@ pub fn get_customer_id_of_review_host(db: &Store) -> Result<Option<u32>> {
         let node = bincode::DefaultOptions::new()
             .deserialize::<Node>(value.as_ref())
             .map_err(|_| "invalid value in database")?;
-        if node.review {
-            return Ok(Some(node.customer_id));
+
+        if let Some(node_setting) = &node.setting {
+            if node_setting.review {
+                return Ok(Some(node_setting.customer_id));
+            }
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::graphql::TestSchema;
+    use assert_json_diff::assert_json_eq;
+    use serde_json::json;
+
+    // test scenario : insert node -> update node with different name -> remove node
+    #[tokio::test]
+    async fn node_crud() {
+        let schema = TestSchema::new().await;
+
+        // check empty
+        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 0}}"#);
+
+        // insert node
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "admin node",
+                        customerId: 0,
+                        description: "This is the admin node running review.",
+                        hostname: "admin.aice-security.com",
+                        review: true,
+                        reviewPort: 1111,
+                        reviewWebPort: 1112,
+                        piglet: false,
+                        pigletGigantoIp: null,
+                        pigletGigantoPort: null,
+                        pigletReviewIp: null,
+                        pigletReviewPort: null,
+                        savePackets: false,
+                        http: false,
+                        office: false,
+                        exe: false,
+                        pdf: false,
+                        html: false,
+                        txt: false,
+                        smtpEml: false,
+                        ftp: false,
+                        giganto: false,
+                        gigantoIngestionIp: null,
+                        gigantoIngestionPort: null,
+                        gigantoPublishIp: null,
+                        gigantoPublishPort: null,
+                        gigantoGraphqlIp: null,
+                        gigantoGraphqlPort: null,
+                        retentionPeriod: null,
+                        reconverge: false,
+                        reconvergeReviewIp: null,
+                        reconvergeReviewPort: null,
+                        reconvergeGigantoIp: null,
+                        reconvergeGigantoPort: null,
+                        hog: false,
+                        hogReviewIp: null,
+                        hogReviewPort: null,
+                        hogGigantoIp: null,
+                        hogGigantoPort: null,
+                        protocols: false,
+                        protocolList: {},
+                        sensors: false,
+                        sensorList: {},
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // check node count after insert
+        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 1}}"#);
+
+        // check inserted node
+        let res = schema
+            .execute(
+                r#"{node(id: "0") {
+                    id
+                    name
+                    nameDraft
+                    setting {
+                        customerId
+                        description
+                        hostname
+                        review
+                        reviewPort
+                        reviewWebPort
+                        protocolList
+                        sensorList
+                    }
+                    settingDraft {
+                        customerId
+                        description
+                        hostname
+                        review
+                        reviewPort
+                        reviewWebPort
+                        protocolList
+                        sensorList
+                    }
+
+                }}"#,
+            )
+            .await;
+
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "node": {
+                    "id": "0",
+                    "name": "admin node",
+                    "nameDraft": null,
+                    "setting": null,
+                    "settingDraft": {
+                        "customerId": "0",
+                        "description": "This is the admin node running review.",
+                        "hostname": "admin.aice-security.com",
+                        "review": true,
+                        "reviewPort": 1111,
+                        "reviewWebPort": 1112,
+                        "protocolList": {},
+                        "sensorList": {},
+                    },
+                }
+            })
+        );
+
+        // update node
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateNode(
+                        id: "0"
+                        old: {
+                            name: "admin node",
+                            nameDraft: null,
+                            setting: null
+                            settingDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "admin.aice-security.com",
+                                review: true,
+                                reviewPort: 1111,
+                                reviewWebPort: 1112,
+                                piglet: false,
+                                pigletGigantoIp: null,
+                                pigletGigantoPort: null,
+                                pigletReviewIp: null,
+                                pigletReviewPort: null,
+                                savePackets: false,
+                                http: false,
+                                office: false,
+                                exe: false,
+                                pdf: false,
+                                html: false,
+                                txt: false,
+                                smtpEml: false,
+                                ftp: false,
+                                giganto: false,
+                                gigantoIngestionIp: null,
+                                gigantoIngestionPort: null,
+                                gigantoPublishIp: null,
+                                gigantoPublishPort: null,
+                                gigantoGraphqlIp: null,
+                                gigantoGraphqlPort: null,
+                                retentionPeriod: null,
+                                reconverge: false,
+                                reconvergeReviewIp: null,
+                                reconvergeReviewPort: null,
+                                reconvergeGigantoIp: null,
+                                reconvergeGigantoPort: null,
+                                hog: false,
+                                hogReviewIp: null,
+                                hogReviewPort: null,
+                                hogGigantoIp: null,
+                                hogGigantoPort: null,
+                                protocols: false,
+                                protocolList: {},
+                                sensors: false,
+                                sensorList: {},
+                            }
+                        },
+                        new: {
+                            name: "admin node",
+                            nameDraft: "AdminNode",
+                            setting: null,
+                            settingDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "admin.aice-security.com",
+                                review: true,
+                                reviewPort: 2222,
+                                reviewWebPort: 2223,
+                                piglet: false,
+                                pigletGigantoIp: null,
+                                pigletGigantoPort: null,
+                                pigletReviewIp: null,
+                                pigletReviewPort: null,
+                                savePackets: false,
+                                http: false,
+                                office: false,
+                                exe: false,
+                                pdf: false,
+                                html: false,
+                                txt: false,
+                                smtpEml: false,
+                                ftp: false,
+                                giganto: false,
+                                gigantoIngestionIp: null,
+                                gigantoIngestionPort: null,
+                                gigantoPublishIp: null,
+                                gigantoPublishPort: null,
+                                gigantoGraphqlIp: null,
+                                gigantoGraphqlPort: null,
+                                retentionPeriod: null,
+                                reconverge: false,
+                                reconvergeReviewIp: null,
+                                reconvergeReviewPort: null,
+                                reconvergeGigantoIp: null,
+                                reconvergeGigantoPort: null,
+                                hog: false,
+                                hogReviewIp: null,
+                                hogReviewPort: null,
+                                hogGigantoIp: null,
+                                hogGigantoPort: null,
+                                protocols: false,
+                                protocolList: {},
+                                sensors: false,
+                                sensorList: {},
+                            }
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{updateNode: "0"}"#);
+
+        // check node count after update
+        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 1}}"#);
+
+        // check updated node
+        let res = schema
+            .execute(
+                r#"{node(id: "0") {
+                    id
+                    name
+                    nameDraft
+                    setting {
+                        customerId
+                        description
+                        hostname
+                        review
+                        reviewPort
+                        reviewWebPort
+                        protocolList
+                        sensorList
+                    }
+                    settingDraft {
+                        customerId
+                        description
+                        hostname
+                        review
+                        reviewPort
+                        reviewWebPort
+                        protocolList
+                        sensorList
+                    }
+
+                }}"#,
+            )
+            .await;
+
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "node": {
+                    "id": "0",
+                    "name": "admin node", // stays the same
+                    "nameDraft": "AdminNode", // updated
+                    "setting": null,
+                    "settingDraft": {
+                        "customerId": "0",
+                        "description": "This is the admin node running review.",
+                        "hostname": "admin.aice-security.com",
+                        "review": true,
+                        "reviewPort": 2222,  // updated
+                        "reviewWebPort": 2223, // updated
+                        "protocolList": {},
+                        "sensorList": {},
+                    },
+                }
+            })
+        );
+
+        // try reverting node, but it should fail because the node is an initial draft
+        let res = schema
+            .execute(
+                r#"mutation {
+                updateNode(
+                    id: "0"
+                    old: {
+                        name: "admin node",
+                        nameDraft: "AdminNode",
+                        setting: null
+                        settingDraft: {
+                            customerId: 0,
+                            description: "This is the admin node running review.",
+                            hostname: "admin.aice-security.com",
+                            review: true,
+                            reviewPort: 2222,
+                            reviewWebPort: 2223,
+                            piglet: false,
+                            pigletGigantoIp: null,
+                            pigletGigantoPort: null,
+                            pigletReviewIp: null,
+                            pigletReviewPort: null,
+                            savePackets: false,
+                            http: false,
+                            office: false,
+                            exe: false,
+                            pdf: false,
+                            html: false,
+                            txt: false,
+                            smtpEml: false,
+                            ftp: false,
+                            giganto: false,
+                            gigantoIngestionIp: null,
+                            gigantoIngestionPort: null,
+                            gigantoPublishIp: null,
+                            gigantoPublishPort: null,
+                            gigantoGraphqlIp: null,
+                            gigantoGraphqlPort: null,
+                            retentionPeriod: null,
+                            reconverge: false,
+                            reconvergeReviewIp: null,
+                            reconvergeReviewPort: null,
+                            reconvergeGigantoIp: null,
+                            reconvergeGigantoPort: null,
+                            hog: false,
+                            hogReviewIp: null,
+                            hogReviewPort: null,
+                            hogGigantoIp: null,
+                            hogGigantoPort: null,
+                            protocols: false,
+                            protocolList: {},
+                            sensors: false,
+                            sensorList: {},
+                        }
+                    },
+                    new: {
+                        name: "admin node",
+                        nameDraft: null,
+                        setting: null,
+                        settingDraft: null,
+                    }
+                )
+            }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"null"#);
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(
+            res.errors[0].message,
+            "Invalid combination of old and new values"
+        );
+
+        // remove node
+        let res = schema
+            .execute(
+                r#"mutation {
+                    removeNodes(ids: ["0"])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{removeNodes: ["admin node"]}"#);
+
+        // check node count after remove
+        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 0}}"#);
+    }
 }

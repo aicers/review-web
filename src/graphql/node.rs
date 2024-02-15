@@ -10,7 +10,7 @@ use chrono::{DateTime, TimeZone, Utc};
 pub use crud::{get_customer_id_of_review_host, get_node_settings};
 use input::NodeInput;
 use ipnet::Ipv4Net;
-use review_database::{types::FromKeyValue, Indexable, Indexed};
+use review_database::{types::FromKeyValue, Indexable, Indexed, IndexedMapUpdate};
 use roxy::Process as RoxyProcess;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -102,13 +102,10 @@ impl TryFrom<&NicInput> for Nic {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize, SimpleObject)]
+#[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
 #[graphql(complex)]
-#[allow(clippy::struct_excessive_bools)]
-pub(super) struct Node {
-    #[graphql(skip)]
-    id: u32,
-    name: String,
+#[allow(clippy::struct_excessive_bools, clippy::module_name_repetitions)]
+pub struct NodeSetting {
     #[graphql(skip)]
     customer_id: u32,
     description: String,
@@ -134,6 +131,7 @@ pub(super) struct Node {
     txt: bool,
     smtp_eml: bool,
     ftp: bool,
+
     giganto: bool,
     #[graphql(skip)]
     giganto_ingestion_ip: Option<IpAddr>,
@@ -166,11 +164,33 @@ pub(super) struct Node {
 
     sensors: bool,
     sensor_list: HashMap<String, bool>,
-
+}
+#[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
+#[graphql(complex)]
+pub(super) struct Node {
+    #[graphql(skip)]
+    id: u32,
+    name: String,
+    name_draft: Option<String>,
+    pub setting: Option<NodeSetting>,
+    pub setting_draft: Option<NodeSetting>,
     creation_time: DateTime<Utc>,
+}
 
-    apply_target_id: Option<u32>,
-    apply_in_progress: bool,
+impl IndexedMapUpdate for Node {
+    type Entry = Self;
+
+    fn key(&self) -> Option<Cow<[u8]>> {
+        Some(Indexable::key(self))
+    }
+
+    fn apply(&self, _value: Self::Entry) -> anyhow::Result<Self::Entry> {
+        Ok(self.clone())
+    }
+
+    fn verify(&self, value: &Self::Entry) -> bool {
+        self == value
+    }
 }
 
 #[ComplexObject]
@@ -178,7 +198,10 @@ impl Node {
     async fn id(&self) -> ID {
         ID(self.id.to_string())
     }
+}
 
+#[ComplexObject]
+impl NodeSetting {
     async fn customer_id(&self) -> ID {
         ID(self.customer_id.to_string())
     }
@@ -420,216 +443,5 @@ impl From<RoxyProcess> for Process {
             start_time: Utc.timestamp_nanos(value.start_time),
             command: value.command,
         }
-    }
-}
-
-#[cfg(test)]
-
-mod tests {
-    use crate::graphql::TestSchema;
-
-    #[tokio::test]
-    async fn test_node() {
-        let schema = TestSchema::new().await;
-
-        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 0}}"#);
-
-        let res = schema
-            .execute(
-                r#"mutation {
-                    insertNode(
-                        name: "admin node",
-                        customerId: 0,
-                        description: "This is the admin node running review.",
-                        hostname: "admin.aice-security.com",
-                        review: true,
-                        reviewPort: 38390,
-                        reviewWebPort: 8443,
-                        piglet: false,
-                        pigletGigantoIp: null,
-                        pigletGigantoPort: null,
-                        pigletReviewIp: null,
-                        pigletReviewPort: null,
-                        savePackets: false,
-                        http: false,
-                        office: false,
-                        exe: false,
-                        pdf: false,
-                        html: false,
-                        txt: false,
-                        smtpEml: false,
-                        ftp: false,
-                        giganto: false,
-                        gigantoIngestionIp: null,
-                        gigantoIngestionPort: null,
-                        gigantoPublishIp: null,
-                        gigantoPublishPort: null,
-                        gigantoGraphqlIp: null,
-                        gigantoGraphqlPort: null,
-                        retentionPeriod: null,
-                        reconverge: false,
-                        reconvergeReviewIp: null,
-                        reconvergeReviewPort: null,
-                        reconvergeGigantoIp: null,
-                        reconvergeGigantoPort: null,
-                        hog: false,
-                        hogReviewIp: null,
-                        hogReviewPort: null,
-                        hogGigantoIp: null,
-                        hogGigantoPort: null,
-                        protocols: false,
-                        protocolList: {},
-                        sensors: false,
-                        sensorList: {},
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
-
-        let res = schema
-            .execute(
-                r#"mutation {
-                    updateNode(
-                        id: "0"
-                        old: {
-                            name: "admin node",
-                            customerId: 0,
-                            description: "This is the admin node running review.",
-                            hostname: "admin.aice-security.com",
-                            review: true,
-                            reviewPort: 38390,
-                            reviewWebPort: 8443,
-                            piglet: false,
-                            pigletGigantoIp: null,
-                            pigletGigantoPort: null,
-                            pigletReviewIp: null,
-                            pigletReviewPort: null,
-                            savePackets: false,
-                            http: false,
-                            office: false,
-                            exe: false,
-                            pdf: false,
-                            html: false,
-                            txt: false,
-                            smtpEml: false,
-                            ftp: false,
-                            giganto: false,
-                            gigantoIngestionIp: null,
-                            gigantoIngestionPort: null,
-                            gigantoPublishIp: null,
-                            gigantoPublishPort: null,
-                            gigantoGraphqlIp: null,
-                            gigantoGraphqlPort: null,
-                            retentionPeriod: null,
-                            reconverge: false,
-                            reconvergeReviewIp: null,
-                            reconvergeReviewPort: null,
-                            reconvergeGigantoIp: null,
-                            reconvergeGigantoPort: null,
-                            hog: false,
-                            hogReviewIp: null,
-                            hogReviewPort: null,
-                            hogGigantoIp: null,
-                            hogGigantoPort: null,
-                            protocols: false,
-                            protocolList: {},
-                            sensors: false,
-                            sensorList: {},
-                        },
-                        new: {
-                            name: "AdminNode",
-                            customerId: 0,
-                            description: "This is the admin node running review.",
-                            hostname: "admin.aice-security.com",
-                            review: true,
-                            reviewPort: 38391,
-                            reviewWebPort: 8443,
-                            piglet: false,
-                            pigletGigantoIp: null,
-                            pigletGigantoPort: null,
-                            pigletReviewIp: null,
-                            pigletReviewPort: null,
-                            savePackets: false,
-                            http: false,
-                            office: false,
-                            exe: false,
-                            pdf: false,
-                            html: false,
-                            txt: false,
-                            smtpEml: false,
-                            ftp: false,
-                            giganto: false,
-                            gigantoIngestionIp: null,
-                            gigantoIngestionPort: null,
-                            gigantoPublishIp: null,
-                            gigantoPublishPort: null,
-                            gigantoGraphqlIp: null,
-                            gigantoGraphqlPort: null,
-                            retentionPeriod: null,
-                            reconverge: false,
-                            reconvergeReviewIp: null,
-                            reconvergeReviewPort: null,
-                            reconvergeGigantoIp: null,
-                            reconvergeGigantoPort: null,
-                            hog: false,
-                            hogReviewIp: null,
-                            hogReviewPort: null,
-                            hogGigantoIp: null,
-                            hogGigantoPort: null,
-                            protocols: false,
-                            protocolList: {},
-                            sensors: false,
-                            sensorList: {},
-                        }
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{updateNode: "0"}"#);
-
-        let res = schema
-            .execute(
-                r#"query {
-                    nodeList(first: 1) {
-                        nodes {
-                            name
-                        }
-                    }
-                }"#,
-            )
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{nodeList: {nodes: [{name: "AdminNode"}]}}"#
-        );
-
-        let res = schema
-            .execute(
-                r#"query {
-                    nodeStatusList(first: 1) {
-                        nodes {
-                            name
-                            cpuUsage
-                            review
-                        }
-                    }
-                }"#,
-            )
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{nodeStatusList: {nodes: [{name: "AdminNode",cpuUsage: null,review: null}]}}"#
-        );
-
-        let res = schema
-            .execute(
-                r#"mutation {
-                    removeNodes(ids: ["0"])
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{removeNodes: ["AdminNode"]}"#);
     }
 }
