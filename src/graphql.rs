@@ -44,6 +44,7 @@ pub use self::sampling::{
     Policy as SamplingPolicy,
 };
 pub use self::trusted_user_agent::get_trusted_user_agent_list;
+use anyhow::anyhow;
 use async_graphql::connection::ConnectionNameType;
 use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
@@ -73,24 +74,37 @@ pub(super) type Schema = async_graphql::Schema<Query, Mutation, Subscription>;
 
 #[async_trait]
 pub trait AgentManager: Send + Sync {
-    async fn broadcast_to_crusher(&self, message: &[u8]) -> Result<(), anyhow::Error>;
-    async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error>;
+    async fn broadcast_to_crusher(&self, _message: &[u8]) -> Result<(), anyhow::Error> {
+        self.default()
+    }
+
+    async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
+        self.default()
+    }
+
     async fn broadcast_internal_networks(
         &self,
         _networks: &[u8],
     ) -> Result<Vec<String>, anyhow::Error>;
+
     async fn broadcast_allow_networks(
         &self,
         _networks: &[u8],
     ) -> Result<Vec<String>, anyhow::Error>;
+
     async fn broadcast_block_networks(
         &self,
         _networks: &[u8],
     ) -> Result<Vec<String>, anyhow::Error>;
-    async fn broadcast_trusted_user_agent_list(&self, _list: &[u8]) -> Result<(), anyhow::Error>;
+
+    async fn broadcast_trusted_user_agent_list(&self, _list: &[u8]) -> Result<(), anyhow::Error> {
+        self.default()
+    }
+
     async fn online_apps_by_host_id(
         &self,
     ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error>;
+
     async fn send_and_recv(&self, key: &str, msg: &[u8]) -> Result<Vec<u8>, anyhow::Error>;
 
     async fn broadcast_crusher_sampling_policy(
@@ -134,9 +148,20 @@ pub trait AgentManager: Send + Sync {
     /// Updates the traffic filter rules for the given host.
     async fn update_traffic_filter_rules(
         &self,
-        host: &str,
-        rules: &[(IpNet, Option<Vec<u16>>, Option<Vec<u16>>)],
-    ) -> Result<(), anyhow::Error>;
+        _host: &str,
+        _rules: &[(IpNet, Option<Vec<u16>>, Option<Vec<u16>>)],
+    ) -> Result<(), anyhow::Error> {
+        self.default()
+    }
+
+    /// Default implementation
+    ///
+    /// # Errors
+    ///
+    /// Returns an error with the message "not supported".
+    fn default(&self) -> Result<(), anyhow::Error> {
+        Err(anyhow!("not supported"))
+    }
 }
 
 type BoxedAgentManager = Box<dyn AgentManager>;
@@ -763,6 +788,11 @@ struct TestSchema {
 #[cfg(test)]
 impl TestSchema {
     async fn new() -> Self {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        Self::new_with(agent_manager).await
+    }
+
+    async fn new_with(agent_manager: BoxedAgentManager) -> Self {
         use self::account::set_initial_admin_password;
 
         let db_dir = tempfile::tempdir().unwrap();
@@ -770,7 +800,6 @@ impl TestSchema {
         let store = Store::new(db_dir.path(), backup_dir.path()).unwrap();
         let _ = set_initial_admin_password(&store);
         let store = Arc::new(RwLock::new(store));
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
         let schema = Schema::build(
             Query::default(),
             Mutation::default(),
