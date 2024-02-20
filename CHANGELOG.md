@@ -20,6 +20,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   advancements and improvements in our system, this type is no longer necessary
   and has been removed to streamline the codebase and enhance overall maintainability.
 
+### Added
+
+- Add unit tests to `customer_list` to check ordering of nodes and edges.
+
 ## [0.18.0] - 2024-02-26
 
 ### Added

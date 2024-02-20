@@ -581,6 +581,180 @@ mod tests {
     use crate::graphql::TestSchema;
 
     #[tokio::test]
+    async fn check_customer_ordering() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute(r#"{customerList{edges{node{name}}totalCount}}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{customerList: {edges: [],totalCount: 0}}"#
+        );
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                insertCustomer(name: "t1", description: "", networks: [])
+            }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                insertCustomer(name: "t2", description: "", networks: [])
+            }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                insertCustomer(name: "t3", description: "", networks: [])
+            }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "2"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                insertCustomer(name: "t4", description: "", networks: [])
+            }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "3"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                insertCustomer(name: "t5", description: "", networks: [])
+            }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "4"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                insertCustomer(name: "t6", description: "", networks: [])
+            }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "5"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                insertCustomer(name: "t7", description: "", networks: [])
+            }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "6"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                insertCustomer(name: "t8", description: "", networks: [])
+            }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "7"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                insertCustomer(name: "t9", description: "", networks: [])
+            }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "8"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                insertCustomer(name: "t10", description: "", networks: [])
+            }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "9"}"#);
+
+        let res = schema
+            .execute(r#"{customerList(last: 10){edges{node{name}}totalCount}}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{customerList: {edges: [{node: {name: "t1"}},{node: {name: "t10"}},{node: {name: "t2"}},{node: {name: "t3"}},{node: {name: "t4"}},{node: {name: "t5"}},{node: {name: "t6"}},{node: {name: "t7"}},{node: {name: "t8"}},{node: {name: "t9"}}],totalCount: 10}}"#
+        );
+
+        let res = schema
+            .execute(r#"{customerList(last: 10, before: "dDg="){edges{node{name}}totalCount,pageInfo{startCursor}}}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{customerList: {edges: [{node: {name: "t1"}},{node: {name: "t10"}},{node: {name: "t2"}},{node: {name: "t3"}},{node: {name: "t4"}},{node: {name: "t5"}},{node: {name: "t6"}},{node: {name: "t7"}}],totalCount: 10,pageInfo: {startCursor: "dDE="}}}"#
+        );
+
+        let res = schema
+            .execute(
+                r#"{customerList(last: 10, after: "dDc="){edges{node{name}}totalCount,pageInfo{startCursor}}}"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{customerList: {edges: [{node: {name: "t8"}},{node: {name: "t9"}}],totalCount: 10,pageInfo: {startCursor: "dDg="}}}"#
+        );
+
+        let res = schema
+            .execute(
+                r#"{customerList(first:10 after:"dDc=" ){edges{node{name}}totalCount,pageInfo{endCursor}}}"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{customerList: {edges: [{node: {name: "t8"}},{node: {name: "t9"}}],totalCount: 10,pageInfo: {endCursor: "dDk="}}}"#
+        );
+
+        let res = schema
+        .execute(
+            r#"{customerList(first:10 before:"dDc=" ){edges{node{name}}totalCount,pageInfo{endCursor}}}"#,
+        )
+        .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{customerList: {edges: [{node: {name: "t1"}},{node: {name: "t10"}},{node: {name: "t2"}},{node: {name: "t3"}},{node: {name: "t4"}},{node: {name: "t5"}},{node: {name: "t6"}}],totalCount: 10,pageInfo: {endCursor: "dDY="}}}"#
+        );
+
+        let res = schema
+            .execute(r#"{customerList(first:10){edges{node{name}}totalCount}}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{customerList: {edges: [{node: {name: "t1"}},{node: {name: "t10"}},{node: {name: "t2"}},{node: {name: "t3"}},{node: {name: "t4"}},{node: {name: "t5"}},{node: {name: "t6"}},{node: {name: "t7"}},{node: {name: "t8"}},{node: {name: "t9"}}],totalCount: 10}}"#
+        );
+
+        let res = schema
+            .execute(
+                r#"mutation { removeCustomers(ids: ["0","1","2","3","4","5","6","7","8","9"]) }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{removeCustomers: ["t1","t2","t3","t4","t5","t6","t7","t8","t9","t10"]}"#
+        );
+
+        let res = schema
+            .execute(r#"{customerList{edges{node{name}}totalCount}}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{customerList: {edges: [],totalCount: 0}}"#
+        );
+    }
+
+    #[tokio::test]
     async fn remove_customers() {
         let schema = TestSchema::new().await;
         let res = schema
