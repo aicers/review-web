@@ -11,6 +11,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Add `apply_target_id` field to `Node` struct for reverting node status.
 - Add `apply_in_progress` field to `Node` struct for reverting node status.
+- Added the following GraphQL API to access workflow tags:
+  - 'workflowTagList'
+  - 'insertWorkflowTag'
+  - 'removeWorkflowTag'
+  - 'updateWorkflowTag'
 
 ### Fixed
 

@@ -22,10 +22,10 @@ impl WorkflowTagQuery {
 }
 
 #[derive(Default)]
-pub(in crate::graphql) struct EventTagMutation;
+pub(in crate::graphql) struct WorkflowTagMutation;
 
 #[Object]
-impl EventTagMutation {
+impl WorkflowTagMutation {
     /// Inserts a new workflow tag, returning the ID of the new tag.
     async fn insert_workflow_tag(&self, ctx: &Context<'_>, name: String) -> Result<ID> {
         let store = crate::graphql::get_store(ctx).await?;
@@ -57,7 +57,7 @@ impl EventTagMutation {
         new: String,
     ) -> Result<bool> {
         let store = crate::graphql::get_store(ctx).await?;
-        let set = store.event_tag_set();
+        let set = store.workflow_tag_set();
         Ok(set.update(id.0.parse()?, old.as_bytes(), new.as_bytes())?)
     }
 }
