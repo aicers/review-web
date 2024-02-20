@@ -1,5 +1,5 @@
 use crate::graphql::{Role, RoleGuard};
-use async_graphql::{Context, Object, Result, SimpleObject};
+use async_graphql::{Context, Object, Result};
 use chrono::{DateTime, Utc};
 use review_database::{self as database};
 
@@ -12,8 +12,9 @@ impl IndicatorQuery {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn indicator(&self, ctx: &Context<'_>, name: String) -> Result<Option<ModelIndicator>> {
-        let store = super::get_store(ctx).await?;
-        database::ModelIndicator::get(&store, &name)
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.model_indicator_map();
+        map.get(&name)
             .map(|indicator| indicator.map(Into::into))
             .map_err(Into::into)
     }
@@ -23,18 +24,14 @@ impl IndicatorQuery {
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
-    async fn indicator_list(&self, ctx: &Context<'_>) -> Result<Vec<ModelIndicatorOutput>> {
+    async fn indicator_list(&self, ctx: &Context<'_>) -> Result<Vec<ModelIndicator>> {
+        use database::Iterable;
+
         let store = super::get_store(ctx).await?;
-        database::ModelIndicator::get_list(&store)
-            .map(|list| {
-                list.into_iter()
-                    .map(|(name, indicator)| ModelIndicatorOutput {
-                        name,
-                        indicator: indicator.into(),
-                    })
-                    .collect()
-            })
-            .map_err(Into::into)
+        let map = store.model_indicator_map();
+        map.iter(database::Direction::Forward, None)
+            .map(|res| res.map(Into::into).map_err(Into::into))
+            .collect()
     }
 }
 
@@ -53,9 +50,10 @@ impl IndicatorMutation {
         name: String,
         dbfile: String,
     ) -> Result<String> {
-        let indicator = database::ModelIndicator::new(&dbfile)?;
+        let indicator = database::ModelIndicator::new(&name, &dbfile)?;
         let store = super::get_store(ctx).await?;
-        indicator.insert(&store, &name).map_err(Into::into)
+        let map = store.model_indicator_map();
+        map.insert(indicator).map_err(Into::into).map(|()| name)
     }
 
     /// Removes Indicator, returning the db's name and version that no longer exist.
@@ -69,7 +67,9 @@ impl IndicatorMutation {
         #[graphql(validator(min_items = 1))] names: Vec<String>,
     ) -> Result<Vec<String>> {
         let store = super::get_store(ctx).await?;
-        database::ModelIndicator::remove(&store, &names).map_err(Into::into)
+        let map = store.model_indicator_map();
+        map.remove(names.iter().map(String::as_str))
+            .map_err(Into::into)
     }
 
     /// Updates the given indicator, returning the indicator name that was updated.
@@ -84,9 +84,10 @@ impl IndicatorMutation {
         name: String,
         new: String,
     ) -> Result<String> {
-        let indicator = database::ModelIndicator::new(&new)?;
+        let indicator = database::ModelIndicator::new(&name, &new)?;
         let store = super::get_store(ctx).await?;
-        indicator.update(&store, &name).map_err(Into::into)
+        let map = store.model_indicator_map();
+        map.update(indicator).map_err(Into::into).map(|()| name)
     }
 }
 
@@ -96,6 +97,11 @@ struct ModelIndicator {
 
 #[Object]
 impl ModelIndicator {
+    /// The name of the model indicator.
+    async fn name(&self) -> &str {
+        &self.inner.name
+    }
+
     /// The description of the model indicator.
     async fn description(&self) -> &str {
         &self.inner.description
@@ -121,11 +127,4 @@ impl From<database::ModelIndicator> for ModelIndicator {
     fn from(inner: database::ModelIndicator) -> Self {
         Self { inner }
     }
-}
-
-#[derive(SimpleObject)]
-#[allow(clippy::module_name_repetitions)]
-pub struct ModelIndicatorOutput {
-    name: String,
-    indicator: ModelIndicator,
 }

@@ -5,6 +5,21 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Updated the `ModelIndicator` GraphQL type. Added `name` field as the name of
+  the model indicator.
+- Changed the return type of `indicatorList` GraphQL query to `[ModelIndicator!]!`.
+
+### Removed
+
+- Removed the obsoleted `ModelIndicatorOutput` GraphQL type. This type was
+  previously used as return type of `indicatorList` GraphQL query. With
+  advancements and improvements in our system, this type is no longer necessary
+  and has been removed to streamline the codebase and enhance overall maintainability.
+
 ## [0.18.0] - 2024-02-26
 
 ### Added
@@ -405,6 +420,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.18.0...main
 [0.18.0]: https://github.com/aicers/review-web/compare/0.17.0...0.18.0
 [0.17.0]: https://github.com/aicers/review-web/compare/0.16.0...0.17.0
 [0.16.0]: https://github.com/aicers/review-web/compare/0.15.0...0.16.0
