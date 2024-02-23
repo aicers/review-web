@@ -1,10 +1,8 @@
 use super::{ParseEnumError, Role, RoleGuard};
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
-    Context, Enum, InputObject, Object, Result, SimpleObject, Union,
+    Context, Enum, InputObject, Object, Result, Union,
 };
-use bincode::Options;
-use review_database::{types::FromKeyValue, IterableMap, Map, MapIterator};
 use serde::{Deserialize, Serialize};
 use std::convert::{TryFrom, TryInto};
 
@@ -52,13 +50,15 @@ impl TemplateMutation {
         structured: Option<StructuredClusteringTemplateInput>,
         unstructured: Option<UnstructuredClusteringTemplateInput>,
     ) -> Result<String> {
-        let template = match (structured, unstructured) {
-            (Some(structured), None) => Template::Structured(
+        let (name, template) = match (structured, unstructured) {
+            (Some(structured), None) => (
+                structured.name.clone(),
                 structured
                     .try_into()
                     .map_err(|_| "invalid clustering algorithm")?,
             ),
-            (None, Some(unstructured)) => Template::Unstructured(
+            (None, Some(unstructured)) => (
+                unstructured.name.clone(),
                 unstructured
                     .try_into()
                     .map_err(|_| "invalid clustering algorithm")?,
@@ -75,11 +75,9 @@ impl TemplateMutation {
             }
         };
 
-        let name = template.name().to_string();
-        let value = bincode::DefaultOptions::new().serialize(&template)?;
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.template_map();
-        map.put(name.as_bytes(), &value)?;
+        map.insert(template)?;
         Ok(name)
     }
 
@@ -90,7 +88,7 @@ impl TemplateMutation {
     async fn remove_template(&self, ctx: &Context<'_>, name: String) -> Result<String> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.template_map();
-        map.delete(name.as_bytes())?;
+        map.remove(&name)?;
         Ok(name)
     }
 
@@ -106,51 +104,30 @@ impl TemplateMutation {
         new_structured: Option<StructuredClusteringTemplateInput>,
         new_unstructured: Option<UnstructuredClusteringTemplateInput>,
     ) -> Result<bool> {
-        match (
+        let (old, new) = match (
             old_structured,
             old_unstructured,
             new_structured,
             new_unstructured,
         ) {
             (Some(old_structured), None, Some(new_structured), None) => {
-                let old_template = Template::Structured(
-                    old_structured
-                        .try_into()
-                        .map_err(|_| "invalid clustering algorithm")?,
-                );
-                let new_template = Template::Structured(
-                    new_structured
-                        .try_into()
-                        .map_err(|_| "invalid clustering algorithm")?,
-                );
-
-                let old_key = old_template.name().as_bytes();
-                let old_value = bincode::DefaultOptions::new().serialize(&old_template)?;
-                let new_key = new_template.name().as_bytes();
-                let new_value = bincode::DefaultOptions::new().serialize(&new_template)?;
-                let store = crate::graphql::get_store(ctx).await?;
-                let map = store.template_map();
-                map.update((old_key, &old_value), (new_key, &new_value))?;
+                let old_template = old_structured
+                    .try_into()
+                    .map_err(|_| "invalid clustering algorithm")?;
+                let new_template = new_structured
+                    .try_into()
+                    .map_err(|_| "invalid clustering algorithm")?;
+                (old_template, new_template)
             }
             (None, Some(old_unstructured), None, Some(new_unstructured)) => {
-                let old_template = Template::Unstructured(
-                    old_unstructured
-                        .try_into()
-                        .map_err(|_| "invalid clustering algorithm")?,
-                );
-                let new_template = Template::Unstructured(
-                    new_unstructured
-                        .try_into()
-                        .map_err(|_| "invalid clustering algorithm")?,
-                );
+                let old_template = old_unstructured
+                    .try_into()
+                    .map_err(|_| "invalid clustering algorithm")?;
+                let new_template = new_unstructured
+                    .try_into()
+                    .map_err(|_| "invalid clustering algorithm")?;
 
-                let old_key = old_template.name().as_bytes();
-                let old_value = bincode::DefaultOptions::new().serialize(&old_template)?;
-                let new_key = new_template.name().as_bytes();
-                let new_value = bincode::DefaultOptions::new().serialize(&new_template)?;
-                let store = crate::graphql::get_store(ctx).await?;
-                let map = store.template_map();
-                map.update((old_key, &old_value), (new_key, &new_value))?;
+                (old_template, new_template)
             }
             _ => {
                 return Err(
@@ -158,6 +135,9 @@ impl TemplateMutation {
                 );
             }
         };
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.template_map();
+        map.update(old, new)?;
         Ok(true)
     }
 }
@@ -179,6 +159,48 @@ enum StructuredClusteringAlgorithm {
     Optics,
 }
 
+impl From<StructuredClusteringAlgorithm> for review_database::StructuredClusteringAlgorithm {
+    fn from(input: StructuredClusteringAlgorithm) -> Self {
+        match input {
+            StructuredClusteringAlgorithm::Dbscan => Self::Dbscan,
+            StructuredClusteringAlgorithm::Optics => Self::Optics,
+        }
+    }
+}
+
+impl From<review_database::StructuredClusteringAlgorithm> for StructuredClusteringAlgorithm {
+    fn from(input: review_database::StructuredClusteringAlgorithm) -> Self {
+        match input {
+            review_database::StructuredClusteringAlgorithm::Dbscan => Self::Dbscan,
+            review_database::StructuredClusteringAlgorithm::Optics => Self::Optics,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Deserialize, Enum, Eq, PartialEq, Serialize)]
+enum UnstructuredClusteringAlgorithm {
+    Distribution,
+    Prefix,
+}
+
+impl From<UnstructuredClusteringAlgorithm> for review_database::UnstructuredClusteringAlgorithm {
+    fn from(input: UnstructuredClusteringAlgorithm) -> Self {
+        match input {
+            UnstructuredClusteringAlgorithm::Distribution => Self::Distribution,
+            UnstructuredClusteringAlgorithm::Prefix => Self::Prefix,
+        }
+    }
+}
+
+impl From<review_database::UnstructuredClusteringAlgorithm> for UnstructuredClusteringAlgorithm {
+    fn from(input: review_database::UnstructuredClusteringAlgorithm) -> Self {
+        match input {
+            review_database::UnstructuredClusteringAlgorithm::Distribution => Self::Distribution,
+            review_database::UnstructuredClusteringAlgorithm::Prefix => Self::Prefix,
+        }
+    }
+}
+
 #[derive(InputObject)]
 struct UnstructuredClusteringTemplateInput {
     name: String,
@@ -187,78 +209,117 @@ struct UnstructuredClusteringTemplateInput {
     min_token_length: Option<i32>,
 }
 
-#[derive(Deserialize, Serialize, Union)]
+#[derive(Union)]
 enum Template {
     Structured(StructuredClusteringTemplate),
     Unstructured(UnstructuredClusteringTemplate),
 }
 
-impl FromKeyValue for Template {
-    fn from_key_value(_key: &[u8], value: &[u8]) -> anyhow::Result<Self> {
-        Ok(bincode::DefaultOptions::new().deserialize(value)?)
-    }
-}
-
-impl Template {
-    fn name(&self) -> &str {
-        match self {
-            Template::Structured(template) => &template.name,
-            Template::Unstructured(template) => &template.name,
+impl From<review_database::Template> for Template {
+    fn from(inner: review_database::Template) -> Self {
+        match inner {
+            review_database::Template::Structured(s) => Self::Structured(s.into()),
+            review_database::Template::Unstructured(u) => Self::Unstructured(u.into()),
         }
     }
 }
 
-#[derive(Copy, Clone, Deserialize, Enum, Eq, PartialEq, Serialize)]
-enum UnstructuredClusteringAlgorithm {
-    Prefix,
-    Distribution,
-}
-
-#[derive(Deserialize, Serialize, SimpleObject)]
 struct StructuredClusteringTemplate {
-    name: String,
-    description: String,
-    algorithm: Option<StructuredClusteringAlgorithm>,
-    eps: Option<f32>,
-    format: Option<String>,
-    time_intervals: Option<Vec<i64>>,
-    numbers_of_top_n: Option<Vec<i32>>,
+    inner: review_database::Structured,
 }
 
-impl TryFrom<StructuredClusteringTemplateInput> for StructuredClusteringTemplate {
+#[Object]
+impl StructuredClusteringTemplate {
+    async fn name(&self) -> &str {
+        &self.inner.name
+    }
+
+    async fn description(&self) -> &str {
+        &self.inner.description
+    }
+
+    async fn algorithm(&self) -> Option<StructuredClusteringAlgorithm> {
+        self.inner.algorithm.map(Into::into)
+    }
+
+    async fn eps(&self) -> Option<f32> {
+        self.inner.eps
+    }
+
+    async fn format(&self) -> Option<&str> {
+        self.inner.format.as_deref()
+    }
+
+    async fn time_intervals(&self) -> Option<&[i64]> {
+        self.inner.time_intervals.as_deref()
+    }
+
+    async fn numbers_of_top_n(&self) -> Option<&[i32]> {
+        self.inner.numbers_of_top_n.as_deref()
+    }
+}
+
+impl From<review_database::Structured> for StructuredClusteringTemplate {
+    fn from(inner: review_database::Structured) -> Self {
+        Self { inner }
+    }
+}
+
+struct UnstructuredClusteringTemplate {
+    inner: review_database::Unstructured,
+}
+
+#[Object]
+impl UnstructuredClusteringTemplate {
+    async fn name(&self) -> &str {
+        &self.inner.name
+    }
+
+    async fn description(&self) -> &str {
+        &self.inner.description
+    }
+
+    async fn algorithm(&self) -> Option<UnstructuredClusteringAlgorithm> {
+        self.inner.algorithm.map(Into::into)
+    }
+
+    async fn min_token_length(&self) -> Option<i32> {
+        self.inner.min_token_length
+    }
+}
+
+impl From<review_database::Unstructured> for UnstructuredClusteringTemplate {
+    fn from(inner: review_database::Unstructured) -> Self {
+        Self { inner }
+    }
+}
+
+impl TryFrom<StructuredClusteringTemplateInput> for review_database::Template {
     type Error = ParseEnumError;
 
     fn try_from(input: StructuredClusteringTemplateInput) -> Result<Self, Self::Error> {
-        Ok(Self {
+        Ok(Self::Structured(review_database::Structured {
             name: input.name,
             description: input.description.unwrap_or_default(),
-            algorithm: input.algorithm,
+            algorithm: input.algorithm.map(Into::into),
             eps: input.eps,
             format: input.format,
             time_intervals: input.time_intervals,
             numbers_of_top_n: input.numbers_of_top_n,
-        })
+        }))
     }
 }
 
-#[derive(Deserialize, Serialize, SimpleObject)]
-struct UnstructuredClusteringTemplate {
-    name: String,
-    description: String,
-    algorithm: Option<UnstructuredClusteringAlgorithm>,
-    min_token_length: Option<i32>,
-}
-
-impl TryFrom<UnstructuredClusteringTemplateInput> for UnstructuredClusteringTemplate {
+impl TryFrom<UnstructuredClusteringTemplateInput> for review_database::Template {
     type Error = ParseEnumError;
 
     fn try_from(input: UnstructuredClusteringTemplateInput) -> Result<Self, Self::Error> {
-        Ok(Self {
+        Ok(Self::Unstructured(review_database::Unstructured {
             name: input.name,
             description: input.description.unwrap_or_default(),
-            algorithm: input.algorithm,
+            algorithm: input.algorithm.map(Into::into),
             min_token_length: input.min_token_length,
-        })
+        }))
     }
 }
 
@@ -268,9 +329,10 @@ struct TemplateTotalCount;
 impl TemplateTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+        use review_database::{Direction, Iterable};
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.template_map();
-        let count = map.iter_forward()?.count();
+        let count = map.iter(Direction::Forward, None).count();
         Ok(count)
     }
 }
@@ -284,14 +346,7 @@ async fn load(
 ) -> Result<Connection<String, Template, TemplateTotalCount, EmptyFields>> {
     let store = crate::graphql::get_store(ctx).await?;
     let map = store.template_map();
-    super::load::<'_, Map, MapIterator, Template, Template, TemplateTotalCount>(
-        &map,
-        after,
-        before,
-        first,
-        last,
-        TemplateTotalCount,
-    )
+    super::load_edges(&map, after, before, first, last, TemplateTotalCount)
 }
 
 #[cfg(test)]
