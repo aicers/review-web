@@ -1,9 +1,4 @@
-use super::{
-    always_true,
-    model::ModelDigest,
-    triage::response::{key, TriageResponse},
-    Role, RoleGuard, DEFAULT_CONNECTION_SIZE,
-};
+use super::{always_true, model::ModelDigest, Role, RoleGuard, DEFAULT_CONNECTION_SIZE};
 use crate::graphql::{earliest_key, latest_key};
 use anyhow::anyhow;
 use async_graphql::{
@@ -778,7 +773,7 @@ async fn load_ranked_outliers_with_filter(
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // since this is called within `load` only
 fn load_nodes_with_search_filter<'m, M, I>(
     map: &'m M,
-    remarks_map: &review_database::IndexedMap<'_>,
+    remarks_map: &review_database::IndexedTable<'_, review_database::TriageResponse>,
     tags_map: &review_database::IndexedSet<'_>,
     filter: &Option<SearchFilterInput>,
     after: Option<String>,
@@ -859,7 +854,7 @@ where
 #[allow(clippy::too_many_lines)]
 fn iter_through_search_filter_nodes<I>(
     iter: I,
-    remarks_map: &review_database::IndexedMap<'_>,
+    remarks_map: &review_database::IndexedTable<'_, review_database::TriageResponse>,
     tags_map: &review_database::IndexedSet<'_>,
     to: &[u8],
     cond: fn(cmp::Ordering) -> bool,
@@ -906,18 +901,14 @@ where
 
         if let Some(filter) = filter {
             if filter.remark.is_some() || tag_id_list.is_some() {
-                let key = key(&node.source, Utc.timestamp_nanos(node.id));
-                if let Some(value) = remarks_map.get_by_key(&key)? {
-                    let value: TriageResponse = bincode::DefaultOptions::new()
-                        .deserialize(value.as_ref())
-                        .map_err(|_| "invalid value in database")?;
+                if let Some(value) = remarks_map.get(&node.source, &Utc.timestamp_nanos(node.id))? {
                     if let Some(remark) = &filter.remark {
                         if !value.remarks.contains(remark) {
                             continue;
                         }
                     }
                     if let Some(tag_ids) = &tag_id_list {
-                        if !tag_ids.iter().any(|tag| value.tag_ids.contains(tag)) {
+                        if !tag_ids.iter().any(|tag| value.tag_ids().contains(tag)) {
                             continue;
                         }
                     }

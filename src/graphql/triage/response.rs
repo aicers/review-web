@@ -1,44 +1,34 @@
-use std::borrow::Cow;
-
 use super::{Role, RoleGuard};
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     types::ID,
-    ComplexObject, Context, InputObject, Object, Result, SimpleObject,
+    Context, InputObject, Object, Result,
 };
-use bincode::Options;
 use chrono::{DateTime, Utc};
-use review_database::{
-    types::FromKeyValue, Indexable, Indexed, IndexedMap, IndexedMapIterator, IndexedMapUpdate,
-    IterableMap,
-};
-use serde::{Deserialize, Serialize};
 
 #[allow(clippy::module_name_repetitions)]
-#[derive(Deserialize, Serialize, SimpleObject)]
-#[graphql(complex)]
 pub struct TriageResponse {
-    #[graphql(skip)]
-    id: u32,
-    key: Vec<u8>,
-    source: String,
-    time: DateTime<Utc>,
-    pub tag_ids: Vec<u32>,
-    pub remarks: String,
-    creation_time: DateTime<Utc>,
-    last_modified_time: DateTime<Utc>,
+    inner: review_database::TriageResponse,
 }
 
-#[ComplexObject]
-impl TriageResponse {
-    async fn id(&self) -> ID {
-        ID(self.id.to_string())
+impl From<review_database::TriageResponse> for TriageResponse {
+    fn from(inner: review_database::TriageResponse) -> Self {
+        Self { inner }
     }
 }
 
-impl FromKeyValue for TriageResponse {
-    fn from_key_value(_key: &[u8], value: &[u8]) -> anyhow::Result<Self> {
-        Ok(bincode::DefaultOptions::new().deserialize(value)?)
+#[Object]
+impl TriageResponse {
+    async fn id(&self) -> ID {
+        ID(self.inner.id.to_string())
+    }
+
+    async fn remarks(&self) -> &str {
+        &self.inner.remarks
+    }
+
+    async fn tag_ids(&self) -> &[u32] {
+        self.inner.tag_ids()
     }
 }
 
@@ -48,24 +38,11 @@ struct TriageResponseTotalCount;
 impl TriageResponseTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+        use review_database::{Direction, Iterable};
+
         let store = crate::graphql::get_store(ctx).await?;
-        Ok(store.triage_response_map().count()?)
-    }
-}
-
-impl Indexable for TriageResponse {
-    fn key(&self) -> Cow<[u8]> {
-        Cow::Borrowed(&self.key)
-    }
-
-    fn value(&self) -> Vec<u8> {
-        bincode::DefaultOptions::new()
-            .serialize(self)
-            .expect("serializable")
-    }
-
-    fn set_index(&mut self, index: u32) {
-        self.id = index;
+        let map = store.triage_response_map();
+        Ok(map.iter(Direction::Forward, None).count())
     }
 }
 
@@ -74,6 +51,12 @@ pub(super) struct TriageResponseInput {
     key: Vec<u8>,
     tag_ids: Option<Vec<u32>>,
     remarks: Option<String>,
+}
+
+impl From<TriageResponseInput> for review_database::TriageResponseUpdate {
+    fn from(input: TriageResponseInput) -> Self {
+        Self::new(input.key, input.tag_ids, input.remarks)
+    }
 }
 
 #[Object]
@@ -110,18 +93,7 @@ impl super::TriageResponseQuery {
     ) -> Result<Option<TriageResponse>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_response_map();
-        let key = key(&source, time);
-
-        let value = if let Some(value) = map.get_by_key(&key)? {
-            let value: TriageResponse = bincode::DefaultOptions::new()
-                .deserialize(value.as_ref())
-                .map_err(|_| "invalid value in database")?;
-            Some(value)
-        } else {
-            None
-        };
-
-        Ok(value)
+        Ok(map.get(&source, &time)?.map(Into::into))
     }
 }
 
@@ -133,22 +105,8 @@ async fn load(
     last: Option<usize>,
 ) -> Result<Connection<String, TriageResponse, TriageResponseTotalCount, EmptyFields>> {
     let store = crate::graphql::get_store(ctx).await?;
-    let map = store.triage_response_map();
-    super::super::load::<
-        '_,
-        IndexedMap,
-        IndexedMapIterator,
-        TriageResponse,
-        TriageResponse,
-        TriageResponseTotalCount,
-    >(&map, after, before, first, last, TriageResponseTotalCount)
-}
-
-pub fn key(source: &str, time: DateTime<Utc>) -> Vec<u8> {
-    let mut key = Vec::new();
-    key.extend_from_slice(source.as_bytes());
-    key.extend_from_slice(&time.timestamp_nanos_opt().unwrap_or_default().to_be_bytes());
-    key
+    let table = store.triage_response_map();
+    crate::graphql::load_edges(&table, after, before, first, last, TriageResponseTotalCount)
 }
 
 #[Object]
@@ -162,26 +120,13 @@ impl super::TriageResponseMutation {
         ctx: &Context<'_>,
         source: String,
         time: DateTime<Utc>,
-        mut tag_ids: Vec<u32>,
+        tag_ids: Vec<u32>,
         remarks: String,
     ) -> Result<ID> {
-        let key = key(&source, time);
-        tag_ids.sort_unstable();
-        tag_ids.dedup();
-        let time = Utc::now();
-        let pol = TriageResponse {
-            id: u32::MAX,
-            key,
-            source,
-            time,
-            tag_ids,
-            remarks,
-            creation_time: time,
-            last_modified_time: time,
-        };
+        let pol = review_database::TriageResponse::new(source, time, tag_ids, remarks);
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_response_map();
-        let id = map.insert(pol)?;
+        let id = map.put(pol)?;
 
         Ok(ID(id.to_string()))
     }
@@ -223,97 +168,18 @@ impl super::TriageResponseMutation {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
         let store = crate::graphql::get_store(ctx).await?;
-        let map = store.triage_response_map();
+        let mut map = store.triage_response_map();
+        let old: review_database::TriageResponseUpdate = old.into();
+        let new: review_database::TriageResponseUpdate = new.into();
         map.update(i, &old, &new)?;
 
         Ok(id)
     }
 }
 
-impl IndexedMapUpdate for TriageResponseInput {
-    type Entry = TriageResponse;
-
-    fn key(&self) -> Option<Cow<[u8]>> {
-        Some(Cow::Borrowed(&self.key))
-    }
-
-    fn apply(&self, mut value: Self::Entry) -> Result<Self::Entry, anyhow::Error> {
-        if let Some(remarks) = self.remarks.as_deref() {
-            value.remarks.clear();
-            value.remarks.push_str(remarks);
-        }
-        if let Some(tag_ids) = self.tag_ids.as_deref() {
-            let mut tag_ids = tag_ids.to_vec();
-            tag_ids.sort_unstable();
-            tag_ids.dedup();
-            value.tag_ids.clear();
-            value.tag_ids.extend(tag_ids.iter());
-        }
-        value.last_modified_time = Utc::now();
-
-        Ok(value)
-    }
-
-    fn verify(&self, value: &Self::Entry) -> bool {
-        if self.key != value.key {
-            return false;
-        }
-        if let Some(remarks) = self.remarks.as_deref() {
-            if remarks != value.remarks {
-                return false;
-            }
-        }
-        if let Some(tag_ids) = self.tag_ids.as_deref() {
-            let mut tag_ids = tag_ids.to_vec();
-            tag_ids.sort_unstable();
-            tag_ids.dedup();
-            if tag_ids != value.tag_ids {
-                return false;
-            }
-        }
-
-        true
-    }
-}
-
 pub(in crate::graphql) async fn remove_tag(ctx: &Context<'_>, tag_id: u32) -> Result<()> {
     let store = crate::graphql::get_store(ctx).await?;
     let map = store.triage_response_map();
-    let mut updates = Vec::new();
-    for (_, value) in map.iter_forward()? {
-        let triage_response = bincode::DefaultOptions::new()
-            .deserialize::<TriageResponse>(value.as_ref())
-            .map_err(|_| "invalid value in database")?;
-        if triage_response.tag_ids.iter().all(|x| *x != tag_id) {
-            continue;
-        }
 
-        let old_tag_ids = triage_response.tag_ids;
-        let mut new_tag_ids = old_tag_ids.clone();
-        new_tag_ids.retain(|&id| id != tag_id);
-        updates.push((
-            triage_response.id,
-            triage_response.key,
-            old_tag_ids,
-            new_tag_ids,
-            triage_response.remarks,
-        ));
-    }
-
-    for (id, key, old_tag_ids, new_tag_ids, remarks) in updates {
-        let old = TriageResponseInput {
-            key: key.clone(),
-            tag_ids: Some(old_tag_ids),
-            remarks: Some(remarks.clone()),
-        };
-        let new = TriageResponseInput {
-            key: key.clone(),
-            tag_ids: Some(new_tag_ids),
-            remarks: Some(remarks),
-        };
-        map.update(id, &old, &new)
-            .map_err(|e| format!("failed to update triage response: {e}"))?;
-    }
-
-    Ok(())
+    Ok(map.remove_tag(tag_id)?)
 }
