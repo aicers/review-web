@@ -1,11 +1,10 @@
 use super::{Role, RoleGuard};
-use anyhow::Context as _;
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     Context, Object, Result, SimpleObject,
 };
 use chrono::{DateTime, Utc};
-use review_database::{types::FromKeyValue, IterableMap};
+use review_database::{Direction, Iterable};
 
 #[derive(Default)]
 pub(super) struct TorExitNodeQuery;
@@ -41,7 +40,7 @@ pub(super) struct TorExitNodeMutation;
 
 #[Object]
 impl TorExitNodeMutation {
-    /// Delete all existing entries and add new IP address(es)
+    /// Deletes all existing entries and add new IP address(es)
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn update_tor_exit_node_list(
@@ -51,12 +50,15 @@ impl TorExitNodeMutation {
     ) -> Result<Vec<String>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.tor_exit_node_map();
-        let timestamp = Utc::now().to_string();
-        let entries = ip_addresses
-            .iter()
-            .map(|addr| (addr.as_bytes(), timestamp.as_bytes()))
-            .collect::<Vec<_>>();
-        map.replace_all(&entries)?;
+        let updated_at = Utc::now();
+        map.replace_all(
+            ip_addresses
+                .iter()
+                .map(|ip_address| review_database::TorExitNode {
+                    ip_address: ip_address.to_owned(),
+                    updated_at,
+                }),
+        )?;
         Ok(ip_addresses)
     }
 }
@@ -67,18 +69,12 @@ struct TorExitNode {
     updated_at: DateTime<Utc>,
 }
 
-impl FromKeyValue for TorExitNode {
-    fn from_key_value(key: &[u8], value: &[u8]) -> Result<Self, anyhow::Error> {
-        let ip_address =
-            String::from_utf8(key.to_vec()).context("invalid IP address in database")?;
-        let updated_at = String::from_utf8(value.to_vec())
-            .context("invalid timestamp in database")?
-            .parse()
-            .context("invalid timestamp in database")?;
-        Ok(TorExitNode {
-            ip_address,
-            updated_at,
-        })
+impl From<review_database::TorExitNode> for TorExitNode {
+    fn from(input: review_database::TorExitNode) -> Self {
+        Self {
+            ip_address: input.ip_address,
+            updated_at: input.updated_at,
+        }
     }
 }
 
@@ -90,7 +86,7 @@ impl TorExitNodeTotalCount {
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.tor_exit_node_map();
-        let count = map.iter_forward()?.count();
+        let count = map.iter(Direction::Forward, None).count();
         Ok(count)
     }
 }
@@ -104,7 +100,8 @@ async fn load(
 ) -> Result<Connection<String, TorExitNode, TorExitNodeTotalCount, EmptyFields>> {
     let store = crate::graphql::get_store(ctx).await?;
     let map = store.tor_exit_node_map();
-    super::load(&map, after, before, first, last, TorExitNodeTotalCount)
+
+    super::load_edges(&map, after, before, first, last, TorExitNodeTotalCount)
 }
 
 #[cfg(test)]
