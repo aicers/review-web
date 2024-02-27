@@ -1,5 +1,5 @@
 use super::{Role, Tag};
-use crate::graphql::{triage::response, RoleGuard};
+use crate::graphql::RoleGuard;
 use async_graphql::{Context, Object, Result, ID};
 
 #[derive(Default)]
@@ -14,13 +14,12 @@ impl EventTagQuery {
         .or(RoleGuard::new(Role::SecurityMonitor))")]
     async fn event_tag_list(&self, ctx: &Context<'_>) -> Result<Vec<Tag>> {
         let store = crate::graphql::get_store(ctx).await?;
-        let set = store.event_tag_set();
-        let index = set.index()?;
-        Ok(index
-            .iter()
-            .map(|(id, name)| Tag {
-                id,
-                name: String::from_utf8_lossy(name).into_owned(),
+        let set = store.event_tag_set()?;
+        Ok(set
+            .tags()
+            .map(|tag| Tag {
+                id: tag.id,
+                name: tag.name.clone(),
             })
             .collect())
     }
@@ -37,8 +36,8 @@ impl EventTagMutation {
         .or(RoleGuard::new(Role::SecurityManager))")]
     async fn insert_event_tag(&self, ctx: &Context<'_>, name: String) -> Result<ID> {
         let store = crate::graphql::get_store(ctx).await?;
-        let set = store.event_tag_set();
-        let id = set.insert(name.as_bytes())?;
+        let mut set = store.event_tag_set()?;
+        let id = set.insert(&name)?;
         Ok(ID(id.to_string()))
     }
 
@@ -48,24 +47,12 @@ impl EventTagMutation {
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))")]
     async fn remove_event_tag(&self, ctx: &Context<'_>, id: ID) -> Result<Option<String>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let mut set = store.event_tag_set()?;
+        let triage_response_map = store.triage_response_map();
         let id = id.0.parse::<u32>()?;
-
-        let name = {
-            let store = crate::graphql::get_store(ctx).await?;
-            let tags = store.event_tag_set();
-            tags.deactivate(id)
-                .map_err(|e| format!("failed to deactivate ID: {e:#}"))?
-        };
-        response::remove_tag(ctx, id)
-            .await
-            .map_err(|e| format!("failed to remove tag from networks: {}", e.message))?;
-        {
-            let store = crate::graphql::get_store(ctx).await?;
-            let tags = store.event_tag_set();
-            tags.clear_inactive()
-                .map_err(|e| format!("failed to clear inactive IDs: {e:#}"))?;
-        }
-        Ok(Some(String::from_utf8_lossy(&name).into_owned()))
+        let name = set.remove_event_tag(id, &triage_response_map)?;
+        Ok(Some(name))
     }
 
     /// Updates the name of an event tag for the given ID.
@@ -83,7 +70,7 @@ impl EventTagMutation {
         new: String,
     ) -> Result<bool> {
         let store = crate::graphql::get_store(ctx).await?;
-        let set = store.event_tag_set();
-        Ok(set.update(id.0.parse()?, old.as_bytes(), new.as_bytes())?)
+        let mut set = store.event_tag_set()?;
+        Ok(set.update(id.0.parse()?, &old, &new)?)
     }
 }

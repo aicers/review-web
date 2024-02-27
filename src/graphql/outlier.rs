@@ -742,7 +742,7 @@ async fn load_ranked_outliers_with_filter(
     let store = crate::graphql::get_store(ctx).await?;
     let map = store.outlier_map().into_prefix_map(&prefix);
     let remarks_map = store.triage_response_map();
-    let tags_map = store.event_tag_set();
+    let tags_map = store.event_tag_set()?;
 
     let (nodes, has_previous, has_next) = load_nodes_with_search_filter(
         &map,
@@ -771,10 +771,10 @@ async fn load_ranked_outliers_with_filter(
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // since this is called within `load` only
-fn load_nodes_with_search_filter<'m, M, I>(
+fn load_nodes_with_search_filter<'m, M, I, T>(
     map: &'m M,
     remarks_map: &review_database::IndexedTable<'_, review_database::TriageResponse>,
-    tags_map: &review_database::IndexedSet<'_>,
+    tags_map: &review_database::TagSet<'_, T>,
     filter: &Option<SearchFilterInput>,
     after: Option<String>,
     before: Option<String>,
@@ -852,10 +852,10 @@ where
 }
 
 #[allow(clippy::too_many_lines)]
-fn iter_through_search_filter_nodes<I>(
+fn iter_through_search_filter_nodes<I, T>(
     iter: I,
     remarks_map: &review_database::IndexedTable<'_, review_database::TriageResponse>,
-    tags_map: &review_database::IndexedSet<'_>,
+    tag_set: &review_database::TagSet<'_, T>,
     to: &[u8],
     cond: fn(cmp::Ordering) -> bool,
     filter: &Option<SearchFilterInput>,
@@ -868,16 +868,17 @@ where
     let mut exceeded = false;
 
     let tag_id_list = if let Some(filter) = filter {
-        if let Some(tag) = &filter.tag {
-            let index = tags_map.index()?;
-            let tag_ids: Vec<u32> = index
-                .iter()
-                .filter(|(_, name)| {
-                    let name = String::from_utf8_lossy(name).into_owned();
-                    name.contains(tag)
+        if let Some(pattern) = &filter.tag {
+            let tag_ids = tag_set
+                .tags()
+                .filter_map(|tag| {
+                    if tag.name.contains(pattern) {
+                        Some(tag.id)
+                    } else {
+                        None
+                    }
                 })
-                .map(|(id, _)| id)
-                .collect();
+                .collect::<Vec<_>>();
             if tag_ids.is_empty() {
                 return Ok((nodes, exceeded));
             }

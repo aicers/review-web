@@ -176,10 +176,3 @@ impl super::TriageResponseMutation {
         Ok(id)
     }
 }
-
-pub(in crate::graphql) async fn remove_tag(ctx: &Context<'_>, tag_id: u32) -> Result<()> {
-    let store = crate::graphql::get_store(ctx).await?;
-    let map = store.triage_response_map();
-
-    Ok(map.remove_tag(tag_id)?)
-}

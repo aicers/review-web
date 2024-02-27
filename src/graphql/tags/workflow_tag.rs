@@ -40,7 +40,7 @@ impl WorkflowTagMutation {
         // TODO: Delete the tag from workflows when assigning tags to a workflow
         // is implemented.
         let mut set = store.workflow_tag_set()?;
-        let name = set.remove(id.0.parse()?)?;
+        let name = set.remove_workflow_tag(id.0.parse()?)?;
         Ok(Some(name))
     }
 
