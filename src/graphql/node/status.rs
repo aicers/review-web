@@ -72,6 +72,8 @@ async fn load(
                     },
                 );
 
+                // TODO: Refactor this code to use `AgentManager::ping` after
+                // `review` implements it. See #144.
                 let start = Utc::now().timestamp_micros();
                 if let Ok(response) = agents.send_and_recv(&key, &ping_msg).await {
                     let end = Utc::now().timestamp_micros();

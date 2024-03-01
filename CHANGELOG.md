@@ -23,6 +23,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Add unit tests to `customer_list` to check ordering of nodes and edges.
+- `AgentManager::ping` method to measure the latency between the agent manager
+  and a host.
 - `AgentManager::reboot` method to reboot a host.
 
 ## [0.18.0] - 2024-02-26

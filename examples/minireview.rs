@@ -94,6 +94,10 @@ impl AgentManager for Manager {
         bail!("Not supported")
     }
 
+    async fn ping(&self, hostname: &str) -> Result<i64, Error> {
+        bail!("Host {hostname} is unreachable")
+    }
+
     async fn reboot(&self, hostname: &str) -> Result<(), Error> {
         bail!("Host {hostname} is unreachable")
     }

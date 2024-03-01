@@ -88,6 +88,14 @@ pub trait AgentManager: Send + Sync {
     ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error>;
     async fn send_and_recv(&self, key: &str, msg: &[u8]) -> Result<Vec<u8>, anyhow::Error>;
 
+    /// Sends a ping message to the given host and waits for a response. Returns
+    /// the round-trip time in microseconds.
+    async fn ping(&self, _hostname: &str) -> Result<i64, anyhow::Error> {
+        // TODO: This body is only to avoid breaking changes. It should be
+        // removed when all the implementations are updated. See #144.
+        anyhow::bail!("not implemented")
+    }
+
     /// Reboots the node with the given hostname.
     async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error> {
         // TODO: This body is only to avoid breaking changes. It should be
@@ -682,6 +690,10 @@ impl AgentManager for MockAgentManager {
         Ok(HashMap::new())
     }
     async fn send_and_recv(&self, _key: &str, _msg: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
+        unimplemented!()
+    }
+
+    async fn ping(&self, _hostname: &str) -> Result<i64, anyhow::Error> {
         unimplemented!()
     }
 
