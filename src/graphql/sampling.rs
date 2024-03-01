@@ -23,7 +23,7 @@ pub(super) struct SamplingPolicyMutation;
 
 #[derive(Clone, Copy, Eq, PartialEq, Enum, Deserialize, Serialize)]
 #[repr(u32)]
-pub(super) enum Interval {
+pub enum Interval {
     FiveMinutes = 0,
     TenMinutes = 1,
     FifteenMinutes = 2,
@@ -39,7 +39,7 @@ impl Default for Interval {
 
 #[derive(Clone, Copy, Eq, PartialEq, Enum, Deserialize, Serialize)]
 #[repr(u32)]
-pub(super) enum Period {
+pub enum Period {
     SixHours = 0,
     TwelveHours = 1,
     OneDay = 2,
@@ -53,7 +53,7 @@ impl Default for Period {
 
 #[derive(Clone, Copy, Eq, PartialEq, Enum, Deserialize, Serialize)]
 #[repr(u32)]
-pub(super) enum Kind {
+pub enum Kind {
     Conn = 0,
     Dns = 1,
     Http = 2,
@@ -209,16 +209,16 @@ async fn load(
 }
 
 #[derive(Serialize)]
-pub(super) struct Policy {
-    id: u32,
-    kind: Kind,
-    interval: Interval,
-    period: Period,
-    offset: i32,
-    src_ip: Option<IpAddr>,
-    dst_ip: Option<IpAddr>,
-    node: Option<String>,
-    column: Option<u32>,
+pub struct Policy {
+    pub id: u32,
+    pub kind: Kind,
+    pub interval: Interval,
+    pub period: Period,
+    pub offset: i32,
+    pub src_ip: Option<IpAddr>,
+    pub dst_ip: Option<IpAddr>,
+    pub node: Option<String>,
+    pub column: Option<u32>,
 }
 
 impl TryFrom<SamplingPolicy> for SamplingPolicyInput {
@@ -330,6 +330,9 @@ impl SamplingPolicyMutation {
         }
 
         if immutable {
+            // TODO: Refactor this code to use
+            // `AgentManager::broadcast_crusher_sampling_policy` after
+            // `review` implements it. See #144.
             let mut msg = bincode::serialize::<u32>(&RequestCode::SamplingPolicyList.into())?;
             let policies = load_immutable(ctx).await?;
             msg.extend(bincode::DefaultOptions::new().serialize(&policies)?);

@@ -23,6 +23,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Add unit tests to `customer_list` to check ordering of nodes and edges.
+- `AgentManager::broadcast_crusher_sampling_policy` method to broadcast the
+  sampling policy to the Crusher agents.
 - `AgentManager::get_process_list` method to retrieve the list of processes
   usage running on host. It returns a `Vec` of `graphql::Process`.
 - `AgentManager::get_resource_usage` method to retrieve the resource usage of a

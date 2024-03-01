@@ -9,8 +9,7 @@ use ipnet::IpNet;
 use review_database::{migrate_data_dir, Database, Store};
 use review_web::{
     self as web,
-    graphql::AgentManager,
-    graphql::{Process, ResourceUsage},
+    graphql::{AgentManager, Process, ResourceUsage, SamplingPolicy},
     CertManager,
 };
 use serde::Deserialize;
@@ -97,6 +96,13 @@ impl AgentManager for Manager {
 
     async fn send_and_recv(&self, _key: &str, _msg: &[u8]) -> Result<Vec<u8>, Error> {
         bail!("Not supported")
+    }
+
+    async fn broadcast_crusher_sampling_policy(
+        &self,
+        _policy: &[SamplingPolicy],
+    ) -> Result<(), Error> {
+        bail!("Crusher nodes are unreachable")
     }
 
     async fn get_process_list(&self, hostname: &str) -> Result<Vec<Process>, Error> {

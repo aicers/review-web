@@ -39,6 +39,10 @@ pub use self::block_network::get_block_networks;
 pub use self::cert::ParsedCertificate;
 pub use self::customer::get_customer_networks;
 pub use self::node::{get_customer_id_of_review_host, get_node_settings};
+pub use self::sampling::{
+    Interval as SamplingInterval, Kind as SamplingKind, Period as SamplingPeriod,
+    Policy as SamplingPolicy,
+};
 pub use self::trusted_user_agent::get_trusted_user_agent_list;
 use async_graphql::connection::ConnectionNameType;
 use async_graphql::{
@@ -88,6 +92,15 @@ pub trait AgentManager: Send + Sync {
         &self,
     ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error>;
     async fn send_and_recv(&self, key: &str, msg: &[u8]) -> Result<Vec<u8>, anyhow::Error>;
+
+    async fn broadcast_crusher_sampling_policy(
+        &self,
+        _sampling_policies: &[SamplingPolicy],
+    ) -> Result<(), anyhow::Error> {
+        // TODO: This body is only to avoid breaking changes. It should be
+        // removed when all the implementations are updated. See #144.
+        anyhow::bail!("not implemented")
+    }
 
     /// Returns the list of processes running on the given host.
     async fn get_process_list(&self, _hostname: &str) -> Result<Vec<Process>, anyhow::Error> {
@@ -705,6 +718,13 @@ impl AgentManager for MockAgentManager {
         Ok(HashMap::new())
     }
     async fn send_and_recv(&self, _key: &str, _msg: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
+        unimplemented!()
+    }
+
+    async fn broadcast_crusher_sampling_policy(
+        &self,
+        _sampling_policies: &[SamplingPolicy],
+    ) -> Result<(), anyhow::Error> {
         unimplemented!()
     }
 
