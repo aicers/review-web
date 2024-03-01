@@ -53,7 +53,7 @@ use num_traits::ToPrimitive;
 use review_database::{
     self as database, types::FromKeyValue, Database, Direction, IterableMap, Role, Store,
 };
-pub use roxy::ResourceUsage;
+pub use roxy::{Process, ResourceUsage};
 use std::{
     cmp,
     collections::HashMap,
@@ -88,6 +88,13 @@ pub trait AgentManager: Send + Sync {
         &self,
     ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error>;
     async fn send_and_recv(&self, key: &str, msg: &[u8]) -> Result<Vec<u8>, anyhow::Error>;
+
+    /// Returns the list of processes running on the given host.
+    async fn get_process_list(&self, _hostname: &str) -> Result<Vec<Process>, anyhow::Error> {
+        // TODO: This body is only to avoid breaking changes. It should be
+        // removed when all the implementations are updated. See #144.
+        anyhow::bail!("not implemented")
+    }
 
     /// Returns the resource usage of the given host.
     async fn get_resource_usage(&self, _hostname: &str) -> Result<ResourceUsage, anyhow::Error> {
@@ -698,6 +705,10 @@ impl AgentManager for MockAgentManager {
         Ok(HashMap::new())
     }
     async fn send_and_recv(&self, _key: &str, _msg: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
+        unimplemented!()
+    }
+
+    async fn get_process_list(&self, _hostname: &str) -> Result<Vec<Process>, anyhow::Error> {
         unimplemented!()
     }
 

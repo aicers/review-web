@@ -25,6 +25,8 @@ impl ProcessListQuery {
                 .map(Process::from)
                 .collect();
         } else {
+            // TODO: Refactor this code to use `AgentManager::process_list`
+            // after the `AgentManager` trait is implemented. See #144.
             let apps = agents.online_apps_by_host_id().await?;
             let Some(apps) = apps.get(&hostname) else {
                 return Err("unable to gather info of online agents".into());
