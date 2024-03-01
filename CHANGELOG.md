@@ -23,6 +23,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Add unit tests to `customer_list` to check ordering of nodes and edges.
+- `AgentManager::get_resource_usage` method to retrieve the resource usage of a
+  host. It returns `graphql::ResourceUsage`.
 - `AgentManager::ping` method to measure the latency between the agent manager
   and a host.
 - `AgentManager::reboot` method to reboot a host.

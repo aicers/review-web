@@ -8,6 +8,7 @@ use futures::{
 use ipnet::IpNet;
 use review_database::{migrate_data_dir, Database, Store};
 use review_web::{self as web, graphql::AgentManager, CertManager};
+use roxy::ResourceUsage;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -92,6 +93,10 @@ impl AgentManager for Manager {
 
     async fn send_and_recv(&self, _key: &str, _msg: &[u8]) -> Result<Vec<u8>, Error> {
         bail!("Not supported")
+    }
+
+    async fn get_resource_usage(&self, hostname: &str) -> Result<ResourceUsage, Error> {
+        bail!("Host {hostname} is unreachable")
     }
 
     async fn ping(&self, hostname: &str) -> Result<i64, Error> {

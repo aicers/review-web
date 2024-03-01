@@ -57,6 +57,8 @@ async fn load(
     let mut usages: HashMap<String, ResourceUsage> = HashMap::new();
     let mut ping: HashMap<String, i64> = HashMap::new();
     for (_, key) in hostname_key {
+        // TODO: Refactor this code to use `AgentManager::resource_usage` after
+        // `review` implements it. See #144.
         if let Ok(response) = agents.send_and_recv(&key, &resource_msg).await {
             if let Ok(Ok((hostname, ru))) = bincode::DefaultOptions::new()
                 .deserialize::<Result<(String, ResourceUsage), &str>>(&response)
