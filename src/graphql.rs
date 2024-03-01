@@ -87,6 +87,15 @@ pub trait AgentManager: Send + Sync {
         &self,
     ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error>;
     async fn send_and_recv(&self, key: &str, msg: &[u8]) -> Result<Vec<u8>, anyhow::Error>;
+
+    /// Reboots the node with the given hostname.
+    async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error> {
+        // TODO: This body is only to avoid breaking changes. It should be
+        // removed when all the implementations are updated. See #144.
+        anyhow::bail!("not implemented")
+    }
+
+    /// Updates the traffic filter rules for the given host.
     async fn update_traffic_filter_rules(
         &self,
         host: &str,
@@ -675,6 +684,11 @@ impl AgentManager for MockAgentManager {
     async fn send_and_recv(&self, _key: &str, _msg: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
         unimplemented!()
     }
+
+    async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error> {
+        unimplemented!()
+    }
+
     async fn update_traffic_filter_rules(
         &self,
         _key: &str,

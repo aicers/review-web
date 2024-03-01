@@ -94,6 +94,10 @@ impl AgentManager for Manager {
         bail!("Not supported")
     }
 
+    async fn reboot(&self, hostname: &str) -> Result<(), Error> {
+        bail!("Host {hostname} is unreachable")
+    }
+
     async fn update_traffic_filter_rules(
         &self,
         _key: &str,

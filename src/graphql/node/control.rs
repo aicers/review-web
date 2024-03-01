@@ -17,6 +17,8 @@ impl NodeControlMutation {
         if !review_hostname.is_empty() && review_hostname == hostname {
             roxy::reboot().map_or_else(|e| Err(e.to_string().into()), |_| Ok(hostname))
         } else {
+            // TODO: Refactor this code to use `AgentManager::reboot` after
+            // `review` implements it. See #144.
             let apps = agents.online_apps_by_host_id().await?;
             let Some(apps) = apps.get(&hostname) else {
                 return Err("unable to gather info of online agents".into());
