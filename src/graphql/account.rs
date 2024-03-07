@@ -317,25 +317,34 @@ impl AccountMutation {
         }
     }
 
-    /// Updates how long signing in lasts in seconds
+    /// Updates the expiration time for signing in, specifying the duration in
+    /// seconds. The `time` parameter specifies the new expiration time in
+    /// seconds and must be a positive integer.
     #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
         .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
-    async fn update_expiration_time(&self, ctx: &Context<'_>, time: i64) -> Result<i64> {
+    async fn update_expiration_time(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(validator(minimum = 1))] time: i32,
+    ) -> Result<i32> {
+        let Ok(expires_in) = u32::try_from(time) else {
+            unreachable!("`time` is a positive integer")
+        };
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_policy_map();
         if let Some(value) = map.get(ACCOUNT_POLICY_KEY)? {
             let codec = bincode::DefaultOptions::new();
             let mut policy = codec.deserialize::<AccountPolicy>(value.as_ref())?;
-            policy.expiration_time = time;
+            policy.expiration_time = expires_in.into();
             let new_value = codec.serialize(&policy)?;
             map.update(
                 (ACCOUNT_POLICY_KEY, value.as_ref()),
                 (ACCOUNT_POLICY_KEY, &new_value),
             )?;
         } else {
-            init_expiration_time(&store, time)?;
+            init_expiration_time(&store, expires_in)?;
         }
-        update_jwt_expires_in(time)?;
+        update_jwt_expires_in(expires_in)?;
         Ok(time)
     }
 }
@@ -363,10 +372,10 @@ pub fn expiration_time(store: &Store) -> Result<i64> {
 ///
 /// Returns an error if the value cannot be serialized or the underlaying store
 /// fails to put the value.
-pub fn init_expiration_time(store: &Store, time: i64) -> anyhow::Result<()> {
+pub fn init_expiration_time(store: &Store, time: u32) -> anyhow::Result<()> {
     let map = store.account_policy_map();
     let policy = AccountPolicy {
-        expiration_time: time,
+        expiration_time: time.into(),
     };
     let value = bincode::DefaultOptions::new().serialize(&policy)?;
     map.put(ACCOUNT_POLICY_KEY, &value)?;

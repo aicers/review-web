@@ -12,6 +12,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Updated the `ModelIndicator` GraphQL type. Added `name` field as the name of
   the model indicator.
 - Changed the return type of `indicatorList` GraphQL query to `[ModelIndicator!]!`.
+- GraphQL query `updateExpirationTime` returns an error if the expiration time
+  is less than one second.
+- `init_expiration_time` and `update_jwt_expires_in` take `u32` instead of `i64`
+  for the expiration time argument.
 
 ### Removed
 

@@ -12,7 +12,7 @@ use std::{
 };
 
 lazy_static::lazy_static! {
-    static ref JWT_EXPIRES_IN: Arc<RwLock<i64>> = Arc::new(RwLock::new(3600));
+    static ref JWT_EXPIRES_IN: Arc<RwLock<u32>> = Arc::new(RwLock::new(3600));
     static ref JWT_SECRET: Arc<RwLock<Vec<u8>>> = Arc::new(RwLock::new(vec![]));
 }
 
@@ -34,19 +34,14 @@ impl Claims {
 /// # Errors
 ///
 /// Returns an error if the JWT locks are poisoned or if the JWT secret cannot be read.
-///
-/// # Panics
-///
-/// Panics if converting 3600 to `TimeDelta` fails, which is unlikely according to Chrono.
 pub fn create_token(username: String, role: String) -> Result<(String, NaiveDateTime), AuthError> {
-    let expires_in = JWT_EXPIRES_IN
+    let expires_in = *JWT_EXPIRES_IN
         .read()
         .map_err(|e| AuthError::ReadJwtSecret(e.to_string()))?;
-    let exp = chrono::Utc::now()
-        + TimeDelta::try_seconds(*expires_in).unwrap_or(
-            TimeDelta::try_seconds(3600)
-                .expect("3600 is a safe value for converting to TimeDelta."),
-        );
+    let Some(delta) = TimeDelta::try_seconds(expires_in.into()) else {
+        unreachable!("`JWT_EXPIRES_IN` is greather than 0 and less than 2^32")
+    };
+    let exp = chrono::Utc::now() + delta;
 
     let claims = Claims::new(username, role, exp.timestamp());
     let jwt_secret = JWT_SECRET
@@ -85,7 +80,7 @@ pub fn decode_token(token: &str) -> anyhow::Result<Claims> {
 /// # Errors
 ///
 /// Returns an error if the JWT lock is poisoned.
-pub fn update_jwt_expires_in(new_expires_in: i64) -> anyhow::Result<()> {
+pub fn update_jwt_expires_in(new_expires_in: u32) -> anyhow::Result<()> {
     JWT_EXPIRES_IN
         .write()
         .map(|mut expires_in| {
