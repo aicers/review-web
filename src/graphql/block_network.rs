@@ -7,10 +7,10 @@ use async_graphql::{
     Context, InputObject, Object, Result, ID,
 };
 use bincode::Options;
-use database::types::FromKeyValue;
-use review_database::{self as database, Indexable, Indexed, IndexedMapUpdate, IterableMap, Store};
+use database::Direction;
+use review_database::{self as database, Store};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 #[derive(Default)]
@@ -61,13 +61,13 @@ impl BlockNetworkMutation {
         let map = db.block_network_map();
         let networks: database::HostNetworkGroup =
             networks.try_into().map_err(|_| "invalid network")?;
-        let value = BlockNetwork {
+        let value = review_database::BlockNetwork {
             id: u32::MAX,
             name,
             networks,
             description,
         };
-        let id = map.insert(value)?;
+        let id = map.put(value)?;
         Ok(ID(id.to_string()))
     }
 
@@ -87,7 +87,7 @@ impl BlockNetworkMutation {
         let mut removed = Vec::<String>::with_capacity(ids.len());
         for id in ids {
             let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-            let key = map.remove::<BlockNetwork>(i)?;
+            let key = map.remove(i)?;
 
             let name = match String::from_utf8(key) {
                 Ok(key) => key,
@@ -112,7 +112,9 @@ impl BlockNetworkMutation {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
         let db = super::get_store(ctx).await?;
-        let map = db.block_network_map();
+        let mut map = db.block_network_map();
+        let old: review_database::BlockNetworkUpdate = old.try_into()?;
+        let new: review_database::BlockNetworkUpdate = new.try_into()?;
         map.update(i, &old, &new)?;
         Ok(id)
     }
@@ -134,58 +136,31 @@ impl BlockNetworkMutation {
 
 #[derive(Deserialize, Serialize)]
 pub(super) struct BlockNetwork {
-    id: u32,
-    name: String,
-    networks: database::HostNetworkGroup,
-    description: String,
+    inner: review_database::BlockNetwork,
+}
+
+impl From<review_database::BlockNetwork> for BlockNetwork {
+    fn from(inner: review_database::BlockNetwork) -> Self {
+        Self { inner }
+    }
 }
 
 #[Object]
 impl BlockNetwork {
     async fn id(&self) -> ID {
-        ID(self.id.to_string())
+        ID(self.inner.id.to_string())
     }
 
     async fn name(&self) -> &str {
-        &self.name
+        &self.inner.name
     }
 
     async fn description(&self) -> &str {
-        &self.description
+        &self.inner.description
     }
 
     async fn networks(&self) -> HostNetworkGroup {
-        (&self.networks).into()
-    }
-}
-
-impl FromKeyValue for BlockNetwork {
-    fn from_key_value(_key: &[u8], value: &[u8]) -> anyhow::Result<Self> {
-        Ok(bincode::DefaultOptions::new().deserialize(value)?)
-    }
-}
-
-impl Indexable for BlockNetwork {
-    fn key(&self) -> Cow<[u8]> {
-        Cow::Borrowed(self.name.as_bytes())
-    }
-
-    fn index(&self) -> u32 {
-        self.id
-    }
-
-    fn make_indexed_key(key: Cow<[u8]>, _index: u32) -> Cow<[u8]> {
-        key
-    }
-
-    fn value(&self) -> Vec<u8> {
-        bincode::DefaultOptions::new()
-            .serialize(self)
-            .expect("serializable")
-    }
-
-    fn set_index(&mut self, index: u32) {
-        self.id = index;
+        (&self.inner.networks).into()
     }
 }
 
@@ -196,48 +171,16 @@ struct BlockNetworkInput {
     description: Option<String>,
 }
 
-impl IndexedMapUpdate for BlockNetworkInput {
-    type Entry = BlockNetwork;
+impl TryFrom<BlockNetworkInput> for review_database::BlockNetworkUpdate {
+    type Error = anyhow::Error;
 
-    fn key(&self) -> Option<Cow<[u8]>> {
-        self.name.as_deref().map(str::as_bytes).map(Cow::Borrowed)
-    }
-
-    fn apply(&self, mut value: Self::Entry) -> Result<Self::Entry, anyhow::Error> {
-        if let Some(name) = self.name.as_deref() {
-            value.name.clear();
-            value.name.push_str(name);
-        }
-        if let Some(networks) = self.networks.as_ref() {
-            value.networks = networks.try_into()?;
-        }
-        if let Some(description) = self.description.as_deref() {
-            value.description.clear();
-            value.description.push_str(description);
-        }
-        Ok(value)
-    }
-
-    fn verify(&self, value: &Self::Entry) -> bool {
-        if let Some(v) = self.name.as_deref() {
-            if v != value.name {
-                return false;
-            }
-        }
-        if let Some(v) = self.networks.as_ref() {
-            let Ok(v) = database::HostNetworkGroup::try_from(v) else {
-                return false;
-            };
-            if v != value.networks {
-                return false;
-            }
-        }
-        if let Some(v) = self.description.as_deref() {
-            if v != value.description {
-                return false;
-            }
-        }
-        true
+    fn try_from(input: BlockNetworkInput) -> Result<Self, Self::Error> {
+        let networks = input.networks.map(TryInto::try_into).transpose()?;
+        Ok(Self {
+            name: input.name,
+            networks,
+            description: input.description,
+        })
     }
 }
 
@@ -261,7 +204,7 @@ async fn load(
 ) -> Result<Connection<String, BlockNetwork, BlockNetworkTotalCount, EmptyFields>> {
     let db = super::get_store(ctx).await?;
     let map = db.block_network_map();
-    super::load(&map, after, before, first, last, BlockNetworkTotalCount)
+    super::load_edges(&map, after, before, first, last, BlockNetworkTotalCount)
 }
 
 /// Returns the block network list.
@@ -270,14 +213,14 @@ async fn load(
 ///
 /// Returns an error if the block network database could not be retrieved.
 pub fn get_block_networks(db: &Store) -> Result<database::HostNetworkGroup> {
+    use review_database::Iterable;
+
     let map = db.block_network_map();
     let mut hosts = vec![];
     let mut networks = vec![];
     let mut ip_ranges = vec![];
-    for (_key, value) in map.iter_forward()? {
-        let block_network = bincode::DefaultOptions::new()
-            .deserialize::<BlockNetwork>(value.as_ref())
-            .map_err(|_| "invalid value in database")?;
+    for res in map.iter(Direction::Forward, None) {
+        let block_network = res?;
         hosts.extend(block_network.networks.hosts());
         networks.extend(block_network.networks.networks());
         ip_ranges.extend(block_network.networks.ip_ranges().to_vec());
