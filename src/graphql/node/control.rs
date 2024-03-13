@@ -7,7 +7,7 @@ use crate::graphql::{customer::broadcast_customer_networks, get_customer_network
 
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard},
-    Node, NodeControlMutation, NodeSettings,
+    ModuleName, Node, NodeControlMutation, NodeSettings,
 };
 use anyhow::bail;
 use async_graphql::{Context, Object, Result, SimpleObject, ID};
@@ -142,17 +142,6 @@ impl NodeControlMutation {
 pub struct ApplyResult {
     pub id: ID,
     pub success_modules: Vec<ModuleName>,
-}
-
-#[derive(
-    async_graphql::Enum, Copy, Clone, Eq, PartialEq, strum_macros::Display, strum_macros::EnumString,
-)]
-#[strum(serialize_all = "snake_case")]
-pub enum ModuleName {
-    Hog,
-    Piglet,
-    Reconverge,
-    Review,
 }
 
 async fn send_set_config_requests(
