@@ -31,17 +31,26 @@ impl ProcessListQuery {
             let Some(apps) = apps.get(&hostname) else {
                 return Err("unable to gather info of online agents".into());
             };
+
+            // The priority of applications (`Hog`, followed by `Crusher` and
+            // then `Piglet`) is determined based on their roles and
+            // capabilities in the system.
+            //
+            // 1. `Hog` has the highest priority because it can act as a dummy
+            //    agent to monitor servers where our software isn't installed.
+            //    This is essential for comprehensive system monitoring.
+            // 2. `Crusher` and `Piglet` are preferred for process list
+            //    collection because they maintain a continuous connection to
+            //    REview.
+            // 3. `REconverge` is not suited for process list collection due to
+            //    its intermittent connection.
+            // 4. The order of Hog, Crusher, and Piglet also considers the load
+            //    each program can handle.
             let priority_app = apps
                 .iter()
-                .find(|(x, _)| x == &format!("hog@{hostname}"))
-                .or_else(|| {
-                    apps.iter()
-                        .find(|(x, _)| x == &format!("piglet@{hostname}"))
-                })
-                .or_else(|| {
-                    apps.iter()
-                        .find(|(x, _)| x == &format!("crusher@{hostname}"))
-                });
+                .find(|(_, app_name)| app_name == "hog")
+                .or_else(|| apps.iter().find(|(_, app_name)| app_name == "piglet"))
+                .or_else(|| apps.iter().find(|(_, app_name)| app_name == "crusher"));
 
             let Some((key, _)) = priority_app else {
                 return Err("unable to get process list".into());

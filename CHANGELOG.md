@@ -37,6 +37,17 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   and a host.
 - `AgentManager::reboot` method to reboot a host.
 
+### Fixed
+
+- Resolved an issue in the `processList` query function where applications were
+  incorrectly identified by their agent ID instead of their application name.
+  Previously, the function assumed the agent ID in the format
+  "agent_id@hostname" directly corresponded to the application name, which was
+  not always the case. This assumption did not support scenarios where multiple
+  instances of the same application ran on the same host with unique agent IDs.
+  The updated implementation now correctly identifies applications by their
+  name, ensuring accurate application prioritization.
+
 ## [0.18.0] - 2024-02-26
 
 ### Added
