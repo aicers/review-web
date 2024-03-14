@@ -11,7 +11,6 @@ use chrono::Utc;
 use oinq::RequestCode;
 use roxy::ResourceUsage;
 use std::collections::{HashMap, HashSet};
-use tracing::error;
 
 #[Object]
 impl NodeStatusQuery {
@@ -103,19 +102,7 @@ async fn load(
         Connection::with_additional_fields(has_previous, has_next, NodeStatusTotalCount);
     connection
         .edges
-        .extend(node_list.into_iter().filter_map(move |(k, ev)| {
-            let hostname = if let Some(setting) = &ev.setting {
-                &setting.hostname
-            } else if let Some(setting_draft) = &ev.setting_draft {
-                &setting_draft.hostname
-            } else {
-                error!(
-                    "Both `setting` and `setting_draft` are `None`. Skipping current node {}",
-                    ev.id
-                );
-                return None;
-            };
-
+        .extend(node_list.into_iter().map(move |(k, ev)| {
             let (
                 review,
                 piglet,
@@ -128,53 +115,60 @@ async fn load(
                 total_disk_space,
                 used_disk_space,
                 ping,
-            ) = if let (Some(modules), Some(usage), Some(ping)) =
-                (apps.get(hostname), usages.get(hostname), ping.get(hostname))
-            {
-                let module_names = modules
-                    .iter()
-                    .map(|(_, m)| m.clone())
-                    .collect::<HashSet<String>>();
-                let (review, piglet, giganto, reconverge, hog) = (
-                    module_names.contains(&"review".to_string()),
-                    module_names.contains(&"piglet".to_string()),
-                    module_names.contains(&"giganto".to_string()),
-                    module_names.contains(&"reconverge".to_string()),
-                    module_names.contains(&"hog".to_string()),
-                );
-                (
-                    Some(review),
-                    Some(piglet),
-                    Some(giganto),
-                    Some(reconverge),
-                    Some(hog),
-                    Some(usage.cpu_usage),
-                    Some(usage.total_memory),
-                    Some(usage.used_memory),
-                    Some(usage.total_disk_space),
-                    Some(usage.used_disk_space),
-                    Some(*ping),
-                )
-            } else if !review_hostname.is_empty() && &review_hostname == hostname {
-                (
-                    Some(true),
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(review_usage.cpu_usage),
-                    Some(review_usage.total_memory),
-                    Some(review_usage.used_memory),
-                    Some(review_usage.total_disk_space),
-                    Some(review_usage.used_disk_space),
-                    None,
-                )
-            } else {
-                (
+            ) = match ev.settings.as_ref().map(|settings| &settings.hostname) {
+                Some(hostname) => {
+                    if let (Some(modules), Some(usage), Some(ping)) =
+                        (apps.get(hostname), usages.get(hostname), ping.get(hostname))
+                    {
+                        let module_names = modules
+                            .iter()
+                            .map(|(_, m)| m.clone())
+                            .collect::<HashSet<String>>();
+                        let (review, piglet, giganto, reconverge, hog) = (
+                            module_names.contains(&"review".to_string()),
+                            module_names.contains(&"piglet".to_string()),
+                            module_names.contains(&"giganto".to_string()),
+                            module_names.contains(&"reconverge".to_string()),
+                            module_names.contains(&"hog".to_string()),
+                        );
+                        (
+                            Some(review),
+                            Some(piglet),
+                            Some(giganto),
+                            Some(reconverge),
+                            Some(hog),
+                            Some(usage.cpu_usage),
+                            Some(usage.total_memory),
+                            Some(usage.used_memory),
+                            Some(usage.total_disk_space),
+                            Some(usage.used_disk_space),
+                            Some(*ping),
+                        )
+                    } else if !review_hostname.is_empty() && &review_hostname == hostname {
+                        (
+                            Some(true),
+                            None,
+                            None,
+                            None,
+                            None,
+                            Some(review_usage.cpu_usage),
+                            Some(review_usage.total_memory),
+                            Some(review_usage.used_memory),
+                            Some(review_usage.total_disk_space),
+                            Some(review_usage.used_disk_space),
+                            None,
+                        )
+                    } else {
+                        (
+                            None, None, None, None, None, None, None, None, None, None, None,
+                        )
+                    }
+                }
+                None => (
                     None, None, None, None, None, None, None, None, None, None, None,
-                )
+                ),
             };
-            Some(Edge::new(
+            Edge::new(
                 k,
                 NodeStatus::new(
                     ev.id,
@@ -191,7 +185,7 @@ async fn load(
                     reconverge,
                     hog,
                 ),
-            ))
+            )
         }));
     Ok(connection)
 }

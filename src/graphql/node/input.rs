@@ -1,13 +1,14 @@
-use super::{Node, NodeSetting, PortNumber};
+use super::{Node, NodeSettings, PortNumber};
 use anyhow::Context as AnyhowContext;
 use async_graphql::{types::ID, InputObject, Result};
 use review_database::IndexedMapUpdate;
 use std::{borrow::Cow, collections::HashMap, net::IpAddr};
+use tracing::error;
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, InputObject)]
 #[allow(clippy::struct_excessive_bools)]
-pub struct NodeSettingInput {
+pub struct NodeSettingsInput {
     pub customer_id: ID,
     pub description: String,
     pub hostname: String,
@@ -57,8 +58,8 @@ pub struct NodeSettingInput {
     pub sensor_list: HashMap<String, bool>,
 }
 
-impl PartialEq<NodeSetting> for NodeSettingInput {
-    fn eq(&self, other: &NodeSetting) -> bool {
+impl PartialEq<NodeSettings> for NodeSettingsInput {
+    fn eq(&self, other: &NodeSettings) -> bool {
         self.customer_id.as_str().parse::<u32>() == Ok(other.customer_id)
             && self.description == other.description
             && self.hostname == other.hostname
@@ -104,17 +105,17 @@ impl PartialEq<NodeSetting> for NodeSettingInput {
     }
 }
 
-impl PartialEq<NodeSettingInput> for NodeSetting {
-    fn eq(&self, other: &NodeSettingInput) -> bool {
+impl PartialEq<NodeSettingsInput> for NodeSettings {
+    fn eq(&self, other: &NodeSettingsInput) -> bool {
         other.eq(self)
     }
 }
 
-impl TryFrom<&NodeSettingInput> for NodeSetting {
+impl TryFrom<&NodeSettingsInput> for NodeSettings {
     type Error = anyhow::Error;
 
-    fn try_from(input: &NodeSettingInput) -> Result<Self, Self::Error> {
-        Ok(NodeSetting {
+    fn try_from(input: &NodeSettingsInput) -> Result<Self, Self::Error> {
+        Ok(NodeSettings {
             customer_id: input.customer_id.parse().context("invalid customer ID")?,
             description: input.description.clone(),
             hostname: input.hostname.clone(),
@@ -170,8 +171,16 @@ fn parse_str_to_ip(ip_str: Option<&str>) -> Option<IpAddr> {
 pub(super) struct NodeInput {
     pub name: String,
     pub name_draft: Option<String>,
-    pub setting: Option<NodeSettingInput>,
-    pub setting_draft: Option<NodeSettingInput>,
+    pub settings: Option<NodeSettingsInput>,
+    pub settings_draft: Option<NodeSettingsInput>,
+}
+
+#[allow(clippy::module_name_repetitions)]
+#[derive(Clone, InputObject)]
+pub(super) struct NodeDraftInput {
+    pub name: String,
+    pub name_draft: Option<String>,
+    pub settings_draft: Option<NodeSettingsInput>,
 }
 
 impl IndexedMapUpdate for NodeInput {
@@ -181,14 +190,8 @@ impl IndexedMapUpdate for NodeInput {
         Some(Cow::Borrowed(self.name.as_bytes()))
     }
 
-    fn apply(&self, mut value: Self::Entry) -> Result<Self::Entry, anyhow::Error> {
-        if let Some(setting_draft) = self.setting_draft.as_ref() {
-            value.name_draft = self.name_draft.clone();
-            value.setting_draft = Some(NodeSetting::try_from(setting_draft)?);
-        } else {
-            value.name_draft = None;
-            value.setting_draft = None;
-        }
+    fn apply(&self, value: Self::Entry) -> Result<Self::Entry, anyhow::Error> {
+        error!("This is not expected to be called. Nothing will be applied to DB.");
         Ok(value)
     }
 
@@ -201,18 +204,42 @@ impl IndexedMapUpdate for NodeInput {
             (None, None) => true,
         };
 
-        let setting_matches = match (&self.setting, &value.setting) {
+        let setting_matches = match (&self.settings, &value.settings) {
             (Some(input_value), Some(db_value)) => input_value == db_value,
             (Some(_), None) | (None, Some(_)) => false,
             (None, None) => true,
         };
 
-        let setting_draft_matches = match (&self.setting_draft, &value.setting_draft) {
+        let setting_draft_matches = match (&self.settings_draft, &value.settings_draft) {
             (Some(input_value), Some(db_value)) => input_value == db_value,
             (Some(_), None) | (None, Some(_)) => false,
             (None, None) => true,
         };
 
         name_matches && name_draft_matches && setting_matches && setting_draft_matches
+    }
+}
+
+impl IndexedMapUpdate for NodeDraftInput {
+    type Entry = Node;
+
+    fn key(&self) -> Option<Cow<[u8]>> {
+        Some(Cow::Borrowed(self.name.as_bytes()))
+    }
+
+    fn apply(&self, mut value: Self::Entry) -> Result<Self::Entry, anyhow::Error> {
+        if let Some(settings_draft) = self.settings_draft.as_ref() {
+            value.name_draft = self.name_draft.clone();
+            value.settings_draft = Some(NodeSettings::try_from(settings_draft)?);
+        } else {
+            value.name_draft = None;
+            value.settings_draft = None;
+        }
+        Ok(value)
+    }
+
+    fn verify(&self, _value: &Self::Entry) -> bool {
+        error!("This is not expected to be called. There is nothing to verify");
+        true
     }
 }

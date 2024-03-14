@@ -102,10 +102,10 @@ impl TryFrom<&NicInput> for Nic {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
+#[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq, Default)]
 #[graphql(complex)]
 #[allow(clippy::struct_excessive_bools, clippy::module_name_repetitions)]
-pub struct NodeSetting {
+pub struct NodeSettings {
     #[graphql(skip)]
     customer_id: u32,
     description: String,
@@ -169,11 +169,11 @@ pub struct NodeSetting {
 #[graphql(complex)]
 pub(super) struct Node {
     #[graphql(skip)]
-    id: u32,
+    pub id: u32,
     name: String,
     name_draft: Option<String>,
-    pub setting: Option<NodeSetting>,
-    pub setting_draft: Option<NodeSetting>,
+    pub settings: Option<NodeSettings>,
+    pub settings_draft: Option<NodeSettings>,
     creation_time: DateTime<Utc>,
 }
 
@@ -201,7 +201,7 @@ impl Node {
 }
 
 #[ComplexObject]
-impl NodeSetting {
+impl NodeSettings {
     async fn customer_id(&self) -> ID {
         ID(self.customer_id.to_string())
     }

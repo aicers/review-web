@@ -4,7 +4,8 @@ use crate::graphql::{customer::broadcast_customer_networks, get_customer_network
 
 use super::{
     super::{Role, RoleGuard},
-    Node, NodeInput, NodeMutation, NodeQuery, NodeSetting, NodeTotalCount, PortNumber,
+    input::NodeDraftInput,
+    Node, NodeInput, NodeMutation, NodeQuery, NodeSettings, NodeTotalCount, PortNumber,
     ServerAddress, ServerPort, Setting,
 };
 use async_graphql::{
@@ -130,8 +131,8 @@ impl NodeMutation {
                 id: u32::MAX,
                 name,
                 name_draft: None,
-                setting: None,
-                setting_draft: Some(NodeSetting {
+                settings: None,
+                settings_draft: Some(NodeSettings {
                     customer_id,
                     description,
                     hostname,
@@ -254,37 +255,19 @@ impl NodeMutation {
     /// Updates the given node, returning the node ID that was updated.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
-    async fn update_node(
+    async fn update_node_draft(
         &self,
         ctx: &Context<'_>,
         id: ID,
         old: NodeInput,
-        new: NodeInput,
+        new: NodeDraftInput,
     ) -> Result<ID> {
-        if !validate_update_input(&old, &new) {
-            return Err("Invalid combination of old and new values".into());
-        }
-
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.node_map();
         map.update(i, &old, &new)?;
         Ok(id)
     }
-}
-
-fn validate_update_input(old: &NodeInput, new: &NodeInput) -> bool {
-    matches!(
-        (
-            old.setting.as_ref(),
-            old.setting_draft.as_ref(),
-            new.setting.as_ref(),
-            new.setting_draft.as_ref(),
-        ),
-        (None, Some(_), None, Some(_))
-            | (Some(_), None, Some(_), Some(_))
-            | (Some(_), Some(_), Some(_), _)
-    )
 }
 
 fn parse_str_to_ip<'em>(
@@ -326,10 +309,7 @@ pub fn get_node_settings(db: &Store) -> Result<Vec<Setting>> {
             .deserialize::<Node>(value.as_ref())
             .map_err(|_| "invalid value in database")?;
 
-        let node_setting = node
-            .setting
-            .or(node.setting_draft)
-            .ok_or("node is not yet fully configured")?;
+        let node_setting = node.settings.ok_or("Applied node settings do not exist")?;
 
         let piglet: Option<ServerAddress> = if node_setting.piglet {
             Some(ServerAddress {
@@ -452,9 +432,9 @@ pub fn get_customer_id_of_review_host(db: &Store) -> Result<Option<u32>> {
             .deserialize::<Node>(value.as_ref())
             .map_err(|_| "invalid value in database")?;
 
-        if let Some(node_setting) = &node.setting {
-            if node_setting.review {
-                return Ok(Some(node_setting.customer_id));
+        if let Some(node_settings) = &node.settings {
+            if node_settings.review {
+                return Ok(Some(node_settings.customer_id));
             }
         }
     }
@@ -541,7 +521,7 @@ mod tests {
                     id
                     name
                     nameDraft
-                    setting {
+                    settings {
                         customerId
                         description
                         hostname
@@ -551,7 +531,7 @@ mod tests {
                         protocolList
                         sensorList
                     }
-                    settingDraft {
+                    settingsDraft {
                         customerId
                         description
                         hostname
@@ -573,8 +553,8 @@ mod tests {
                     "id": "0",
                     "name": "admin node",
                     "nameDraft": null,
-                    "setting": null,
-                    "settingDraft": {
+                    "settings": null,
+                    "settingsDraft": {
                         "customerId": "0",
                         "description": "This is the admin node running review.",
                         "hostname": "admin.aice-security.com",
@@ -592,13 +572,13 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                    updateNode(
+                    updateNodeDraft(
                         id: "0"
                         old: {
                             name: "admin node",
                             nameDraft: null,
-                            setting: null
-                            settingDraft: {
+                            settings: null
+                            settingsDraft: {
                                 customerId: 0,
                                 description: "This is the admin node running review.",
                                 hostname: "admin.aice-security.com",
@@ -646,8 +626,7 @@ mod tests {
                         new: {
                             name: "admin node",
                             nameDraft: "AdminNode",
-                            setting: null,
-                            settingDraft: {
+                            settingsDraft: {
                                 customerId: 0,
                                 description: "This is the admin node running review.",
                                 hostname: "admin.aice-security.com",
@@ -696,7 +675,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{updateNode: "0"}"#);
+        assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
 
         // check node count after update
         let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
@@ -709,7 +688,7 @@ mod tests {
                     id
                     name
                     nameDraft
-                    setting {
+                    settings {
                         customerId
                         description
                         hostname
@@ -719,7 +698,7 @@ mod tests {
                         protocolList
                         sensorList
                     }
-                    settingDraft {
+                    settingsDraft {
                         customerId
                         description
                         hostname
@@ -741,8 +720,8 @@ mod tests {
                     "id": "0",
                     "name": "admin node", // stays the same
                     "nameDraft": "AdminNode", // updated
-                    "setting": null,
-                    "settingDraft": {
+                    "settings": null,
+                    "settingsDraft": {
                         "customerId": "0",
                         "description": "This is the admin node running review.",
                         "hostname": "admin.aice-security.com",
@@ -756,17 +735,17 @@ mod tests {
             })
         );
 
-        // try reverting node, but it should fail because the node is an initial draft
+        // try reverting node, but it should succeed even though the node is an initial draft
         let res = schema
             .execute(
                 r#"mutation {
-                updateNode(
+                updateNodeDraft(
                     id: "0"
                     old: {
                         name: "admin node",
                         nameDraft: "AdminNode",
-                        setting: null
-                        settingDraft: {
+                        settings: null
+                        settingsDraft: {
                             customerId: 0,
                             description: "This is the admin node running review.",
                             hostname: "admin.aice-security.com",
@@ -814,19 +793,13 @@ mod tests {
                     new: {
                         name: "admin node",
                         nameDraft: null,
-                        setting: null,
-                        settingDraft: null,
+                        settingsDraft: null,
                     }
                 )
             }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"null"#);
-        assert_eq!(res.errors.len(), 1);
-        assert_eq!(
-            res.errors[0].message,
-            "Invalid combination of old and new values"
-        );
+        assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
 
         // remove node
         let res = schema

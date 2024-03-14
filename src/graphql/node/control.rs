@@ -7,10 +7,10 @@ use crate::graphql::{customer::broadcast_customer_networks, get_customer_network
 
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard},
-    Node, NodeControlMutation, NodeSetting,
+    Node, NodeControlMutation, NodeSettings,
 };
 use anyhow::bail;
-use async_graphql::{Context, Object, Result, ID};
+use async_graphql::{Context, Object, Result, SimpleObject, ID};
 use bincode::Options;
 use oinq::{
     request::{HogConfig, PigletConfig, ReconvergeConfig},
@@ -19,10 +19,7 @@ use oinq::{
 use review_database::Indexed;
 use tracing::{error, info};
 
-const MAX_SET_CONFIG_TRY_COUNT: i32 = 3;
-const PIGLET_APP_NAME: &str = "piglet";
-const HOG_APP_NAME: &str = "hog";
-const RECONVERGE_APP_NAME: &str = "reconverge";
+const MAX_SET_CONFIG_TRY_COUNT: u32 = 3;
 
 #[Object]
 impl NodeControlMutation {
@@ -70,6 +67,8 @@ impl NodeControlMutation {
         if !review_hostname.is_empty() && review_hostname == hostname {
             Err("cannot shutdown. review shutdown is not allowed".into())
         } else {
+            // TODO: Refactor this code to use `AgentManager::shutdown` after
+            // `review` implements it.
             let apps = agents.online_apps_by_host_id().await?;
             let Some(apps) = apps.get(&hostname) else {
                 return Err("unable to gather info of online agents".into());
@@ -95,8 +94,9 @@ impl NodeControlMutation {
 
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
-    async fn apply_node(&self, ctx: &Context<'_>, id: ID) -> async_graphql::Result<ID> {
+    async fn apply_node(&self, ctx: &Context<'_>, id: ID) -> Result<ApplyResult> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
+        let agents = ctx.data::<BoxedAgentManager>()?;
 
         let node: Node = {
             let store = crate::graphql::get_store(ctx).await?;
@@ -105,38 +105,99 @@ impl NodeControlMutation {
                 .get_by_id(i)?
                 .ok_or_else(|| async_graphql::Error::new(format!("Node with ID {i} not found",)))?
         };
-        if node.setting_draft.is_none() {
-            return Err("Cannot apply when `setting_draft` is None".into());
+
+        if node.name_draft.is_none() && node.settings_draft.is_none() {
+            return Err("There is nothing to apply.".into());
         }
 
-        let agents = ctx.data::<BoxedAgentManager>()?;
-        if send_set_config_requests(agents, &node).await? {
-            update_node_data(ctx, i, &node).await?;
+        let review_config_setted = match &node.settings_draft {
+            Some(settings_draft) if settings_draft.review => {
+                // TODO: Trigger `set_review_config()`; Configs that can be set
+                // for REview are `revew_port` and `review_web_port`.
+                // `set_review_config` is expected to exist in REview.
+                // `set_review_config()` will write the update to a temporary
+                // file. Until the `set_review_config()` is implemented, the
+                // `review_config_setted` is temporarily fixed to true, but
+                // after implementation, it should be set according to the
+                // return value of `set_review_config()`.
+                true
+            }
+            _ => false,
+        };
+        let config_setted_modules = send_set_config_requests(agents, &node).await;
+        let success_modules = if let Ok(mut config_setted_modules) = config_setted_modules {
+            if review_config_setted {
+                config_setted_modules.push(ModuleName::Review);
+            }
+            update_node_data(ctx, i, &node, &config_setted_modules).await?;
             if let (true, customer_id) = should_broadcast_customer_change(&node) {
                 broadcast_customer_change(customer_id, ctx).await?;
             }
-            Ok(id)
+            config_setted_modules
         } else {
-            Err("Failed to apply node setting".into())
+            return Err("Failed to apply node settings".into());
+        };
+
+        if review_config_setted {
+            // TODO: Spawn a task to trigger `reload_review()` after a few
+            // seconds like below. `reload_review()` is expected to exist in
+            // REview. It reads the temp file written by `set_review_config()`.
+            // At reload, the temporary file replaces the original config file.
+            /*
+            tokio::spawn(async {
+              tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+              reload_review();
+            });
+            */
         }
+
+        Ok(ApplyResult {
+            id,
+            success_modules,
+        })
     }
 }
 
-async fn send_set_config_requests(agents: &BoxedAgentManager, node: &Node) -> anyhow::Result<bool> {
+#[derive(SimpleObject, Clone)]
+pub struct ApplyResult {
+    pub id: ID,
+    pub success_modules: Vec<ModuleName>,
+}
+
+#[derive(
+    async_graphql::Enum, Copy, Clone, Eq, PartialEq, strum_macros::Display, strum_macros::EnumString,
+)]
+#[strum(serialize_all = "snake_case")]
+pub enum ModuleName {
+    Hog,
+    Piglet,
+    Reconverge,
+    Review,
+}
+
+async fn send_set_config_requests(
+    agents: &BoxedAgentManager,
+    node: &Node,
+) -> anyhow::Result<Vec<ModuleName>> {
+    // TODO: Refactor this code to use `AgentManager::set_config` after
+    // `review` implements it.
+
     let online_apps = agents.online_apps_by_host_id().await?;
 
-    let mut result_combined: bool = true;
+    let mut result_combined: Vec<ModuleName> = vec![];
 
-    if let Some(setting_draft) = &node.setting_draft {
-        let hostname_draft = &setting_draft.hostname;
+    if let Some(settings_draft) = &node.settings_draft {
+        let hostname_draft = &settings_draft.hostname;
 
-        for (app_name, config) in target_app_configs(setting_draft)? {
-            let agent_key = find_agent_key(&online_apps, hostname_draft, app_name)?;
+        for (module_name, config) in target_app_configs(settings_draft)? {
+            let agent_key = find_agent_key(&online_apps, hostname_draft, module_name)?;
             let result = send_set_config_request(agents, agent_key.as_str(), &config).await?;
-            result_combined = result_combined && result;
+            if result {
+                result_combined.push(module_name);
+            }
         }
     } else {
-        bail!("`setting_draft` is None");
+        bail!("There is nothing to be applied.");
     }
 
     Ok(result_combined)
@@ -153,32 +214,33 @@ async fn send_set_config_request(
 
     for _ in 0..MAX_SET_CONFIG_TRY_COUNT {
         let set_config_response = agents.send_and_recv(agent_key, &set_config_msg).await;
-
-        if let Ok(response) = set_config_response {
-            if response.is_empty() {
-                return Ok(true);
-            }
+        if set_config_response.is_ok() {
+            return Ok(true);
         }
-
-        info!("set_config_response is not Ok(true). retrying");
+        info!("Failed to set config for module {agent_key}. Retrying...");
     }
 
     Ok(false)
 }
 
-fn target_app_configs(setting_draft: &NodeSetting) -> anyhow::Result<Vec<(&str, oinq::Config)>> {
+fn target_app_configs(
+    settings_draft: &NodeSettings,
+) -> anyhow::Result<Vec<(ModuleName, oinq::Config)>> {
     let mut configurations = Vec::new();
 
-    if setting_draft.piglet {
-        configurations.push((PIGLET_APP_NAME, build_piglet_config(setting_draft)?));
+    if settings_draft.piglet {
+        configurations.push((ModuleName::Piglet, build_piglet_config(settings_draft)?));
     }
 
-    if setting_draft.hog {
-        configurations.push((HOG_APP_NAME, build_hog_config(setting_draft)?));
+    if settings_draft.hog {
+        configurations.push((ModuleName::Hog, build_hog_config(settings_draft)?));
     }
 
-    if setting_draft.reconverge {
-        configurations.push((RECONVERGE_APP_NAME, build_reconverge_config(setting_draft)?));
+    if settings_draft.reconverge {
+        configurations.push((
+            ModuleName::Reconverge,
+            build_reconverge_config(settings_draft)?,
+        ));
     }
 
     Ok(configurations)
@@ -187,28 +249,28 @@ fn target_app_configs(setting_draft: &NodeSetting) -> anyhow::Result<Vec<(&str, 
 fn find_agent_key(
     online_apps: &HashMap<String, Vec<(String, String)>>,
     hostname: &str,
-    app_name: &str,
+    module_name: ModuleName,
 ) -> anyhow::Result<String> {
     online_apps
         .get(hostname)
-        .and_then(|v| v.iter().find(|(_, name)| *name == app_name))
+        .and_then(|v| v.iter().find(|(_, name)| *name == module_name.to_string()))
         .map(|(k, _)| k.clone())
-        .ok_or_else(|| anyhow::anyhow!("{} agent not found", app_name))
+        .ok_or_else(|| anyhow::anyhow!("{} agent not found", module_name))
 }
 
-fn build_piglet_config(setting_draft: &NodeSetting) -> anyhow::Result<oinq::Config> {
+fn build_piglet_config(settings_draft: &NodeSettings) -> anyhow::Result<oinq::Config> {
     let review_address = build_socket_address(
-        setting_draft.piglet_review_ip,
-        setting_draft.piglet_review_port,
+        settings_draft.piglet_review_ip,
+        settings_draft.piglet_review_port,
     )
     .ok_or_else(|| anyhow::anyhow!("piglet review address is not set"))?;
 
     let giganto_address = build_socket_address(
-        setting_draft.piglet_giganto_ip,
-        setting_draft.piglet_giganto_port,
+        settings_draft.piglet_giganto_ip,
+        settings_draft.piglet_giganto_port,
     );
-    let log_options = build_log_options(setting_draft);
-    let http_file_types = build_http_file_types(setting_draft);
+    let log_options = build_log_options(settings_draft);
+    let http_file_types = build_http_file_types(settings_draft);
 
     Ok(oinq::Config::Piglet(PigletConfig {
         review_address,
@@ -218,14 +280,16 @@ fn build_piglet_config(setting_draft: &NodeSetting) -> anyhow::Result<oinq::Conf
     }))
 }
 
-fn build_hog_config(setting_draft: &NodeSetting) -> anyhow::Result<oinq::Config> {
+fn build_hog_config(settings_draft: &NodeSettings) -> anyhow::Result<oinq::Config> {
     let review_address =
-        build_socket_address(setting_draft.hog_review_ip, setting_draft.hog_review_port)
+        build_socket_address(settings_draft.hog_review_ip, settings_draft.hog_review_port)
             .ok_or_else(|| anyhow::anyhow!("hog review address is not set"))?;
-    let giganto_address =
-        build_socket_address(setting_draft.hog_giganto_ip, setting_draft.hog_giganto_port);
-    let active_protocols = build_active_protocols(setting_draft);
-    let active_sources = build_active_sources(setting_draft);
+    let giganto_address = build_socket_address(
+        settings_draft.hog_giganto_ip,
+        settings_draft.hog_giganto_port,
+    );
+    let active_protocols = build_active_protocols(settings_draft);
+    let active_sources = build_active_sources(settings_draft);
 
     Ok(oinq::Config::Hog(HogConfig {
         review_address,
@@ -235,12 +299,12 @@ fn build_hog_config(setting_draft: &NodeSetting) -> anyhow::Result<oinq::Config>
     }))
 }
 
-fn build_log_options(setting_draft: &NodeSetting) -> Option<Vec<String>> {
+fn build_log_options(settings_draft: &NodeSettings) -> Option<Vec<String>> {
     let condition_to_log_option = [
-        (setting_draft.save_packets, "dump"),
-        (setting_draft.http, "http"),
-        (setting_draft.smtp_eml, "eml"),
-        (setting_draft.ftp, "ftp"),
+        (settings_draft.save_packets, "dump"),
+        (settings_draft.http, "http"),
+        (settings_draft.smtp_eml, "eml"),
+        (settings_draft.ftp, "ftp"),
     ];
 
     let log_options = condition_to_log_option
@@ -261,13 +325,13 @@ fn build_log_options(setting_draft: &NodeSetting) -> Option<Vec<String>> {
     }
 }
 
-fn build_http_file_types(setting_draft: &NodeSetting) -> Option<Vec<String>> {
+fn build_http_file_types(settings_draft: &NodeSettings) -> Option<Vec<String>> {
     let condition_to_http_file_types = [
-        (setting_draft.office, "office"),
-        (setting_draft.exe, "exe"),
-        (setting_draft.pdf, "pdf"),
-        (setting_draft.html, "html"),
-        (setting_draft.txt, "txt"),
+        (settings_draft.office, "office"),
+        (settings_draft.exe, "exe"),
+        (settings_draft.pdf, "pdf"),
+        (settings_draft.html, "html"),
+        (settings_draft.txt, "txt"),
     ];
 
     let http_file_types = condition_to_http_file_types
@@ -288,14 +352,13 @@ fn build_http_file_types(setting_draft: &NodeSetting) -> Option<Vec<String>> {
     }
 }
 
-fn build_active_protocols(setting_draft: &NodeSetting) -> Option<Vec<String>> {
-    if setting_draft.protocols {
+fn build_active_protocols(settings_draft: &NodeSettings) -> Option<Vec<String>> {
+    if settings_draft.protocols {
         Some(
-            setting_draft
+            settings_draft
                 .protocol_list
                 .iter()
-                .filter(|(_, v)| **v)
-                .map(|(k, _)| k.clone())
+                .filter_map(|(k, v)| if *v { Some(k.clone()) } else { None })
                 .collect::<Vec<String>>(),
         )
     } else {
@@ -303,14 +366,13 @@ fn build_active_protocols(setting_draft: &NodeSetting) -> Option<Vec<String>> {
     }
 }
 
-fn build_active_sources(setting_draft: &NodeSetting) -> Option<Vec<String>> {
-    if setting_draft.sensors {
+fn build_active_sources(settings_draft: &NodeSettings) -> Option<Vec<String>> {
+    if settings_draft.sensors {
         Some(
-            setting_draft
+            settings_draft
                 .sensor_list
                 .iter()
-                .filter(|(_, v)| **v)
-                .map(|(k, _)| k.clone())
+                .filter_map(|(k, v)| if *v { Some(k.clone()) } else { None })
                 .collect::<Vec<String>>(),
         )
     } else {
@@ -318,16 +380,16 @@ fn build_active_sources(setting_draft: &NodeSetting) -> Option<Vec<String>> {
     }
 }
 
-fn build_reconverge_config(setting_draft: &NodeSetting) -> anyhow::Result<oinq::Config> {
+fn build_reconverge_config(settings_draft: &NodeSettings) -> anyhow::Result<oinq::Config> {
     let review_address = build_socket_address(
-        setting_draft.reconverge_review_ip,
-        setting_draft.reconverge_review_port,
+        settings_draft.reconverge_review_ip,
+        settings_draft.reconverge_review_port,
     )
     .ok_or_else(|| anyhow::anyhow!("reconverge review address is not set"))?;
 
     let giganto_address = build_socket_address(
-        setting_draft.reconverge_giganto_ip,
-        setting_draft.reconverge_giganto_port,
+        settings_draft.reconverge_giganto_ip,
+        settings_draft.reconverge_giganto_port,
     );
 
     Ok(oinq::Config::Reconverge(ReconvergeConfig {
@@ -340,25 +402,149 @@ fn build_socket_address(ip: Option<IpAddr>, port: Option<u16>) -> Option<SocketA
     ip.and_then(|ip| port.map(|port| SocketAddr::new(ip, port)))
 }
 
-async fn update_node_data(ctx: &Context<'_>, i: u32, node: &Node) -> Result<()> {
-    let mut new_node = node.clone();
-    new_node.name = new_node.name_draft.take().unwrap_or(new_node.name);
-    new_node.setting = new_node.setting_draft.take();
+#[allow(clippy::struct_excessive_bools)]
+struct ModuleSpecificSettingUpdateIndicator {
+    review: bool,
+    hog: bool,
+    reconverge: bool,
+    piglet: bool,
+}
+
+impl ModuleSpecificSettingUpdateIndicator {
+    fn all_true(&self) -> bool {
+        self.review && self.hog && self.reconverge && self.piglet
+    }
+}
+
+fn okay_to_update_module_specific_settings(
+    setting_draft_value: bool,
+    config_setted_modules: &[ModuleName],
+    expected_module: ModuleName,
+) -> bool {
+    !setting_draft_value || config_setted_modules.iter().any(|x| *x == expected_module)
+}
+
+async fn update_node_data(
+    ctx: &Context<'_>,
+    i: u32,
+    node: &Node,
+    config_setted_modules: &[ModuleName],
+) -> Result<()> {
+    let mut updated_node = node.clone();
+    updated_node.name = updated_node.name_draft.take().unwrap_or(updated_node.name);
+
+    if let Some(settings_draft) = &updated_node.settings_draft {
+        let update_module_specific_settings = ModuleSpecificSettingUpdateIndicator {
+            review: okay_to_update_module_specific_settings(
+                settings_draft.review,
+                config_setted_modules,
+                ModuleName::Review,
+            ),
+            hog: okay_to_update_module_specific_settings(
+                settings_draft.hog,
+                config_setted_modules,
+                ModuleName::Hog,
+            ),
+            reconverge: okay_to_update_module_specific_settings(
+                settings_draft.reconverge,
+                config_setted_modules,
+                ModuleName::Reconverge,
+            ),
+            piglet: okay_to_update_module_specific_settings(
+                settings_draft.piglet,
+                config_setted_modules,
+                ModuleName::Piglet,
+            ),
+        };
+
+        if update_module_specific_settings.all_true() {
+            // All fields in the `settings` can simply be replaced with fields in `settings_draft`.
+            updated_node.settings = updated_node.settings_draft.take();
+        } else {
+            update_common_node_settings(&mut updated_node);
+            update_module_specfic_settings(&mut updated_node, &update_module_specific_settings);
+        }
+    }
 
     let store = crate::graphql::get_store(ctx).await?;
     let map = store.node_map();
-    Ok(map.update(i, node, &new_node)?)
+    Ok(map.update(i, node, &updated_node)?)
+}
+
+fn update_common_node_settings(updated_node: &mut Node) {
+    let mut updated_setting = updated_node.settings.take().unwrap_or_default();
+    if let Some(settings_draft) = updated_node.settings_draft.as_ref() {
+        // These are common node settings fields, that are not tied to specific modules
+        updated_setting.customer_id = settings_draft.customer_id;
+        updated_setting.description = settings_draft.description.clone();
+        updated_setting.hostname = settings_draft.hostname.clone();
+    }
+    updated_node.settings = Some(updated_setting);
+}
+
+fn update_module_specfic_settings(
+    updated_node: &mut Node,
+    update_module_specific_settings: &ModuleSpecificSettingUpdateIndicator,
+) {
+    let mut updated_setting = updated_node.settings.take().unwrap_or_default();
+
+    if let Some(settings_draft) = updated_node.settings_draft.as_mut() {
+        if update_module_specific_settings.review {
+            updated_setting.review = settings_draft.review;
+            updated_setting.review_port = settings_draft.review_port;
+            updated_setting.review_web_port = settings_draft.review_web_port;
+        }
+
+        if update_module_specific_settings.hog {
+            updated_setting.hog = settings_draft.hog;
+            updated_setting.hog_review_ip = settings_draft.hog_review_ip;
+            updated_setting.hog_review_port = settings_draft.hog_review_port;
+            updated_setting.hog_giganto_ip = settings_draft.hog_giganto_ip;
+            updated_setting.hog_giganto_port = settings_draft.hog_giganto_port;
+            updated_setting.protocols = settings_draft.protocols;
+            updated_setting.protocol_list = settings_draft.protocol_list.clone();
+            updated_setting.sensors = settings_draft.sensors;
+            updated_setting.sensor_list = settings_draft.sensor_list.clone();
+        }
+
+        if update_module_specific_settings.reconverge {
+            updated_setting.reconverge = settings_draft.reconverge;
+            updated_setting.reconverge_review_ip = settings_draft.reconverge_review_ip;
+            updated_setting.reconverge_review_port = settings_draft.reconverge_review_port;
+            updated_setting.reconverge_giganto_ip = settings_draft.reconverge_giganto_ip;
+            updated_setting.reconverge_giganto_port = settings_draft.reconverge_giganto_port;
+        }
+
+        if update_module_specific_settings.piglet {
+            updated_setting.piglet = settings_draft.piglet;
+            updated_setting.piglet_review_ip = settings_draft.piglet_review_ip;
+            updated_setting.piglet_review_port = settings_draft.piglet_review_port;
+            updated_setting.piglet_giganto_ip = settings_draft.piglet_giganto_ip;
+            updated_setting.piglet_giganto_port = settings_draft.piglet_giganto_port;
+            updated_setting.save_packets = settings_draft.save_packets;
+            updated_setting.http = settings_draft.http;
+            updated_setting.office = settings_draft.office;
+            updated_setting.exe = settings_draft.exe;
+            updated_setting.pdf = settings_draft.pdf;
+            updated_setting.html = settings_draft.html;
+            updated_setting.txt = settings_draft.txt;
+            updated_setting.smtp_eml = settings_draft.smtp_eml;
+            updated_setting.ftp = settings_draft.ftp;
+        }
+    }
+
+    updated_node.settings = Some(updated_setting);
 }
 
 fn should_broadcast_customer_change(node: &Node) -> (bool, u32) {
-    match (node.setting.as_ref(), node.setting_draft.as_ref()) {
-        (None, Some(setting_draft)) => (setting_draft.review, setting_draft.customer_id),
-        (Some(setting), Some(setting_draft)) => (
-            setting_draft.review && setting_draft.customer_id != setting.customer_id,
-            setting_draft.customer_id,
+    match (node.settings.as_ref(), node.settings_draft.as_ref()) {
+        (None, Some(settings_draft)) => (settings_draft.review, settings_draft.customer_id),
+        (Some(settings), Some(settings_draft)) => (
+            settings_draft.review && settings_draft.customer_id != settings.customer_id,
+            settings_draft.customer_id,
         ),
         (_, None) => {
-            error!("When `setting_draft` is None, this function should not be called. Returning (false, _) to avoid broadcasting customer change.");
+            info!("When there is no settings draft, customer change should not be broadcasted.");
             (false, u32::MAX)
         }
     }
@@ -459,7 +645,7 @@ mod tests {
                             id
                             name
                             nameDraft
-                            setting {
+                            settings {
                                 customerId
                                 description
                                 hostname
@@ -473,7 +659,7 @@ mod tests {
                                 protocolList
                                 sensorList
                             }
-                            settingDraft {
+                            settingsDraft {
                                 customerId
                                 description
                                 hostname
@@ -504,8 +690,8 @@ mod tests {
                                 "id": "0",
                                 "name": "admin node",
                                 "nameDraft": null,
-                                "setting": null,
-                                "settingDraft": {
+                                "settings": null,
+                                "settingsDraft": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
                                     "hostname": "admin.aice-security.com",
@@ -530,11 +716,17 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                        applyNode(id: "0")
-                    }"#,
+                    applyNode(id: "0") {
+                        id
+                        successModules
+                    }
+                }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{applyNode: {id: "0",successModules: [REVIEW]}}"#
+        );
 
         // check node list after apply
         let res = schema
@@ -547,7 +739,7 @@ mod tests {
                             id
                             name
                             nameDraft
-                            setting {
+                            settings {
                                 customerId
                                 description
                                 hostname
@@ -561,7 +753,7 @@ mod tests {
                                 protocolList
                                 sensorList
                             }
-                            settingDraft {
+                            settingsDraft {
                                 customerId
                                 description
                                 hostname
@@ -592,7 +784,7 @@ mod tests {
                                 "id": "0",
                                 "name": "admin node",
                                 "nameDraft": null,
-                                "setting": {
+                                "settings": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
                                     "hostname": "admin.aice-security.com",
@@ -606,7 +798,7 @@ mod tests {
                                     "protocolList": {},
                                     "sensorList": {},
                                 },
-                                "settingDraft": null,
+                                "settingsDraft": null,
                             }
                         }
                     ]
@@ -618,12 +810,12 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                    updateNode(
+                    updateNodeDraft(
                         id: "0"
                         old: {
                             name: "admin node",
                             nameDraft: null,
-                            setting: {
+                            settings: {
                                 customerId: "0",
                                 description: "This is the admin node running review.",
                                 hostname: "admin.aice-security.com",
@@ -667,56 +859,12 @@ mod tests {
                                 sensors: false,
                                 sensorList: {},
                             },
-                            settingDraft: null
+                            settingsDraft: null
                         },
                         new: {
                             name: "admin node",
                             nameDraft: "admin node with new name",
-                            setting: {
-                                customerId: "0",
-                                description: "This is the admin node running review.",
-                                hostname: "admin.aice-security.com",
-                                review: true,
-                                reviewPort: 1111,
-                                reviewWebPort: 1112,
-                                piglet: false,
-                                pigletGigantoIp: null,
-                                pigletGigantoPort: null,
-                                pigletReviewIp: null,
-                                pigletReviewPort: null,
-                                savePackets: false,
-                                http: false,
-                                office: false,
-                                exe: false,
-                                pdf: false,
-                                html: false,
-                                txt: false,
-                                smtpEml: false,
-                                ftp: false,
-                                giganto: false,
-                                gigantoIngestionIp: null,
-                                gigantoIngestionPort: null,
-                                gigantoPublishIp: null,
-                                gigantoPublishPort: null,
-                                gigantoGraphqlIp: null,
-                                gigantoGraphqlPort: null,
-                                retentionPeriod: null,
-                                reconverge: false,
-                                reconvergeReviewIp: null,
-                                reconvergeReviewPort: null,
-                                reconvergeGigantoIp: null,
-                                reconvergeGigantoPort: null,
-                                hog: false,
-                                hogReviewIp: null,
-                                hogReviewPort: null,
-                                hogGigantoIp: null,
-                                hogGigantoPort: null,
-                                protocols: false,
-                                protocolList: {},
-                                sensors: false,
-                                sensorList: {},
-                            },
-                            settingDraft: {
+                            settingsDraft: {
                                 customerId: "0",
                                 description: "This is the admin node running review.",
                                 hostname: "admin.aice-security.com",
@@ -765,17 +913,23 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{updateNode: "0"}"#);
+        assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
 
         // apply node
         let res = schema
             .execute(
                 r#"mutation {
-            applyNode(id: "0")
-        }"#,
+                    applyNode(id: "0") {
+                        id
+                        successModules
+                    }
+                }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{applyNode: {id: "0",successModules: [REVIEW]}}"#
+        );
 
         // check node list after apply
         let res = schema
@@ -788,7 +942,7 @@ mod tests {
                             id
                             name
                             nameDraft
-                            setting {
+                            settings {
                                 customerId
                                 description
                                 hostname
@@ -802,7 +956,7 @@ mod tests {
                                 protocolList
                                 sensorList
                             }
-                            settingDraft {
+                            settingsDraft {
                                 customerId
                                 description
                                 hostname
@@ -833,7 +987,7 @@ mod tests {
                                 "id": "0",
                                 "name": "admin node with new name",
                                 "nameDraft": null,
-                                "setting": {
+                                "settings": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
                                     "hostname": "admin.aice-security.com",
@@ -847,7 +1001,7 @@ mod tests {
                                     "protocolList": {},
                                     "sensorList": {},
                                 },
-                                "settingDraft": null,
+                                "settingsDraft": null,
                             }
                         }
                     ]
@@ -1045,7 +1199,7 @@ mod tests {
                             id
                             name
                             nameDraft
-                            setting {
+                            settings {
                                 customerId
                                 description
                                 hostname
@@ -1055,7 +1209,7 @@ mod tests {
                                 reconverge
                                 hog
                             }
-                            settingDraft {
+                            settingsDraft {
                                 customerId
                                 description
                                 hostname
@@ -1082,8 +1236,8 @@ mod tests {
                                 "id": "0",
                                 "name": "node1",
                                 "nameDraft": null,
-                                "setting": null,
-                                "settingDraft": {
+                                "settings": null,
+                                "settingsDraft": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
                                     "hostname": "host1",
@@ -1104,11 +1258,17 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                        applyNode(id: "0")
-                    }"#,
+                    applyNode(id: "0") {
+                        id
+                        successModules
+                    }
+                }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{applyNode: {id: "0",successModules: [PIGLET,REVIEW]}}"#
+        );
 
         // check node list after apply
         let res = schema
@@ -1121,7 +1281,7 @@ mod tests {
                             id
                             name
                             nameDraft
-                            setting {
+                            settings {
                                 customerId
                                 description
                                 hostname
@@ -1131,7 +1291,7 @@ mod tests {
                                 reconverge
                                 hog
                             }
-                            settingDraft {
+                            settingsDraft {
                                 customerId
                                 description
                                 hostname
@@ -1158,7 +1318,7 @@ mod tests {
                                 "id": "0",
                                 "name": "node1",
                                 "nameDraft": null,
-                                "setting": {
+                                "settings": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
                                     "hostname": "host1",
@@ -1168,7 +1328,7 @@ mod tests {
                                     "reconverge": false,
                                     "hog": false,
                                 },
-                                "settingDraft": null,
+                                "settingsDraft": null,
                             }
                         }
                     ]
