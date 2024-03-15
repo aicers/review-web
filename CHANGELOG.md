@@ -36,6 +36,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - `AgentManager::ping` method to measure the latency between the agent manager
   and a host.
 - `AgentManager::reboot` method to reboot a host.
+- `AgentManager::get_config` and `AgentManager::set_config` methods to get and
+  set the configuration of an agent.
 - Add `nodeShutdown` GraphQL API.
 
 ## [0.18.0] - 2024-02-26

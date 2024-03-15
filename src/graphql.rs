@@ -116,6 +116,17 @@ pub trait AgentManager: Send + Sync {
         anyhow::bail!("not implemented")
     }
 
+    /// Returns the configuration of the given agent.
+    async fn get_config(
+        &self,
+        _hostname: &str,
+        _agent_id: &str,
+    ) -> Result<oinq::Config, anyhow::Error> {
+        // TODO: This body is only to avoid breaking changes. It should be
+        // removed when all the implementations are updated. See #144.
+        anyhow::bail!("not implemented")
+    }
+
     /// Returns the list of processes running on the given host.
     async fn get_process_list(&self, _hostname: &str) -> Result<Vec<Process>, anyhow::Error> {
         // TODO: This body is only to avoid breaking changes. It should be
@@ -140,6 +151,18 @@ pub trait AgentManager: Send + Sync {
 
     /// Reboots the node with the given hostname.
     async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error> {
+        // TODO: This body is only to avoid breaking changes. It should be
+        // removed when all the implementations are updated. See #144.
+        anyhow::bail!("not implemented")
+    }
+
+    /// Sets the configuration of the given agent.
+    async fn set_config(
+        &self,
+        _hostname: &str,
+        _agent_id: &str,
+        _config: &oinq::Config,
+    ) -> Result<(), anyhow::Error> {
         // TODO: This body is only to avoid breaking changes. It should be
         // removed when all the implementations are updated. See #144.
         anyhow::bail!("not implemented")
@@ -753,6 +776,14 @@ impl AgentManager for MockAgentManager {
         unimplemented!()
     }
 
+    async fn get_config(
+        &self,
+        _hostname: &str,
+        _agent_id: &str,
+    ) -> Result<oinq::Config, anyhow::Error> {
+        unimplemented!()
+    }
+
     async fn get_process_list(&self, _hostname: &str) -> Result<Vec<Process>, anyhow::Error> {
         unimplemented!()
     }
@@ -766,6 +797,15 @@ impl AgentManager for MockAgentManager {
     }
 
     async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error> {
+        unimplemented!()
+    }
+
+    async fn set_config(
+        &self,
+        _hostname: &str,
+        _agent_id: &str,
+        _config: &oinq::Config,
+    ) -> Result<(), anyhow::Error> {
         unimplemented!()
     }
 

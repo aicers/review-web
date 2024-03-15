@@ -105,6 +105,10 @@ impl AgentManager for Manager {
         bail!("Crusher nodes are unreachable")
     }
 
+    async fn get_config(&self, hostname: &str, agent_id: &str) -> Result<oinq::Config, Error> {
+        bail!("Agent {agent_id}@{hostname} is unreachable")
+    }
+
     async fn get_process_list(&self, hostname: &str) -> Result<Vec<Process>, Error> {
         bail!("Host {hostname} is unreachable")
     }
@@ -119,6 +123,15 @@ impl AgentManager for Manager {
 
     async fn reboot(&self, hostname: &str) -> Result<(), Error> {
         bail!("Host {hostname} is unreachable")
+    }
+
+    async fn set_config(
+        &self,
+        hostname: &str,
+        agent_id: &str,
+        _config: &oinq::Config,
+    ) -> Result<(), Error> {
+        bail!("Agent {agent_id}@{hostname} is unreachable")
     }
 
     async fn update_traffic_filter_rules(
