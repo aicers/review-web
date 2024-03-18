@@ -570,7 +570,7 @@ mod tests {
     use serde_json::json;
     use tokio::sync::mpsc::{self, Sender};
 
-    use crate::graphql::{AgentManager, BoxedAgentManager, TestSchema};
+    use crate::graphql::{AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema};
 
     #[tokio::test]
     async fn test_node_apply() {
@@ -1137,6 +1137,54 @@ mod tests {
             self.insert_result(key).await;
             Ok(vec![])
         }
+
+        async fn broadcast_crusher_sampling_policy(
+            &self,
+            _sampling_policies: &[SamplingPolicy],
+        ) -> Result<(), anyhow::Error> {
+            Ok(())
+        }
+
+        /// Returns the configuration of the given agent.
+        async fn get_config(
+            &self,
+            hostname: &str,
+            _agent_id: &str,
+        ) -> Result<oinq::Config, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn get_process_list(
+            &self,
+            hostname: &str,
+        ) -> Result<Vec<roxy::Process>, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn get_resource_usage(
+            &self,
+            hostname: &str,
+        ) -> Result<roxy::ResourceUsage, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn ping(&self, hostname: &str) -> Result<i64, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn reboot(&self, hostname: &str) -> Result<(), anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn set_config(
+            &self,
+            hostname: &str,
+            _agent_id: &str,
+            _config: &oinq::Config,
+        ) -> Result<(), anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
         async fn update_traffic_filter_rules(
             &self,
             _key: &str,

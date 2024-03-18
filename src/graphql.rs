@@ -109,51 +109,27 @@ pub trait AgentManager: Send + Sync {
     async fn broadcast_crusher_sampling_policy(
         &self,
         _sampling_policies: &[SamplingPolicy],
-    ) -> Result<(), anyhow::Error> {
-        // TODO: This body is only to avoid breaking changes. It should be
-        // removed when all the implementations are updated. See #144.
-        anyhow::bail!("not implemented")
-    }
+    ) -> Result<(), anyhow::Error>;
 
     /// Returns the configuration of the given agent.
     async fn get_config(
         &self,
         _hostname: &str,
         _agent_id: &str,
-    ) -> Result<oinq::Config, anyhow::Error> {
-        // TODO: This body is only to avoid breaking changes. It should be
-        // removed when all the implementations are updated. See #144.
-        anyhow::bail!("not implemented")
-    }
+    ) -> Result<oinq::Config, anyhow::Error>;
 
     /// Returns the list of processes running on the given host.
-    async fn get_process_list(&self, _hostname: &str) -> Result<Vec<Process>, anyhow::Error> {
-        // TODO: This body is only to avoid breaking changes. It should be
-        // removed when all the implementations are updated. See #144.
-        anyhow::bail!("not implemented")
-    }
+    async fn get_process_list(&self, _hostname: &str) -> Result<Vec<Process>, anyhow::Error>;
 
     /// Returns the resource usage of the given host.
-    async fn get_resource_usage(&self, _hostname: &str) -> Result<ResourceUsage, anyhow::Error> {
-        // TODO: This body is only to avoid breaking changes. It should be
-        // removed when all the implementations are updated. See #144.
-        anyhow::bail!("not implemented")
-    }
+    async fn get_resource_usage(&self, _hostname: &str) -> Result<ResourceUsage, anyhow::Error>;
 
     /// Sends a ping message to the given host and waits for a response. Returns
     /// the round-trip time in microseconds.
-    async fn ping(&self, _hostname: &str) -> Result<i64, anyhow::Error> {
-        // TODO: This body is only to avoid breaking changes. It should be
-        // removed when all the implementations are updated. See #144.
-        anyhow::bail!("not implemented")
-    }
+    async fn ping(&self, _hostname: &str) -> Result<i64, anyhow::Error>;
 
     /// Reboots the node with the given hostname.
-    async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error> {
-        // TODO: This body is only to avoid breaking changes. It should be
-        // removed when all the implementations are updated. See #144.
-        anyhow::bail!("not implemented")
-    }
+    async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error>;
 
     /// Sets the configuration of the given agent.
     async fn set_config(
@@ -161,11 +137,7 @@ pub trait AgentManager: Send + Sync {
         _hostname: &str,
         _agent_id: &str,
         _config: &oinq::Config,
-    ) -> Result<(), anyhow::Error> {
-        // TODO: This body is only to avoid breaking changes. It should be
-        // removed when all the implementations are updated. See #144.
-        anyhow::bail!("not implemented")
-    }
+    ) -> Result<(), anyhow::Error>;
 
     /// Updates the traffic filter rules for the given host.
     async fn update_traffic_filter_rules(

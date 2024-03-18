@@ -17,6 +17,17 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   This enhancement ensures better consistency and adherence to best practices in
   handling pagination requests.
 
+### Removed
+
+- `AgentManager` no longer provides shared behavior for the following methods:
+  - `broadcast_crusher_sampling_policy`
+  - `get_process_list`
+  - `get_resource_usage`
+  - `ping`
+  - `reboot`
+  The implementor of `AgentManager` is now responsible for providing the
+  behavior for these methods.
+
 ## [0.19.0] - 2024-03-18
 
 ### Changed
@@ -482,6 +493,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.19.0...main
 [0.19.0]: https://github.com/aicers/review-web/compare/0.18.0...0.19.0
 [0.18.0]: https://github.com/aicers/review-web/compare/0.17.0...0.18.0
 [0.17.0]: https://github.com/aicers/review-web/compare/0.16.0...0.17.0
