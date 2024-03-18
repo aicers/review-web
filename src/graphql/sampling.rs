@@ -7,7 +7,6 @@ use async_graphql::{
 };
 use bincode::Options;
 use chrono::{DateTime, Utc};
-use oinq::RequestCode;
 use review_database::{
     types::FromKeyValue, Indexable, Indexed, IndexedMap, IndexedMapIterator, IndexedMapUpdate,
     IterableMap,
@@ -336,18 +335,11 @@ impl SamplingPolicyMutation {
         }
 
         if immutable {
-            // TODO: Refactor this code to use
-            // `AgentManager::broadcast_crusher_sampling_policy` after
-            // `review` implements it. See #144.
-            let mut msg = bincode::serialize::<u32>(&RequestCode::SamplingPolicyList.into())?;
-            let policies = load_immutable(ctx).await?;
-            msg.extend(bincode::DefaultOptions::new().serialize(&policies)?);
-
             let agents = ctx.data::<BoxedAgentManager>()?;
-            if let Err(e) = agents.broadcast_to_crusher(&msg).await {
+            let policies = load_immutable(ctx).await?;
+            if let Err(e) = agents.broadcast_crusher_sampling_policy(&policies).await {
                 // Change policy to mutable so that user can retry
                 let old = SamplingPolicyInput::try_from(pol)?;
-                #[allow(clippy::redundant_clone)]
                 let mut new = old.clone();
                 new.immutable = false;
                 let store = crate::graphql::get_store(ctx).await?;
