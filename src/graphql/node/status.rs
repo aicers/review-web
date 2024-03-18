@@ -6,8 +6,6 @@ use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
     Context, Object, Result,
 };
-use bincode::Options;
-use oinq::RequestCode;
 use roxy::ResourceUsage;
 use std::collections::{HashMap, HashSet};
 
@@ -45,36 +43,26 @@ async fn load(
 ) -> Result<Connection<String, NodeStatus, NodeStatusTotalCount, EmptyFields>> {
     let agents = ctx.data::<BoxedAgentManager>()?;
     let apps = agents.online_apps_by_host_id().await?;
-    let hostname_key = apps
-        .iter()
-        .filter_map(|(h, a)| a.first().map(move |(k, _)| (h.clone(), k.clone())))
-        .collect::<Vec<(String, String)>>();
-    let resource_code: u32 = RequestCode::ResourceUsage.into();
-    let resource_msg = bincode::serialize(&resource_code)?;
     let mut usages: HashMap<String, ResourceUsage> = HashMap::new();
     let mut ping: HashMap<String, i64> = HashMap::new();
-    for (_, key) in hostname_key {
-        // TODO: Refactor this code to use `AgentManager::resource_usage` after
-        // `review` implements it. See #144.
-        if let Ok(response) = agents.send_and_recv(&key, &resource_msg).await {
-            if let Ok(Ok((hostname, ru))) = bincode::DefaultOptions::new()
-                .deserialize::<Result<(String, ResourceUsage), &str>>(&response)
-            {
-                usages.insert(
-                    hostname.clone(),
-                    ResourceUsage {
-                        cpu_usage: ru.cpu_usage,
-                        total_memory: ru.total_memory,
-                        used_memory: ru.used_memory,
-                        total_disk_space: ru.total_disk_space,
-                        used_disk_space: ru.used_disk_space,
-                    },
-                );
-
-                let rtt = agents.ping(&hostname).await?;
-                ping.insert(hostname, rtt);
-            }
-        }
+    for hostname in apps.keys() {
+        let Ok(usage) = agents.get_resource_usage(hostname).await else {
+            continue;
+        };
+        usages.insert(
+            hostname.clone(),
+            ResourceUsage {
+                cpu_usage: usage.cpu_usage,
+                total_memory: usage.total_memory,
+                used_memory: usage.used_memory,
+                total_disk_space: usage.total_disk_space,
+                used_disk_space: usage.used_disk_space,
+            },
+        );
+        let Ok(rtt) = agents.ping(hostname).await else {
+            continue;
+        };
+        ping.insert(hostname.clone(), rtt);
     }
 
     let review_usage = roxy::resource_usage().await;
