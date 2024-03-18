@@ -25,10 +25,6 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   moved to `name`, and `settings`.
   - Renamed `updateNode` GraphQL API to `updateNodeDraft`, and modified
     parameter types. `old` to `NodeInput`, and `new` to `NodeDraftInput`.
-  - Introduced `applyNode` GraphQL API, that applies draft values to modules and
-    updates values in database. This API handles partial success of setting
-    application, which may happen when a node carries multiple modules.
-    `ApplyResult::success_modules` lists the succeeded modules' names.
   - `graphql::event::convert_sensors` uses `Node`'s `settings` value, to
     retrieve the hostnames of the sensors. This function is called by GraphQL
     APIs of `EventQuery` and `EventGroupQuery`.
@@ -57,6 +53,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - `AgentManager::get_config` and `AgentManager::set_config` methods to get and
   set the configuration of an agent.
 - Add `nodeShutdown` GraphQL API.
+- Introduced `applyNode` GraphQL API, that applies draft values to modules and
+  updates values in database. This API handles partial success of setting
+  application settings, which may happen when a node carries multiple modules.
+  The API returns the list of succeeded modules' names in
+  `ApplyResult::success_modules`.
 
 ### Fixed
 
