@@ -120,7 +120,7 @@ impl NodeControlMutation {
                 // `review_config_setted` is temporarily fixed to true, but
                 // after implementation, it should be set according to the
                 // return value of `set_review_config()`.
-                true
+                false
             }
             _ => false,
         };
@@ -129,8 +129,9 @@ impl NodeControlMutation {
             if review_config_setted {
                 config_setted_modules.push(ModuleName::Review);
             }
-            update_node_data(ctx, i, &node, &config_setted_modules).await?;
-            if let (true, customer_id) = should_broadcast_customer_change(&node) {
+            update_node(ctx, i, &node, &config_setted_modules).await?;
+
+            if let Some(customer_id) = should_broadcast_customer_change(&node) {
                 broadcast_customer_change(customer_id, ctx).await?;
             }
             config_setted_modules
@@ -424,7 +425,7 @@ fn okay_to_update_module_specific_settings(
     !setting_draft_value || config_setted_modules.iter().any(|x| *x == expected_module)
 }
 
-async fn update_node_data(
+async fn update_node(
     ctx: &Context<'_>,
     i: u32,
     node: &Node,
@@ -536,17 +537,16 @@ fn update_module_specfic_settings(
     updated_node.settings = Some(updated_setting);
 }
 
-fn should_broadcast_customer_change(node: &Node) -> (bool, u32) {
-    match (node.settings.as_ref(), node.settings_draft.as_ref()) {
-        (None, Some(settings_draft)) => (settings_draft.review, settings_draft.customer_id),
-        (Some(settings), Some(settings_draft)) => (
-            settings_draft.review && settings_draft.customer_id != settings.customer_id,
-            settings_draft.customer_id,
-        ),
-        (_, None) => {
-            info!("When there is no settings draft, customer change should not be broadcasted.");
-            (false, u32::MAX)
-        }
+fn should_broadcast_customer_change(node: &Node) -> Option<u32> {
+    let is_review = node.settings_draft.as_ref().is_some_and(|s| s.review);
+
+    let old_customer_id: Option<u32> = node.settings.as_ref().map(|s| s.customer_id);
+    let new_customer_id: Option<u32> = node.settings_draft.as_ref().map(|s| s.customer_id);
+
+    if is_review && (old_customer_id != new_customer_id) {
+        new_customer_id
+    } else {
+        None
     }
 }
 
@@ -725,7 +725,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{applyNode: {id: "0",successModules: [REVIEW]}}"#
+            r#"{applyNode: {id: "0",successModules: []}}"#
         );
 
         // check node list after apply
@@ -788,6 +788,20 @@ mod tests {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
                                     "hostname": "admin.aice-security.com",
+                                    "review": false,
+                                    "reviewPort": null,
+                                    "reviewWebPort": null,
+                                    "piglet": false,
+                                    "giganto": false,
+                                    "reconverge": false,
+                                    "hog": false,
+                                    "protocolList": {},
+                                    "sensorList": {},
+                                },
+                                "settingsDraft": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "admin.aice-security.com",
                                     "review": true,
                                     "reviewPort": 1111,
                                     "reviewWebPort": 1112,
@@ -798,7 +812,6 @@ mod tests {
                                     "protocolList": {},
                                     "sensorList": {},
                                 },
-                                "settingsDraft": null,
                             }
                         }
                     ]
@@ -816,6 +829,50 @@ mod tests {
                             name: "admin node",
                             nameDraft: null,
                             settings: {
+                                customerId: "0",
+                                description: "This is the admin node running review.",
+                                hostname: "admin.aice-security.com",
+                                review: false,
+                                reviewPort: null,
+                                reviewWebPort: null,
+                                piglet: false,
+                                pigletGigantoIp: null,
+                                pigletGigantoPort: null,
+                                pigletReviewIp: null,
+                                pigletReviewPort: null,
+                                savePackets: false,
+                                http: false,
+                                office: false,
+                                exe: false,
+                                pdf: false,
+                                html: false,
+                                txt: false,
+                                smtpEml: false,
+                                ftp: false,
+                                giganto: false,
+                                gigantoIngestionIp: null,
+                                gigantoIngestionPort: null,
+                                gigantoPublishIp: null,
+                                gigantoPublishPort: null,
+                                gigantoGraphqlIp: null,
+                                gigantoGraphqlPort: null,
+                                retentionPeriod: null,
+                                reconverge: false,
+                                reconvergeReviewIp: null,
+                                reconvergeReviewPort: null,
+                                reconvergeGigantoIp: null,
+                                reconvergeGigantoPort: null,
+                                hog: false,
+                                hogReviewIp: null,
+                                hogReviewPort: null,
+                                hogGigantoIp: null,
+                                hogGigantoPort: null,
+                                protocols: false,
+                                protocolList: {},
+                                sensors: false,
+                                sensorList: {},
+                            },
+                            settingsDraft: {
                                 customerId: "0",
                                 description: "This is the admin node running review.",
                                 hostname: "admin.aice-security.com",
@@ -858,8 +915,7 @@ mod tests {
                                 protocolList: {},
                                 sensors: false,
                                 sensorList: {},
-                            },
-                            settingsDraft: null
+                            }
                         },
                         new: {
                             nameDraft: "admin node with new name",
@@ -927,7 +983,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{applyNode: {id: "0",successModules: [REVIEW]}}"#
+            r#"{applyNode: {id: "0",successModules: []}}"#
         );
 
         // check node list after apply
@@ -990,6 +1046,20 @@ mod tests {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
                                     "hostname": "admin.aice-security.com",
+                                    "review": false,
+                                    "reviewPort": null,
+                                    "reviewWebPort": null,
+                                    "piglet": false,
+                                    "giganto": false,
+                                    "reconverge": false,
+                                    "hog": false,
+                                    "protocolList": {},
+                                    "sensorList": {},
+                                },
+                                "settingsDraft": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "admin.aice-security.com",
                                     "review": true,
                                     "reviewPort": 2222,
                                     "reviewWebPort": 2223,
@@ -1000,7 +1070,6 @@ mod tests {
                                     "protocolList": {},
                                     "sensorList": {},
                                 },
-                                "settingsDraft": null,
                             }
                         }
                     ]
@@ -1266,7 +1335,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{applyNode: {id: "0",successModules: [PIGLET,REVIEW]}}"#
+            r#"{applyNode: {id: "0",successModules: [PIGLET]}}"#
         );
 
         // check node list after apply
@@ -1321,13 +1390,22 @@ mod tests {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
                                     "hostname": "host1",
+                                    "review": false,
+                                    "piglet": true,
+                                    "giganto": false,
+                                    "reconverge": false,
+                                    "hog": false,
+                                },
+                                "settingsDraft": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "host1",
                                     "review": true,
                                     "piglet": true,
                                     "giganto": false,
                                     "reconverge": false,
                                     "hog": false,
                                 },
-                                "settingsDraft": null,
                             }
                         }
                     ]

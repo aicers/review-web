@@ -61,7 +61,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::time;
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 
 const DEFAULT_CONNECTION_SIZE: usize = 100;
 const DEFAULT_EVENT_FETCH_TIME: u64 = 20;
@@ -932,11 +932,6 @@ fn convert_sensors(map: &IndexedMap, sensors: &[ID]) -> anyhow::Result<Vec<Strin
             if !node_settings.hostname.is_empty() {
                 converted_sensors.push(node_settings.hostname.clone());
             }
-        } else {
-            info!(
-                "Applied node settings do not exist. Skip the node {} as sensor",
-                node.id
-            );
         }
     }
     Ok(converted_sensors)
