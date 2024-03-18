@@ -24,8 +24,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   are only saved to the database. Once those are applied, the draft values are
   moved to `name`, and `settings`.
   - Renamed `updateNode` GraphQL API to `updateNodeDraft`, and modified
-    parameter types. `old` to `NodeInput`, and `new` to `NodeDraftInput`,
-    respectively with and without `settings` field.
+    parameter types. `old` to `NodeInput`, and `new` to `NodeDraftInput`.
   - Introduced `applyNode` GraphQL API, that applies draft values to modules and
     updates values in database. This API handles partial success of setting
     application, which may happen when a node carries multiple modules.

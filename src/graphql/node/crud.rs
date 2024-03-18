@@ -5,7 +5,7 @@ use crate::graphql::{customer::broadcast_customer_networks, get_customer_network
 use super::{
     super::{Role, RoleGuard},
     input::NodeDraftInput,
-    Node, NodeInput, NodeMutation, NodeQuery, NodeSettings, NodeTotalCount, PortNumber,
+    Node, NodeDraft, NodeInput, NodeMutation, NodeQuery, NodeSettings, NodeTotalCount, PortNumber,
     ServerAddress, ServerPort, Setting,
 };
 use async_graphql::{
@@ -265,7 +265,8 @@ impl NodeMutation {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.node_map();
-        map.update(i, &old, &new)?;
+        let node_draft = NodeDraft::new_with(&old.name, new);
+        map.update(i, &old, &node_draft)?;
         Ok(id)
     }
 }
@@ -624,7 +625,6 @@ mod tests {
                             }
                         },
                         new: {
-                            name: "admin node",
                             nameDraft: "AdminNode",
                             settingsDraft: {
                                 customerId: 0,
@@ -791,7 +791,6 @@ mod tests {
                         }
                     },
                     new: {
-                        name: "admin node",
                         nameDraft: null,
                         settingsDraft: null,
                     }

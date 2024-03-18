@@ -862,7 +862,6 @@ mod tests {
                             settingsDraft: null
                         },
                         new: {
-                            name: "admin node",
                             nameDraft: "admin node with new name",
                             settingsDraft: {
                                 customerId: "0",

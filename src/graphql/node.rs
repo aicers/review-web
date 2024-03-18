@@ -18,6 +18,9 @@ use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
 };
+use tracing::error;
+
+use self::input::{NodeDraftInput, NodeSettingsInput};
 
 pub type PortNumber = u16;
 
@@ -197,6 +200,46 @@ impl IndexedMapUpdate for Node {
 impl Node {
     async fn id(&self) -> ID {
         ID(self.id.to_string())
+    }
+}
+
+pub(super) struct NodeDraft {
+    name: String,
+    pub name_draft: Option<String>,
+    pub settings_draft: Option<NodeSettingsInput>,
+}
+
+impl IndexedMapUpdate for NodeDraft {
+    type Entry = Node;
+
+    fn key(&self) -> Option<Cow<[u8]>> {
+        Some(Cow::Borrowed(self.name.as_bytes()))
+    }
+
+    fn apply(&self, mut value: Self::Entry) -> Result<Self::Entry, anyhow::Error> {
+        if let Some(settings_draft) = self.settings_draft.as_ref() {
+            value.name_draft = self.name_draft.clone();
+            value.settings_draft = Some(NodeSettings::try_from(settings_draft)?);
+        } else {
+            value.name_draft = None;
+            value.settings_draft = None;
+        }
+        Ok(value)
+    }
+
+    fn verify(&self, _value: &Self::Entry) -> bool {
+        error!("This is not expected to be called. There is nothing to verify");
+        true
+    }
+}
+
+impl NodeDraft {
+    fn new_with(name: &str, node_draft_input: NodeDraftInput) -> Self {
+        Self {
+            name: name.to_string(),
+            name_draft: node_draft_input.name_draft,
+            settings_draft: node_draft_input.settings_draft,
+        }
     }
 }
 

@@ -178,7 +178,6 @@ pub(super) struct NodeInput {
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, InputObject)]
 pub(super) struct NodeDraftInput {
-    pub name: String,
     pub name_draft: Option<String>,
     pub settings_draft: Option<NodeSettingsInput>,
 }
@@ -217,29 +216,5 @@ impl IndexedMapUpdate for NodeInput {
         };
 
         name_matches && name_draft_matches && setting_matches && setting_draft_matches
-    }
-}
-
-impl IndexedMapUpdate for NodeDraftInput {
-    type Entry = Node;
-
-    fn key(&self) -> Option<Cow<[u8]>> {
-        Some(Cow::Borrowed(self.name.as_bytes()))
-    }
-
-    fn apply(&self, mut value: Self::Entry) -> Result<Self::Entry, anyhow::Error> {
-        if let Some(settings_draft) = self.settings_draft.as_ref() {
-            value.name_draft = self.name_draft.clone();
-            value.settings_draft = Some(NodeSettings::try_from(settings_draft)?);
-        } else {
-            value.name_draft = None;
-            value.settings_draft = None;
-        }
-        Ok(value)
-    }
-
-    fn verify(&self, _value: &Self::Entry) -> bool {
-        error!("This is not expected to be called. There is nothing to verify");
-        true
     }
 }
