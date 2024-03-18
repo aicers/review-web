@@ -32,29 +32,8 @@ impl NodeControlMutation {
         if !review_hostname.is_empty() && review_hostname == hostname {
             Err("cannot reboot. review reboot is not allowed".into())
         } else {
-            // TODO: Refactor this code to use `AgentManager::reboot` after
-            // `review` implements it. See #144.
-            let apps = agents.online_apps_by_host_id().await?;
-            let Some(apps) = apps.get(&hostname) else {
-                return Err("unable to gather info of online agents".into());
-            };
-            let Some((key, _)) = apps.first() else {
-                return Err("unable to access first of online agents".into());
-            };
-
-            let code: u32 = RequestCode::Reboot.into();
-            let msg = bincode::serialize(&code)?;
-            let response = agents.send_and_recv(key, &msg).await?;
-            let Ok(response) =
-                bincode::DefaultOptions::new().deserialize::<Result<(), &str>>(&response)
-            else {
-                // Since the node turns off, deserialization fails.
-                return Ok(hostname);
-            };
-            response.map_or_else(
-                |e| Err(format!("unable to reboot the system: {e}").into()),
-                |()| Ok(hostname),
-            )
+            agents.reboot(&hostname).await?;
+            Ok(hostname)
         }
     }
 
