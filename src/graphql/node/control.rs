@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    net::{IpAddr, SocketAddr},
-};
+use std::net::{IpAddr, SocketAddr};
 
 use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks};
 
@@ -169,11 +166,17 @@ async fn send_set_config_requests(
     if let Some(settings_draft) = &node.settings_draft {
         let hostname_draft = &settings_draft.hostname;
 
-        for (module_name, config) in target_app_configs(settings_draft)? {
-            let agent_key = find_agent_key(&online_apps, hostname_draft, module_name)?;
-            let result = send_set_config_request(agents, agent_key.as_str(), &config).await?;
+        for (module_kind, config) in target_app_configs(settings_draft)? {
+            let module_name = module_kind.to_string();
+            let (hostname, agent_id) = online_apps
+                .get(hostname_draft)
+                .ok_or_else(|| anyhow::anyhow!("no agent is running on {hostname_draft}"))?
+                .iter()
+                .find(|(_, app_name)| app_name == &module_name)
+                .ok_or_else(|| anyhow::anyhow!("no {module_name} instance is running"))?;
+            let result = send_set_config_request(agents, hostname, agent_id, &config).await?;
             if result {
-                result_combined.push(module_name);
+                result_combined.push(module_kind);
             }
         }
     } else {
@@ -185,19 +188,16 @@ async fn send_set_config_requests(
 
 async fn send_set_config_request(
     agents: &BoxedAgentManager,
-    agent_key: &str,
+    hostname: &str,
+    agent_id: &str,
     config: &oinq::Config,
 ) -> anyhow::Result<bool> {
-    let set_config_request: u32 = RequestCode::SetConfig.into();
-    let mut set_config_msg = bincode::serialize(&set_config_request)?;
-    set_config_msg.extend(bincode::DefaultOptions::new().serialize(config)?);
-
     for _ in 0..MAX_SET_CONFIG_TRY_COUNT {
-        let set_config_response = agents.send_and_recv(agent_key, &set_config_msg).await;
+        let set_config_response = agents.set_config(hostname, agent_id, config).await;
         if set_config_response.is_ok() {
             return Ok(true);
         }
-        info!("Failed to set config for module {agent_key}. Retrying...");
+        info!("Failed to set config for agent {agent_id}@{hostname}. Retrying...");
     }
 
     Ok(false)
@@ -224,18 +224,6 @@ fn target_app_configs(
     }
 
     Ok(configurations)
-}
-
-fn find_agent_key(
-    online_apps: &HashMap<String, Vec<(String, String)>>,
-    hostname: &str,
-    module_name: ModuleName,
-) -> anyhow::Result<String> {
-    online_apps
-        .get(hostname)
-        .and_then(|v| v.iter().find(|(_, name)| *name == module_name.to_string()))
-        .map(|(k, _)| k.clone())
-        .ok_or_else(|| anyhow::anyhow!("{} agent not found", module_name))
 }
 
 fn build_piglet_config(settings_draft: &NodeSettings) -> anyhow::Result<oinq::Config> {
@@ -1157,11 +1145,11 @@ mod tests {
 
         async fn set_config(
             &self,
-            hostname: &str,
+            _hostname: &str,
             _agent_id: &str,
             _config: &oinq::Config,
         ) -> Result<(), anyhow::Error> {
-            anyhow::bail!("{hostname} is unreachable")
+            Ok(())
         }
 
         async fn update_traffic_filter_rules(
