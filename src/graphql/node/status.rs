@@ -7,7 +7,6 @@ use async_graphql::{
     Context, Object, Result,
 };
 use bincode::Options;
-use chrono::Utc;
 use oinq::RequestCode;
 use roxy::ResourceUsage;
 use std::collections::{HashMap, HashSet};
@@ -52,8 +51,6 @@ async fn load(
         .collect::<Vec<(String, String)>>();
     let resource_code: u32 = RequestCode::ResourceUsage.into();
     let resource_msg = bincode::serialize(&resource_code)?;
-    let ping_code: u32 = RequestCode::EchoRequest.into();
-    let ping_msg = bincode::serialize(&ping_code)?;
     let mut usages: HashMap<String, ResourceUsage> = HashMap::new();
     let mut ping: HashMap<String, i64> = HashMap::new();
     for (_, key) in hostname_key {
@@ -74,18 +71,8 @@ async fn load(
                     },
                 );
 
-                // TODO: Refactor this code to use `AgentManager::ping` after
-                // `review` implements it. See #144.
-                let start = Utc::now().timestamp_micros();
-                if let Ok(response) = agents.send_and_recv(&key, &ping_msg).await {
-                    let end = Utc::now().timestamp_micros();
-                    if bincode::DefaultOptions::new()
-                        .deserialize::<Result<(), &str>>(&response)
-                        .is_ok()
-                    {
-                        ping.insert(hostname, end - start);
-                    };
-                }
+                let rtt = agents.ping(&hostname).await?;
+                ping.insert(hostname, rtt);
             }
         }
     }
