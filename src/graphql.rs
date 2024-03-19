@@ -124,6 +124,9 @@ pub trait AgentManager: Send + Sync {
     /// Returns the resource usage of the given host.
     async fn get_resource_usage(&self, _hostname: &str) -> Result<ResourceUsage, anyhow::Error>;
 
+    /// Halts the node with the given hostname.
+    async fn halt(&self, _hostname: &str) -> Result<(), anyhow::Error>;
+
     /// Sends a ping message to the given host and waits for a response. Returns
     /// the round-trip time in microseconds.
     async fn ping(&self, _hostname: &str) -> Result<i64, anyhow::Error>;
@@ -772,6 +775,10 @@ impl AgentManager for MockAgentManager {
     }
 
     async fn get_resource_usage(&self, _hostname: &str) -> Result<ResourceUsage, anyhow::Error> {
+        unimplemented!()
+    }
+
+    async fn halt(&self, _hostname: &str) -> Result<(), anyhow::Error> {
         unimplemented!()
     }
 

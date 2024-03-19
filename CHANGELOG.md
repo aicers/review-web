@@ -7,6 +7,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `AgentManager::halt` method to shut down a host.
+
 ### Changed
 
 - GraphQL queries `accountList`, `allowNetworkList`, `blockNetworkList`, `categories`,

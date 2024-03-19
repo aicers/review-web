@@ -46,8 +46,8 @@ impl NodeControlMutation {
         if !review_hostname.is_empty() && review_hostname == hostname {
             Err("cannot shutdown. review shutdown is not allowed".into())
         } else {
-            // TODO: Refactor this code to use `AgentManager::shutdown` after
-            // `review` implements it.
+            // TODO: Refactor this code to use `AgentManager::halt` after
+            // `review` implements it. See #144.
             let apps = agents.online_apps_by_host_id().await?;
             let Some(apps) = apps.get(&hostname) else {
                 return Err("unable to gather info of online agents".into());
@@ -1144,6 +1144,10 @@ mod tests {
             &self,
             hostname: &str,
         ) -> Result<roxy::ResourceUsage, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn halt(&self, hostname: &str) -> Result<(), anyhow::Error> {
             anyhow::bail!("{hostname} is unreachable")
         }
 

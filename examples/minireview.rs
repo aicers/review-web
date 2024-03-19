@@ -117,6 +117,10 @@ impl AgentManager for Manager {
         bail!("Host {hostname} is unreachable")
     }
 
+    async fn halt(&self, hostname: &str) -> Result<(), Error> {
+        bail!("Host {hostname} is unreachable")
+    }
+
     async fn ping(&self, hostname: &str) -> Result<i64, Error> {
         bail!("Host {hostname} is unreachable")
     }
