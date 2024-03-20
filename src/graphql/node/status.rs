@@ -164,3 +164,312 @@ async fn load(
         }));
     Ok(connection)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::graphql::TestSchema;
+
+    #[tokio::test]
+    async fn check_node_status_list_ordering() {
+        let schema = TestSchema::new().await;
+
+        // Insert 5 nodes
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "test1",
+                        customerId: 0,
+                        description: "This is the admin node running review.",
+                        hostname: "admin.aice-security.com",
+                        review: true,
+                        reviewPort: 1111,
+                        reviewWebPort: 1112,
+                        piglet: false,
+                        pigletGigantoIp: null,
+                        pigletGigantoPort: null,
+                        pigletReviewIp: null,
+                        pigletReviewPort: null,
+                        savePackets: false,
+                        http: false,
+                        office: false,
+                        exe: false,
+                        pdf: false,
+                        html: false,
+                        txt: false,
+                        smtpEml: false,
+                        ftp: false,
+                        giganto: false,
+                        gigantoIngestionIp: null,
+                        gigantoIngestionPort: null,
+                        gigantoPublishIp: null,
+                        gigantoPublishPort: null,
+                        gigantoGraphqlIp: null,
+                        gigantoGraphqlPort: null,
+                        retentionPeriod: null,
+                        reconverge: false,
+                        reconvergeReviewIp: null,
+                        reconvergeReviewPort: null,
+                        reconvergeGigantoIp: null,
+                        reconvergeGigantoPort: null,
+                        hog: false,
+                        hogReviewIp: null,
+                        hogReviewPort: null,
+                        hogGigantoIp: null,
+                        hogGigantoPort: null,
+                        protocols: false,
+                        protocolList: {},
+                        sensors: false,
+                        sensorList: {},
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "test2",
+                        customerId: 0,
+                        description: "This is the admin node running review.",
+                        hostname: "admin.aice-security.com",
+                        review: true,
+                        reviewPort: 1111,
+                        reviewWebPort: 1112,
+                        piglet: false,
+                        pigletGigantoIp: null,
+                        pigletGigantoPort: null,
+                        pigletReviewIp: null,
+                        pigletReviewPort: null,
+                        savePackets: false,
+                        http: false,
+                        office: false,
+                        exe: false,
+                        pdf: false,
+                        html: false,
+                        txt: false,
+                        smtpEml: false,
+                        ftp: false,
+                        giganto: false,
+                        gigantoIngestionIp: null,
+                        gigantoIngestionPort: null,
+                        gigantoPublishIp: null,
+                        gigantoPublishPort: null,
+                        gigantoGraphqlIp: null,
+                        gigantoGraphqlPort: null,
+                        retentionPeriod: null,
+                        reconverge: false,
+                        reconvergeReviewIp: null,
+                        reconvergeReviewPort: null,
+                        reconvergeGigantoIp: null,
+                        reconvergeGigantoPort: null,
+                        hog: false,
+                        hogReviewIp: null,
+                        hogReviewPort: null,
+                        hogGigantoIp: null,
+                        hogGigantoPort: null,
+                        protocols: false,
+                        protocolList: {},
+                        sensors: false,
+                        sensorList: {},
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "test3",
+                        customerId: 0,
+                        description: "This is the admin node running review.",
+                        hostname: "admin.aice-security.com",
+                        review: true,
+                        reviewPort: 1111,
+                        reviewWebPort: 1112,
+                        piglet: false,
+                        pigletGigantoIp: null,
+                        pigletGigantoPort: null,
+                        pigletReviewIp: null,
+                        pigletReviewPort: null,
+                        savePackets: false,
+                        http: false,
+                        office: false,
+                        exe: false,
+                        pdf: false,
+                        html: false,
+                        txt: false,
+                        smtpEml: false,
+                        ftp: false,
+                        giganto: false,
+                        gigantoIngestionIp: null,
+                        gigantoIngestionPort: null,
+                        gigantoPublishIp: null,
+                        gigantoPublishPort: null,
+                        gigantoGraphqlIp: null,
+                        gigantoGraphqlPort: null,
+                        retentionPeriod: null,
+                        reconverge: false,
+                        reconvergeReviewIp: null,
+                        reconvergeReviewPort: null,
+                        reconvergeGigantoIp: null,
+                        reconvergeGigantoPort: null,
+                        hog: false,
+                        hogReviewIp: null,
+                        hogReviewPort: null,
+                        hogGigantoIp: null,
+                        hogGigantoPort: null,
+                        protocols: false,
+                        protocolList: {},
+                        sensors: false,
+                        sensorList: {},
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "2"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "test4",
+                        customerId: 0,
+                        description: "This is the admin node running review.",
+                        hostname: "admin.aice-security.com",
+                        review: true,
+                        reviewPort: 1111,
+                        reviewWebPort: 1112,
+                        piglet: false,
+                        pigletGigantoIp: null,
+                        pigletGigantoPort: null,
+                        pigletReviewIp: null,
+                        pigletReviewPort: null,
+                        savePackets: false,
+                        http: false,
+                        office: false,
+                        exe: false,
+                        pdf: false,
+                        html: false,
+                        txt: false,
+                        smtpEml: false,
+                        ftp: false,
+                        giganto: false,
+                        gigantoIngestionIp: null,
+                        gigantoIngestionPort: null,
+                        gigantoPublishIp: null,
+                        gigantoPublishPort: null,
+                        gigantoGraphqlIp: null,
+                        gigantoGraphqlPort: null,
+                        retentionPeriod: null,
+                        reconverge: false,
+                        reconvergeReviewIp: null,
+                        reconvergeReviewPort: null,
+                        reconvergeGigantoIp: null,
+                        reconvergeGigantoPort: null,
+                        hog: false,
+                        hogReviewIp: null,
+                        hogReviewPort: null,
+                        hogGigantoIp: null,
+                        hogGigantoPort: null,
+                        protocols: false,
+                        protocolList: {},
+                        sensors: false,
+                        sensorList: {},
+                        )
+                    }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "3"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "test5",
+                        customerId: 0,
+                        description: "This is the admin node running review.",
+                        hostname: "admin.aice-security.com",
+                        review: true,
+                        reviewPort: 1111,
+                        reviewWebPort: 1112,
+                        piglet: false,
+                        pigletGigantoIp: null,
+                        pigletGigantoPort: null,
+                        pigletReviewIp: null,
+                        pigletReviewPort: null,
+                        savePackets: false,
+                        http: false,
+                        office: false,
+                        exe: false,
+                        pdf: false,
+                        html: false,
+                        txt: false,
+                        smtpEml: false,
+                        ftp: false,
+                        giganto: false,
+                        gigantoIngestionIp: null,
+                        gigantoIngestionPort: null,
+                        gigantoPublishIp: null,
+                        gigantoPublishPort: null,
+                        gigantoGraphqlIp: null,
+                        gigantoGraphqlPort: null,
+                        retentionPeriod: null,
+                        reconverge: false,
+                        reconvergeReviewIp: null,
+                        reconvergeReviewPort: null,
+                        reconvergeGigantoIp: null,
+                        reconvergeGigantoPort: null,
+                        hog: false,
+                        hogReviewIp: null,
+                        hogReviewPort: null,
+                        hogGigantoIp: null,
+                        hogGigantoPort: null,
+                        protocols: false,
+                        protocolList: {},
+                        sensors: false,
+                        sensorList: {},
+                    )
+            }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "4"}"#);
+
+        // Test first, last, after, before in refernce to test3 node
+        let res = schema
+            .execute(r#"{nodeStatusList(first:5){edges{node{name}}}}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{nodeStatusList: {edges: [{node: {name: "test1"}},{node: {name: "test2"}},{node: {name: "test3"}},{node: {name: "test4"}},{node: {name: "test5"}}]}}"#
+        );
+
+        let res = schema
+            .execute(r#"{nodeStatusList(last:5){edges{node{name}}}}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{nodeStatusList: {edges: [{node: {name: "test1"}},{node: {name: "test2"}},{node: {name: "test3"}},{node: {name: "test4"}},{node: {name: "test5"}}]}}"#
+        );
+
+        let res = schema
+            .execute(r#"{nodeStatusList(last:2, before:"dGVzdDM="){edges{node{name}}}}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{nodeStatusList: {edges: [{node: {name: "test1"}},{node: {name: "test2"}}]}}"#
+        );
+
+        let res = schema
+            .execute(r#"{nodeStatusList(first:2, after:"dGVzdDM="){edges{node{name}}}}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{nodeStatusList: {edges: [{node: {name: "test4"}},{node: {name: "test5"}}]}}"#
+        );
+    }
+}

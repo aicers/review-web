@@ -10,6 +10,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - `AgentManager::halt` method to shut down a host.
+- Add unit test for `nodeStatusList` to check ordering of nodes and edges.
 
 ### Changed
 
