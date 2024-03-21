@@ -319,113 +319,6 @@ impl Indexable for Node {
     }
 }
 
-#[derive(Debug, SimpleObject, Serialize, Deserialize, Clone)]
-#[graphql(complex)]
-struct HogConfig {
-    #[graphql(skip)]
-    review_ip: IpAddr,
-    review_port: PortNumber,
-    #[graphql(skip)]
-    giganto_ip: Option<IpAddr>,
-    giganto_port: Option<PortNumber>,
-    active_protocols: Option<Vec<String>>,
-    active_sources: Option<Vec<String>>,
-}
-
-#[ComplexObject]
-impl HogConfig {
-    async fn review_ip(&self) -> String {
-        self.review_ip.to_string()
-    }
-
-    async fn giganto_ip(&self) -> Option<String> {
-        self.giganto_ip.as_ref().map(ToString::to_string)
-    }
-}
-
-impl From<oinq::request::HogConfig> for HogConfig {
-    fn from(value: oinq::request::HogConfig) -> Self {
-        Self {
-            review_ip: value.review_address.ip(),
-            review_port: value.review_address.port(),
-            giganto_ip: value.giganto_address.as_ref().map(SocketAddr::ip),
-            giganto_port: value.giganto_address.as_ref().map(SocketAddr::port),
-            active_protocols: value.active_protocols,
-            active_sources: value.active_sources,
-        }
-    }
-}
-
-#[derive(Debug, SimpleObject, Serialize, Deserialize, Clone)]
-#[graphql(complex)]
-struct PigletConfig {
-    #[graphql(skip)]
-    review_ip: IpAddr,
-    review_port: PortNumber,
-    #[graphql(skip)]
-    giganto_ip: Option<IpAddr>,
-    giganto_port: Option<PortNumber>,
-    log_options: Option<Vec<String>>,
-    http_file_types: Option<Vec<String>>,
-}
-
-#[ComplexObject]
-impl PigletConfig {
-    async fn review_ip(&self) -> String {
-        self.review_ip.to_string()
-    }
-
-    async fn giganto_ip(&self) -> Option<String> {
-        self.giganto_ip.as_ref().map(ToString::to_string)
-    }
-}
-
-impl From<oinq::request::PigletConfig> for PigletConfig {
-    fn from(value: oinq::request::PigletConfig) -> Self {
-        Self {
-            review_ip: value.review_address.ip(),
-            review_port: value.review_address.port(),
-            giganto_ip: value.giganto_address.as_ref().map(SocketAddr::ip),
-            giganto_port: value.giganto_address.as_ref().map(SocketAddr::port),
-            log_options: value.log_options,
-            http_file_types: value.http_file_types,
-        }
-    }
-}
-
-#[derive(Debug, SimpleObject, Serialize, Deserialize, Clone)]
-#[graphql(complex)]
-struct ReconvergeConfig {
-    #[graphql(skip)]
-    review_ip: IpAddr,
-    review_port: PortNumber,
-    #[graphql(skip)]
-    giganto_ip: Option<IpAddr>,
-    giganto_port: Option<PortNumber>,
-}
-
-#[ComplexObject]
-impl ReconvergeConfig {
-    async fn review_ip(&self) -> String {
-        self.review_ip.to_string()
-    }
-
-    async fn giganto_ip(&self) -> Option<String> {
-        self.giganto_ip.as_ref().map(ToString::to_string)
-    }
-}
-
-impl From<oinq::request::ReconvergeConfig> for ReconvergeConfig {
-    fn from(value: oinq::request::ReconvergeConfig) -> Self {
-        Self {
-            review_ip: value.review_address.ip(),
-            review_port: value.review_address.port(),
-            giganto_ip: value.giganto_address.as_ref().map(SocketAddr::ip),
-            giganto_port: value.giganto_address.as_ref().map(SocketAddr::port),
-        }
-    }
-}
-
 #[derive(Clone, Deserialize, Serialize, SimpleObject)]
 #[graphql(complex)]
 pub(super) struct NodeStatus {
@@ -459,23 +352,14 @@ pub(super) struct NodeStatus {
     /// Whether piglet is online or not.
     piglet: Option<bool>,
 
-    /// actual piglet configuration
-    piglet_config: Option<PigletConfig>,
-
     /// Whether giganto is online or not.
     giganto: Option<bool>,
 
     /// Whether reconverge is online or not.
     reconverge: Option<bool>,
 
-    /// actual reconverge configuration
-    reconverge_config: Option<ReconvergeConfig>,
-
     /// Whether hog is online or not.
     hog: Option<bool>,
-
-    /// actual hog configuration
-    hog_config: Option<HogConfig>,
 }
 
 #[ComplexObject]
@@ -498,12 +382,9 @@ impl NodeStatus {
         ping: Option<i64>,
         review: Option<bool>,
         piglet: Option<bool>,
-        piglet_config: Option<PigletConfig>,
         giganto: Option<bool>,
         reconverge: Option<bool>,
-        reconverge_config: Option<ReconvergeConfig>,
         hog: Option<bool>,
-        hog_config: Option<HogConfig>,
     ) -> Self {
         Self {
             id,
@@ -516,12 +397,9 @@ impl NodeStatus {
             ping,
             review,
             piglet,
-            piglet_config,
             giganto,
             reconverge,
-            reconverge_config,
             hog,
-            hog_config,
         }
     }
 }
@@ -609,23 +487,4 @@ impl From<RoxyProcess> for Process {
             command: value.command,
         }
     }
-}
-
-#[derive(
-    async_graphql::Enum,
-    Copy,
-    Clone,
-    Eq,
-    PartialEq,
-    strum_macros::Display,
-    strum_macros::EnumString,
-    strum_macros::AsRefStr,
-)]
-#[strum(serialize_all = "snake_case")]
-pub enum ModuleName {
-    Hog,
-    Piglet,
-    Reconverge,
-    Review,
-    Giganto,
 }

@@ -20,7 +20,6 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   after) parameters, following the GraphQL pagination documentation guidelines.
   This enhancement ensures better consistency and adherence to best practices in
   handling pagination requests.
-- Add the result of `get_config` of each module to `nodeStatusList` GraphQL API.
 
 ### Removed
 
