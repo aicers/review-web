@@ -668,9 +668,7 @@ where
 
 pub(crate) fn datetime_from_ts_nano(time: i64) -> Option<DateTime<Utc>> {
     let sec = time / 1_000_000_000;
-    let Some(nano) = (time - sec * 1_000_000_000).to_u32() else {
-        return None;
-    };
+    let nano = (time - sec * 1_000_000_000).to_u32()?;
     if let LocalResult::Single(time) = Utc.timestamp_opt(sec, nano) {
         Some(time)
     } else {
