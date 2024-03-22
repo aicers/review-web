@@ -1,14 +1,8 @@
-use std::{
-    collections::HashMap,
-    net::{IpAddr, SocketAddr},
-};
-
-use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks};
-
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard},
-    NodeControlMutation,
+    ModuleName, NodeControlMutation,
 };
+use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks};
 use anyhow::bail;
 use async_graphql::{Context, Object, Result, SimpleObject, ID};
 use bincode::Options;
@@ -17,6 +11,10 @@ use oinq::{
     RequestCode,
 };
 use review_database::{Node, NodeSetting};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+};
 use tracing::{error, info};
 
 const MAX_SET_CONFIG_TRY_COUNT: u32 = 3;
@@ -142,17 +140,6 @@ impl NodeControlMutation {
 pub struct ApplyResult {
     pub id: ID,
     pub success_modules: Vec<ModuleName>,
-}
-
-#[derive(
-    async_graphql::Enum, Copy, Clone, Eq, PartialEq, strum_macros::Display, strum_macros::EnumString,
-)]
-#[strum(serialize_all = "snake_case")]
-pub enum ModuleName {
-    Hog,
-    Piglet,
-    Reconverge,
-    Review,
 }
 
 async fn send_set_config_requests(
