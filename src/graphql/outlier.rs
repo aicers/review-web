@@ -1,4 +1,5 @@
 use super::{always_true, model::ModelDigest, Role, RoleGuard, DEFAULT_CONNECTION_SIZE};
+use crate::graphql::validate_pagination_params_and_set_default;
 use crate::graphql::{earliest_key, latest_key};
 use anyhow::anyhow;
 use async_graphql::{
@@ -188,6 +189,12 @@ impl OutlierQuery {
     ) -> Result<Connection<String, Outlier, OutlierTotalCount, EmptyFields>> {
         let model = model.as_str().parse()?;
         let filter = Some;
+        let (after, before, first, last) =
+            match validate_pagination_params_and_set_default(after, before, first, last) {
+                Ok((after, before, first, last)) => (after, before, first, last),
+                Err(e) => return Err(e),
+            };
+
         query(
             after,
             before,
@@ -218,6 +225,21 @@ impl OutlierQuery {
         last: Option<usize>,
     ) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
         let filter = |node: RankedOutlier| if node.saved { Some(node) } else { None };
+        let (after, before, first, last) = match validate_pagination_params_and_set_default(
+            after,
+            before,
+            first.unwrap_or_default().to_i32(),
+            last.unwrap_or_default().to_i32(),
+        ) {
+            Ok((after, before, first, last)) => (
+                after,
+                before,
+                first.unwrap_or_default().to_usize(),
+                last.unwrap_or_default().to_usize(),
+            ),
+            Err(e) => return Err(e),
+        };
+
         load_outliers(ctx, model_id, time, after, before, first, last, filter).await
     }
 
@@ -239,6 +261,21 @@ impl OutlierQuery {
         last: Option<usize>,
         filter: Option<SearchFilterInput>,
     ) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
+        let (after, before, first, last) = match validate_pagination_params_and_set_default(
+            after,
+            before,
+            first.unwrap_or_default().to_i32(),
+            last.unwrap_or_default().to_i32(),
+        ) {
+            Ok((after, before, first, last)) => (
+                after,
+                before,
+                first.unwrap_or_default().to_usize(),
+                last.unwrap_or_default().to_usize(),
+            ),
+            Err(e) => return Err(e),
+        };
+
         load_ranked_outliers_with_filter(ctx, model_id, time, after, before, first, last, filter)
             .await
     }

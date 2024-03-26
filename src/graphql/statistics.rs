@@ -1,4 +1,5 @@
 use super::{slicing, Role, RoleGuard};
+use crate::graphql::validate_pagination_params_and_set_default;
 use async_graphql::{
     connection::{query, Connection, ConnectionNameType, Edge, EmptyFields},
     types::ID,
@@ -43,6 +44,12 @@ impl StatisticsQuery {
         last: Option<i32>,
     ) -> Result<Connection<String, Round, TotalCountByCluster, EmptyFields, RoundByCluster>> {
         let cluster = cluster.as_str().parse()?;
+        let (after, before, first, last) =
+            match validate_pagination_params_and_set_default(after, before, first, last) {
+                Ok((after, before, first, last)) => (after, before, first, last),
+                Err(e) => return Err(e),
+            };
+
         query(
             after,
             before,
@@ -69,6 +76,12 @@ impl StatisticsQuery {
         last: Option<i32>,
     ) -> Result<Connection<String, Round, TotalCountByModel, EmptyFields, RoundByModel>> {
         let model = model.as_str().parse()?;
+        let (after, before, first, last) =
+            match validate_pagination_params_and_set_default(after, before, first, last) {
+                Ok((after, before, first, last)) => (after, before, first, last),
+                Err(e) => return Err(e),
+            };
+
         query(
             after,
             before,

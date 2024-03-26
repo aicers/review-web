@@ -9,6 +9,7 @@ use super::{
     status::Status,
     Role, RoleGuard, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER,
 };
+use crate::graphql::validate_pagination_params_and_set_default;
 use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
     types::ID,
@@ -50,6 +51,12 @@ impl ClusterQuery {
         let detectors = try_id_args_into_ints(detectors)?;
         let qualifiers = try_id_args_into_ints(qualifiers)?;
         let statuses = try_id_args_into_ints(statuses)?;
+        let (after, before, first, last) =
+            match validate_pagination_params_and_set_default(after, before, first, last) {
+                Ok((after, before, first, last)) => (after, before, first, last),
+                Err(e) => return Err(e),
+            };
+
         query(
             after,
             before,

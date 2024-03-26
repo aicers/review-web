@@ -1,4 +1,5 @@
 use super::{Role, RoleGuard};
+use crate::graphql::validate_pagination_params_and_set_default;
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     Context, Object, Result, SimpleObject,
@@ -24,6 +25,12 @@ impl TorExitNodeQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, TorExitNode, TorExitNodeTotalCount, EmptyFields>> {
+        let (after, before, first, last) =
+            match validate_pagination_params_and_set_default(after, before, first, last) {
+                Ok((after, before, first, last)) => (after, before, first, last),
+                Err(e) => return Err(e),
+            };
+
         query(
             after,
             before,
