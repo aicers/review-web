@@ -1,4 +1,5 @@
 use super::{always_true, model::ModelDigest, Role, RoleGuard, DEFAULT_CONNECTION_SIZE};
+use crate::graphql::validate_and_process_pagination_params;
 use crate::graphql::{earliest_key, latest_key};
 use anyhow::anyhow;
 use async_graphql::{
@@ -188,6 +189,9 @@ impl OutlierQuery {
     ) -> Result<Connection<String, Outlier, OutlierTotalCount, EmptyFields>> {
         let model = model.as_str().parse()?;
         let filter = Some;
+        let (after, before, first, last) =
+            validate_and_process_pagination_params(after, before, first, last)?;
+
         query(
             after,
             before,
@@ -214,10 +218,13 @@ impl OutlierQuery {
         time: Option<NaiveDateTime>,
         after: Option<String>,
         before: Option<String>,
-        first: Option<usize>,
-        last: Option<usize>,
+        first: Option<i32>,
+        last: Option<i32>,
     ) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
         let filter = |node: RankedOutlier| if node.saved { Some(node) } else { None };
+        let (after, before, first, last) =
+            validate_and_process_pagination_params(after, before, first, last)?;
+
         load_outliers(ctx, model_id, time, after, before, first, last, filter).await
     }
 
@@ -235,10 +242,13 @@ impl OutlierQuery {
         time: Option<NaiveDateTime>,
         after: Option<String>,
         before: Option<String>,
-        first: Option<usize>,
-        last: Option<usize>,
+        first: Option<i32>,
+        last: Option<i32>,
         filter: Option<SearchFilterInput>,
     ) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
+        let (after, before, first, last) =
+            validate_and_process_pagination_params(after, before, first, last)?;
+
         load_ranked_outliers_with_filter(ctx, model_id, time, after, before, first, last, filter)
             .await
     }
@@ -251,8 +261,8 @@ async fn load_outliers(
     time: Option<NaiveDateTime>,
     after: Option<String>,
     before: Option<String>,
-    first: Option<usize>,
-    last: Option<usize>,
+    first: Option<i32>,
+    last: Option<i32>,
     filter: fn(RankedOutlier) -> Option<RankedOutlier>,
 ) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
     let model_id: i32 = model_id.as_str().parse()?;
@@ -724,8 +734,8 @@ async fn load_ranked_outliers_with_filter(
     time: Option<NaiveDateTime>,
     after: Option<String>,
     before: Option<String>,
-    first: Option<usize>,
-    last: Option<usize>,
+    first: Option<i32>,
+    last: Option<i32>,
     filter: Option<SearchFilterInput>,
 ) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
     let model_id: i32 = model_id.as_str().parse()?;
@@ -749,8 +759,8 @@ async fn load_ranked_outliers_with_filter(
         &filter,
         after,
         before,
-        first,
-        last,
+        first.and_then(|f| f.to_usize()),
+        last.and_then(|l| l.to_usize()),
     )?;
 
     let mut connection = Connection::with_additional_fields(

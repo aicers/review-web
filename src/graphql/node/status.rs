@@ -1,5 +1,5 @@
 use super::{
-    super::{BoxedAgentManager, Role, RoleGuard},
+    super::{validate_and_process_pagination_params, BoxedAgentManager, Role, RoleGuard},
     ModuleName, Node, NodeStatus, NodeStatusQuery, NodeStatusTotalCount,
 };
 use async_graphql::{
@@ -22,6 +22,9 @@ impl NodeStatusQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, NodeStatus, NodeStatusTotalCount, EmptyFields>> {
+        let (after, before, first, last) =
+            validate_and_process_pagination_params(after, before, first, last)?;
+
         query(
             after,
             before,
@@ -490,7 +493,6 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "4"}"#);
 
-        // Test first, last, after, before in refernce to test3 node
         let res = schema
             .execute(r#"{nodeStatusList(first:5){edges{node{name}}}}"#)
             .await;
@@ -500,27 +502,37 @@ mod tests {
         );
 
         let res = schema
-            .execute(r#"{nodeStatusList(last:5){edges{node{name}}}}"#)
+            .execute(r#"{nodeStatusList(last:5){edges{node{name}},pageInfo{endCursor}}}"#)
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{nodeStatusList: {edges: [{node: {name: "test1"}},{node: {name: "test2"}},{node: {name: "test3"}},{node: {name: "test4"}},{node: {name: "test5"}}]}}"#
+            r#"{nodeStatusList: {edges: [{node: {name: "test1"}},{node: {name: "test2"}},{node: {name: "test3"}},{node: {name: "test4"}},{node: {name: "test5"}}],pageInfo: {endCursor: "dGVzdDU="}}}"#
         );
 
         let res = schema
-            .execute(r#"{nodeStatusList(last:2, before:"dGVzdDM="){edges{node{name}}}}"#)
+            .execute(r#"{nodeStatusList(last:3,before:"dGVzdDM="){edges{node{name}},pageInfo{startCursor}}}"#)
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{nodeStatusList: {edges: [{node: {name: "test1"}},{node: {name: "test2"}}]}}"#
+            r#"{nodeStatusList: {edges: [{node: {name: "test1"}},{node: {name: "test2"}}],pageInfo: {startCursor: "dGVzdDE="}}}"#
         );
 
         let res = schema
-            .execute(r#"{nodeStatusList(first:2, after:"dGVzdDM="){edges{node{name}}}}"#)
+            .execute(r#"{nodeStatusList(first:3,after:"dGVzdDM="){edges{node{name}},pageInfo{endCursor}}}"#)
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{nodeStatusList: {edges: [{node: {name: "test4"}},{node: {name: "test5"}}]}}"#
+            r#"{nodeStatusList: {edges: [{node: {name: "test4"}},{node: {name: "test5"}}],pageInfo: {endCursor: "dGVzdDU="}}}"#
         );
+
+        let res = schema
+            .execute(r#"{nodeStatusList(last:2, after:"dGVzdDU="){edges{node{name}}}}"#)
+            .await;
+        assert!(res.is_err());
+
+        let res = schema
+            .execute(r#"{nodeStatusList(first:2, before:"dGVzdDU="){edges{node{name}}}}"#)
+            .await;
+        assert!(res.is_err());
     }
 }

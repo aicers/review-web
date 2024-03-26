@@ -11,14 +11,21 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `AgentManager::halt` method to shut down a host.
 - Add unit test for `nodeStatusList` to check ordering of nodes and edges.
+- Add `validate_and_process_pagination_params` to check input valid
+  combinations of first, last, before, and after and apply it to GraphQL
+  queries with pagination.
 
 ### Changed
 
-- GraphQL queries `accountList`, `allowNetworkList`, `blockNetworkList`, `categories`,
-  `networkList`, `qualifiers`, `samplingPolicyList`, `loadRoundsByModel`, `statuses`,
-  `templateList`, `torExitNodeList`, `triageResponseList` now explicitly reject
-  user input with combinations of (before, after), (first, before), and (last,
-  after) parameters, following the GraphQL pagination documentation guidelines.
+- GraphQL queries `accountList`, `allowNetworkList`, `blockNetworkList`,
+  `categories`, `networkList`, `qualifiers`, `samplingPolicyList`,
+  `loadRoundsByModel`, `statuses`, `templateList`, `torExitNodeList`,
+  `triageResponseList`, `nodeStatusList`, `clusters`, `customerList`,
+  `dataSourceList`, `eventList`, `roundsByCluster`, `trustedUserAgentList`,
+  `trustedDomainList`, `rankedOutliers`, `savedOutliers`, `outliers`, `models`,
+  `triagePolicyList`, `nodeList` now explicitly reject user input with
+  combinations of (before, after), (first, before), and (last, after)
+  parameters, following the GraphQL pagination documentation guidelines.
   This enhancement ensures better consistency and adherence to best practices in
   handling pagination requests.
 - GraphQl queries `insertTidb` requires `dbfile` to be encoded string of `Tidb`

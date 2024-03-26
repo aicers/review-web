@@ -1,10 +1,12 @@
 use super::{slicing, Role, RoleGuard};
+use crate::graphql::validate_and_process_pagination_params;
 use async_graphql::{
     connection::{query, Connection, ConnectionNameType, Edge, EmptyFields},
     types::ID,
     Context, Object, Result,
 };
 use chrono::{DateTime, NaiveDateTime};
+use num_traits::ToPrimitive;
 use review_database::{BatchInfo, Database};
 use serde_json::Value as JsonValue;
 
@@ -43,6 +45,9 @@ impl StatisticsQuery {
         last: Option<i32>,
     ) -> Result<Connection<String, Round, TotalCountByCluster, EmptyFields, RoundByCluster>> {
         let cluster = cluster.as_str().parse()?;
+        let (after, before, first, last) =
+            validate_and_process_pagination_params(after, before, first, last)?;
+
         query(
             after,
             before,
@@ -69,6 +74,9 @@ impl StatisticsQuery {
         last: Option<i32>,
     ) -> Result<Connection<String, Round, TotalCountByModel, EmptyFields, RoundByModel>> {
         let model = model.as_str().parse()?;
+        let (after, before, first, last) =
+            validate_and_process_pagination_params(after, before, first, last)?;
+
         query(
             after,
             before,
@@ -202,7 +210,6 @@ async fn load_rounds_by_model(
 }
 
 fn i64_to_naive_date_time(t: i64) -> NaiveDateTime {
-    use num_traits::ToPrimitive;
     const A_BILLION: i64 = 1_000_000_000;
     DateTime::from_timestamp(t / A_BILLION, (t % A_BILLION).to_u32().unwrap_or_default())
         .unwrap_or_default()

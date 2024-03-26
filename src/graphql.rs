@@ -316,44 +316,14 @@ fn load_nodes<I, R, N>(
     table: &I,
     after: Option<String>,
     before: Option<String>,
-    mut first: Option<usize>,
-    mut last: Option<usize>,
+    first: Option<usize>,
+    last: Option<usize>,
 ) -> Result<(Vec<(String, N)>, bool, bool)>
 where
     I: database::Iterable<R>,
     R: database::types::FromKeyValue + database::UniqueKey,
     N: From<R> + OutputType,
 {
-    match (
-        first.is_some(),
-        last.is_some(),
-        before.is_some(),
-        after.is_some(),
-    ) {
-        (true, true, _, _) => return Err("cannot provide both `first` and `last`".into()),
-        (_, _, true, true) => return Err("cannot provide both `before` and `after`".into()),
-        (true, _, true, _) => return Err("cannot provide both `first` and `before`".into()),
-        (_, true, _, true) => return Err("cannot provide both `last` and `after`".into()),
-        (false, false, false, _) => {
-            first = Some(DEFAULT_CONNECTION_SIZE);
-        }
-        (false, false, true, false) => {
-            last = Some(DEFAULT_CONNECTION_SIZE);
-        }
-        _ => {}
-    }
-
-    let after = if let Some(after) = after {
-        Some(decode_cursor(&after).ok_or("invalid cursor `after`")?)
-    } else {
-        None
-    };
-    let before = if let Some(before) = before {
-        Some(decode_cursor(&before).ok_or("invalid cursor `before`")?)
-    } else {
-        None
-    };
-
     let (nodes, has_previous, has_next) = if let Some(first) = first {
         let (nodes, has_more) = collect_edges(table, Direction::Forward, after, before, first);
         (nodes, false, has_more)
@@ -379,8 +349,8 @@ fn load_nodes_with_filter<'m, M, I, N, NI>(
     filter: fn(N) -> Option<N>,
     after: Option<String>,
     before: Option<String>,
-    first: Option<usize>,
-    last: Option<usize>,
+    first: Option<i32>,
+    last: Option<i32>,
 ) -> Result<(Vec<(String, N)>, bool, bool)>
 where
     M: IterableMap<'m, I>,
@@ -398,14 +368,28 @@ where
 
         let (mut nodes, has_more) = if let Some(after) = after {
             let to = earliest_key(&after)?;
-            iter_to_nodes_with_filter(iter, &to, cmp::Ordering::is_ge, filter, last)
+            iter_to_nodes_with_filter(
+                iter,
+                &to,
+                cmp::Ordering::is_ge,
+                filter,
+                last.to_usize().unwrap_or_default(),
+            )
         } else {
-            iter_to_nodes_with_filter(iter, &[], always_true, filter, last)
+            iter_to_nodes_with_filter(
+                iter,
+                &[],
+                always_true,
+                filter,
+                last.to_usize().unwrap_or_default(),
+            )
         }?;
         nodes.reverse();
         Ok((nodes, has_more, false))
     } else {
-        let first = first.unwrap_or(DEFAULT_CONNECTION_SIZE);
+        let first = first
+            .and_then(|f| f.to_usize())
+            .unwrap_or(DEFAULT_CONNECTION_SIZE);
         let iter = if let Some(after) = after {
             let start = earliest_key(&after)?;
             map.iter_from(&start, Direction::Forward)?
@@ -432,8 +416,8 @@ fn load_with_filter<'m, M, I, N, NI, T>(
     filter: fn(N) -> Option<N>,
     after: Option<String>,
     before: Option<String>,
-    first: Option<usize>,
-    last: Option<usize>,
+    first: Option<i32>,
+    last: Option<i32>,
     total_count: T,
 ) -> Result<Connection<String, N, T, EmptyFields>>
 where
@@ -531,8 +515,8 @@ fn load_edges<I, R, N, A, NodesField>(
     table: &I,
     after: Option<String>,
     before: Option<String>,
-    mut first: Option<usize>,
-    mut last: Option<usize>,
+    first: Option<usize>,
+    last: Option<usize>,
     additional_fields: A,
 ) -> Result<Connection<String, N, A, EmptyFields, NodesField>>
 where
@@ -542,36 +526,6 @@ where
     A: ObjectType,
     NodesField: ConnectionNameType,
 {
-    match (
-        first.is_some(),
-        last.is_some(),
-        before.is_some(),
-        after.is_some(),
-    ) {
-        (true, true, _, _) => return Err("cannot provide both `first` and `last`".into()),
-        (_, _, true, true) => return Err("cannot provide both `before` and `after`".into()),
-        (true, _, true, _) => return Err("cannot provide both `first` and `before`".into()),
-        (_, true, _, true) => return Err("cannot provide both `last` and `after`".into()),
-        (false, false, false, _) => {
-            first = Some(DEFAULT_CONNECTION_SIZE);
-        }
-        (false, false, true, false) => {
-            last = Some(DEFAULT_CONNECTION_SIZE);
-        }
-        _ => {}
-    }
-
-    let after = if let Some(after) = after {
-        Some(decode_cursor(&after).ok_or("invalid cursor `after`")?)
-    } else {
-        None
-    };
-    let before = if let Some(before) = before {
-        Some(decode_cursor(&before).ok_or("invalid cursor `before`")?)
-    } else {
-        None
-    };
-
     let (nodes, has_previous, has_next) = if let Some(first) = first {
         let (nodes, has_more) = collect_edges(table, Direction::Forward, after, before, first);
         (nodes, false, has_more)
@@ -727,6 +681,51 @@ fn get_trend(
     };
     let (b, a) = signal::filter::design::butter(trendi_order, cutoff_frequency);
     signal::filter::filtfilt(&b, &a, &original)
+}
+
+/// Checks after, before, first, and last to see if they follow GraphQL guidelines.
+///
+/// # Errors
+///
+/// Returns an error if the parameters are invalid.
+#[allow(clippy::type_complexity)]
+fn validate_and_process_pagination_params(
+    after: Option<String>,
+    before: Option<String>,
+    mut first: Option<i32>,
+    mut last: Option<i32>,
+) -> Result<(Option<String>, Option<String>, Option<i32>, Option<i32>)> {
+    match (
+        first.is_some(),
+        last.is_some(),
+        before.is_some(),
+        after.is_some(),
+    ) {
+        (true, true, _, _) => return Err("cannot provide both `first` and `last`".into()),
+        (_, _, true, true) => return Err("cannot provide both `before` and `after`".into()),
+        (true, _, true, _) => return Err("cannot provide both `first` and `before`".into()),
+        (_, true, _, true) => return Err("cannot provide both `last` and `after`".into()),
+        (false, false, false, _) => {
+            first = Some(DEFAULT_CONNECTION_SIZE.to_i32().unwrap_or_default());
+        }
+        (false, false, true, false) => {
+            last = Some(DEFAULT_CONNECTION_SIZE.to_i32().unwrap_or_default());
+        }
+        _ => {}
+    }
+
+    let after = if let Some(after) = after {
+        Some(decode_cursor(&after).ok_or("invalid cursor `after`")?)
+    } else {
+        None
+    };
+    let before = if let Some(before) = before {
+        Some(decode_cursor(&before).ok_or("invalid cursor `before`")?)
+    } else {
+        None
+    };
+
+    Ok((after, before, first, last))
 }
 
 #[cfg(test)]

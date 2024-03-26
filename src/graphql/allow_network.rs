@@ -2,6 +2,7 @@ use super::{
     customer::{HostNetworkGroup, HostNetworkGroupInput},
     BoxedAgentManager, Role, RoleGuard,
 };
+use crate::graphql::validate_and_process_pagination_params;
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     Context, InputObject, Object, Result, ID,
@@ -29,6 +30,9 @@ impl AllowNetworkQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, AllowNetwork, AllowNetworkTotalCount, EmptyFields>> {
+        let (after, before, first, last) =
+            validate_and_process_pagination_params(after, before, first, last)?;
+
         query(
             after,
             before,

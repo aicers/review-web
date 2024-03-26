@@ -1,5 +1,6 @@
 use super::RoleGuard;
 use crate::auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in};
+use crate::graphql::validate_and_process_pagination_params;
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     Context, Enum, InputObject, Object, Result, SimpleObject,
@@ -59,6 +60,9 @@ impl AccountQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, Account, AccountTotalCount, EmptyFields>> {
+        let (after, before, first, last) =
+            validate_and_process_pagination_params(after, before, first, last)?;
+
         query(
             after,
             before,

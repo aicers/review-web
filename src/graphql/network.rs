@@ -11,6 +11,7 @@ use async_graphql::{
 use chrono::{DateTime, Utc};
 use review_database::{self as database};
 
+use crate::graphql::validate_and_process_pagination_params;
 use std::{convert::TryInto, mem::size_of};
 
 #[derive(Default)]
@@ -31,6 +32,9 @@ impl NetworkQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, Network, NetworkTotalCount, EmptyFields>> {
+        let (after, before, first, last) =
+            validate_and_process_pagination_params(after, before, first, last)?;
+
         query(
             after,
             before,

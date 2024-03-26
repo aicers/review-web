@@ -1,4 +1,5 @@
 use super::{get_customer_id_of_review_host, BoxedAgentManager, Role, RoleGuard};
+use crate::graphql::validate_and_process_pagination_params;
 use anyhow::Context as AnyhowContext;
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
@@ -27,6 +28,9 @@ impl CustomerQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, Customer, CustomerTotalCount, EmptyFields>> {
+        let (after, before, first, last) =
+            validate_and_process_pagination_params(after, before, first, last)?;
+
         query(
             after,
             before,

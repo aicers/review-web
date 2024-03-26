@@ -1,4 +1,5 @@
 use super::{Role, RoleGuard};
+use crate::graphql::validate_and_process_pagination_params;
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     types::ID,
@@ -72,6 +73,9 @@ impl super::TriageResponseQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, TriageResponse, TriageResponseTotalCount, EmptyFields>> {
+        let (after, before, first, last) =
+            validate_and_process_pagination_params(after, before, first, last)?;
+
         query(
             after,
             before,

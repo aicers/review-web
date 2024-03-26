@@ -2,6 +2,7 @@ use super::{
     cluster::TimeCount, data_source::DataSource, fill_vacant_time_slots, get_trend, slicing, Role,
     RoleGuard, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER,
 };
+use crate::graphql::validate_and_process_pagination_params;
 use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
     types::ID,
@@ -35,6 +36,9 @@ impl ModelQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, ModelDigest, ModelTotalCount, EmptyFields>> {
+        let (after, before, first, last) =
+            validate_and_process_pagination_params(after, before, first, last)?;
+
         query(
             after,
             before,

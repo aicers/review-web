@@ -36,6 +36,7 @@ use super::{
     network::Network,
     Role, RoleGuard,
 };
+use crate::graphql::validate_and_process_pagination_params;
 use anyhow::{anyhow, bail, Context as AnyhowContext};
 use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
@@ -423,6 +424,9 @@ impl EventQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, Event, EventTotalCount, EmptyFields>> {
+        let (after, before, first, last) =
+            validate_and_process_pagination_params(after, before, first, last)?;
+
         query(
             after,
             before,
