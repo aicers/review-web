@@ -1,4 +1,5 @@
 use super::{ParseEnumError, Role, RoleGuard};
+use crate::graphql::validate_pagination_params_and_set_default;
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     Context, Enum, InputObject, Object, Result, Union,
@@ -24,6 +25,12 @@ impl TemplateQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, Template, TemplateTotalCount, EmptyFields>> {
+        let (after, before, first, last) =
+            match validate_pagination_params_and_set_default(after, before, first, last) {
+                Ok((after, before, first, last)) => (after, before, first, last),
+                Err(e) => return Err(e),
+            };
+
         query(
             after,
             before,
