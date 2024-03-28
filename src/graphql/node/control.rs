@@ -4,11 +4,7 @@ use super::{
 };
 use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks};
 use async_graphql::{Context, Object, Result, SimpleObject, ID};
-use bincode::Options;
-use oinq::{
-    request::{HogConfig, PigletConfig, ReconvergeConfig},
-    RequestCode,
-};
+use oinq::request::{HogConfig, PigletConfig, ReconvergeConfig};
 use review_database::{Node, NodeSetting};
 use std::net::{IpAddr, SocketAddr};
 use tracing::{error, info};
@@ -36,32 +32,11 @@ impl NodeControlMutation {
     async fn node_shutdown(&self, ctx: &Context<'_>, hostname: String) -> Result<String> {
         let agents = ctx.data::<BoxedAgentManager>()?;
         let review_hostname = roxy::hostname();
-
         if !review_hostname.is_empty() && review_hostname == hostname {
             Err("cannot shutdown. review shutdown is not allowed".into())
         } else {
-            // TODO: Refactor this code to use `AgentManager::halt` after
-            // `review` implements it. See #144.
-            let apps = agents.online_apps_by_host_id().await?;
-            let Some(apps) = apps.get(&hostname) else {
-                return Err("unable to gather info of online agents".into());
-            };
-            let Some((key, _)) = apps.first() else {
-                return Err("unable to access first of online agents".into());
-            };
-
-            let code: u32 = RequestCode::Shutdown.into();
-            let msg = bincode::serialize(&code)?;
-            let response = agents.send_and_recv(key, &msg).await?;
-            let Ok(response) =
-                bincode::DefaultOptions::new().deserialize::<Result<(), &str>>(&response)
-            else {
-                return Ok(hostname);
-            };
-            response.map_or_else(
-                |e| Err(format!("unable to shutdown the system: {e}").into()),
-                |()| Ok(hostname),
-            )
+            agents.halt(&hostname).await?;
+            Ok(hostname)
         }
     }
 
@@ -1116,8 +1091,8 @@ mod tests {
             anyhow::bail!("{hostname} is unreachable")
         }
 
-        async fn halt(&self, hostname: &str) -> Result<(), anyhow::Error> {
-            anyhow::bail!("{hostname} is unreachable")
+        async fn halt(&self, _hostname: &str) -> Result<(), anyhow::Error> {
+            Ok(())
         }
 
         async fn ping(&self, hostname: &str) -> Result<i64, anyhow::Error> {
