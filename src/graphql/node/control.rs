@@ -3,18 +3,10 @@ use super::{
     ModuleName, NodeControlMutation,
 };
 use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks};
-use anyhow::bail;
 use async_graphql::{Context, Object, Result, SimpleObject, ID};
-use bincode::Options;
-use oinq::{
-    request::{HogConfig, PigletConfig, ReconvergeConfig},
-    RequestCode,
-};
+use oinq::request::{HogConfig, PigletConfig, ReconvergeConfig};
 use review_database::{Node, NodeSetting};
-use std::{
-    collections::HashMap,
-    net::{IpAddr, SocketAddr},
-};
+use std::net::{IpAddr, SocketAddr};
 use tracing::{error, info};
 
 const MAX_SET_CONFIG_TRY_COUNT: u32 = 3;
@@ -40,32 +32,11 @@ impl NodeControlMutation {
     async fn node_shutdown(&self, ctx: &Context<'_>, hostname: String) -> Result<String> {
         let agents = ctx.data::<BoxedAgentManager>()?;
         let review_hostname = roxy::hostname();
-
         if !review_hostname.is_empty() && review_hostname == hostname {
             Err("cannot shutdown. review shutdown is not allowed".into())
         } else {
-            // TODO: Refactor this code to use `AgentManager::halt` after
-            // `review` implements it. See #144.
-            let apps = agents.online_apps_by_host_id().await?;
-            let Some(apps) = apps.get(&hostname) else {
-                return Err("unable to gather info of online agents".into());
-            };
-            let Some((key, _)) = apps.first() else {
-                return Err("unable to access first of online agents".into());
-            };
-
-            let code: u32 = RequestCode::Shutdown.into();
-            let msg = bincode::serialize(&code)?;
-            let response = agents.send_and_recv(key, &msg).await?;
-            let Ok(response) =
-                bincode::DefaultOptions::new().deserialize::<Result<(), &str>>(&response)
-            else {
-                return Ok(hostname);
-            };
-            response.map_or_else(
-                |e| Err(format!("unable to shutdown the system: {e}").into()),
-                |()| Ok(hostname),
-            )
+            agents.halt(&hostname).await?;
+            Ok(hostname)
         }
     }
 
@@ -146,25 +117,24 @@ async fn send_set_config_requests(
     agents: &BoxedAgentManager,
     node: &Node,
 ) -> anyhow::Result<Vec<ModuleName>> {
-    // TODO: Refactor this code to use `AgentManager::set_config` after
-    // `review` implements it.
-
-    let online_apps = agents.online_apps_by_host_id().await?;
+    let settings_draft = node
+        .setting_draft
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("There is nothing to be applied."))?;
 
     let mut result_combined: Vec<ModuleName> = vec![];
 
-    if let Some(settings_draft) = &node.setting_draft {
-        let hostname_draft = &settings_draft.hostname;
-
-        for (module_name, config) in target_app_configs(settings_draft)? {
-            let agent_key = find_agent_key(&online_apps, hostname_draft, module_name)?;
-            let result = send_set_config_request(agents, agent_key.as_str(), &config).await?;
-            if result {
-                result_combined.push(module_name);
-            }
+    for (module_name, config) in target_app_configs(settings_draft)? {
+        if send_set_config_request(
+            agents,
+            &settings_draft.hostname,
+            module_name.as_ref(),
+            &config,
+        )
+        .await?
+        {
+            result_combined.push(module_name);
         }
-    } else {
-        bail!("There is nothing to be applied.");
     }
 
     Ok(result_combined)
@@ -172,19 +142,16 @@ async fn send_set_config_requests(
 
 async fn send_set_config_request(
     agents: &BoxedAgentManager,
-    agent_key: &str,
+    hostname: &str,
+    module_name: &str,
     config: &oinq::Config,
 ) -> anyhow::Result<bool> {
-    let set_config_request: u32 = RequestCode::SetConfig.into();
-    let mut set_config_msg = bincode::serialize(&set_config_request)?;
-    set_config_msg.extend(bincode::DefaultOptions::new().serialize(config)?);
-
     for _ in 0..MAX_SET_CONFIG_TRY_COUNT {
-        let set_config_response = agents.send_and_recv(agent_key, &set_config_msg).await;
+        let set_config_response = agents.set_config(hostname, module_name, config).await;
         if set_config_response.is_ok() {
             return Ok(true);
         }
-        info!("Failed to set config for module {agent_key}. Retrying...");
+        info!("Failed to set config for module {module_name}. Retrying...");
     }
 
     Ok(false)
@@ -211,18 +178,6 @@ fn target_app_configs(
     }
 
     Ok(configurations)
-}
-
-fn find_agent_key(
-    online_apps: &HashMap<String, Vec<(String, String)>>,
-    hostname: &str,
-    module_name: ModuleName,
-) -> anyhow::Result<String> {
-    online_apps
-        .get(hostname)
-        .and_then(|v| v.iter().find(|(_, name)| *name == module_name.to_string()))
-        .map(|(k, _)| k.clone())
-        .ok_or_else(|| anyhow::anyhow!("{} agent not found", module_name))
 }
 
 fn build_piglet_config(settings_draft: &NodeSetting) -> anyhow::Result<oinq::Config> {
@@ -1102,9 +1057,8 @@ mod tests {
             Ok(self.online_apps_by_host_id.clone())
         }
 
-        async fn send_and_recv(&self, key: &str, _msg: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
-            self.insert_result(key).await;
-            Ok(vec![])
+        async fn send_and_recv(&self, _key: &str, _msg: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
+            anyhow::bail!("not expected to be called")
         }
 
         async fn broadcast_crusher_sampling_policy(
@@ -1137,8 +1091,8 @@ mod tests {
             anyhow::bail!("{hostname} is unreachable")
         }
 
-        async fn halt(&self, hostname: &str) -> Result<(), anyhow::Error> {
-            anyhow::bail!("{hostname} is unreachable")
+        async fn halt(&self, _hostname: &str) -> Result<(), anyhow::Error> {
+            Ok(())
         }
 
         async fn ping(&self, hostname: &str) -> Result<i64, anyhow::Error> {
@@ -1152,10 +1106,12 @@ mod tests {
         async fn set_config(
             &self,
             hostname: &str,
-            _agent_id: &str,
+            agent_id: &str,
             _config: &oinq::Config,
         ) -> Result<(), anyhow::Error> {
-            anyhow::bail!("{hostname} is unreachable")
+            self.insert_result(format!("{agent_id}@{hostname}").as_str())
+                .await;
+            Ok(())
         }
 
         async fn update_traffic_filter_rules(
