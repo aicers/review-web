@@ -28,6 +28,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   instance that is serialized with `bincode::DefaultOptions::new().serialize`
   instead of `bincode::serialize`.
 - Add the result of `get_config` of each module to `nodeStatusList` GraphQL API.
+- Use `set_config` of `AgentManager`, instead of `send_and_recv` in `applyNode`
+  GraphQL API.
 
 ### Removed
 
