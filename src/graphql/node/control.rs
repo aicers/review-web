@@ -4,7 +4,6 @@ use super::{
 };
 use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks};
 use async_graphql::{Context, Object, Result, SimpleObject, ID};
-use oinq::request::{HogConfig, PigletConfig, ReconvergeConfig};
 use review_database::{Node, NodeSetting};
 use std::net::{IpAddr, SocketAddr};
 use tracing::{error, info};
@@ -144,7 +143,7 @@ async fn send_set_config_request(
     agents: &BoxedAgentManager,
     hostname: &str,
     module_name: &str,
-    config: &oinq::Config,
+    config: &review_protocol::types::Config,
 ) -> anyhow::Result<bool> {
     for _ in 0..MAX_SET_CONFIG_TRY_COUNT {
         let set_config_response = agents.set_config(hostname, module_name, config).await;
@@ -159,7 +158,7 @@ async fn send_set_config_request(
 
 fn target_app_configs(
     settings_draft: &NodeSetting,
-) -> anyhow::Result<Vec<(ModuleName, oinq::Config)>> {
+) -> anyhow::Result<Vec<(ModuleName, review_protocol::types::Config)>> {
     let mut configurations = Vec::new();
 
     if settings_draft.piglet {
@@ -180,7 +179,9 @@ fn target_app_configs(
     Ok(configurations)
 }
 
-fn build_piglet_config(settings_draft: &NodeSetting) -> anyhow::Result<oinq::Config> {
+fn build_piglet_config(
+    settings_draft: &NodeSetting,
+) -> anyhow::Result<review_protocol::types::Config> {
     let review_address = build_socket_address(
         settings_draft.piglet_review_ip,
         settings_draft.piglet_review_port,
@@ -194,15 +195,19 @@ fn build_piglet_config(settings_draft: &NodeSetting) -> anyhow::Result<oinq::Con
     let log_options = build_log_options(settings_draft);
     let http_file_types = build_http_file_types(settings_draft);
 
-    Ok(oinq::Config::Piglet(PigletConfig {
-        review_address,
-        giganto_address,
-        log_options,
-        http_file_types,
-    }))
+    Ok(review_protocol::types::Config::Piglet(
+        review_protocol::types::PigletConfig {
+            review_address,
+            giganto_address,
+            log_options,
+            http_file_types,
+        },
+    ))
 }
 
-fn build_hog_config(settings_draft: &NodeSetting) -> anyhow::Result<oinq::Config> {
+fn build_hog_config(
+    settings_draft: &NodeSetting,
+) -> anyhow::Result<review_protocol::types::Config> {
     let review_address =
         build_socket_address(settings_draft.hog_review_ip, settings_draft.hog_review_port)
             .ok_or_else(|| anyhow::anyhow!("hog review address is not set"))?;
@@ -213,12 +218,14 @@ fn build_hog_config(settings_draft: &NodeSetting) -> anyhow::Result<oinq::Config
     let active_protocols = build_active_protocols(settings_draft);
     let active_sources = build_active_sources(settings_draft);
 
-    Ok(oinq::Config::Hog(HogConfig {
-        review_address,
-        giganto_address,
-        active_protocols,
-        active_sources,
-    }))
+    Ok(review_protocol::types::Config::Hog(
+        review_protocol::types::HogConfig {
+            review_address,
+            giganto_address,
+            active_protocols,
+            active_sources,
+        },
+    ))
 }
 
 fn build_log_options(settings_draft: &NodeSetting) -> Option<Vec<String>> {
@@ -302,7 +309,9 @@ fn build_active_sources(settings_draft: &NodeSetting) -> Option<Vec<String>> {
     }
 }
 
-fn build_reconverge_config(settings_draft: &NodeSetting) -> anyhow::Result<oinq::Config> {
+fn build_reconverge_config(
+    settings_draft: &NodeSetting,
+) -> anyhow::Result<review_protocol::types::Config> {
     let review_address = build_socket_address(
         settings_draft.reconverge_review_ip,
         settings_draft.reconverge_review_port,
@@ -314,10 +323,12 @@ fn build_reconverge_config(settings_draft: &NodeSetting) -> anyhow::Result<oinq:
         settings_draft.reconverge_giganto_port,
     );
 
-    Ok(oinq::Config::Reconverge(ReconvergeConfig {
-        review_address,
-        giganto_address,
-    }))
+    Ok(review_protocol::types::Config::Reconverge(
+        review_protocol::types::ReconvergeConfig {
+            review_address,
+            giganto_address,
+        },
+    ))
 }
 
 fn build_socket_address(ip: Option<IpAddr>, port: Option<u16>) -> Option<SocketAddr> {
@@ -1073,7 +1084,7 @@ mod tests {
             &self,
             hostname: &str,
             _agent_id: &str,
-        ) -> Result<oinq::Config, anyhow::Error> {
+        ) -> Result<review_protocol::types::Config, anyhow::Error> {
             anyhow::bail!("{hostname} is unreachable")
         }
 
@@ -1107,7 +1118,7 @@ mod tests {
             &self,
             hostname: &str,
             agent_id: &str,
-            _config: &oinq::Config,
+            _config: &review_protocol::types::Config,
         ) -> Result<(), anyhow::Error> {
             self.insert_result(format!("{agent_id}@{hostname}").as_str())
                 .await;

@@ -116,7 +116,7 @@ pub trait AgentManager: Send + Sync {
         &self,
         _hostname: &str,
         _agent_id: &str,
-    ) -> Result<oinq::Config, anyhow::Error>;
+    ) -> Result<review_protocol::types::Config, anyhow::Error>;
 
     /// Returns the list of processes running on the given host.
     async fn get_process_list(&self, _hostname: &str) -> Result<Vec<Process>, anyhow::Error>;
@@ -139,7 +139,7 @@ pub trait AgentManager: Send + Sync {
         &self,
         _hostname: &str,
         _agent_id: &str,
-        _config: &oinq::Config,
+        _config: &review_protocol::types::Config,
     ) -> Result<(), anyhow::Error>;
 
     /// Updates the traffic filter rules for the given host.
@@ -786,7 +786,7 @@ impl AgentManager for MockAgentManager {
         &self,
         _hostname: &str,
         _agent_id: &str,
-    ) -> Result<oinq::Config, anyhow::Error> {
+    ) -> Result<review_protocol::types::Config, anyhow::Error> {
         unimplemented!()
     }
 
@@ -814,7 +814,7 @@ impl AgentManager for MockAgentManager {
         &self,
         _hostname: &str,
         _agent_id: &str,
-        _config: &oinq::Config,
+        _config: &review_protocol::types::Config,
     ) -> Result<(), anyhow::Error> {
         unimplemented!()
     }

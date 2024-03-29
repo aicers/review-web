@@ -115,7 +115,9 @@ async fn load(
                             .await
                             .ok()
                             .and_then(|cfg| match cfg {
-                                oinq::Config::Piglet(piglet_config) => Some(piglet_config.into()),
+                                review_protocol::types::Config::Piglet(piglet_config) => {
+                                    Some(piglet_config.into())
+                                }
                                 _ => None,
                             })
                     } else {
@@ -127,7 +129,7 @@ async fn load(
                             .await
                             .ok()
                             .and_then(|cfg| match cfg {
-                                oinq::Config::Reconverge(reconverge_config) => {
+                                review_protocol::types::Config::Reconverge(reconverge_config) => {
                                     Some(reconverge_config.into())
                                 }
                                 _ => None,
@@ -141,7 +143,9 @@ async fn load(
                             .await
                             .ok()
                             .and_then(|cfg| match cfg {
-                                oinq::Config::Hog(hog_config) => Some(hog_config.into()),
+                                review_protocol::types::Config::Hog(hog_config) => {
+                                    Some(hog_config.into())
+                                }
                                 _ => None,
                             })
                     } else {

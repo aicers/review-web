@@ -317,8 +317,8 @@ impl HogConfig {
     }
 }
 
-impl From<oinq::request::HogConfig> for HogConfig {
-    fn from(value: oinq::request::HogConfig) -> Self {
+impl From<review_protocol::types::HogConfig> for HogConfig {
+    fn from(value: review_protocol::types::HogConfig) -> Self {
         Self {
             review_ip: value.review_address.ip(),
             review_port: value.review_address.port(),
@@ -354,8 +354,8 @@ impl PigletConfig {
     }
 }
 
-impl From<oinq::request::PigletConfig> for PigletConfig {
-    fn from(value: oinq::request::PigletConfig) -> Self {
+impl From<review_protocol::types::PigletConfig> for PigletConfig {
+    fn from(value: review_protocol::types::PigletConfig) -> Self {
         Self {
             review_ip: value.review_address.ip(),
             review_port: value.review_address.port(),
@@ -389,8 +389,8 @@ impl ReconvergeConfig {
     }
 }
 
-impl From<oinq::request::ReconvergeConfig> for ReconvergeConfig {
-    fn from(value: oinq::request::ReconvergeConfig) -> Self {
+impl From<review_protocol::types::ReconvergeConfig> for ReconvergeConfig {
+    fn from(value: review_protocol::types::ReconvergeConfig) -> Self {
         Self {
             review_ip: value.review_address.ip(),
             review_port: value.review_address.port(),
