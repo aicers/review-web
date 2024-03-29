@@ -94,10 +94,6 @@ impl AgentManager for Manager {
         bail!("Not supported")
     }
 
-    async fn send_and_recv(&self, _key: &str, _msg: &[u8]) -> Result<Vec<u8>, Error> {
-        bail!("Not supported")
-    }
-
     async fn broadcast_crusher_sampling_policy(
         &self,
         _policy: &[SamplingPolicy],

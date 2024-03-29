@@ -1057,10 +1057,6 @@ mod tests {
             Ok(self.online_apps_by_host_id.clone())
         }
 
-        async fn send_and_recv(&self, _key: &str, _msg: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-
         async fn broadcast_crusher_sampling_policy(
             &self,
             _sampling_policies: &[SamplingPolicy],
