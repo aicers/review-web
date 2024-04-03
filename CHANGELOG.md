@@ -33,6 +33,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Use `halt` of `AgentManager`, instead of `send_and_recv` in `nodeShutdown`
   GraphQL API.
 - Updated review-database to 0.27.0.
+- Fix the `nodeStatusList` GraphQL API to return appropriate results for each field.
+- Remove `giganto` from `NodeStatus` struct and `nodeStatusList`.
 
 ### Removed
 

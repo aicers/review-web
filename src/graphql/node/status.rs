@@ -46,23 +46,21 @@ async fn load(
     let mut usages: HashMap<String, ResourceUsage> = HashMap::new();
     let mut ping: HashMap<String, i64> = HashMap::new();
     for hostname in apps.keys() {
-        let Ok(usage) = agents.get_resource_usage(hostname).await else {
-            continue;
-        };
-        usages.insert(
-            hostname.clone(),
-            ResourceUsage {
-                cpu_usage: usage.cpu_usage,
-                total_memory: usage.total_memory,
-                used_memory: usage.used_memory,
-                total_disk_space: usage.total_disk_space,
-                used_disk_space: usage.used_disk_space,
-            },
-        );
-        let Ok(rtt) = agents.ping(hostname).await else {
-            continue;
-        };
-        ping.insert(hostname.clone(), rtt);
+        if let Ok(usage) = agents.get_resource_usage(hostname).await {
+            usages.insert(
+                hostname.clone(),
+                ResourceUsage {
+                    cpu_usage: usage.cpu_usage,
+                    total_memory: usage.total_memory,
+                    used_memory: usage.used_memory,
+                    total_disk_space: usage.total_disk_space,
+                    used_disk_space: usage.used_disk_space,
+                },
+            );
+        }
+        if let Ok(rtt) = agents.ping(hostname).await {
+            ping.insert(hostname.clone(), rtt);
+        }
     }
 
     let review_usage = roxy::resource_usage().await;
@@ -81,7 +79,6 @@ async fn load(
         let (
             review,
             piglet,
-            giganto,
             reconverge,
             hog,
             cpu_usage,
@@ -95,104 +92,122 @@ async fn load(
             hog_config,
         ) = match ev.settings.as_ref().map(|settings| &settings.hostname) {
             Some(hostname) => {
-                if let (Some(modules), Some(usage), Some(ping)) =
-                    (apps.get(hostname), usages.get(hostname), ping.get(hostname))
-                {
+                let matches_review_host =
+                    !review_hostname.is_empty() && &review_hostname == hostname;
+
+                // modules
+                let (review, piglet, reconverge, hog) = if let Some(modules) = apps.get(hostname) {
                     let module_names = modules
                         .iter()
                         .map(|(_, m)| m.as_str())
                         .collect::<HashSet<&str>>();
-                    let (review, piglet, giganto, reconverge, hog) = (
-                        module_names.contains(ModuleName::Review.as_ref()),
-                        module_names.contains(ModuleName::Piglet.as_ref()),
-                        module_names.contains(ModuleName::Giganto.as_ref()),
-                        module_names.contains(ModuleName::Reconverge.as_ref()),
-                        module_names.contains(ModuleName::Hog.as_ref()),
-                    );
-                    let piglet_config = if piglet {
-                        agents
-                            .get_config(hostname, ModuleName::Piglet.as_ref())
-                            .await
-                            .ok()
-                            .and_then(|cfg| match cfg {
-                                review_protocol::types::Config::Piglet(piglet_config) => {
-                                    Some(piglet_config.into())
-                                }
-                                _ => None,
-                            })
-                    } else {
-                        None
-                    };
-                    let reconverge_config = if reconverge {
-                        agents
-                            .get_config(hostname, ModuleName::Reconverge.as_ref())
-                            .await
-                            .ok()
-                            .and_then(|cfg| match cfg {
-                                review_protocol::types::Config::Reconverge(reconverge_config) => {
-                                    Some(reconverge_config.into())
-                                }
-                                _ => None,
-                            })
-                    } else {
-                        None
-                    };
-                    let hog_config = if hog {
-                        agents
-                            .get_config(hostname, ModuleName::Hog.as_ref())
-                            .await
-                            .ok()
-                            .and_then(|cfg| match cfg {
-                                review_protocol::types::Config::Hog(hog_config) => {
-                                    Some(hog_config.into())
-                                }
-                                _ => None,
-                            })
-                    } else {
-                        None
-                    };
                     (
-                        Some(review),
-                        Some(piglet),
-                        Some(giganto),
-                        Some(reconverge),
-                        Some(hog),
-                        Some(usage.cpu_usage),
-                        Some(usage.total_memory),
-                        Some(usage.used_memory),
-                        Some(usage.total_disk_space),
-                        Some(usage.used_disk_space),
-                        Some(*ping),
-                        piglet_config,
-                        reconverge_config,
-                        hog_config,
+                        Some(
+                            matches_review_host
+                                || module_names.contains(ModuleName::Review.as_ref()),
+                        ),
+                        Some(module_names.contains(ModuleName::Piglet.as_ref())),
+                        Some(module_names.contains(ModuleName::Reconverge.as_ref())),
+                        Some(module_names.contains(ModuleName::Hog.as_ref())),
                     )
-                } else if !review_hostname.is_empty() && &review_hostname == hostname {
-                    (
-                        Some(true),
-                        None,
-                        None,
-                        None,
-                        None,
-                        Some(review_usage.cpu_usage),
-                        Some(review_usage.total_memory),
-                        Some(review_usage.used_memory),
-                        Some(review_usage.total_disk_space),
-                        Some(review_usage.used_disk_space),
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
+                // only review is running
+                } else if matches_review_host {
+                    (Some(true), None, None, None)
                 } else {
-                    (
-                        None, None, None, None, None, None, None, None, None, None, None, None,
-                        None, None,
-                    )
-                }
+                    (None, None, None, None)
+                };
+
+                // configs
+                let piglet_config = if let Some(true) = piglet {
+                    agents
+                        .get_config(hostname, ModuleName::Piglet.as_ref())
+                        .await
+                        .ok()
+                        .and_then(|cfg| match cfg {
+                            review_protocol::types::Config::Piglet(piglet_config) => {
+                                Some(piglet_config.into())
+                            }
+                            _ => None,
+                        })
+                } else {
+                    None
+                };
+                let reconverge_config = if let Some(true) = reconverge {
+                    agents
+                        .get_config(hostname, ModuleName::Reconverge.as_ref())
+                        .await
+                        .ok()
+                        .and_then(|cfg| match cfg {
+                            review_protocol::types::Config::Reconverge(reconverge_config) => {
+                                Some(reconverge_config.into())
+                            }
+                            _ => None,
+                        })
+                } else {
+                    None
+                };
+                let hog_config = if let Some(true) = hog {
+                    agents
+                        .get_config(hostname, ModuleName::Hog.as_ref())
+                        .await
+                        .ok()
+                        .and_then(|cfg| match cfg {
+                            review_protocol::types::Config::Hog(hog_config) => {
+                                Some(hog_config.into())
+                            }
+                            _ => None,
+                        })
+                } else {
+                    None
+                };
+
+                // usages
+                let (cpu_usage, total_memory, used_memory, total_disk_space, used_disk_space) =
+                    if matches_review_host {
+                        (
+                            Some(review_usage.cpu_usage),
+                            Some(review_usage.total_memory),
+                            Some(review_usage.used_memory),
+                            Some(review_usage.total_disk_space),
+                            Some(review_usage.used_disk_space),
+                        )
+                    } else if let Some(usage) = usages.get(hostname) {
+                        (
+                            Some(usage.cpu_usage),
+                            Some(usage.total_memory),
+                            Some(usage.used_memory),
+                            Some(usage.total_disk_space),
+                            Some(usage.used_disk_space),
+                        )
+                    } else {
+                        (None, None, None, None, None)
+                    };
+
+                // ping
+                let ping = if matches_review_host {
+                    None
+                } else {
+                    ping.get(hostname).copied()
+                };
+
+                (
+                    review,
+                    piglet,
+                    reconverge,
+                    hog,
+                    cpu_usage,
+                    total_memory,
+                    used_memory,
+                    total_disk_space,
+                    used_disk_space,
+                    ping,
+                    piglet_config,
+                    reconverge_config,
+                    hog_config,
+                )
             }
             None => (
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None,
             ),
         };
         connection.edges.push(Edge::new(
@@ -209,7 +224,6 @@ async fn load(
                 review,
                 piglet,
                 piglet_config,
-                giganto,
                 reconverge,
                 reconverge_config,
                 hog,

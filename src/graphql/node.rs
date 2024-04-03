@@ -436,9 +436,6 @@ pub(super) struct NodeStatus {
     /// actual piglet configuration
     piglet_config: Option<PigletConfig>,
 
-    /// Whether giganto is online or not.
-    giganto: Option<bool>,
-
     /// Whether reconverge is online or not.
     reconverge: Option<bool>,
 
@@ -473,7 +470,6 @@ impl NodeStatus {
         review: Option<bool>,
         piglet: Option<bool>,
         piglet_config: Option<PigletConfig>,
-        giganto: Option<bool>,
         reconverge: Option<bool>,
         reconverge_config: Option<ReconvergeConfig>,
         hog: Option<bool>,
@@ -491,7 +487,6 @@ impl NodeStatus {
             review,
             piglet,
             piglet_config,
-            giganto,
             reconverge,
             reconverge_config,
             hog,
@@ -601,5 +596,4 @@ pub enum ModuleName {
     Piglet,
     Reconverge,
     Review,
-    Giganto,
 }
