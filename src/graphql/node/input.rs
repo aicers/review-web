@@ -56,7 +56,7 @@ pub struct NodeSettingsInput {
     pub sensor_list: HashMap<String, bool>,
 }
 
-impl TryFrom<NodeSettingsInput> for review_database::NodeSetting {
+impl TryFrom<NodeSettingsInput> for review_database::NodeSettings {
     type Error = anyhow::Error;
 
     fn try_from(input: NodeSettingsInput) -> Result<Self, Self::Error> {
@@ -127,8 +127,8 @@ impl TryFrom<NodeInput> for review_database::NodeUpdate {
         Ok(Self {
             name: Some(input.name),
             name_draft: input.name_draft,
-            setting: input.settings.map(TryInto::try_into).transpose()?,
-            setting_draft: input.settings_draft.map(TryInto::try_into).transpose()?,
+            settings: input.settings.map(TryInto::try_into).transpose()?,
+            settings_draft: input.settings_draft.map(TryInto::try_into).transpose()?,
         })
     }
 }
@@ -144,7 +144,7 @@ pub(super) fn create_draft_update(
     old: &NodeInput,
     new: NodeDraftInput,
 ) -> Result<review_database::NodeUpdate> {
-    let (name_draft, setting_draft) = if let Some(draft) = new.settings_draft {
+    let (name_draft, settings_draft) = if let Some(draft) = new.settings_draft {
         (new.name_draft, Some(draft.try_into()?))
     } else {
         (None, None)
@@ -152,7 +152,7 @@ pub(super) fn create_draft_update(
     Ok(review_database::NodeUpdate {
         name: Some(old.name.clone()),
         name_draft,
-        setting: old.settings.clone().map(TryInto::try_into).transpose()?,
-        setting_draft,
+        settings: old.settings.clone().map(TryInto::try_into).transpose()?,
+        settings_draft,
     })
 }

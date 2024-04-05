@@ -130,8 +130,8 @@ impl NodeMutation {
                 id: u32::MAX,
                 name,
                 name_draft: None,
-                setting: None,
-                setting_draft: Some(review_database::NodeSetting {
+                settings: None,
+                settings_draft: Some(review_database::NodeSettings {
                     customer_id,
                     description,
                     hostname,
@@ -308,96 +308,96 @@ pub fn get_node_settings(db: &Store) -> Result<Vec<Setting>> {
     for res in map.iter(Direction::Forward, None) {
         let node = res.map_err(|_| "invalid value in database")?;
 
-        let node_setting = node.setting.ok_or("Applied node settings do not exist")?;
+        let node_settings = node.settings.ok_or("Applied node settings do not exist")?;
 
-        let piglet: Option<ServerAddress> = if node_setting.piglet {
+        let piglet: Option<ServerAddress> = if node_settings.piglet {
             Some(ServerAddress {
                 web: None,
                 rpc: Some(SocketAddr::new(
-                    node_setting
+                    node_settings
                         .piglet_review_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_setting.piglet_review_port.unwrap_or_default(),
+                    node_settings.piglet_review_port.unwrap_or_default(),
                 )),
                 public: Some(SocketAddr::new(
-                    node_setting
+                    node_settings
                         .piglet_giganto_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_setting.piglet_giganto_port.unwrap_or_default(),
+                    node_settings.piglet_giganto_port.unwrap_or_default(),
                 )),
                 ing: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)),
             })
         } else {
             None
         };
-        let giganto = if node_setting.giganto {
+        let giganto = if node_settings.giganto {
             Some(ServerAddress {
                 web: Some(SocketAddr::new(
-                    node_setting
+                    node_settings
                         .giganto_graphql_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_setting.giganto_graphql_port.unwrap_or_default(),
+                    node_settings.giganto_graphql_port.unwrap_or_default(),
                 )),
                 rpc: None,
                 public: Some(SocketAddr::new(
-                    node_setting
+                    node_settings
                         .giganto_publish_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_setting.giganto_publish_port.unwrap_or_default(),
+                    node_settings.giganto_publish_port.unwrap_or_default(),
                 )),
                 ing: Some(SocketAddr::new(
-                    node_setting
+                    node_settings
                         .giganto_ingestion_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_setting.giganto_ingestion_port.unwrap_or_default(),
+                    node_settings.giganto_ingestion_port.unwrap_or_default(),
                 )),
             })
         } else {
             None
         };
 
-        let review = if node_setting.review {
+        let review = if node_settings.review {
             Some(ServerPort {
-                rpc_port: node_setting.review_port.unwrap_or_default(),
-                web_port: node_setting.review_web_port.unwrap_or_default(),
+                rpc_port: node_settings.review_port.unwrap_or_default(),
+                web_port: node_settings.review_web_port.unwrap_or_default(),
             })
         } else {
             None
         };
-        let reconverge = if node_setting.reconverge {
+        let reconverge = if node_settings.reconverge {
             Some(ServerAddress {
                 web: None,
                 rpc: Some(SocketAddr::new(
-                    node_setting
+                    node_settings
                         .reconverge_review_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_setting.reconverge_review_port.unwrap_or_default(),
+                    node_settings.reconverge_review_port.unwrap_or_default(),
                 )),
                 public: Some(SocketAddr::new(
-                    node_setting
+                    node_settings
                         .reconverge_giganto_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_setting.reconverge_giganto_port.unwrap_or_default(),
+                    node_settings.reconverge_giganto_port.unwrap_or_default(),
                 )),
                 ing: None,
             })
         } else {
             None
         };
-        let hog = if node_setting.hog {
+        let hog = if node_settings.hog {
             Some(ServerAddress {
                 web: None,
                 rpc: Some(SocketAddr::new(
-                    node_setting
+                    node_settings
                         .hog_review_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_setting.hog_review_port.unwrap_or_default(),
+                    node_settings.hog_review_port.unwrap_or_default(),
                 )),
                 public: Some(SocketAddr::new(
-                    node_setting
+                    node_settings
                         .hog_giganto_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_setting.hog_giganto_port.unwrap_or_default(),
+                    node_settings.hog_giganto_port.unwrap_or_default(),
                 )),
                 ing: None,
             })
@@ -406,7 +406,7 @@ pub fn get_node_settings(db: &Store) -> Result<Vec<Setting>> {
         };
 
         output.push(Setting {
-            name: node_setting.hostname,
+            name: node_settings.hostname,
             piglet,
             giganto,
             hog,
@@ -429,7 +429,7 @@ pub fn get_customer_id_of_review_host(db: &Store) -> Result<Option<u32>> {
     for entry in map.iter(Direction::Forward, None) {
         let node = entry.map_err(|_| "invalid value in database")?;
 
-        if let Some(node_settings) = &node.setting {
+        if let Some(node_settings) = &node.settings {
             if node_settings.review {
                 return Ok(Some(node_settings.customer_id));
             }

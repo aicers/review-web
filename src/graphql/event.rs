@@ -931,7 +931,7 @@ fn convert_sensors(
             bail!("no such sensor")
         };
 
-        if let Some(node_settings) = node.setting {
+        if let Some(node_settings) = node.settings {
             if !node_settings.hostname.is_empty() {
                 converted_sensors.push(node_settings.hostname.clone());
             }

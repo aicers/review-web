@@ -166,8 +166,8 @@ pub struct NodeSettings {
     sensor_list: HashMap<String, bool>,
 }
 
-impl From<review_database::NodeSetting> for NodeSettings {
-    fn from(input: review_database::NodeSetting) -> Self {
+impl From<review_database::NodeSettings> for NodeSettings {
+    fn from(input: review_database::NodeSettings) -> Self {
         Self {
             customer_id: input.customer_id,
             description: input.description.clone(),
@@ -233,8 +233,8 @@ impl From<review_database::Node> for Node {
             id: input.id,
             name: input.name,
             name_draft: input.name_draft,
-            settings: input.setting.map(Into::into),
-            settings_draft: input.setting_draft.map(Into::into),
+            settings: input.settings.map(Into::into),
+            settings_draft: input.settings_draft.map(Into::into),
             creation_time: input.creation_time,
         }
     }

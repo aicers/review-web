@@ -32,6 +32,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   GraphQL API.
 - Use `halt` of `AgentManager`, instead of `send_and_recv` in `nodeShutdown`
   GraphQL API.
+- Updated review-database to 0.27.0.
 
 ### Removed
 

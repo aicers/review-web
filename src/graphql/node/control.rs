@@ -4,7 +4,7 @@ use super::{
 };
 use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks};
 use async_graphql::{Context, Object, Result, SimpleObject, ID};
-use review_database::{Node, NodeSetting};
+use review_database::{Node, NodeSettings};
 use std::net::{IpAddr, SocketAddr};
 use tracing::{error, info};
 
@@ -53,11 +53,11 @@ impl NodeControlMutation {
                 .ok_or_else(|| async_graphql::Error::new(format!("Node with ID {i} not found",)))?
         };
 
-        if node.name_draft.is_none() && node.setting_draft.is_none() {
+        if node.name_draft.is_none() && node.settings_draft.is_none() {
             return Err("There is nothing to apply.".into());
         }
 
-        let review_config_setted = match &node.setting_draft {
+        let review_config_setted = match &node.settings_draft {
             Some(settings_draft) if settings_draft.review => {
                 // TODO: Trigger `set_review_config()`; Configs that can be set
                 // for REview are `revew_port` and `review_web_port`.
@@ -117,7 +117,7 @@ async fn send_set_config_requests(
     node: &Node,
 ) -> anyhow::Result<Vec<ModuleName>> {
     let settings_draft = node
-        .setting_draft
+        .settings_draft
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("There is nothing to be applied."))?;
 
@@ -157,7 +157,7 @@ async fn send_set_config_request(
 }
 
 fn target_app_configs(
-    settings_draft: &NodeSetting,
+    settings_draft: &NodeSettings,
 ) -> anyhow::Result<Vec<(ModuleName, review_protocol::types::Config)>> {
     let mut configurations = Vec::new();
 
@@ -180,7 +180,7 @@ fn target_app_configs(
 }
 
 fn build_piglet_config(
-    settings_draft: &NodeSetting,
+    settings_draft: &NodeSettings,
 ) -> anyhow::Result<review_protocol::types::Config> {
     let review_address = build_socket_address(
         settings_draft.piglet_review_ip,
@@ -206,7 +206,7 @@ fn build_piglet_config(
 }
 
 fn build_hog_config(
-    settings_draft: &NodeSetting,
+    settings_draft: &NodeSettings,
 ) -> anyhow::Result<review_protocol::types::Config> {
     let review_address =
         build_socket_address(settings_draft.hog_review_ip, settings_draft.hog_review_port)
@@ -228,7 +228,7 @@ fn build_hog_config(
     ))
 }
 
-fn build_log_options(settings_draft: &NodeSetting) -> Option<Vec<String>> {
+fn build_log_options(settings_draft: &NodeSettings) -> Option<Vec<String>> {
     let condition_to_log_option = [
         (settings_draft.save_packets, "dump"),
         (settings_draft.http, "http"),
@@ -254,7 +254,7 @@ fn build_log_options(settings_draft: &NodeSetting) -> Option<Vec<String>> {
     }
 }
 
-fn build_http_file_types(settings_draft: &NodeSetting) -> Option<Vec<String>> {
+fn build_http_file_types(settings_draft: &NodeSettings) -> Option<Vec<String>> {
     let condition_to_http_file_types = [
         (settings_draft.office, "office"),
         (settings_draft.exe, "exe"),
@@ -281,7 +281,7 @@ fn build_http_file_types(settings_draft: &NodeSetting) -> Option<Vec<String>> {
     }
 }
 
-fn build_active_protocols(settings_draft: &NodeSetting) -> Option<Vec<String>> {
+fn build_active_protocols(settings_draft: &NodeSettings) -> Option<Vec<String>> {
     if settings_draft.protocols {
         Some(
             settings_draft
@@ -295,7 +295,7 @@ fn build_active_protocols(settings_draft: &NodeSetting) -> Option<Vec<String>> {
     }
 }
 
-fn build_active_sources(settings_draft: &NodeSetting) -> Option<Vec<String>> {
+fn build_active_sources(settings_draft: &NodeSettings) -> Option<Vec<String>> {
     if settings_draft.sensors {
         Some(
             settings_draft
@@ -310,7 +310,7 @@ fn build_active_sources(settings_draft: &NodeSetting) -> Option<Vec<String>> {
 }
 
 fn build_reconverge_config(
-    settings_draft: &NodeSetting,
+    settings_draft: &NodeSettings,
 ) -> anyhow::Result<review_protocol::types::Config> {
     let review_address = build_socket_address(
         settings_draft.reconverge_review_ip,
@@ -366,7 +366,7 @@ async fn update_node(
     let mut updated_node = node.clone();
     updated_node.name = updated_node.name_draft.take().unwrap_or(updated_node.name);
 
-    if let Some(settings_draft) = &updated_node.setting_draft {
+    if let Some(settings_draft) = &updated_node.settings_draft {
         let update_module_specific_settings = ModuleSpecificSettingUpdateIndicator {
             review: okay_to_update_module_specific_settings(
                 settings_draft.review,
@@ -392,7 +392,7 @@ async fn update_node(
 
         if update_module_specific_settings.all_true() {
             // All fields in the `settings` can simply be replaced with fields in `settings_draft`.
-            updated_node.setting = updated_node.setting_draft.take();
+            updated_node.settings = updated_node.settings_draft.take();
         } else {
             update_common_node_settings(&mut updated_node);
             update_module_specfic_settings(&mut updated_node, &update_module_specific_settings);
@@ -408,75 +408,75 @@ async fn update_node(
 }
 
 fn update_common_node_settings(updated_node: &mut Node) {
-    let mut updated_setting = updated_node.setting.take().unwrap_or_default();
-    if let Some(settings_draft) = updated_node.setting_draft.as_ref() {
+    let mut updated_settings = updated_node.settings.take().unwrap_or_default();
+    if let Some(settings_draft) = updated_node.settings_draft.as_ref() {
         // These are common node settings fields, that are not tied to specific modules
-        updated_setting.customer_id = settings_draft.customer_id;
-        updated_setting.description = settings_draft.description.clone();
-        updated_setting.hostname = settings_draft.hostname.clone();
+        updated_settings.customer_id = settings_draft.customer_id;
+        updated_settings.description = settings_draft.description.clone();
+        updated_settings.hostname = settings_draft.hostname.clone();
     }
-    updated_node.setting = Some(updated_setting);
+    updated_node.settings = Some(updated_settings);
 }
 
 fn update_module_specfic_settings(
     updated_node: &mut Node,
     update_module_specific_settings: &ModuleSpecificSettingUpdateIndicator,
 ) {
-    let mut updated_setting = updated_node.setting.take().unwrap_or_default();
+    let mut updated_settings = updated_node.settings.take().unwrap_or_default();
 
-    if let Some(settings_draft) = updated_node.setting_draft.as_mut() {
+    if let Some(settings_draft) = updated_node.settings_draft.as_mut() {
         if update_module_specific_settings.review {
-            updated_setting.review = settings_draft.review;
-            updated_setting.review_port = settings_draft.review_port;
-            updated_setting.review_web_port = settings_draft.review_web_port;
+            updated_settings.review = settings_draft.review;
+            updated_settings.review_port = settings_draft.review_port;
+            updated_settings.review_web_port = settings_draft.review_web_port;
         }
 
         if update_module_specific_settings.hog {
-            updated_setting.hog = settings_draft.hog;
-            updated_setting.hog_review_ip = settings_draft.hog_review_ip;
-            updated_setting.hog_review_port = settings_draft.hog_review_port;
-            updated_setting.hog_giganto_ip = settings_draft.hog_giganto_ip;
-            updated_setting.hog_giganto_port = settings_draft.hog_giganto_port;
-            updated_setting.protocols = settings_draft.protocols;
-            updated_setting.protocol_list = settings_draft.protocol_list.clone();
-            updated_setting.sensors = settings_draft.sensors;
-            updated_setting.sensor_list = settings_draft.sensor_list.clone();
+            updated_settings.hog = settings_draft.hog;
+            updated_settings.hog_review_ip = settings_draft.hog_review_ip;
+            updated_settings.hog_review_port = settings_draft.hog_review_port;
+            updated_settings.hog_giganto_ip = settings_draft.hog_giganto_ip;
+            updated_settings.hog_giganto_port = settings_draft.hog_giganto_port;
+            updated_settings.protocols = settings_draft.protocols;
+            updated_settings.protocol_list = settings_draft.protocol_list.clone();
+            updated_settings.sensors = settings_draft.sensors;
+            updated_settings.sensor_list = settings_draft.sensor_list.clone();
         }
 
         if update_module_specific_settings.reconverge {
-            updated_setting.reconverge = settings_draft.reconverge;
-            updated_setting.reconverge_review_ip = settings_draft.reconverge_review_ip;
-            updated_setting.reconverge_review_port = settings_draft.reconverge_review_port;
-            updated_setting.reconverge_giganto_ip = settings_draft.reconverge_giganto_ip;
-            updated_setting.reconverge_giganto_port = settings_draft.reconverge_giganto_port;
+            updated_settings.reconverge = settings_draft.reconverge;
+            updated_settings.reconverge_review_ip = settings_draft.reconverge_review_ip;
+            updated_settings.reconverge_review_port = settings_draft.reconverge_review_port;
+            updated_settings.reconverge_giganto_ip = settings_draft.reconverge_giganto_ip;
+            updated_settings.reconverge_giganto_port = settings_draft.reconverge_giganto_port;
         }
 
         if update_module_specific_settings.piglet {
-            updated_setting.piglet = settings_draft.piglet;
-            updated_setting.piglet_review_ip = settings_draft.piglet_review_ip;
-            updated_setting.piglet_review_port = settings_draft.piglet_review_port;
-            updated_setting.piglet_giganto_ip = settings_draft.piglet_giganto_ip;
-            updated_setting.piglet_giganto_port = settings_draft.piglet_giganto_port;
-            updated_setting.save_packets = settings_draft.save_packets;
-            updated_setting.http = settings_draft.http;
-            updated_setting.office = settings_draft.office;
-            updated_setting.exe = settings_draft.exe;
-            updated_setting.pdf = settings_draft.pdf;
-            updated_setting.html = settings_draft.html;
-            updated_setting.txt = settings_draft.txt;
-            updated_setting.smtp_eml = settings_draft.smtp_eml;
-            updated_setting.ftp = settings_draft.ftp;
+            updated_settings.piglet = settings_draft.piglet;
+            updated_settings.piglet_review_ip = settings_draft.piglet_review_ip;
+            updated_settings.piglet_review_port = settings_draft.piglet_review_port;
+            updated_settings.piglet_giganto_ip = settings_draft.piglet_giganto_ip;
+            updated_settings.piglet_giganto_port = settings_draft.piglet_giganto_port;
+            updated_settings.save_packets = settings_draft.save_packets;
+            updated_settings.http = settings_draft.http;
+            updated_settings.office = settings_draft.office;
+            updated_settings.exe = settings_draft.exe;
+            updated_settings.pdf = settings_draft.pdf;
+            updated_settings.html = settings_draft.html;
+            updated_settings.txt = settings_draft.txt;
+            updated_settings.smtp_eml = settings_draft.smtp_eml;
+            updated_settings.ftp = settings_draft.ftp;
         }
     }
 
-    updated_node.setting = Some(updated_setting);
+    updated_node.settings = Some(updated_settings);
 }
 
 fn should_broadcast_customer_change(node: &Node) -> Option<u32> {
-    let is_review = node.setting_draft.as_ref().is_some_and(|s| s.review);
+    let is_review = node.settings_draft.as_ref().is_some_and(|s| s.review);
 
-    let old_customer_id: Option<u32> = node.setting.as_ref().map(|s| s.customer_id);
-    let new_customer_id: Option<u32> = node.setting_draft.as_ref().map(|s| s.customer_id);
+    let old_customer_id: Option<u32> = node.settings.as_ref().map(|s| s.customer_id);
+    let new_customer_id: Option<u32> = node.settings_draft.as_ref().map(|s| s.customer_id);
 
     if is_review && (old_customer_id != new_customer_id) {
         new_customer_id
