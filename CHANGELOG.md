@@ -44,9 +44,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   - `reboot`
   The implementor of `AgentManager` is now responsible for providing the
   behavior for these methods.
-- `AgentManager::send_and_recv` has been removed because it exposed the
-  underlying communication mechanism to the caller. The caller should now use
-  the specific methods provided by `AgentManager` to interact with the agent.
+- `AgentManager::send_and_recv` and `broadcast_to_crusher` has been removed
+  because they exposed the underlying communication mechanism to the caller. The
+  caller should now use the specific methods provided by `AgentManager` to
+  interact with the agent.
 
 ## [0.19.0] - 2024-03-18
 

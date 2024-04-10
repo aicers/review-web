@@ -74,10 +74,6 @@ pub(super) type Schema = async_graphql::Schema<Query, Mutation, Subscription>;
 
 #[async_trait]
 pub trait AgentManager: Send + Sync {
-    async fn broadcast_to_crusher(&self, _message: &[u8]) -> Result<(), anyhow::Error> {
-        self.default()
-    }
-
     async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
         self.default()
     }
@@ -734,9 +730,6 @@ struct MockAgentManager {}
 #[cfg(test)]
 #[async_trait]
 impl AgentManager for MockAgentManager {
-    async fn broadcast_to_crusher(&self, _msg: &[u8]) -> Result<(), anyhow::Error> {
-        unimplemented!()
-    }
     async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
         unimplemented!()
     }

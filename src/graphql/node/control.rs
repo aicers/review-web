@@ -1029,9 +1029,6 @@ mod tests {
 
     #[async_trait]
     impl AgentManager for MockAgentManager {
-        async fn broadcast_to_crusher(&self, _msg: &[u8]) -> Result<(), anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
         async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
             anyhow::bail!("not expected to be called")
         }

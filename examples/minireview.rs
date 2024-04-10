@@ -64,10 +64,6 @@ struct Manager;
 
 #[async_trait]
 impl AgentManager for Manager {
-    async fn broadcast_to_crusher(&self, _msg: &[u8]) -> Result<(), Error> {
-        bail!("Not supported")
-    }
-
     async fn broadcast_trusted_domains(&self) -> Result<(), Error> {
         bail!("Not supported")
     }
