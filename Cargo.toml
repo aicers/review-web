@@ -26,7 +26,7 @@ num-traits = "0.2"
 reqwest = { version = "0.11", default-features = false, features = [
   "rustls-tls-native-roots",
 ] }
-review-database = { git = "https://github.com/petabi/review-database.git", tag = "0.27.0" }
+review-database = { git = "https://github.com/petabi/review-database.git", tag = "0.27.1" }
 review-protocol = { git = "https://github.com/petabi/review-protocol.git", tag = "0.2.0" }
 roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.2.1" }
 rustls = "0.21"
@@ -47,7 +47,7 @@ assert-json-diff = "2.0.2"
 config = { version = "0.13", features = ["toml"], default-features = false }
 futures = "0.3"
 tempfile = "3"
-tokio = { version = "1", features = ["rt-multi-thread", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "signal", "sync"] }
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

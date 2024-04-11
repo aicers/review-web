@@ -22,9 +22,9 @@ pub(super) use self::group::EventGroupQuery;
 use self::{
     conn::BlockListConn, conn::ExternalDdos, conn::MultiHostPortScan, conn::PortScan,
     dcerpc::BlockListDceRpc, dns::BlockListDns, dns::CryptocurrencyMiningPool,
-    dns::DnsCovertChannel, ftp::BlockListFtp, ftp::FtpBruteForce, ftp::FtpPlainText,
-    http::BlockListHttp, http::DomainGenerationAlgorithm, http::HttpThreat, http::NonBrowser,
-    http::RepeatedHttpSessions, http::TorConnection, kerberos::BlockListKerberos,
+    dns::DnsCovertChannel, dns::LockyRansomware, ftp::BlockListFtp, ftp::FtpBruteForce,
+    ftp::FtpPlainText, http::BlockListHttp, http::DomainGenerationAlgorithm, http::HttpThreat,
+    http::NonBrowser, http::RepeatedHttpSessions, http::TorConnection, kerberos::BlockListKerberos,
     ldap::BlockListLdap, ldap::LdapBruteForce, ldap::LdapPlainText, log::ExtraThreat,
     mqtt::BlockListMqtt, network::NetworkThreat, nfs::BlockListNfs, ntlm::BlockListNtlm,
     rdp::BlockListRdp, rdp::RdpBruteForce, smb::BlockListSmb, smtp::BlockListSmtp,
@@ -151,6 +151,7 @@ async fn fetch_events(
     let mut windows_threat_time = start_time;
     let mut network_threat_time = start_time;
     let mut extra_threat_time = start_time;
+    let mut locky_ransomware_time = start_time;
 
     loop {
         itv.tick().await;
@@ -188,7 +189,8 @@ async fn fetch_events(
             .min(block_list_tls_time)
             .min(windows_threat_time)
             .min(network_threat_time)
-            .min(extra_threat_time);
+            .min(extra_threat_time)
+            .min(locky_ransomware_time);
 
         // Fetch event iterator based on time
         let start = i128::from(start) << 64;
@@ -403,6 +405,12 @@ async fn fetch_events(
                         extra_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
+                EventKind::LockyRansomware => {
+                    if event_time >= locky_ransomware_time {
+                        tx.unbounded_send(value.into())?;
+                        locky_ransomware_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
             }
         }
     }
@@ -535,6 +543,8 @@ enum Event {
     NetworkThreat(NetworkThreat),
 
     ExtraThreat(ExtraThreat),
+
+    LockyRansomware(LockyRansomware),
 }
 
 impl From<database::Event> for Event {
@@ -581,6 +591,7 @@ impl From<database::Event> for Event {
             database::Event::WindowsThreat(event) => Event::WindowsThreat(event.into()),
             database::Event::NetworkThreat(event) => Event::NetworkThreat(event.into()),
             database::Event::ExtraThreat(event) => Event::ExtraThreat(event.into()),
+            database::Event::LockyRansomware(event) => Event::LockyRansomware(event.into()),
         }
     }
 }
@@ -1522,6 +1533,62 @@ mod tests {
         assert_eq!(
             res.unwrap().data.to_string(),
             r#"{eventStream: {__typename: "DnsCovertChannel",srcAddr: "0.0.0.5"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn event_list_locky_ransomware() {
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        let db = store.events();
+        let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let fields = DnsEventFields {
+            source: "collector1".to_string(),
+            session_end_time: timestamp,
+            src_addr: Ipv4Addr::from(1).into(),
+            src_port: 10000,
+            dst_addr: Ipv4Addr::from(2).into(),
+            dst_port: 53,
+            proto: 17,
+            query: "domain".into(),
+            answer: Vec::new(),
+            trans_id: 0,
+            rtt: 10,
+            qclass: 0,
+            qtype: 0,
+            rcode: 0,
+            aa_flag: false,
+            tc_flag: false,
+            rd_flag: false,
+            ra_flag: false,
+            ttl: Vec::new(),
+            confidence: 0.8,
+        };
+        let message = EventMessage {
+            time: timestamp,
+            kind: EventKind::LockyRansomware,
+            fields: bincode::serialize(&fields).expect("serializable"),
+        };
+        db.put(&message).unwrap();
+        let query = format!(
+            "{{ \
+                eventList(filter: {{
+                    start:\"{}\"
+                }}) {{ \
+                    edges {{ node {{... on LockyRansomware {{ srcAddr,rtt,query }} }} }} \
+                }} \
+            }}",
+            timestamp
+        );
+        let res = schema.execute(&query).await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1",rtt: 10,query: "domain"}}]}}"#
         );
     }
 }

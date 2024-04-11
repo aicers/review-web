@@ -14,6 +14,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Add `validate_and_process_pagination_params` to check input valid
   combinations of first, last, before, and after and apply it to GraphQL
   queries with pagination.
+- Added `LockyRansomware` detection event.
 
 ### Changed
 
