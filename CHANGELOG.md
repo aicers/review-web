@@ -5,7 +5,7 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.20.0] - 2024-04-16
 
 ### Added
 
@@ -33,10 +33,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   parameters, following the GraphQL pagination documentation guidelines.
   This enhancement ensures better consistency and adherence to best practices in
   handling pagination requests.
-- GraphQl queries `insertTidb` requires `dbfile` to be encoded string of `Tidb`
+- GraphQL queries `insertTidb` requires `dbfile` to be encoded string of `Tidb`
   instance that is serialized with `bincode::DefaultOptions::new().serialize`
   instead of `bincode::serialize`.
-- GraphQl queries `updateTidb` requires `new` to be encoded string of `Tidb`
+- GraphQL queries `updateTidb` requires `new` to be encoded string of `Tidb`
   instance that is serialized with `bincode::DefaultOptions::new().serialize`
   instead of `bincode::serialize`.
 - Add the result of `get_config` of each module to `nodeStatusList` GraphQL API.
@@ -540,7 +540,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - An initial version.
 
-[Unreleased]: https://github.com/aicers/review-web/compare/0.19.0...main
+[0.20.0]: https://github.com/aicers/review-web/compare/0.19.0...0.20.0
 [0.19.0]: https://github.com/aicers/review-web/compare/0.18.0...0.19.0
 [0.18.0]: https://github.com/aicers/review-web/compare/0.17.0...0.18.0
 [0.17.0]: https://github.com/aicers/review-web/compare/0.16.0...0.17.0
