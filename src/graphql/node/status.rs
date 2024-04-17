@@ -239,7 +239,324 @@ async fn load(
 
 #[cfg(test)]
 mod tests {
-    use crate::graphql::TestSchema;
+    use crate::graphql::{AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema};
+    use assert_json_diff::assert_json_eq;
+    use axum::async_trait;
+    use roxy::ResourceUsage;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    struct MockAgentManager {
+        pub online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,
+    }
+
+    #[async_trait]
+    impl AgentManager for MockAgentManager {
+        async fn broadcast_internal_networks(
+            &self,
+            _networks: &[u8],
+        ) -> Result<Vec<String>, anyhow::Error> {
+            anyhow::bail!("not expected to be called")
+        }
+
+        async fn broadcast_allow_networks(
+            &self,
+            _networks: &[u8],
+        ) -> Result<Vec<String>, anyhow::Error> {
+            unimplemented!()
+        }
+
+        async fn broadcast_block_networks(
+            &self,
+            _networks: &[u8],
+        ) -> Result<Vec<String>, anyhow::Error> {
+            unimplemented!()
+        }
+
+        async fn online_apps_by_host_id(
+            &self,
+        ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error> {
+            Ok(self.online_apps_by_host_id.clone())
+        }
+
+        async fn broadcast_crusher_sampling_policy(
+            &self,
+            _sampling_policies: &[SamplingPolicy],
+        ) -> Result<(), anyhow::Error> {
+            unimplemented!()
+        }
+
+        async fn get_config(
+            &self,
+            hostname: &str,
+            _agent_id: &str,
+        ) -> Result<review_protocol::types::Config, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn get_process_list(
+            &self,
+            _hostname: &str,
+        ) -> Result<Vec<roxy::Process>, anyhow::Error> {
+            unimplemented!()
+        }
+
+        async fn get_resource_usage(
+            &self,
+            _hostname: &str,
+        ) -> Result<roxy::ResourceUsage, anyhow::Error> {
+            Ok(ResourceUsage {
+                cpu_usage: 20.0,
+                total_memory: 1000,
+                used_memory: 100,
+                total_disk_space: 1000,
+                used_disk_space: 100,
+            })
+        }
+
+        async fn halt(&self, _hostname: &str) -> Result<(), anyhow::Error> {
+            unimplemented!()
+        }
+
+        async fn ping(&self, _hostname: &str) -> Result<i64, anyhow::Error> {
+            Ok(10)
+        }
+
+        async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error> {
+            unimplemented!()
+        }
+
+        async fn set_config(
+            &self,
+            _hostname: &str,
+            _agent_id: &str,
+            _config: &review_protocol::types::Config,
+        ) -> Result<(), anyhow::Error> {
+            Ok(())
+        }
+    }
+
+    fn insert_apps(host: &str, apps: &[&str], map: &mut HashMap<String, Vec<(String, String)>>) {
+        let entries = apps
+            .iter()
+            .map(|&app| (format!("{}@{}", app, host), app.to_string()))
+            .collect();
+        map.insert(host.to_string(), entries);
+    }
+
+    #[tokio::test]
+    async fn test_node_status_list() {
+        let mut online_apps_by_host_id = HashMap::new();
+        insert_apps("host1", &["review", "piglet"], &mut online_apps_by_host_id);
+        insert_apps("host2", &["hog", "reconverge"], &mut online_apps_by_host_id);
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id,
+        });
+
+        let schema = TestSchema::new_with(agent_manager).await;
+
+        // check empty
+        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 0}}"#);
+
+        // insert 2 nodes
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "node1",
+                        customerId: 0,
+                        description: "This is the admin node running review.",
+                        hostname: "host1",
+                        review: true,
+                        reviewPort: 1111,
+                        reviewWebPort: 1112,
+                        piglet: true,
+                        pigletGigantoIp: "0.0.0.0",
+                        pigletGigantoPort: 5555,
+                        pigletReviewIp: "0.0.0.0",
+                        pigletReviewPort: 1111,
+                        savePackets: false,
+                        http: false,
+                        office: false,
+                        exe: false,
+                        pdf: false,
+                        html: false,
+                        txt: false,
+                        smtpEml: false,
+                        ftp: false,
+                        giganto: false,
+                        reconverge: false,
+                        hog: false,
+                        protocols: false,
+                        protocolList: {},
+                        sensors: false,
+                        sensorList: {},
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(id: "0") {
+                        id
+                        successModules
+                    }
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{applyNode: {id: "0",successModules: [PIGLET]}}"#
+        );
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "node2",
+                        customerId: 0,
+                        description: "This is the reconverge, hog node.",
+                        hostname: "host2",
+                        review: false,
+                        piglet: false,
+                        savePackets: false,
+                        http: false,
+                        office: false,
+                        exe: false,
+                        pdf: false,
+                        html: false,
+                        txt: false,
+                        smtpEml: false,
+                        ftp: false,
+                        giganto: false,
+                        reconverge: true,
+                        reconvergeReviewIp: "0.0.0.0",
+                        reconvergeReviewPort: 1111,
+                        reconvergeGigantoIp: "0.0.0.0",
+                        reconvergeGigantoPort: 5555,
+                        hog: true,
+                        hogReviewIp: "0.0.0.0",
+                        hogReviewPort: 1111,
+                        hogGigantoIp: "0.0.0.0",
+                        hogGigantoPort: 5555,
+                        protocols: false,
+                        protocolList: {},
+                        sensors: false,
+                        sensorList: {},
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(id: "1") {
+                        id
+                        successModules
+                    }
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{applyNode: {id: "1",successModules: [HOG,RECONVERGE]}}"#
+        );
+
+        // check node status list
+        let res = schema
+            .execute(
+                r#"query {
+                    nodeStatusList(first: 10) {
+                      edges {
+                        node {
+                            name
+                            cpuUsage
+                            totalMemory
+                            usedMemory
+                            totalDiskSpace
+                            usedDiskSpace
+                            ping
+                            review
+                            piglet
+                            pigletConfig {
+                                gigantoIp
+                                gigantoPort
+                                reviewIp
+                                reviewPort
+                            }
+                            reconverge
+                            reconvergeConfig {
+                                gigantoIp
+                                gigantoPort
+                                reviewIp
+                                reviewPort
+                            }
+                            hog
+                            hogConfig {
+                                gigantoIp
+                                gigantoPort
+                                reviewIp
+                                reviewPort
+                            }
+                        }
+                      }
+                    }
+                  }"#,
+            )
+            .await;
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeStatusList": {
+                    "edges": [
+                        {
+                            "node": {
+                                "name": "node1",
+                                "cpuUsage": 20.0,
+                                "totalMemory": 1000,
+                                "usedMemory": 100,
+                                "totalDiskSpace": 1000,
+                                "usedDiskSpace": 100,
+                                "ping": 10,
+                                "review": true,
+                                "piglet": true,
+                                "pigletConfig": null,
+                                "reconverge": false,
+                                "reconvergeConfig": null,
+                                "hog": false,
+                                "hogConfig": null,
+                            }
+                        },
+                        {
+                            "node": {
+                                "name": "node2",
+                                "cpuUsage": 20.0,
+                                "totalMemory": 1000,
+                                "usedMemory": 100,
+                                "totalDiskSpace": 1000,
+                                "usedDiskSpace": 100,
+                                "ping": 10,
+                                "review": false,
+                                "piglet": false,
+                                "pigletConfig": null,
+                                "reconverge": true,
+                                "reconvergeConfig": null,
+                                "hog": true,
+                                "hogConfig": null,
+                            }
+                        }
+                    ]
+                }
+            })
+        );
+    }
 
     #[tokio::test]
     async fn check_node_status_list_ordering() {
