@@ -4,7 +4,9 @@ mod input;
 mod process;
 mod status;
 
-use async_graphql::{types::ID, ComplexObject, Context, InputObject, Object, Result, SimpleObject};
+use async_graphql::{
+    types::ID, ComplexObject, Context, InputObject, Object, Result, SimpleObject, StringNumber,
+};
 use bincode::Options;
 use chrono::{DateTime, TimeZone, Utc};
 pub use crud::{get_customer_id_of_review_host, get_node_settings};
@@ -413,18 +415,23 @@ pub(super) struct NodeStatus {
     cpu_usage: Option<f32>,
 
     /// The RAM size in KB.
+    #[graphql(skip)]
     total_memory: Option<u64>,
 
     /// The amount of used RAM in KB.
+    #[graphql(skip)]
     used_memory: Option<u64>,
 
     /// The total disk space in bytes.
+    #[graphql(skip)]
     total_disk_space: Option<u64>,
 
     /// The total disk space in bytes that is currently used.
+    #[graphql(skip)]
     used_disk_space: Option<u64>,
 
     /// The ping value for a specific node.
+    #[graphql(skip)]
     ping: Option<i64>,
 
     /// Whether review is online or not.
@@ -453,6 +460,26 @@ pub(super) struct NodeStatus {
 impl NodeStatus {
     async fn id(&self) -> ID {
         ID(self.id.to_string())
+    }
+
+    async fn total_memory(&self) -> Option<StringNumber<u64>> {
+        self.total_memory.map(StringNumber)
+    }
+
+    async fn used_memory(&self) -> Option<StringNumber<u64>> {
+        self.used_memory.map(StringNumber)
+    }
+
+    async fn total_disk_space(&self) -> Option<StringNumber<u64>> {
+        self.total_disk_space.map(StringNumber)
+    }
+
+    async fn used_disk_space(&self) -> Option<StringNumber<u64>> {
+        self.used_disk_space.map(StringNumber)
+    }
+
+    async fn ping(&self) -> Option<StringNumber<i64>> {
+        self.ping.map(StringNumber)
     }
 }
 
