@@ -414,11 +414,11 @@ pub(super) struct NodeStatus {
     /// The average CPU usage in percent.
     cpu_usage: Option<f32>,
 
-    /// The RAM size in KB.
+    /// The RAM size in bytes.
     #[graphql(skip)]
     total_memory: Option<u64>,
 
-    /// The amount of used RAM in KB.
+    /// The amount of used RAM in bytes.
     #[graphql(skip)]
     used_memory: Option<u64>,
 

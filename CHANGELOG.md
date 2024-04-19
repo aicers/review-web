@@ -42,7 +42,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   GraphQL API.
 - Updated review-database to 0.27.0.
 - Fix the `nodeStatusList` GraphQL API to return appropriate results for each field.
-  - Remove `giganto` from `NodeStatus` struct and `nodeStatusList`.
+- Remove `giganto` from `NodeStatus` struct and `nodeStatusList`.
 - Converted fields in the `nodeStatusList` GraphQL API response from returning
   `Option<i64>` and `Option<u64>` to using `StringNumber`, like
   `Option<StringNumber<i64>>` and `Option<StringNumber<u64>>`. This adjustment
@@ -64,6 +64,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   because they exposed the underlying communication mechanism to the caller. The
   caller should now use the specific methods provided by `AgentManager` to
   interact with the agent.
+
+### Fixed
+
+- Corrected documentation for `NodeStatus::{total_memory, used_memory}` to
+  specify that the numbers are in bytes, not in KB.
 
 ## [0.19.0] - 2024-03-18
 
