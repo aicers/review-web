@@ -64,6 +64,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   because they exposed the underlying communication mechanism to the caller. The
   caller should now use the specific methods provided by `AgentManager` to
   interact with the agent.
+- `AgentManager::default` has been removed that returns error.
 
 ### Fixed
 

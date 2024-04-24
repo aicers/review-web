@@ -75,7 +75,7 @@ pub(super) type Schema = async_graphql::Schema<Query, Mutation, Subscription>;
 #[async_trait]
 pub trait AgentManager: Send + Sync {
     async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
-        self.default()
+        Err(anyhow!("Not supported"))
     }
 
     async fn broadcast_internal_networks(
@@ -94,7 +94,7 @@ pub trait AgentManager: Send + Sync {
     ) -> Result<Vec<String>, anyhow::Error>;
 
     async fn broadcast_trusted_user_agent_list(&self, _list: &[u8]) -> Result<(), anyhow::Error> {
-        self.default()
+        Err(anyhow!("Not supported"))
     }
 
     async fn online_apps_by_host_id(
@@ -143,16 +143,7 @@ pub trait AgentManager: Send + Sync {
         _host: &str,
         _rules: &[(IpNet, Option<Vec<u16>>, Option<Vec<u16>>)],
     ) -> Result<(), anyhow::Error> {
-        self.default()
-    }
-
-    /// Default implementation
-    ///
-    /// # Errors
-    ///
-    /// Returns an error with the message "not supported".
-    fn default(&self) -> Result<(), anyhow::Error> {
-        Err(anyhow!("not supported"))
+        Err(anyhow!("Not supported"))
     }
 }
 
@@ -729,12 +720,6 @@ struct MockAgentManager {}
 #[cfg(test)]
 #[async_trait]
 impl AgentManager for MockAgentManager {
-    async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
-        unimplemented!()
-    }
-    async fn broadcast_trusted_user_agent_list(&self, _list: &[u8]) -> Result<(), anyhow::Error> {
-        unimplemented!()
-    }
     async fn broadcast_internal_networks(
         &self,
         _networks: &[u8],
@@ -806,14 +791,6 @@ impl AgentManager for MockAgentManager {
     ) -> Result<(), anyhow::Error> {
         unimplemented!()
     }
-
-    async fn update_traffic_filter_rules(
-        &self,
-        _key: &str,
-        _rules: &[(IpNet, Option<Vec<u16>>, Option<Vec<u16>>)],
-    ) -> Result<(), anyhow::Error> {
-        unimplemented!()
-    }
 }
 
 #[cfg(test)]
@@ -872,5 +849,24 @@ impl TestSchema {
         let request: async_graphql::Request = subscription.into();
         self.schema
             .execute_stream(request.data(Role::SystemAdministrator))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentManager;
+
+    #[tokio::test]
+    async fn unimplemented_agent_manager() {
+        let agent_manager = super::MockAgentManager {};
+        assert!(agent_manager.broadcast_trusted_domains().await.is_err());
+        assert!(agent_manager
+            .broadcast_trusted_user_agent_list(&[])
+            .await
+            .is_err());
+        assert!(agent_manager
+            .update_traffic_filter_rules("", &[(Default::default(), None, None)])
+            .await
+            .is_err());
     }
 }
