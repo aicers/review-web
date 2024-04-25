@@ -7,7 +7,12 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## Fixed
+### Changed
+
+- Change admin account to read environment variable `REVIEW_ADMIN` from hardcoded
+  value.
+
+### Fixed
 
 - Correct the release date of `0.20.0` to `2024-04-25`.
 

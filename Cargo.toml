@@ -46,6 +46,7 @@ vinum = { git = "https://github.com/vinesystems/vinum.git", tag = "1.0.3" }
 assert-json-diff = "2.0.2"
 config = { version = "0.13", features = ["toml"], default-features = false }
 futures = "0.3"
+serial_test = "3.1"
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "signal", "sync"] }
 tracing-appender = "0.2"

@@ -1,6 +1,7 @@
 use super::RoleGuard;
 use crate::auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in};
 use crate::graphql::validate_and_process_pagination_params;
+use anyhow::anyhow;
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     Context, Enum, InputObject, Object, Result, SimpleObject,
@@ -13,7 +14,10 @@ use review_database::{
     Direction, Store,
 };
 use serde::{Deserialize, Serialize};
-use std::net::{AddrParseError, IpAddr};
+use std::{
+    env,
+    net::{AddrParseError, IpAddr},
+};
 use tracing::info;
 
 #[allow(clippy::module_name_repetitions)]
@@ -30,6 +34,7 @@ pub struct AccountPolicy {
 }
 
 const ACCOUNT_POLICY_KEY: &[u8] = b"account policy key";
+const REVIEW_ADMIN: &str = "REVIEW_ADMIN";
 
 #[derive(Default)]
 pub(super) struct AccountQuery;
@@ -556,11 +561,15 @@ async fn load(
 
 /// Sets the initial administrator password.
 ///
+/// The credentials are obtained from the `REVIEW_ADMIN` environment variable,
+/// which should be set in the format "username:password".
+///
 /// This function is called only once when the database is opened.
 ///
 /// # Errors
 ///
-/// This function returns an error if the initial administrator password is already set, or if it
+/// This function returns an error if it fails to obtain the administrator credentials from the `REVIEW_ADMIN` environment variable,
+/// or if the initial administrator password is already set, or if it
 /// fails to generate random bytes for password.
 pub fn set_initial_admin_password(store: &Store) -> anyhow::Result<()> {
     let map = store.account_map();
@@ -585,12 +594,11 @@ pub fn reset_admin_password(store: &Store) -> anyhow::Result<()> {
 ///
 /// This function returns an error if it fails to generate random bytes for password.
 fn initial_credential() -> anyhow::Result<types::Account> {
-    const INITIAL_ADMINISTRATOR_ID: &str = "admin";
-    const INITIAL_ADMINISTRATOR_PASSWORD: &str = "admin";
+    let (username, password) = read_review_admin()?;
 
     let initial_account = review_database::types::Account::new(
-        INITIAL_ADMINISTRATOR_ID,
-        INITIAL_ADMINISTRATOR_PASSWORD,
+        &username,
+        &password,
         database::Role::SystemAdministrator,
         "System Administrator".to_owned(),
         String::new(),
@@ -601,15 +609,48 @@ fn initial_credential() -> anyhow::Result<types::Account> {
     Ok(initial_account)
 }
 
+/// Reads the `REVIEW_ADMIN` environment variable and parses it into a tuple of (username, password).
+///
+/// # Returns
+///
+/// - `Ok((String, String))`: If the `REVIEW_ADMIN` environment variable is successfully read and parsed
+///   with the format "username:password".
+/// - `Err(anyhow::Error)`: If the `REVIEW_ADMIN` environment variable is not set or its format is invalid.
+fn read_review_admin() -> anyhow::Result<(String, String)> {
+    match env::var(REVIEW_ADMIN) {
+        Ok(admin) => {
+            let admin_parts: Vec<&str> = admin.split(':').collect();
+            if admin_parts.len() == 2 {
+                let username = admin_parts[0].to_string();
+                let password = admin_parts[1].to_string();
+                Ok((username, password))
+            } else {
+                Err(anyhow!(
+                    "Invalid format for {REVIEW_ADMIN} environment variable"
+                ))
+            }
+        }
+        Err(_) => Err(anyhow!("{REVIEW_ADMIN} environment variable not found")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::graphql::{
+        account::{read_review_admin, REVIEW_ADMIN},
+        RoleGuard, TestSchema,
+    };
     use async_graphql::Value;
     use review_database::Role;
-
-    use crate::graphql::{RoleGuard, TestSchema};
+    use serial_test::serial;
+    use std::env;
 
     #[tokio::test]
+    #[serial]
     async fn pagination() {
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+
         let schema = TestSchema::new().await;
         let res = schema.execute(r#"{accountList{totalCount}}"#).await;
         let Value::Object(retval) = res.data else {
@@ -869,10 +910,16 @@ mod tests {
             panic!("unexpected response: {:?}", node);
         };
         assert_eq!(username, "u1");
+
+        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
+    #[serial]
     async fn remove_accounts() {
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+
         let schema = TestSchema::new().await;
         let res = schema.execute(r#"{accountList{totalCount}}"#).await;
         assert_eq!(res.data.to_string(), r#"{accountList: {totalCount: 1}}"#);
@@ -913,10 +960,16 @@ mod tests {
 
         let res = schema.execute(r#"{accountList{totalCount}}"#).await;
         assert_eq!(res.data.to_string(), r#"{accountList: {totalCount: 1}}"#);
+
+        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
+    #[serial]
     async fn default_account() {
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+
         let schema = TestSchema::new().await;
         let res = schema
             .execute(
@@ -952,6 +1005,51 @@ mod tests {
             res.data.to_string(),
             r#"{signedInAccountList: [{username: "admin"}]}"#
         );
+
+        restore_review_admin(original_review_admin);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_read_review_admin() {
+        let original_review_admin = backup_and_set_review_admin();
+
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+
+        let result = read_review_admin();
+        assert_eq!(result.unwrap(), ("admin".to_string(), "admin".to_string()));
+
+        // Set the temporary `REVIEW_ADMIN` with invalid format
+        env::set_var(REVIEW_ADMIN, "adminadmin");
+
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("adminadmin".to_string()));
+
+        let result = read_review_admin();
+        assert!(result.is_err());
+
+        // Unset the `REVIEW_ADMIN`
+        env::remove_var(REVIEW_ADMIN);
+
+        assert!(env::var(REVIEW_ADMIN).is_err());
+
+        let result = read_review_admin();
+        assert!(result.is_err());
+
+        restore_review_admin(original_review_admin);
+    }
+
+    fn backup_and_set_review_admin() -> Option<String> {
+        let original_review_admin = env::var(REVIEW_ADMIN).ok();
+        env::set_var(REVIEW_ADMIN, "admin:admin");
+        original_review_admin
+    }
+
+    fn restore_review_admin(original_review_admin: Option<String>) {
+        if let Some(value) = original_review_admin {
+            env::set_var(REVIEW_ADMIN, value);
+        } else {
+            env::remove_var(REVIEW_ADMIN);
+        }
     }
 
     #[tokio::test]
