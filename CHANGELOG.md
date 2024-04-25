@@ -5,7 +5,13 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.20.0] - 2024-04-16
+## [Unreleased]
+
+## Fixed
+
+- Correct the release date of `0.20.0` to `2024-04-25`.
+
+## [0.20.0] - 2024-04-25
 
 ### Added
 
@@ -540,6 +546,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.20.0...main
 [0.20.0]: https://github.com/aicers/review-web/compare/0.19.0...0.20.0
 [0.19.0]: https://github.com/aicers/review-web/compare/0.18.0...0.19.0
 [0.18.0]: https://github.com/aicers/review-web/compare/0.17.0...0.18.0
