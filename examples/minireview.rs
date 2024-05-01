@@ -9,8 +9,8 @@ use ipnet::IpNet;
 use review_database::{migrate_data_dir, Database, Store};
 use review_web::{
     self as web,
-    graphql::{AgentManager, Process, ResourceUsage, SamplingPolicy},
-    CertManager,
+    backend::{AgentManager, CertManager},
+    graphql::{Process, ResourceUsage, SamplingPolicy},
 };
 use serde::Deserialize;
 use std::{

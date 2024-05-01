@@ -1,8 +1,10 @@
 pub mod archive;
 pub mod auth;
+pub mod backend;
 pub mod graphql;
 
 use crate::auth::{validate_token, AuthError};
+use crate::backend::{AgentManager, CertManager};
 use async_graphql::{
     http::{playground_source, GraphQLPlaygroundConfig},
     Data,
@@ -17,8 +19,7 @@ use axum::{
     routing::{get, get_service},
     Json, Router,
 };
-pub use graphql::CertManager;
-use graphql::{AgentManager, RoleGuard};
+use graphql::RoleGuard;
 use review_database::{Database, Store};
 use rustls::{Certificate, ClientConfig, RootCertStore};
 use serde_json::json;

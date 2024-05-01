@@ -7,10 +7,20 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added `Config` to the public API under the `backend` module to ensure all
+  types used by the public traits `AgentManager` and `CertManager` are
+  accessible.
+
 ### Changed
 
 - Change admin account to read environment variable `REVIEW_ADMIN` from hardcoded
   value.
+- Moved `AgentManager` and `CertManager` traits from the `graphql` module to a
+  newly created `backend` module. This change better organizes the code
+  structure by separating concerns, as these traits are not directly related to
+  the GraphQL API but are instead utilized within it.
 
 ### Fixed
 
