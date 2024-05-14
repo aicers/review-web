@@ -12,6 +12,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Added `Config` to the public API under the `backend` module to ensure all
   types used by the public traits `AgentManager` and `CertManager` are
   accessible.
+- Added session limitation based on the `max_parallel_sessions` field of `Account`
+  during sign-in.
 
 ### Changed
 

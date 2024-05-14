@@ -10,7 +10,7 @@ use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use review_database::{
     self as database,
     types::{self},
-    Direction, Store,
+    Direction, Iterable, Store,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -297,6 +297,27 @@ impl AccountMutation {
 
         if let Some(mut account) = account_map.get(&username)? {
             if account.verify_password(&password) {
+                if let Some(max_parallel_sessions) = account.max_parallel_sessions {
+                    let access_token_map = store.access_token_map();
+                    let count = access_token_map
+                        .iter(Direction::Forward, Some(username.as_bytes()))
+                        .filter_map(|res| {
+                            if let Ok(access_token) = res {
+                                if access_token.username == username {
+                                    Some(access_token)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                        .count();
+                    if count >= max_parallel_sessions as usize {
+                        info!("maximum parallel sessions exceeded for {username}");
+                        return Err("maximum parallel sessions exceeded".into());
+                    }
+                }
                 let (token, expiration_time) =
                     create_token(account.username.clone(), account.role.to_string())?;
                 account.update_last_signin_time();
@@ -1139,6 +1160,78 @@ mod tests {
                 resetAdminPassword(username: "u2", password: "not local")
             }"#,
                 RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"null"#);
+    }
+
+    #[tokio::test]
+    async fn max_parallel_sessions() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "u1",
+                        password: "pw1",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "User One",
+                        department: "Test"
+                        maxParallelSessions: 2
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "u1"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signIn(username: "u1", password: "pw1") {
+                        token
+                    }
+                }"#,
+            )
+            .await;
+
+        assert!(res.data.to_string().contains("token"));
+
+        let res = schema
+            .execute(
+                r#"query {
+                    signedInAccountList {
+                        username
+                    }
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{signedInAccountList: [{username: "u1"}]}"#
+        );
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signIn(username: "u1", password: "pw1") {
+                        token
+                    }
+                }"#,
+            )
+            .await;
+        assert!(res.data.to_string().contains("token"));
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signIn(username: "u1", password: "pw1") {
+                        token
+                    }
+                }"#,
             )
             .await;
         assert_eq!(res.data.to_string(), r#"null"#);
