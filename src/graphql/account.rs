@@ -14,7 +14,7 @@ use review_database::{
 use serde::Serialize;
 use std::{
     env,
-    net::{AddrParseError, IpAddr},
+    net::{AddrParseError, IpAddr, SocketAddr},
 };
 use tracing::info;
 
@@ -145,9 +145,9 @@ impl AccountMutation {
         if table.contains(&username)? {
             return Err("account already exists".into());
         }
-        let allow_access_from = if let Some(ipaddrs) = allow_access_from {
-            let ipaddrs = strings_to_ipaddrs(&ipaddrs)?;
-            Some(ipaddrs)
+        let allow_access_from = if let Some(ip_addrs) = allow_access_from {
+            let ip_addrs = strings_to_ip_addrs(&ip_addrs)?;
+            Some(ip_addrs)
         } else {
             None
         };
@@ -246,14 +246,14 @@ impl AccountMutation {
         let role = role.map(|r| (database::Role::from(r.old), database::Role::from(r.new)));
         let name = name.map(|n| (n.old, n.new));
         let dept = department.map(|d| (d.old, d.new));
-        let allow_access_from = if let Some(ipaddrs) = allow_access_from {
-            let old = if let Some(old) = ipaddrs.old {
-                Some(strings_to_ipaddrs(&old)?)
+        let allow_access_from = if let Some(ip_addrs) = allow_access_from {
+            let old = if let Some(old) = ip_addrs.old {
+                Some(strings_to_ip_addrs(&old)?)
             } else {
                 None
             };
-            let new = if let Some(new) = ipaddrs.new {
-                Some(strings_to_ipaddrs(&new)?)
+            let new = if let Some(new) = ip_addrs.new {
+                Some(strings_to_ip_addrs(&new)?)
             } else {
                 None
             };
@@ -286,8 +286,22 @@ impl AccountMutation {
     ) -> Result<AuthPayload> {
         let store = crate::graphql::get_store(ctx).await?;
         let account_map = store.account_map();
+        let client_ip = get_client_ip(ctx);
 
         if let Some(mut account) = account_map.get(&username)? {
+            if let Some(allow_access_from) = account.allow_access_from.as_ref() {
+                if let Some(socket) = client_ip {
+                    let ip = socket.ip();
+                    if !allow_access_from.contains(&ip) {
+                        info!("access denied for {username} from IP: {ip}");
+                        return Err("access denied from this IP".into());
+                    }
+                } else {
+                    info!("unable to retrieve client IP for {username}");
+                    return Err("unable to retrieve client IP".into());
+                }
+            }
+
             if account.verify_password(&password) {
                 if let Some(max_parallel_sessions) = account.max_parallel_sessions {
                     let access_token_map = store.access_token_map();
@@ -310,6 +324,7 @@ impl AccountMutation {
                         return Err("maximum parallel sessions exceeded".into());
                     }
                 }
+
                 let (token, expiration_time) =
                     create_token(account.username.clone(), account.role.to_string())?;
                 account.update_last_signin_time();
@@ -317,7 +332,11 @@ impl AccountMutation {
 
                 insert_token(&store, &token, &username)?;
 
-                info!("{} signed in", username);
+                if let Some(socket) = client_ip {
+                    info!("{username} signed in from IP: {}", socket.ip());
+                } else {
+                    info!("{username} signed in");
+                }
                 Ok(AuthPayload {
                     token,
                     expiration_time,
@@ -409,12 +428,16 @@ pub fn expiration_time(store: &Store) -> Result<i64> {
 ///
 /// # Errors
 ///
-/// Returns an error if the value cannot be serialized or the underlaying store
+/// Returns an error if the value cannot be serialized or the underlying store
 /// fails to put the value.
 pub fn init_expiration_time(store: &Store, time: u32) -> anyhow::Result<()> {
     let map = store.account_policy_map();
     map.init_expiry_period(time)?;
     Ok(())
+}
+
+fn get_client_ip(ctx: &Context<'_>) -> Option<SocketAddr> {
+    ctx.data_opt::<SocketAddr>().copied()
 }
 
 struct Account {
@@ -465,13 +488,13 @@ impl From<types::Account> for Account {
     }
 }
 
-fn strings_to_ipaddrs(ipaddrs: &[String]) -> Result<Vec<IpAddr>, AddrParseError> {
-    let mut ipaddrs = ipaddrs
+fn strings_to_ip_addrs(ip_addrs: &[String]) -> Result<Vec<IpAddr>, AddrParseError> {
+    let mut ip_addrs = ip_addrs
         .iter()
-        .map(|ipaddr| ipaddr.parse::<IpAddr>())
+        .map(|ip_addr| ip_addr.parse::<IpAddr>())
         .collect::<Result<Vec<_>, _>>()?;
-    ipaddrs.sort();
-    Ok(ipaddrs)
+    ip_addrs.sort();
+    Ok(ip_addrs)
 }
 
 #[derive(SimpleObject)]
@@ -630,12 +653,12 @@ fn read_review_admin() -> anyhow::Result<(String, String)> {
 mod tests {
     use crate::graphql::{
         account::{read_review_admin, REVIEW_ADMIN},
-        RoleGuard, TestSchema,
+        BoxedAgentManager, MockAgentManager, RoleGuard, TestSchema,
     };
     use async_graphql::Value;
     use review_database::Role;
     use serial_test::serial;
-    use std::env;
+    use std::{env, net::SocketAddr};
 
     #[tokio::test]
     #[serial]
@@ -1164,7 +1187,7 @@ mod tests {
                         password: "pw1",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "User One",
-                        department: "Test"
+                        department: "Test",
                         maxParallelSessions: 2
                     )
                 }"#,
@@ -1223,5 +1246,75 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"null"#);
+    }
+
+    #[tokio::test]
+    async fn allow_access_from() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let test_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+
+        let schema = TestSchema::new_with(agent_manager, Some(test_addr)).await;
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "u1",
+                        password: "pw1",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "User One",
+                        department: "Test",
+                        allowAccessFrom: ["127.0.0.1"]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "u1"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signIn(username: "u1", password: "pw1") {
+                        token
+                    }
+                }"#,
+            )
+            .await;
+
+        assert!(res.data.to_string().contains("token"));
+    }
+
+    #[tokio::test]
+    async fn not_allow_access_from() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let test_addr: SocketAddr = "127.0.0.2:8080".parse().unwrap();
+
+        let schema = TestSchema::new_with(agent_manager, Some(test_addr)).await;
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "u1",
+                        password: "pw1",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "User One",
+                        department: "Test",
+                        allowAccessFrom: ["127.0.0.1"]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "u1"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signIn(username: "u1", password: "pw1") {
+                        token
+                    }
+                }"#,
+            )
+            .await;
+
+        assert!(res.is_err());
     }
 }

@@ -352,7 +352,7 @@ mod tests {
             online_apps_by_host_id,
         });
 
-        let schema = TestSchema::new_with(agent_manager).await;
+        let schema = TestSchema::new_with(agent_manager, None).await;
 
         // check empty
         let res = schema.execute(r#"{nodeList{totalCount}}"#).await;

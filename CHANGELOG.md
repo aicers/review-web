@@ -14,6 +14,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   accessible.
 - Added session limitation based on the `max_parallel_sessions` field of `Account`
   during sign-in.
+- Added ip access control based on the `allow_access_from` field of `Account`
+  during sign-in.
 
 ### Changed
 
@@ -23,6 +25,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   newly created `backend` module. This change better organizes the code
   structure by separating concerns, as these traits are not directly related to
   the GraphQL API but are instead utilized within it.
+- Update `TestSchema` to accept `test_addr` for simulating client IP.
 
 ### Fixed
 

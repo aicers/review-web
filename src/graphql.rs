@@ -55,6 +55,8 @@ use data_encoding::BASE64;
 use num_traits::ToPrimitive;
 use review_database::{self as database, Database, Direction, Role, Store};
 pub use roxy::{Process, ResourceUsage};
+#[cfg(test)]
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{Notify, RwLock};
 use tracing::warn;
@@ -580,16 +582,17 @@ struct TestSchema {
     _dir: tempfile::TempDir, // to delete the data directory when dropped
     store: Arc<RwLock<Store>>,
     schema: Schema,
+    test_addr: Option<SocketAddr>,
 }
 
 #[cfg(test)]
 impl TestSchema {
     async fn new() -> Self {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
-        Self::new_with(agent_manager).await
+        Self::new_with(agent_manager, None).await
     }
 
-    async fn new_with(agent_manager: BoxedAgentManager) -> Self {
+    async fn new_with(agent_manager: BoxedAgentManager, test_addr: Option<SocketAddr>) -> Self {
         use self::account::set_initial_admin_password;
 
         let db_dir = tempfile::tempdir().unwrap();
@@ -610,6 +613,7 @@ impl TestSchema {
             _dir: db_dir,
             store,
             schema,
+            test_addr,
         }
     }
 
@@ -624,6 +628,11 @@ impl TestSchema {
 
     async fn execute_with_guard(&self, query: &str, guard: RoleGuard) -> async_graphql::Response {
         let request: async_graphql::Request = query.into();
+        let request = if let Some(addr) = self.test_addr {
+            request.data(addr)
+        } else {
+            request
+        };
         self.schema.execute(request.data(guard)).await
     }
 

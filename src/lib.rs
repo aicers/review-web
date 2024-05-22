@@ -202,9 +202,12 @@ async fn graphql_handler(
         }
         Err(_e) => {
             if is_local(addr) {
-                Ok(schema.execute(request.data(RoleGuard::Local)).await.into())
+                Ok(schema
+                    .execute(request.data(RoleGuard::Local).data(addr))
+                    .await
+                    .into())
             } else {
-                Ok(schema.execute(request).await.into())
+                Ok(schema.execute(request.data(addr)).await.into())
             }
         }
     }

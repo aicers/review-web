@@ -1155,7 +1155,7 @@ mod tests {
             send_result_checker,
         });
 
-        let schema = TestSchema::new_with(agent_manager).await;
+        let schema = TestSchema::new_with(agent_manager, None).await;
 
         // node_shutdown
         let res = schema
@@ -1185,7 +1185,7 @@ mod tests {
             send_result_checker,
         });
 
-        let schema = TestSchema::new_with(agent_manager).await;
+        let schema = TestSchema::new_with(agent_manager, None).await;
 
         // check empty
         let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
