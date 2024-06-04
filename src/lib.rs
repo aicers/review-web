@@ -11,17 +11,19 @@ use async_graphql::{
 };
 use async_graphql_axum::{GraphQLProtocol, GraphQLRequest, GraphQLResponse, GraphQLWebSocket};
 use axum::{
-    extract::{
-        rejection::TypedHeaderRejection, ConnectInfo, Extension, TypedHeader, WebSocketUpgrade,
-    },
-    headers::authorization::{Authorization, Bearer},
+    extract::{ConnectInfo, Extension, WebSocketUpgrade},
     response::{Html, IntoResponse, Response},
     routing::{get, get_service},
     Json, Router,
 };
+use axum_extra::{
+    headers::{authorization::Bearer, Authorization},
+    typed_header::TypedHeaderRejection,
+    TypedHeader,
+};
 use graphql::RoleGuard;
 use review_database::{Database, Store};
-use rustls::{Certificate, ClientConfig, RootCertStore};
+use rustls::{pki_types::CertificateDer, ClientConfig, RootCertStore};
 use serde_json::json;
 use std::{
     fs::read,
@@ -339,7 +341,7 @@ fn build_client_config<P: AsRef<Path>>(
         match rustls_native_certs::load_native_certs() {
             Ok(certs) => {
                 for cert in certs {
-                    root_store.add(&rustls::Certificate(cert.0))?;
+                    root_store.add(cert)?;
                 }
             }
             Err(e) => tracing::error!("Could not load platform certificates: {:#}", e),
@@ -348,22 +350,21 @@ fn build_client_config<P: AsRef<Path>>(
     for root in root_ca {
         let certs = read_certificate_from_path(root)?;
         for cert in certs {
-            root_store.add(&cert)?;
+            root_store.add(cert)?;
         }
     }
 
     let mut builder = ClientConfig::builder()
-        .with_safe_defaults()
         .with_root_certificates(root_store)
         .with_no_client_auth();
     builder.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
     Ok(builder)
 }
 
-fn read_certificate_from_path<P: AsRef<Path>>(path: P) -> Result<Vec<Certificate>, anyhow::Error> {
+fn read_certificate_from_path<P: AsRef<Path>>(
+    path: P,
+) -> Result<Vec<CertificateDer<'static>>, anyhow::Error> {
     let cert = read(&path)?;
-    Ok(rustls_pemfile::certs(&mut &*cert)?
-        .into_iter()
-        .map(Certificate)
-        .collect())
+    let certs = rustls_pemfile::certs(&mut &*cert).collect::<Result<_, _>>()?;
+    Ok(certs)
 }

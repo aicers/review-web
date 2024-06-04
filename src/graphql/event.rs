@@ -1174,7 +1174,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            "{eventList: {edges: [],totalCount: 0}}"
+            "{eventList: {edges: [], totalCount: 0}}"
         );
 
         let store = schema.store().await;
@@ -1212,7 +1212,7 @@ mod tests {
         let res = schema.execute(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00"}}],totalCount: 1}}"#
+            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00"}}], totalCount: 1}}"#
         );
     }
 
@@ -1277,7 +1277,7 @@ mod tests {
         let res = schema.execute(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {time: "2018-01-26T18:30:09.453829+00:00"}},{node: {time: "2018-01-27T18:30:09.453829+00:00"}}],totalCount: 2}}"#
+            r#"{eventList: {edges: [{node: {time: "2018-01-26T18:30:09.453829+00:00"}}, {node: {time: "2018-01-27T18:30:09.453829+00:00"}}], totalCount: 2}}"#
         );
         let query = format!(
             "{{ \
@@ -1291,7 +1291,7 @@ mod tests {
         let res = schema.execute(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00"}}],totalCount: 1}}"#
+            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00"}}], totalCount: 1}}"#
         );
     }
 
@@ -1528,7 +1528,7 @@ mod tests {
         let res = stream.next().await;
         assert_eq!(
             res.unwrap().data.to_string(),
-            r#"{eventStream: {__typename: "DnsCovertChannel",srcAddr: "0.0.0.5"}}"#
+            r#"{eventStream: {__typename: "DnsCovertChannel", srcAddr: "0.0.0.5"}}"#
         );
     }
 
@@ -1584,7 +1584,7 @@ mod tests {
         let res = schema.execute(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1",rtt: 10,query: "domain"}}]}}"#
+            r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1", rtt: 10, query: "domain"}}]}}"#
         );
     }
 }

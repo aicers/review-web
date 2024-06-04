@@ -668,7 +668,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{applyNode: {id: "0",successModules: []}}"#
+            r#"{applyNode: {id: "0", successModules: []}}"#
         );
 
         // check node list after apply
@@ -926,7 +926,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{applyNode: {id: "0",successModules: []}}"#
+            r#"{applyNode: {id: "0", successModules: []}}"#
         );
 
         // check node list after apply
@@ -1324,7 +1324,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{applyNode: {id: "0",successModules: [PIGLET]}}"#
+            r#"{applyNode: {id: "0", successModules: [PIGLET]}}"#
         );
 
         // check node list after apply

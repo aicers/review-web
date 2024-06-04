@@ -732,7 +732,7 @@ mod tests {
         let e1 = DateTime::from_timestamp(0, 1).unwrap().to_rfc3339();
         assert_eq!(
             res.data.to_string(),
-            format!("{{outliers: {{nodes: [{{id: \"{}\",events: [\"{e0}\",\"{e1}\"],size: 2}}],totalCount: {}}}}}", t1.timestamp_nanos_opt().unwrap(), 1)
+            format!("{{outliers: {{nodes: [{{id: \"{}\", events: [\"{e0}\", \"{e1}\"], size: 2}}], totalCount: {}}}}}", t1.timestamp_nanos_opt().unwrap(), 1)
         );
 
         let t2 = t1 + chrono::TimeDelta::hours(1);
@@ -854,7 +854,7 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             format!(
-                "{{rankedOutliers: {{nodes: [{{id: \"{}\"}},{{id: \"{}\"}}]}}}}",
+                "{{rankedOutliers: {{nodes: [{{id: \"{}\"}}, {{id: \"{}\"}}]}}}}",
                 last,
                 last - 1
             )

@@ -102,7 +102,10 @@ where
 
 /// A set of queries defined in the schema.
 #[derive(MergedObject, Default)]
-pub(super) struct Query(
+pub(super) struct Query(SubQueryOne, SubQueryTwo);
+
+#[derive(MergedObject, Default)]
+struct SubQueryOne(
     account::AccountQuery,
     block_network::BlockNetworkQuery,
     category::CategoryQuery,
@@ -120,6 +123,10 @@ pub(super) struct Query(
     node::NodeStatusQuery,
     qualifier::QualifierQuery,
     outlier::OutlierQuery,
+);
+
+#[derive(MergedObject, Default)]
+struct SubQueryTwo(
     sampling::SamplingPolicyQuery,
     statistics::StatisticsQuery,
     status::StatusQuery,
@@ -142,7 +149,10 @@ pub(super) struct Query(
 ///
 /// This is exposed only for [`Schema`], and not used directly.
 #[derive(MergedObject, Default)]
-pub(super) struct Mutation(
+pub(super) struct Mutation(SubMutationOne, SubMutationTwo);
+
+#[derive(MergedObject, Default)]
+struct SubMutationOne(
     account::AccountMutation,
     block_network::BlockNetworkMutation,
     category::CategoryMutation,
@@ -158,6 +168,10 @@ pub(super) struct Mutation(
     node::NodeControlMutation,
     node::NodeMutation,
     outlier::OutlierMutation,
+);
+
+#[derive(MergedObject, Default)]
+struct SubMutationTwo(
     qualifier::QualifierMutation,
     sampling::SamplingPolicyMutation,
     status::StatusMutation,
@@ -385,7 +399,6 @@ impl RoleGuard {
     }
 }
 
-#[async_trait::async_trait]
 impl Guard for RoleGuard {
     async fn check(&self, ctx: &Context<'_>) -> Result<()> {
         if ctx.data_opt::<Self>() == Some(self) {

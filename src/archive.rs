@@ -1,14 +1,18 @@
 use crate::{auth::validate_token, Error, Store};
 use axum::{
     async_trait,
-    body::{boxed, Body},
-    extract::{rejection::TypedHeaderRejection, FromRef, FromRequestParts, Path, State},
-    headers::{authorization::Bearer, Authorization},
+    body::Body,
+    extract::{FromRef, FromRequestParts, Path, State},
     http::Request,
     middleware::{from_fn_with_state, Next},
     response::Response,
     routing::post,
-    Router, TypedHeader,
+    Router,
+};
+use axum_extra::{
+    headers::{authorization::Bearer, Authorization},
+    typed_header::TypedHeaderRejection,
+    TypedHeader,
 };
 use http::{request::Parts, StatusCode};
 use review_database::types::Role;
@@ -78,7 +82,7 @@ async fn auth(
     State(state): State<ArchiveState>,
     bearer: std::result::Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
     req: Request<Body>,
-    next: Next<Body>,
+    next: Next,
 ) -> Result<Response, Error> {
     let client = state.client;
     let config = state.config;
@@ -118,11 +122,15 @@ async fn process_request(
 
     let method = parts.method;
 
+    let body_bytes = axum::body::to_bytes(body, usize::MAX)
+        .await
+        .map_err(|e| Error::BadRequest(e.to_string()))?;
+    let req_body = reqwest::Body::from(body_bytes);
     let builder = client.request(method, url);
     let request = builder
         .headers(parts.headers)
         .version(parts.version)
-        .body(body)
+        .body(req_body)
         .build()?;
 
     let response = client.execute(request).await?;
@@ -135,7 +143,7 @@ async fn process_request(
     }
     let bytes = response.bytes().await?;
 
-    let body = boxed(Body::from(bytes));
+    let body = Body::from(bytes);
 
     Ok(builder.body(body)?)
 }

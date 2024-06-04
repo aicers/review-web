@@ -104,6 +104,10 @@ impl BlockListSmtp {
         &self.inner.agent
     }
 
+    async fn state(&self) -> &str {
+        &self.inner.state
+    }
+
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
         self.inner
             .triage_scores

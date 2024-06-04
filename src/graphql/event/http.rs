@@ -153,6 +153,30 @@ impl HttpThreat {
         &self.inner.cache_control
     }
 
+    async fn orig_filenames(&self) -> Vec<String> {
+        self.inner.orig_filenames.clone()
+    }
+
+    async fn orig_mime_types(&self) -> Vec<String> {
+        self.inner.orig_mime_types.clone()
+    }
+
+    async fn resp_filenames(&self) -> Vec<String> {
+        self.inner.resp_filenames.clone()
+    }
+
+    async fn resp_mime_types(&self) -> Vec<String> {
+        self.inner.resp_mime_types.clone()
+    }
+
+    async fn post_body(&self) -> Vec<u8> {
+        self.inner.post_body.clone()
+    }
+
+    async fn state(&self) -> &str {
+        &self.inner.state
+    }
+
     async fn db_name(&self) -> &str {
         &self.inner.db_name
     }
@@ -567,6 +591,30 @@ impl DomainGenerationAlgorithm {
         &self.inner.cache_control
     }
 
+    async fn orig_filenames(&self) -> Vec<String> {
+        self.inner.orig_filenames.clone()
+    }
+
+    async fn orig_mime_types(&self) -> Vec<String> {
+        self.inner.orig_mime_types.clone()
+    }
+
+    async fn resp_filenames(&self) -> Vec<String> {
+        self.inner.resp_filenames.clone()
+    }
+
+    async fn resp_mime_types(&self) -> Vec<String> {
+        self.inner.resp_mime_types.clone()
+    }
+
+    async fn post_body(&self) -> Vec<u8> {
+        self.inner.post_body.clone()
+    }
+
+    async fn state(&self) -> &str {
+        &self.inner.state
+    }
+
     async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
@@ -719,6 +767,30 @@ impl NonBrowser {
 
     async fn cache_control(&self) -> &str {
         &self.inner.cache_control
+    }
+
+    async fn orig_filenames(&self) -> Vec<String> {
+        self.inner.orig_filenames.clone()
+    }
+
+    async fn orig_mime_types(&self) -> Vec<String> {
+        self.inner.orig_mime_types.clone()
+    }
+
+    async fn resp_filenames(&self) -> Vec<String> {
+        self.inner.resp_filenames.clone()
+    }
+
+    async fn resp_mime_types(&self) -> Vec<String> {
+        self.inner.resp_mime_types.clone()
+    }
+
+    async fn post_body(&self) -> Vec<u8> {
+        self.inner.post_body.clone()
+    }
+
+    async fn state(&self) -> &str {
+        &self.inner.state
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -889,6 +961,14 @@ impl BlockListHttp {
 
     async fn resp_mime_types(&self) -> Vec<String> {
         self.inner.resp_mime_types.clone()
+    }
+
+    async fn post_body(&self) -> Vec<u8> {
+        self.inner.post_body.clone()
+    }
+
+    async fn state(&self) -> &str {
+        &self.inner.state
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {

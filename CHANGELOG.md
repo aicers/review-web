@@ -26,6 +26,17 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   structure by separating concerns, as these traits are not directly related to
   the GraphQL API but are instead utilized within it.
 - Update `TestSchema` to accept `test_addr` for simulating client IP.
+- Update dependencies version.
+- Fix code based on a dependency update.
+  - Fix code associated with changed fields in events detected in HTTP, SMTP,
+    CONN, NTLM, SSH, and TLS protocols.
+  - Fix code based on changes in test code results.
+  - Split the contents of the `Mutation` and `Query` structures into
+    substructures to fix an issue where a "Requirement evaluation overflow"
+    error occurs when implementing the `MergedObject` trait on the `Mutation`
+    and `query` structures after an update of async-graphql. this is a bug in
+    async-graphql 7.0.2 and later, and will be merged back into one structure
+    when async-graphql is patched for that bug in the future.
 
 ### Fixed
 

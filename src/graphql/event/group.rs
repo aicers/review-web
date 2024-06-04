@@ -527,7 +527,7 @@ mod tests {
         let res = schema.execute(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventCountsByNetwork: {values: ["0"],counts: [1]}}"#
+            r#"{eventCountsByNetwork: {values: ["0"], counts: [1]}}"#
         );
     }
 }

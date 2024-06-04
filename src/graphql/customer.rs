@@ -511,7 +511,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [],totalCount: 0}}"#
+            r#"{customerList: {edges: [], totalCount: 0}}"#
         );
 
         let res = schema
@@ -609,7 +609,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [{node: {name: "t1"}},{node: {name: "t10"}},{node: {name: "t2"}},{node: {name: "t3"}},{node: {name: "t4"}},{node: {name: "t5"}},{node: {name: "t6"}},{node: {name: "t7"}},{node: {name: "t8"}},{node: {name: "t9"}}],totalCount: 10}}"#
+            r#"{customerList: {edges: [{node: {name: "t1"}}, {node: {name: "t10"}}, {node: {name: "t2"}}, {node: {name: "t3"}}, {node: {name: "t4"}}, {node: {name: "t5"}}, {node: {name: "t6"}}, {node: {name: "t7"}}, {node: {name: "t8"}}, {node: {name: "t9"}}], totalCount: 10}}"#
         );
 
         let res = schema
@@ -617,7 +617,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [{node: {name: "t1"}},{node: {name: "t10"}},{node: {name: "t2"}},{node: {name: "t3"}},{node: {name: "t4"}},{node: {name: "t5"}},{node: {name: "t6"}},{node: {name: "t7"}}],totalCount: 10,pageInfo: {startCursor: "dDE="}}}"#
+            r#"{customerList: {edges: [{node: {name: "t1"}}, {node: {name: "t10"}}, {node: {name: "t2"}}, {node: {name: "t3"}}, {node: {name: "t4"}}, {node: {name: "t5"}}, {node: {name: "t6"}}, {node: {name: "t7"}}], totalCount: 10, pageInfo: {startCursor: "dDE="}}}"#
         );
 
         let res = schema
@@ -634,7 +634,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [{node: {name: "t8"}},{node: {name: "t9"}}],totalCount: 10,pageInfo: {endCursor: "dDk="}}}"#
+            r#"{customerList: {edges: [{node: {name: "t8"}}, {node: {name: "t9"}}], totalCount: 10, pageInfo: {endCursor: "dDk="}}}"#
         );
 
         let res = schema
@@ -649,7 +649,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [{node: {name: "t1"}},{node: {name: "t10"}},{node: {name: "t2"}},{node: {name: "t3"}},{node: {name: "t4"}},{node: {name: "t5"}},{node: {name: "t6"}},{node: {name: "t7"}},{node: {name: "t8"}},{node: {name: "t9"}}],totalCount: 10}}"#
+            r#"{customerList: {edges: [{node: {name: "t1"}}, {node: {name: "t10"}}, {node: {name: "t2"}}, {node: {name: "t3"}}, {node: {name: "t4"}}, {node: {name: "t5"}}, {node: {name: "t6"}}, {node: {name: "t7"}}, {node: {name: "t8"}}, {node: {name: "t9"}}], totalCount: 10}}"#
         );
 
         let res = schema
@@ -659,7 +659,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{removeCustomers: ["t1","t2","t3","t4","t5","t6","t7","t8","t9","t10"]}"#
+            r#"{removeCustomers: ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10"]}"#
         );
 
         let res = schema
@@ -667,7 +667,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [],totalCount: 0}}"#
+            r#"{customerList: {edges: [], totalCount: 0}}"#
         );
     }
 
@@ -679,7 +679,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [],totalCount: 0}}"#
+            r#"{customerList: {edges: [], totalCount: 0}}"#
         );
 
         let res = schema
@@ -696,7 +696,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [{node: {name: "c1"}}],totalCount: 1}}"#
+            r#"{customerList: {edges: [{node: {name: "c1"}}], totalCount: 1}}"#
         );
 
         let res = schema
@@ -720,7 +720,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{networkList: {edges: [{node: {customerList: []}}],totalCount: 1}}"#
+            r#"{networkList: {edges: [{node: {customerList: []}}], totalCount: 1}}"#
         );
     }
 }

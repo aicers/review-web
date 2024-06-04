@@ -394,7 +394,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{templateList: {edges: [{node: {name: "t1"}}],totalCount: 1}}"#
+            r#"{templateList: {edges: [{node: {name: "t1"}}], totalCount: 1}}"#
         );
 
         let res = schema
@@ -435,7 +435,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{templateList: {edges: [{node: {algorithm: DISTRIBUTION}}],totalCount: 1}}"#
+            r#"{templateList: {edges: [{node: {algorithm: DISTRIBUTION}}], totalCount: 1}}"#
         );
 
         let res = schema
