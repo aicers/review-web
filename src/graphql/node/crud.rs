@@ -1,9 +1,6 @@
 #![allow(clippy::fn_params_excessive_bools)]
 
-use std::{
-    collections::HashMap,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
@@ -17,8 +14,7 @@ use tracing::error;
 use super::{
     super::{Role, RoleGuard},
     input::NodeDraftInput,
-    Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, PortNumber, ServerAddress,
-    ServerPort, Setting,
+    Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, PortNumber, ServerAddress, Setting,
 };
 use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks};
 
@@ -75,22 +71,16 @@ impl NodeMutation {
         description: String,
         hostname: String,
 
-        review: bool,
-        review_port: Option<PortNumber>,
-        review_web_port: Option<PortNumber>,
-
         piglet: bool,
         piglet_giganto_ip: Option<String>,
         piglet_giganto_port: Option<PortNumber>,
-        piglet_review_ip: Option<String>,
-        piglet_review_port: Option<PortNumber>,
         save_packets: bool,
         http: bool,
         office: bool,
         exe: bool,
         pdf: bool,
-        html: bool,
         txt: bool,
+        vbs: bool,
         smtp_eml: bool,
         ftp: bool,
 
@@ -104,20 +94,12 @@ impl NodeMutation {
         retention_period: Option<u16>,
 
         reconverge: bool,
-        reconverge_review_ip: Option<String>,
-        reconverge_review_port: Option<PortNumber>,
-        reconverge_giganto_ip: Option<String>,
-        reconverge_giganto_port: Option<PortNumber>,
 
         hog: bool,
-        hog_review_ip: Option<String>,
-        hog_review_port: Option<PortNumber>,
         hog_giganto_ip: Option<String>,
         hog_giganto_port: Option<PortNumber>,
-        protocols: bool,
-        protocol_list: HashMap<String, bool>,
-        sensors: bool,
-        sensor_list: HashMap<String, bool>,
+        protocols: Option<Vec<String>>,
+        sensors: Option<Vec<String>>,
     ) -> Result<ID> {
         let (id, customer_id) = {
             let store = crate::graphql::get_store(ctx).await?;
@@ -135,11 +117,7 @@ impl NodeMutation {
                 settings_draft: Some(review_database::NodeSettings {
                     customer_id,
                     description,
-                    hostname,
-
-                    review,
-                    review_port,
-                    review_web_port,
+                    hostname: hostname.clone(),
 
                     piglet,
                     piglet_giganto_ip: parse_str_to_ip(
@@ -147,18 +125,13 @@ impl NodeMutation {
                         "invalid IP address: storage",
                     )?,
                     piglet_giganto_port,
-                    piglet_review_ip: parse_str_to_ip(
-                        piglet_review_ip.as_deref(),
-                        "invalid IP address: administration",
-                    )?,
-                    piglet_review_port,
                     save_packets,
                     http,
                     office,
                     exe,
                     pdf,
-                    html,
                     txt,
+                    vbs,
                     smtp_eml,
                     ftp,
 
@@ -181,39 +154,22 @@ impl NodeMutation {
                     retention_period,
 
                     reconverge,
-                    reconverge_review_ip: parse_str_to_ip(
-                        reconverge_review_ip.as_deref(),
-                        "invalid IP address: administration",
-                    )?,
-                    reconverge_review_port,
-                    reconverge_giganto_ip: parse_str_to_ip(
-                        reconverge_giganto_ip.as_deref(),
-                        "invalid IP address: storage",
-                    )?,
-                    reconverge_giganto_port,
 
                     hog,
-                    hog_review_ip: parse_str_to_ip(
-                        hog_review_ip.as_deref(),
-                        "invalid IP address: administration",
-                    )?,
-                    hog_review_port,
                     hog_giganto_ip: parse_str_to_ip(
                         hog_giganto_ip.as_deref(),
                         "invalid IP address: storage",
                     )?,
                     hog_giganto_port,
                     protocols,
-                    protocol_list,
                     sensors,
-                    sensor_list,
                 }),
                 creation_time: Utc::now(),
             };
             let id = map.put(value)?;
             (id, customer_id)
         };
-        if review {
+        if super::is_review(&hostname) {
             let store = crate::graphql::get_store(ctx).await?;
 
             if let Ok(networks) = get_customer_networks(&store, customer_id) {
@@ -314,19 +270,15 @@ pub fn get_node_settings(db: &Store) -> Result<Vec<Setting>> {
         let piglet: Option<ServerAddress> = if node_settings.piglet {
             Some(ServerAddress {
                 web: None,
-                rpc: Some(SocketAddr::new(
-                    node_settings
-                        .piglet_review_ip
-                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_settings.piglet_review_port.unwrap_or_default(),
-                )),
+                // Set to the `None` since the review address fields has been removed.
+                rpc: None,
                 public: Some(SocketAddr::new(
                     node_settings
                         .piglet_giganto_ip
                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
                     node_settings.piglet_giganto_port.unwrap_or_default(),
                 )),
-                ing: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)),
+                ing: None,
             })
         } else {
             None
@@ -357,29 +309,13 @@ pub fn get_node_settings(db: &Store) -> Result<Vec<Setting>> {
             None
         };
 
-        let review = if node_settings.review {
-            Some(ServerPort {
-                rpc_port: node_settings.review_port.unwrap_or_default(),
-                web_port: node_settings.review_web_port.unwrap_or_default(),
-            })
-        } else {
-            None
-        };
         let reconverge = if node_settings.reconverge {
             Some(ServerAddress {
                 web: None,
-                rpc: Some(SocketAddr::new(
-                    node_settings
-                        .reconverge_review_ip
-                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_settings.reconverge_review_port.unwrap_or_default(),
-                )),
-                public: Some(SocketAddr::new(
-                    node_settings
-                        .reconverge_giganto_ip
-                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_settings.reconverge_giganto_port.unwrap_or_default(),
-                )),
+                // Set to the `None` since the review address fields has been removed.
+                rpc: None,
+                // Set to the `None` since the giganto address fields has been removed.
+                public: None,
                 ing: None,
             })
         } else {
@@ -388,12 +324,8 @@ pub fn get_node_settings(db: &Store) -> Result<Vec<Setting>> {
         let hog = if node_settings.hog {
             Some(ServerAddress {
                 web: None,
-                rpc: Some(SocketAddr::new(
-                    node_settings
-                        .hog_review_ip
-                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_settings.hog_review_port.unwrap_or_default(),
-                )),
+                // Set to the `None` since the review address fields has been removed.
+                rpc: None,
                 public: Some(SocketAddr::new(
                     node_settings
                         .hog_giganto_ip
@@ -412,7 +344,6 @@ pub fn get_node_settings(db: &Store) -> Result<Vec<Setting>> {
             giganto,
             hog,
             reconverge,
-            review,
         });
     }
 
@@ -431,7 +362,7 @@ pub fn get_customer_id_of_review_host(db: &Store) -> Result<Option<u32>> {
         let node = entry.map_err(|_| "invalid value in database")?;
 
         if let Some(node_settings) = &node.settings {
-            if node_settings.review {
+            if super::is_review(&node_settings.hostname) {
                 return Ok(Some(node_settings.customer_id));
             }
         }
@@ -464,21 +395,16 @@ mod tests {
                         customerId: 0,
                         description: "This is the admin node running review.",
                         hostname: "admin.aice-security.com",
-                        review: true,
-                        reviewPort: 1111,
-                        reviewWebPort: 1112,
                         piglet: false,
                         pigletGigantoIp: null,
                         pigletGigantoPort: null,
-                        pigletReviewIp: null,
-                        pigletReviewPort: null,
                         savePackets: false,
                         http: false,
                         office: false,
                         exe: false,
                         pdf: false,
-                        html: false,
                         txt: false,
+                        vbs: false,
                         smtpEml: false,
                         ftp: false,
                         giganto: false,
@@ -490,19 +416,11 @@ mod tests {
                         gigantoGraphqlPort: null,
                         retentionPeriod: null,
                         reconverge: false,
-                        reconvergeReviewIp: null,
-                        reconvergeReviewPort: null,
-                        reconvergeGigantoIp: null,
-                        reconvergeGigantoPort: null,
                         hog: false,
-                        hogReviewIp: null,
-                        hogReviewPort: null,
                         hogGigantoIp: null,
                         hogGigantoPort: null,
-                        protocols: false,
-                        protocolList: {},
-                        sensors: false,
-                        sensorList: {},
+                        protocols: null,
+                        sensors: null,
                     )
                 }"#,
             )
@@ -524,21 +442,15 @@ mod tests {
                         customerId
                         description
                         hostname
-                        review
-                        reviewPort
-                        reviewWebPort
-                        protocolList
-                        sensorList
+                        protocols
+                        sensors
                     }
                     settingsDraft {
                         customerId
                         description
                         hostname
-                        review
-                        reviewPort
-                        reviewWebPort
-                        protocolList
-                        sensorList
+                        protocols
+                        sensors
                     }
 
                 }}"#,
@@ -557,11 +469,8 @@ mod tests {
                         "customerId": "0",
                         "description": "This is the admin node running review.",
                         "hostname": "admin.aice-security.com",
-                        "review": true,
-                        "reviewPort": 1111,
-                        "reviewWebPort": 1112,
-                        "protocolList": {},
-                        "sensorList": {},
+                        "protocols": null,
+                        "sensors": null,
                     },
                 }
             })
@@ -581,21 +490,16 @@ mod tests {
                                 customerId: 0,
                                 description: "This is the admin node running review.",
                                 hostname: "admin.aice-security.com",
-                                review: true,
-                                reviewPort: 1111,
-                                reviewWebPort: 1112,
                                 piglet: false,
                                 pigletGigantoIp: null,
                                 pigletGigantoPort: null,
-                                pigletReviewIp: null,
-                                pigletReviewPort: null,
                                 savePackets: false,
                                 http: false,
                                 office: false,
                                 exe: false,
                                 pdf: false,
-                                html: false,
                                 txt: false,
+                                vbs: false,
                                 smtpEml: false,
                                 ftp: false,
                                 giganto: false,
@@ -607,19 +511,11 @@ mod tests {
                                 gigantoGraphqlPort: null,
                                 retentionPeriod: null,
                                 reconverge: false,
-                                reconvergeReviewIp: null,
-                                reconvergeReviewPort: null,
-                                reconvergeGigantoIp: null,
-                                reconvergeGigantoPort: null,
                                 hog: false,
-                                hogReviewIp: null,
-                                hogReviewPort: null,
                                 hogGigantoIp: null,
                                 hogGigantoPort: null,
-                                protocols: false,
-                                protocolList: {},
-                                sensors: false,
-                                sensorList: {},
+                                protocols: null,
+                                sensors: null,
                             }
                         },
                         new: {
@@ -628,21 +524,16 @@ mod tests {
                                 customerId: 0,
                                 description: "This is the admin node running review.",
                                 hostname: "admin.aice-security.com",
-                                review: true,
-                                reviewPort: 2222,
-                                reviewWebPort: 2223,
                                 piglet: false,
                                 pigletGigantoIp: null,
                                 pigletGigantoPort: null,
-                                pigletReviewIp: null,
-                                pigletReviewPort: null,
                                 savePackets: false,
                                 http: false,
                                 office: false,
                                 exe: false,
                                 pdf: false,
-                                html: false,
                                 txt: false,
+                                vbs: false,
                                 smtpEml: false,
                                 ftp: false,
                                 giganto: false,
@@ -654,19 +545,11 @@ mod tests {
                                 gigantoGraphqlPort: null,
                                 retentionPeriod: null,
                                 reconverge: false,
-                                reconvergeReviewIp: null,
-                                reconvergeReviewPort: null,
-                                reconvergeGigantoIp: null,
-                                reconvergeGigantoPort: null,
                                 hog: false,
-                                hogReviewIp: null,
-                                hogReviewPort: null,
                                 hogGigantoIp: null,
                                 hogGigantoPort: null,
-                                protocols: false,
-                                protocolList: {},
-                                sensors: false,
-                                sensorList: {},
+                                protocols: null,
+                                sensors: null,
                             }
                         }
                     )
@@ -690,21 +573,15 @@ mod tests {
                         customerId
                         description
                         hostname
-                        review
-                        reviewPort
-                        reviewWebPort
-                        protocolList
-                        sensorList
+                        protocols
+                        sensors
                     }
                     settingsDraft {
                         customerId
                         description
                         hostname
-                        review
-                        reviewPort
-                        reviewWebPort
-                        protocolList
-                        sensorList
+                        protocols
+                        sensors
                     }
 
                 }}"#,
@@ -723,11 +600,8 @@ mod tests {
                         "customerId": "0",
                         "description": "This is the admin node running review.",
                         "hostname": "admin.aice-security.com",
-                        "review": true,
-                        "reviewPort": 2222,  // updated
-                        "reviewWebPort": 2223, // updated
-                        "protocolList": {},
-                        "sensorList": {},
+                        "protocols": null,
+                        "sensors": null,
                     },
                 }
             })
@@ -747,21 +621,16 @@ mod tests {
                             customerId: 0,
                             description: "This is the admin node running review.",
                             hostname: "admin.aice-security.com",
-                            review: true,
-                            reviewPort: 2222,
-                            reviewWebPort: 2223,
                             piglet: false,
                             pigletGigantoIp: null,
                             pigletGigantoPort: null,
-                            pigletReviewIp: null,
-                            pigletReviewPort: null,
                             savePackets: false,
                             http: false,
                             office: false,
                             exe: false,
                             pdf: false,
-                            html: false,
                             txt: false,
+                            vbs: false,
                             smtpEml: false,
                             ftp: false,
                             giganto: false,
@@ -773,19 +642,11 @@ mod tests {
                             gigantoGraphqlPort: null,
                             retentionPeriod: null,
                             reconverge: false,
-                            reconvergeReviewIp: null,
-                            reconvergeReviewPort: null,
-                            reconvergeGigantoIp: null,
-                            reconvergeGigantoPort: null,
                             hog: false,
-                            hogReviewIp: null,
-                            hogReviewPort: null,
                             hogGigantoIp: null,
                             hogGigantoPort: null,
-                            protocols: false,
-                            protocolList: {},
-                            sensors: false,
-                            sensorList: {},
+                            protocols: null,
+                            sensors: null,
                         }
                     },
                     new: {

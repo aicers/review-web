@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::IpAddr};
+use std::net::IpAddr;
 
 use anyhow::Context as AnyhowContext;
 use async_graphql::{types::ID, InputObject, Result};
@@ -13,22 +13,16 @@ pub struct NodeSettingsInput {
     pub description: String,
     pub hostname: String,
 
-    pub review: bool,
-    pub review_port: Option<PortNumber>,
-    pub review_web_port: Option<PortNumber>,
-
     pub piglet: bool,
     pub piglet_giganto_ip: Option<String>,
     pub piglet_giganto_port: Option<PortNumber>,
-    pub piglet_review_ip: Option<String>,
-    pub piglet_review_port: Option<PortNumber>,
     pub save_packets: bool,
     pub http: bool,
     pub office: bool,
     pub exe: bool,
     pub pdf: bool,
-    pub html: bool,
     pub txt: bool,
+    pub vbs: bool,
     pub smtp_eml: bool,
     pub ftp: bool,
 
@@ -42,20 +36,12 @@ pub struct NodeSettingsInput {
     pub retention_period: Option<u16>,
 
     pub reconverge: bool,
-    pub reconverge_review_ip: Option<String>,
-    pub reconverge_review_port: Option<PortNumber>,
-    pub reconverge_giganto_ip: Option<String>,
-    pub reconverge_giganto_port: Option<PortNumber>,
 
     pub hog: bool,
-    pub hog_review_ip: Option<String>,
-    pub hog_review_port: Option<PortNumber>,
     pub hog_giganto_ip: Option<String>,
     pub hog_giganto_port: Option<PortNumber>,
-    pub protocols: bool,
-    pub protocol_list: HashMap<String, bool>,
-    pub sensors: bool,
-    pub sensor_list: HashMap<String, bool>,
+    pub protocols: Option<Vec<String>>,
+    pub sensors: Option<Vec<String>>,
 }
 
 impl TryFrom<NodeSettingsInput> for review_database::NodeSettings {
@@ -66,21 +52,16 @@ impl TryFrom<NodeSettingsInput> for review_database::NodeSettings {
             customer_id: input.customer_id.parse().context("invalid customer ID")?,
             description: input.description.clone(),
             hostname: input.hostname.clone(),
-            review: input.review,
-            review_port: input.review_port,
-            review_web_port: input.review_web_port,
             piglet: input.piglet,
             piglet_giganto_ip: parse_str_to_ip(input.piglet_giganto_ip.as_deref()),
             piglet_giganto_port: input.piglet_giganto_port,
-            piglet_review_ip: parse_str_to_ip(input.piglet_review_ip.as_deref()),
-            piglet_review_port: input.piglet_review_port,
             save_packets: input.save_packets,
             http: input.http,
             office: input.office,
             exe: input.exe,
             pdf: input.pdf,
-            html: input.html,
             txt: input.txt,
+            vbs: input.vbs,
             smtp_eml: input.smtp_eml,
             ftp: input.ftp,
             giganto: input.giganto,
@@ -92,19 +73,11 @@ impl TryFrom<NodeSettingsInput> for review_database::NodeSettings {
             giganto_graphql_port: input.giganto_graphql_port,
             retention_period: input.retention_period,
             reconverge: input.reconverge,
-            reconverge_review_ip: parse_str_to_ip(input.reconverge_review_ip.as_deref()),
-            reconverge_review_port: input.reconverge_review_port,
-            reconverge_giganto_ip: parse_str_to_ip(input.reconverge_giganto_ip.as_deref()),
-            reconverge_giganto_port: input.reconverge_giganto_port,
             hog: input.hog,
-            hog_review_ip: parse_str_to_ip(input.hog_review_ip.as_deref()),
-            hog_review_port: input.hog_review_port,
             hog_giganto_ip: parse_str_to_ip(input.hog_giganto_ip.as_deref()),
             hog_giganto_port: input.hog_giganto_port,
             protocols: input.protocols,
-            protocol_list: input.protocol_list.clone(),
             sensors: input.sensors,
-            sensor_list: input.sensor_list.clone(),
         })
     }
 }

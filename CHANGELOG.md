@@ -45,6 +45,12 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     - `cargo fmt -- --check --config group_imports=StdExternalCrate`
 - Updated version of rustls to "0.23" and fixed related code due to reqwest
   version update.
+- Modified the `NodeSettings` fields.
+  - The new `protocols` and `sensors` field should be sorted in alphabetical order.
+- The `get_node_settings` function returns a `Result<Vec<Setting>>`, with the
+  following fields set to `None`:
+  - `Setting::{piglet, reconverge, hog}::rpc`
+  - `Setting::reconverge::public`
 
 ### Fixed
 

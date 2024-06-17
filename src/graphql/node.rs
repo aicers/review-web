@@ -6,7 +6,6 @@ mod status;
 
 use std::{
     borrow::Cow,
-    collections::HashMap,
     net::{IpAddr, SocketAddr},
 };
 
@@ -114,24 +113,17 @@ pub struct NodeSettings {
     description: String,
     pub(super) hostname: String,
 
-    review: bool,
-    review_port: Option<PortNumber>,
-    review_web_port: Option<PortNumber>,
-
     piglet: bool,
     #[graphql(skip)]
     piglet_giganto_ip: Option<IpAddr>,
     piglet_giganto_port: Option<PortNumber>,
-    #[graphql(skip)]
-    piglet_review_ip: Option<IpAddr>,
-    piglet_review_port: Option<PortNumber>,
     save_packets: bool,
     http: bool,
     office: bool,
     exe: bool,
     pdf: bool,
-    html: bool,
     txt: bool,
+    vbs: bool,
     smtp_eml: bool,
     ftp: bool,
 
@@ -148,25 +140,14 @@ pub struct NodeSettings {
     retention_period: Option<u16>,
 
     reconverge: bool,
-    #[graphql(skip)]
-    reconverge_review_ip: Option<IpAddr>,
-    reconverge_review_port: Option<PortNumber>,
-    #[graphql(skip)]
-    reconverge_giganto_ip: Option<IpAddr>,
-    reconverge_giganto_port: Option<PortNumber>,
 
     hog: bool,
     #[graphql(skip)]
-    hog_review_ip: Option<IpAddr>,
-    hog_review_port: Option<PortNumber>,
-    #[graphql(skip)]
     hog_giganto_ip: Option<IpAddr>,
     hog_giganto_port: Option<PortNumber>,
-    protocols: bool,
-    protocol_list: HashMap<String, bool>,
 
-    sensors: bool,
-    sensor_list: HashMap<String, bool>,
+    protocols: Option<Vec<String>>,
+    sensors: Option<Vec<String>>,
 }
 
 impl From<review_database::NodeSettings> for NodeSettings {
@@ -175,21 +156,16 @@ impl From<review_database::NodeSettings> for NodeSettings {
             customer_id: input.customer_id,
             description: input.description.clone(),
             hostname: input.hostname.clone(),
-            review: input.review,
-            review_port: input.review_port,
-            review_web_port: input.review_web_port,
             piglet: input.piglet,
             piglet_giganto_ip: input.piglet_giganto_ip,
             piglet_giganto_port: input.piglet_giganto_port,
-            piglet_review_ip: input.piglet_review_ip,
-            piglet_review_port: input.piglet_review_port,
             save_packets: input.save_packets,
             http: input.http,
             office: input.office,
             exe: input.exe,
             pdf: input.pdf,
-            html: input.html,
             txt: input.txt,
+            vbs: input.vbs,
             smtp_eml: input.smtp_eml,
             ftp: input.ftp,
             giganto: input.giganto,
@@ -201,19 +177,11 @@ impl From<review_database::NodeSettings> for NodeSettings {
             giganto_graphql_port: input.giganto_graphql_port,
             retention_period: input.retention_period,
             reconverge: input.reconverge,
-            reconverge_review_ip: input.reconverge_review_ip,
-            reconverge_review_port: input.reconverge_review_port,
-            reconverge_giganto_ip: input.reconverge_giganto_ip,
-            reconverge_giganto_port: input.reconverge_giganto_port,
             hog: input.hog,
-            hog_review_ip: input.hog_review_ip,
-            hog_review_port: input.hog_review_port,
             hog_giganto_ip: input.hog_giganto_ip,
             hog_giganto_port: input.hog_giganto_port,
             protocols: input.protocols,
-            protocol_list: input.protocol_list.clone(),
             sensors: input.sensors,
-            sensor_list: input.sensor_list.clone(),
         }
     }
 }
@@ -259,27 +227,19 @@ impl NodeSettings {
     async fn piglet_giganto_ip(&self) -> Option<String> {
         self.piglet_giganto_ip.as_ref().map(ToString::to_string)
     }
-    async fn piglet_review_ip(&self) -> Option<String> {
-        self.piglet_review_ip.as_ref().map(ToString::to_string)
-    }
+
     async fn giganto_ingestion_ip(&self) -> Option<String> {
         self.giganto_ingestion_ip.as_ref().map(ToString::to_string)
     }
+
     async fn giganto_publish_ip(&self) -> Option<String> {
         self.giganto_publish_ip.as_ref().map(ToString::to_string)
     }
+
     async fn giganto_graphql_ip(&self) -> Option<String> {
         self.giganto_graphql_ip.as_ref().map(ToString::to_string)
     }
-    async fn reconverge_review_ip(&self) -> Option<String> {
-        self.reconverge_review_ip.as_ref().map(ToString::to_string)
-    }
-    async fn reconverge_giganto_ip(&self) -> Option<String> {
-        self.reconverge_giganto_ip.as_ref().map(ToString::to_string)
-    }
-    async fn hog_review_ip(&self) -> Option<String> {
-        self.hog_review_ip.as_ref().map(ToString::to_string)
-    }
+
     async fn hog_giganto_ip(&self) -> Option<String> {
         self.hog_giganto_ip.as_ref().map(ToString::to_string)
     }
@@ -300,9 +260,6 @@ impl NodeTotalCount {
 #[graphql(complex)]
 struct HogConfig {
     #[graphql(skip)]
-    review_ip: IpAddr,
-    review_port: PortNumber,
-    #[graphql(skip)]
     giganto_ip: Option<IpAddr>,
     giganto_port: Option<PortNumber>,
     active_protocols: Option<Vec<String>>,
@@ -311,10 +268,6 @@ struct HogConfig {
 
 #[ComplexObject]
 impl HogConfig {
-    async fn review_ip(&self) -> String {
-        self.review_ip.to_string()
-    }
-
     async fn giganto_ip(&self) -> Option<String> {
         self.giganto_ip.as_ref().map(ToString::to_string)
     }
@@ -323,8 +276,6 @@ impl HogConfig {
 impl From<review_protocol::types::HogConfig> for HogConfig {
     fn from(value: review_protocol::types::HogConfig) -> Self {
         Self {
-            review_ip: value.review_address.ip(),
-            review_port: value.review_address.port(),
             giganto_ip: value.giganto_address.as_ref().map(SocketAddr::ip),
             giganto_port: value.giganto_address.as_ref().map(SocketAddr::port),
             active_protocols: value.active_protocols,
@@ -337,9 +288,6 @@ impl From<review_protocol::types::HogConfig> for HogConfig {
 #[graphql(complex)]
 struct PigletConfig {
     #[graphql(skip)]
-    review_ip: IpAddr,
-    review_port: PortNumber,
-    #[graphql(skip)]
     giganto_ip: Option<IpAddr>,
     giganto_port: Option<PortNumber>,
     log_options: Option<Vec<String>>,
@@ -348,10 +296,6 @@ struct PigletConfig {
 
 #[ComplexObject]
 impl PigletConfig {
-    async fn review_ip(&self) -> String {
-        self.review_ip.to_string()
-    }
-
     async fn giganto_ip(&self) -> Option<String> {
         self.giganto_ip.as_ref().map(ToString::to_string)
     }
@@ -360,45 +304,10 @@ impl PigletConfig {
 impl From<review_protocol::types::PigletConfig> for PigletConfig {
     fn from(value: review_protocol::types::PigletConfig) -> Self {
         Self {
-            review_ip: value.review_address.ip(),
-            review_port: value.review_address.port(),
             giganto_ip: value.giganto_address.as_ref().map(SocketAddr::ip),
             giganto_port: value.giganto_address.as_ref().map(SocketAddr::port),
             log_options: value.log_options,
             http_file_types: value.http_file_types,
-        }
-    }
-}
-
-#[derive(Debug, SimpleObject, Serialize, Deserialize, Clone)]
-#[graphql(complex)]
-struct ReconvergeConfig {
-    #[graphql(skip)]
-    review_ip: IpAddr,
-    review_port: PortNumber,
-    #[graphql(skip)]
-    giganto_ip: Option<IpAddr>,
-    giganto_port: Option<PortNumber>,
-}
-
-#[ComplexObject]
-impl ReconvergeConfig {
-    async fn review_ip(&self) -> String {
-        self.review_ip.to_string()
-    }
-
-    async fn giganto_ip(&self) -> Option<String> {
-        self.giganto_ip.as_ref().map(ToString::to_string)
-    }
-}
-
-impl From<review_protocol::types::ReconvergeConfig> for ReconvergeConfig {
-    fn from(value: review_protocol::types::ReconvergeConfig) -> Self {
-        Self {
-            review_ip: value.review_address.ip(),
-            review_port: value.review_address.port(),
-            giganto_ip: value.giganto_address.as_ref().map(SocketAddr::ip),
-            giganto_port: value.giganto_address.as_ref().map(SocketAddr::port),
         }
     }
 }
@@ -446,9 +355,6 @@ pub(super) struct NodeStatus {
 
     /// Whether reconverge is online or not.
     reconverge: Option<bool>,
-
-    /// actual reconverge configuration
-    reconverge_config: Option<ReconvergeConfig>,
 
     /// Whether hog is online or not.
     hog: Option<bool>,
@@ -499,7 +405,6 @@ impl NodeStatus {
         piglet: Option<bool>,
         piglet_config: Option<PigletConfig>,
         reconverge: Option<bool>,
-        reconverge_config: Option<ReconvergeConfig>,
         hog: Option<bool>,
         hog_config: Option<HogConfig>,
     ) -> Self {
@@ -516,7 +421,6 @@ impl NodeStatus {
             piglet,
             piglet_config,
             reconverge,
-            reconverge_config,
             hog,
             hog_config,
         }
@@ -569,8 +473,6 @@ pub struct Setting {
     hog: Option<ServerAddress>,
     // ingest, publish address of REconverge. web_addr is not used
     reconverge: Option<ServerAddress>,
-    // rpc, web address of REview. pub_addr is not used
-    review: Option<ServerPort>,
 }
 
 #[derive(Serialize)]
@@ -624,4 +526,10 @@ pub enum ModuleName {
     Piglet,
     Reconverge,
     Review,
+}
+
+pub fn is_review(hostname: &str) -> bool {
+    let review_hostname = roxy::hostname();
+
+    !review_hostname.is_empty() && review_hostname == hostname
 }
