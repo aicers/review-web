@@ -45,6 +45,24 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     - `cargo fmt -- --check --config group_imports=StdExternalCrate`
 - Updated version of rustls to "0.23" and fixed related code due to reqwest
   version update.
+- Modified the `NodeSettings` fields.
+  - Removed central server's address fields.
+  - Removed `reconverge_giganto_[ip|port]` fields.
+  - Removed `html` field.
+  - Added `vbs` field.
+  - Merged `protocols` (boolean) and `protocol_list` (`HashMap<String, bool>`) into
+    `protocols: Option<Vec<String>>`.
+    - The new `protocols` field should be sorted in alphabetical order.
+  - Merged `sensors` (boolean) and `sensor_list` (`HashMap<String, bool>`) into
+    `sensors: Option<Vec<String>>`.
+    - The new `sensors` field should also be sorted in alphabetical order.
+  - The `get_node_settings` function will be removed in the future.
+    - Until it is removed, each `Setting` element returned by `get_node_settings`
+      in `Result<Vec<Setting>>` will have the following fields always set to `0.0.0.0:0`.
+      - `piglet.rpc`
+      - `reconverge.rpc`
+      - `reconverge.public`
+      - `hog.rpc`
 
 ### Fixed
 
