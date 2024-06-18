@@ -254,7 +254,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{networkList: {edges: [],totalCount: 0}}"#
+            r#"{networkList: {edges: [], totalCount: 0}}"#
         );
 
         let res = schema
@@ -273,7 +273,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{networkList: {edges: [{node: {name: "n1"}}],totalCount: 1}}"#
+            r#"{networkList: {edges: [{node: {name: "n1"}}], totalCount: 1}}"#
         );
 
         let res = schema
@@ -286,7 +286,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{networkList: {edges: [],totalCount: 0}}"#
+            r#"{networkList: {edges: [], totalCount: 0}}"#
         );
     }
 

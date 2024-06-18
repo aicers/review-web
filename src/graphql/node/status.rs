@@ -409,7 +409,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{applyNode: {id: "0",successModules: [PIGLET]}}"#
+            r#"{applyNode: {id: "0", successModules: [PIGLET]}}"#
         );
 
         let res = schema
@@ -464,7 +464,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{applyNode: {id: "1",successModules: [HOG,RECONVERGE]}}"#
+            r#"{applyNode: {id: "1", successModules: [HOG, RECONVERGE]}}"#
         );
 
         // check node status list
@@ -831,7 +831,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{nodeStatusList: {edges: [{node: {name: "test1"}},{node: {name: "test2"}},{node: {name: "test3"}},{node: {name: "test4"}},{node: {name: "test5"}}]}}"#
+            r#"{nodeStatusList: {edges: [{node: {name: "test1"}}, {node: {name: "test2"}}, {node: {name: "test3"}}, {node: {name: "test4"}}, {node: {name: "test5"}}]}}"#
         );
 
         let res = schema
@@ -839,7 +839,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{nodeStatusList: {edges: [{node: {name: "test1"}},{node: {name: "test2"}},{node: {name: "test3"}},{node: {name: "test4"}},{node: {name: "test5"}}],pageInfo: {endCursor: "dGVzdDU="}}}"#
+            r#"{nodeStatusList: {edges: [{node: {name: "test1"}}, {node: {name: "test2"}}, {node: {name: "test3"}}, {node: {name: "test4"}}, {node: {name: "test5"}}], pageInfo: {endCursor: "dGVzdDU="}}}"#
         );
 
         let res = schema
@@ -847,7 +847,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{nodeStatusList: {edges: [{node: {name: "test1"}},{node: {name: "test2"}}],pageInfo: {startCursor: "dGVzdDE="}}}"#
+            r#"{nodeStatusList: {edges: [{node: {name: "test1"}}, {node: {name: "test2"}}], pageInfo: {startCursor: "dGVzdDE="}}}"#
         );
 
         let res = schema
@@ -855,7 +855,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{nodeStatusList: {edges: [{node: {name: "test4"}},{node: {name: "test5"}}],pageInfo: {endCursor: "dGVzdDU="}}}"#
+            r#"{nodeStatusList: {edges: [{node: {name: "test4"}}, {node: {name: "test5"}}], pageInfo: {endCursor: "dGVzdDU="}}}"#
         );
 
         let res = schema

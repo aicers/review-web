@@ -959,7 +959,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{accountList: {edges: [{node: {username: "admin"}},{node: {username: "u1"}}],totalCount: 2}}"#
+            r#"{accountList: {edges: [{node: {username: "admin"}}, {node: {username: "u1"}}], totalCount: 2}}"#
         );
 
         // A non-existent username is considered removed.

@@ -96,8 +96,20 @@ impl BlockListTls {
         &self.inner.version
     }
 
+    async fn client_cipher_suites(&self) -> Vec<u16> {
+        self.inner.client_cipher_suites.clone()
+    }
+
+    async fn client_extensions(&self) -> Vec<u16> {
+        self.inner.client_extensions.clone()
+    }
+
     async fn cipher(&self) -> u16 {
         self.inner.cipher
+    }
+
+    async fn extensions(&self) -> Vec<u16> {
+        self.inner.extensions.clone()
     }
 
     async fn ja3s(&self) -> &str {

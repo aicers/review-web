@@ -80,22 +80,6 @@ impl BlockListSsh {
         self.inner.last_time
     }
 
-    async fn version(&self) -> i64 {
-        self.inner.version
-    }
-
-    async fn auth_success(&self) -> &str {
-        &self.inner.auth_success
-    }
-
-    async fn auth_attempts(&self) -> i64 {
-        self.inner.auth_attempts
-    }
-
-    async fn direction(&self) -> &str {
-        &self.inner.direction
-    }
-
     async fn client(&self) -> &str {
         &self.inner.client
     }
@@ -124,8 +108,28 @@ impl BlockListSsh {
         &self.inner.host_key_alg
     }
 
-    async fn host_key(&self) -> &str {
-        &self.inner.host_key
+    async fn hassh_algorithms(&self) -> &str {
+        &self.inner.hassh_algorithms
+    }
+
+    async fn hassh(&self) -> &str {
+        &self.inner.hassh
+    }
+
+    async fn hassh_server_algorithms(&self) -> &str {
+        &self.inner.hassh_server_algorithms
+    }
+
+    async fn hassh_server(&self) -> &str {
+        &self.inner.hassh_server
+    }
+
+    async fn client_shka(&self) -> &str {
+        &self.inner.client_shka
+    }
+
+    async fn server_shka(&self) -> &str {
+        &self.inner.server_shka
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {

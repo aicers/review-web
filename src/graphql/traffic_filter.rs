@@ -282,7 +282,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{trafficFilterList: [{agent: "moon",rules: ["172.30.1.0/24\t80,8080\t-","192.168.0.0/16\t80,8000,8080\t-"]},{agent: "sun",rules: ["0.0.0.0/0\t-\t37,53"]}]}"#
+            r#"{trafficFilterList: [{agent: "moon", rules: ["172.30.1.0/24\t80,8080\t-", "192.168.0.0/16\t80,8000,8080\t-"]}, {agent: "sun", rules: ["0.0.0.0/0\t-\t37,53"]}]}"#
         );
     }
 

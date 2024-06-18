@@ -80,6 +80,10 @@ impl BlockListNtlm {
         self.inner.last_time
     }
 
+    async fn protocol(&self) -> &str {
+        &self.inner.protocol
+    }
+
     async fn username(&self) -> &str {
         &self.inner.username
     }
@@ -90,18 +94,6 @@ impl BlockListNtlm {
 
     async fn domainname(&self) -> &str {
         &self.inner.domainname
-    }
-
-    async fn server_nb_computer_name(&self) -> &str {
-        &self.inner.server_nb_computer_name
-    }
-
-    async fn server_dns_computer_name(&self) -> &str {
-        &self.inner.server_dns_computer_name
-    }
-
-    async fn server_tree_name(&self) -> &str {
-        &self.inner.server_tree_name
     }
 
     async fn success(&self) -> &str {

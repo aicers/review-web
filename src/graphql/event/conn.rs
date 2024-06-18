@@ -369,6 +369,10 @@ impl BlockListConn {
         self.inner.proto
     }
 
+    async fn conn_state(&self) -> String {
+        self.inner.conn_state.clone()
+    }
+
     async fn duration(&self) -> i64 {
         self.inner.duration
     }
