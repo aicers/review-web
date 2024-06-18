@@ -1,8 +1,10 @@
-use super::{Role, RoleGuard};
+use std::sync::Arc;
+
 use async_graphql::{Context, Object, Result};
 use review_database::{backup, Store};
-use std::sync::Arc;
 use tokio::sync::RwLock;
+
+use super::{Role, RoleGuard};
 
 #[derive(Default)]
 pub(super) struct DbManagementMutation;

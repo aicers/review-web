@@ -1,7 +1,5 @@
-use super::{
-    cluster::TimeCount, data_source::DataSource, fill_vacant_time_slots, get_trend, slicing, Role,
-    RoleGuard, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER,
-};
+use std::sync::Arc;
+
 use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
     types::ID,
@@ -11,8 +9,12 @@ use chrono::NaiveDateTime;
 use database::Store;
 use num_traits::ToPrimitive;
 use review_database::{self as database, Database};
-use std::sync::Arc;
 use tokio::sync::RwLock;
+
+use super::{
+    cluster::TimeCount, data_source::DataSource, fill_vacant_time_slots, get_trend, slicing, Role,
+    RoleGuard, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER,
+};
 
 const DEFAULT_MIN_SLOPE: f64 = 10.0;
 const DEFAULT_MIN_ZERO_COUNT_FOR_TREND: u32 = 5;

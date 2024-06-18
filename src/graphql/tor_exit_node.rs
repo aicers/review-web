@@ -1,10 +1,11 @@
-use super::{Role, RoleGuard};
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     Context, Object, Result, SimpleObject,
 };
 use chrono::{DateTime, Utc};
 use review_database::{Direction, Iterable};
+
+use super::{Role, RoleGuard};
 
 #[derive(Default)]
 pub(super) struct TorExitNodeQuery;

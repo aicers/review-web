@@ -1,6 +1,7 @@
-use super::{Role, RoleGuard};
 use async_graphql::{Context, Enum, Object, Result, SimpleObject};
 use review_database::{self as database};
+
+use super::{Role, RoleGuard};
 
 #[derive(Default)]
 pub(super) struct TidbQuery;

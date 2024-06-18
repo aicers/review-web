@@ -1,5 +1,8 @@
-use super::RoleGuard;
-use crate::auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in};
+use std::{
+    env,
+    net::{AddrParseError, IpAddr, SocketAddr},
+};
+
 use anyhow::anyhow;
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
@@ -12,11 +15,10 @@ use review_database::{
     Direction, Iterable, Store,
 };
 use serde::Serialize;
-use std::{
-    env,
-    net::{AddrParseError, IpAddr, SocketAddr},
-};
 use tracing::info;
+
+use super::RoleGuard;
+use crate::auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in};
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Serialize, SimpleObject)]
@@ -70,8 +72,9 @@ impl AccountQuery {
     #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
         .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
     async fn signed_in_account_list(&self, ctx: &Context<'_>) -> Result<Vec<SignedInAccount>> {
-        use review_database::Iterable;
         use std::collections::HashMap;
+
+        use review_database::Iterable;
 
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.access_token_map();
@@ -651,14 +654,16 @@ fn read_review_admin() -> anyhow::Result<(String, String)> {
 
 #[cfg(test)]
 mod tests {
+    use std::{env, net::SocketAddr};
+
+    use async_graphql::Value;
+    use review_database::Role;
+    use serial_test::serial;
+
     use crate::graphql::{
         account::{read_review_admin, REVIEW_ADMIN},
         BoxedAgentManager, MockAgentManager, RoleGuard, TestSchema,
     };
-    use async_graphql::Value;
-    use review_database::Role;
-    use serial_test::serial;
-    use std::{env, net::SocketAddr};
 
     #[tokio::test]
     #[serial]

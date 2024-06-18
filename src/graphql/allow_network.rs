@@ -1,7 +1,3 @@
-use super::{
-    customer::{HostNetworkGroup, HostNetworkGroupInput},
-    BoxedAgentManager, Role, RoleGuard,
-};
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     Context, InputObject, Object, Result, ID,
@@ -10,6 +6,11 @@ use bincode::Options;
 use database::Direction;
 use review_database::{self as database, Store};
 use serde::{Deserialize, Serialize};
+
+use super::{
+    customer::{HostNetworkGroup, HostNetworkGroupInput},
+    BoxedAgentManager, Role, RoleGuard,
+};
 
 #[derive(Default)]
 pub(super) struct AllowNetworkQuery;

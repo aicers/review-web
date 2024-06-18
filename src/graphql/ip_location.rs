@@ -1,9 +1,11 @@
-use super::{Role, RoleGuard};
-use async_graphql::{Context, Object, Result, SimpleObject};
 use std::{
     net::IpAddr,
     sync::{Arc, Mutex},
 };
+
+use async_graphql::{Context, Object, Result, SimpleObject};
+
+use super::{Role, RoleGuard};
 
 #[derive(Default)]
 pub(super) struct IpLocationQuery;

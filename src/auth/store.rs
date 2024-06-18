@@ -1,6 +1,7 @@
+use anyhow::{anyhow, Result};
+
 use super::AuthError;
 use crate::Store;
-use anyhow::{anyhow, Result};
 
 /// Inserts a token into the store.
 ///

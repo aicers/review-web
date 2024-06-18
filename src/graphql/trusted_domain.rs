@@ -1,8 +1,9 @@
-use super::{AgentManager, BoxedAgentManager, Role, RoleGuard};
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     Context, Object, Result, SimpleObject,
 };
+
+use super::{AgentManager, BoxedAgentManager, Role, RoleGuard};
 
 #[derive(Default)]
 pub(super) struct TrustedDomainQuery;

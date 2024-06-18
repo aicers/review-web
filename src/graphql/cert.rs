@@ -1,5 +1,6 @@
-use async_graphql::{Context, Object, Result, SimpleObject};
 use std::sync::Arc;
+
+use async_graphql::{Context, Object, Result, SimpleObject};
 use tokio::sync::Notify;
 use tracing::info;
 

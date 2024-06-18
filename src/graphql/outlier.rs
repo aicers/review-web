@@ -1,5 +1,5 @@
-use super::{encode_cursor, model::ModelDigest, Role, RoleGuard};
-use crate::graphql::validate_and_process_pagination_params;
+use std::{collections::HashMap, sync::Arc};
+
 use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
     types::ID,
@@ -13,9 +13,11 @@ use num_traits::ToPrimitive;
 use review_database::{Database, Direction, Store, UniqueKey};
 use serde::Deserialize;
 use serde::Serialize;
-use std::{collections::HashMap, sync::Arc};
 use tokio::{sync::RwLock, time};
 use tracing::error;
+
+use super::{encode_cursor, model::ModelDigest, Role, RoleGuard};
+use crate::graphql::validate_and_process_pagination_params;
 
 const DEFAULT_OUTLIER_SIZE: usize = 50;
 const DISTANCE_EPSILON: f64 = 0.1;

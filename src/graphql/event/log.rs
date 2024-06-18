@@ -1,7 +1,8 @@
-use super::TriageScore;
 use async_graphql::Object;
 use chrono::{DateTime, Utc};
 use review_database as database;
+
+use super::TriageScore;
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct ExtraThreat {

@@ -1,8 +1,9 @@
+use async_graphql::{Context, Object, Result};
+
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard},
     Process, ProcessListQuery,
 };
-use async_graphql::{Context, Object, Result};
 
 #[Object]
 impl ProcessListQuery {

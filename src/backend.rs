@@ -1,10 +1,12 @@
-pub use crate::graphql::{ParsedCertificate, SamplingPolicy};
+use std::{collections::HashMap, path::PathBuf};
+
 use anyhow::anyhow;
 use async_trait::async_trait;
 use ipnet::IpNet;
 pub use review_protocol::types::Config;
 pub use roxy::{Process, ResourceUsage};
-use std::{collections::HashMap, path::PathBuf};
+
+pub use crate::graphql::{ParsedCertificate, SamplingPolicy};
 
 #[async_trait]
 pub trait AgentManager: Send + Sync {

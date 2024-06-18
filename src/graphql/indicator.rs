@@ -1,7 +1,8 @@
-use crate::graphql::{Role, RoleGuard};
 use async_graphql::{Context, Object, Result};
 use chrono::{DateTime, Utc};
 use review_database::{self as database};
+
+use crate::graphql::{Role, RoleGuard};
 
 #[derive(Default)]
 pub(super) struct IndicatorQuery;

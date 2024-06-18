@@ -1,5 +1,6 @@
-use super::Tag;
 use async_graphql::{Context, Object, Result, ID};
+
+use super::Tag;
 
 #[derive(Default)]
 pub(in crate::graphql) struct WorkflowTagQuery;

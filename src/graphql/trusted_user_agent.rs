@@ -1,4 +1,3 @@
-use super::{BoxedAgentManager, Role, RoleGuard};
 use anyhow::Context as _;
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
@@ -8,6 +7,8 @@ use bincode::Options;
 use chrono::{DateTime, Utc};
 use database::{types::FromKeyValue, Direction, Iterable};
 use review_database::{self as database, Store};
+
+use super::{BoxedAgentManager, Role, RoleGuard};
 
 #[derive(Default)]
 pub(super) struct UserAgentQuery;

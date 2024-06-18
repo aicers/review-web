@@ -34,6 +34,24 @@ mod triage;
 mod trusted_domain;
 mod trusted_user_agent;
 
+#[cfg(test)]
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
+
+use async_graphql::connection::ConnectionNameType;
+use async_graphql::{
+    connection::{Connection, Edge, EmptyFields},
+    Context, Guard, MergedObject, MergedSubscription, ObjectType, OutputType, Result,
+};
+use chrono::TimeDelta;
+use data_encoding::BASE64;
+use num_traits::ToPrimitive;
+use review_database::{self as database, Database, Direction, Role, Store};
+pub use roxy::{Process, ResourceUsage};
+use tokio::sync::{Notify, RwLock};
+use tracing::warn;
+use vinum::signal;
+
 pub use self::allow_network::get_allow_networks;
 pub use self::block_network::get_block_networks;
 pub use self::cert::ParsedCertificate;
@@ -45,22 +63,6 @@ pub use self::sampling::{
 };
 pub use self::trusted_user_agent::get_trusted_user_agent_list;
 use crate::backend::{AgentManager, CertManager};
-use async_graphql::connection::ConnectionNameType;
-use async_graphql::{
-    connection::{Connection, Edge, EmptyFields},
-    Context, Guard, MergedObject, MergedSubscription, ObjectType, OutputType, Result,
-};
-use chrono::TimeDelta;
-use data_encoding::BASE64;
-use num_traits::ToPrimitive;
-use review_database::{self as database, Database, Direction, Role, Store};
-pub use roxy::{Process, ResourceUsage};
-#[cfg(test)]
-use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
-use tokio::sync::{Notify, RwLock};
-use tracing::warn;
-use vinum::signal;
 
 /// GraphQL schema type.
 pub(super) type Schema = async_graphql::Schema<Query, Mutation, Subscription>;

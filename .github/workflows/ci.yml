@@ -15,7 +15,7 @@ jobs:
       with:
         components: clippy, rustfmt
     - name: Check formatting
-      run: cargo fmt -- --check
+      run: cargo fmt -- --check --config group_imports=StdExternalCrate
     - name: Clippy
       run: cargo clippy -- -D warnings -W clippy::pedantic
     - name: Check

@@ -1,13 +1,10 @@
 #![allow(clippy::fn_params_excessive_bools)]
 
-use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks};
-
-use super::{
-    super::{Role, RoleGuard},
-    input::NodeDraftInput,
-    Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, PortNumber, ServerAddress,
-    ServerPort, Setting,
+use std::{
+    collections::HashMap,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
 };
+
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     types::ID,
@@ -15,11 +12,15 @@ use async_graphql::{
 };
 use chrono::Utc;
 use review_database::{Direction, Iterable, Store};
-use std::{
-    collections::HashMap,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-};
 use tracing::error;
+
+use super::{
+    super::{Role, RoleGuard},
+    input::NodeDraftInput,
+    Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, PortNumber, ServerAddress,
+    ServerPort, Setting,
+};
+use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks};
 
 #[Object]
 impl NodeQuery {
@@ -440,9 +441,10 @@ pub fn get_customer_id_of_review_host(db: &Store) -> Result<Option<u32>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::graphql::TestSchema;
     use assert_json_diff::assert_json_eq;
     use serde_json::json;
+
+    use crate::graphql::TestSchema;
 
     // test scenario : insert node -> update node with different name -> remove node
     #[tokio::test]

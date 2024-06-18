@@ -1,10 +1,11 @@
-use super::{Role, RoleGuard};
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     types::ID,
     Context, InputObject, Object, Result,
 };
 use chrono::{DateTime, Utc};
+
+use super::{Role, RoleGuard};
 
 #[allow(clippy::module_name_repetitions)]
 pub struct TriageResponse {

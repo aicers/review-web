@@ -1,14 +1,5 @@
 use std::sync::Arc;
 
-use super::{
-    category::Category,
-    get_trend,
-    model::{ModelDigest, TopElementCountsByColumn},
-    qualifier::Qualifier,
-    slicing,
-    status::Status,
-    Role, RoleGuard, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER,
-};
 use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
     types::ID,
@@ -20,6 +11,16 @@ use database::Store;
 use num_traits::ToPrimitive;
 use review_database::{self as database, Database};
 use tokio::sync::RwLock;
+
+use super::{
+    category::Category,
+    get_trend,
+    model::{ModelDigest, TopElementCountsByColumn},
+    qualifier::Qualifier,
+    slicing,
+    status::Status,
+    Role, RoleGuard, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER,
+};
 
 #[derive(Default)]
 pub(super) struct ClusterQuery;
