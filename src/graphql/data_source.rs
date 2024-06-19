@@ -1,10 +1,11 @@
-use super::{Role, RoleGuard};
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     types::ID,
     Context, Enum, InputObject, Object, Result,
 };
 use review_database::{self as database};
+
+use super::{Role, RoleGuard};
 
 #[derive(Default)]
 pub(super) struct DataSourceQuery;

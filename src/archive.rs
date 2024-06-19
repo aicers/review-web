@@ -1,4 +1,5 @@
-use crate::{auth::validate_token, Error, Store};
+use std::sync::Arc;
+
 use axum::{
     async_trait,
     body::Body,
@@ -17,8 +18,9 @@ use axum_extra::{
 use http::{request::Parts, StatusCode};
 use review_database::types::Role;
 use serde::Deserialize;
-use std::sync::Arc;
 use tokio::sync::RwLock;
+
+use crate::{auth::validate_token, Error, Store};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {

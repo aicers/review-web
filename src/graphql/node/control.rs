@@ -1,12 +1,14 @@
+use std::net::{IpAddr, SocketAddr};
+
+use async_graphql::{Context, Object, Result, SimpleObject, ID};
+use review_database::{Node, NodeSettings};
+use tracing::{error, info};
+
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard},
     ModuleName, NodeControlMutation,
 };
 use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks};
-use async_graphql::{Context, Object, Result, SimpleObject, ID};
-use review_database::{Node, NodeSettings};
-use std::net::{IpAddr, SocketAddr};
-use tracing::{error, info};
 
 const MAX_SET_CONFIG_TRY_COUNT: u32 = 3;
 

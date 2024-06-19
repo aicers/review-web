@@ -1,4 +1,5 @@
-use super::{get_customer_id_of_review_host, BoxedAgentManager, Role, RoleGuard};
+use std::convert::{TryFrom, TryInto};
+
 use anyhow::Context as AnyhowContext;
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
@@ -8,8 +9,9 @@ use async_graphql::{
 use bincode::Options;
 use chrono::{DateTime, Utc};
 use review_database::{self as database, Store};
-use std::convert::{TryFrom, TryInto};
 use tracing::error;
+
+use super::{get_customer_id_of_review_host, BoxedAgentManager, Role, RoleGuard};
 
 #[derive(Default)]
 pub(super) struct CustomerQuery;

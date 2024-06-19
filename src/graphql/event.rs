@@ -18,6 +18,32 @@ mod ssh;
 mod sysmon;
 mod tls;
 
+use std::{
+    cmp,
+    net::IpAddr,
+    num::NonZeroU8,
+    sync::{Arc, Mutex},
+};
+
+use anyhow::{anyhow, bail, Context as AnyhowContext};
+use async_graphql::{
+    connection::{query, Connection, Edge, EmptyFields},
+    Context, InputObject, Object, Result, Subscription, Union, ID,
+};
+use chrono::{DateTime, Utc};
+use futures::channel::mpsc::{unbounded, UnboundedSender};
+use futures_util::stream::Stream;
+use num_traits::FromPrimitive;
+use review_database::{
+    self as database,
+    event::RecordType,
+    find_ip_country,
+    types::{Endpoint, EventCategory, HostNetworkGroup},
+    Direction, EventFilter, EventIterator, EventKind, IndexedTable, Iterable, Store,
+};
+use tokio::time;
+use tracing::{error, warn};
+
 pub(super) use self::group::EventGroupQuery;
 use self::{
     conn::BlockListConn, conn::ExternalDdos, conn::MultiHostPortScan, conn::PortScan,
@@ -36,30 +62,6 @@ use super::{
     network::Network,
     Role, RoleGuard,
 };
-use anyhow::{anyhow, bail, Context as AnyhowContext};
-use async_graphql::{
-    connection::{query, Connection, Edge, EmptyFields},
-    Context, InputObject, Object, Result, Subscription, Union, ID,
-};
-use chrono::{DateTime, Utc};
-use futures::channel::mpsc::{unbounded, UnboundedSender};
-use futures_util::stream::Stream;
-use num_traits::FromPrimitive;
-use review_database::{
-    self as database,
-    event::RecordType,
-    find_ip_country,
-    types::{Endpoint, EventCategory, HostNetworkGroup},
-    Direction, EventFilter, EventIterator, EventKind, IndexedTable, Iterable, Store,
-};
-use std::{
-    cmp,
-    net::IpAddr,
-    num::NonZeroU8,
-    sync::{Arc, Mutex},
-};
-use tokio::time;
-use tracing::{error, warn};
 
 const DEFAULT_CONNECTION_SIZE: usize = 100;
 const DEFAULT_EVENT_FETCH_TIME: u64 = 20;
@@ -1126,11 +1128,13 @@ fn iter_to_events(
 
 #[cfg(test)]
 mod tests {
-    use crate::graphql::TestSchema;
+    use std::net::Ipv4Addr;
+
     use chrono::{DateTime, NaiveDate, Utc};
     use futures_util::StreamExt;
     use review_database::{event::DnsEventFields, EventKind, EventMessage};
-    use std::net::Ipv4Addr;
+
+    use crate::graphql::TestSchema;
 
     /// Creates an event message at `timestamp` with the given source and
     /// destination `IPv4` addresses.

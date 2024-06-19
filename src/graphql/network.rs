@@ -1,7 +1,4 @@
-use super::{
-    customer::{Customer, HostNetworkGroup, HostNetworkGroupInput},
-    Role, RoleGuard,
-};
+use std::{convert::TryInto, mem::size_of};
 
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
@@ -11,7 +8,10 @@ use async_graphql::{
 use chrono::{DateTime, Utc};
 use review_database::{self as database};
 
-use std::{convert::TryInto, mem::size_of};
+use super::{
+    customer::{Customer, HostNetworkGroup, HostNetworkGroupInput},
+    Role, RoleGuard,
+};
 
 #[derive(Default)]
 pub(super) struct NetworkQuery;

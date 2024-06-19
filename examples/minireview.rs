@@ -1,3 +1,12 @@
+use std::{
+    collections::HashMap,
+    env, fs,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    process::exit,
+    sync::{Arc, Mutex},
+};
+
 use anyhow::{anyhow, bail, Context, Error, Result};
 use async_trait::async_trait;
 use config::{Environment, File};
@@ -13,14 +22,6 @@ use review_web::{
     graphql::{Process, ResourceUsage, SamplingPolicy},
 };
 use serde::Deserialize;
-use std::{
-    collections::HashMap,
-    env, fs,
-    net::SocketAddr,
-    path::{Path, PathBuf},
-    process::exit,
-    sync::{Arc, Mutex},
-};
 use tokio::{
     signal::unix::{signal, SignalKind},
     sync::{Notify, RwLock},

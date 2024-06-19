@@ -1,10 +1,12 @@
-use super::{ParseEnumError, Role, RoleGuard};
+use std::convert::{TryFrom, TryInto};
+
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     Context, Enum, InputObject, Object, Result, Union,
 };
 use serde::{Deserialize, Serialize};
-use std::convert::{TryFrom, TryInto};
+
+use super::{ParseEnumError, Role, RoleGuard};
 
 #[derive(Default)]
 pub(super) struct TemplateQuery;

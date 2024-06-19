@@ -4,6 +4,12 @@ mod input;
 mod process;
 mod status;
 
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+};
+
 use async_graphql::{
     types::ID, ComplexObject, Context, InputObject, Object, Result, SimpleObject, StringNumber,
 };
@@ -15,11 +21,6 @@ use ipnet::Ipv4Net;
 use review_database::Indexable;
 use roxy::Process as RoxyProcess;
 use serde::{Deserialize, Serialize};
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    net::{IpAddr, SocketAddr},
-};
 
 pub type PortNumber = u16;
 

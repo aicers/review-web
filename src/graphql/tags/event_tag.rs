@@ -1,6 +1,7 @@
+use async_graphql::{Context, Object, Result, ID};
+
 use super::{Role, Tag};
 use crate::graphql::RoleGuard;
-use async_graphql::{Context, Object, Result, ID};
 
 #[derive(Default)]
 pub(in crate::graphql) struct EventTagQuery;

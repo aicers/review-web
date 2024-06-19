@@ -37,6 +37,12 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     and `query` structures after an update of async-graphql. this is a bug in
     async-graphql 7.0.2 and later, and will be merged back into one structure
     when async-graphql is patched for that bug in the future.
+- Apply rustfmt's option `group_imports=StdExternalCrate`.
+  - Modify the code with the command `cargo fmt -- --config group_imports=StdExternalCrate`.
+    This command must be applied automatically or manually before all future pull
+    requests are submitted.
+  - Add `--config group_imports=StdExternalCrate` to the CI process like:
+    - `cargo fmt -- --check --config group_imports=StdExternalCrate`
 
 ### Fixed
 

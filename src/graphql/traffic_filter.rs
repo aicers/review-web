@@ -1,9 +1,11 @@
-use super::{BoxedAgentManager, Role, RoleGuard};
+use std::net::{IpAddr, Ipv4Addr};
+
 use async_graphql::{Context, Object, Result};
 use chrono::{DateTime, Utc};
 use ipnet::IpNet;
 use review_database::{self as database};
-use std::net::{IpAddr, Ipv4Addr};
+
+use super::{BoxedAgentManager, Role, RoleGuard};
 
 #[derive(Default)]
 pub(super) struct TrafficFilterQuery;

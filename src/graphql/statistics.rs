@@ -1,4 +1,3 @@
-use super::{slicing, Role, RoleGuard};
 use async_graphql::{
     connection::{query, Connection, ConnectionNameType, Edge, EmptyFields},
     types::ID,
@@ -8,6 +7,8 @@ use chrono::{DateTime, NaiveDateTime};
 use num_traits::ToPrimitive;
 use review_database::{BatchInfo, Database};
 use serde_json::Value as JsonValue;
+
+use super::{slicing, Role, RoleGuard};
 
 #[derive(Default)]
 pub(super) struct StatisticsQuery;

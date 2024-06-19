@@ -1,14 +1,16 @@
-use super::{
-    super::{BoxedAgentManager, Role, RoleGuard},
-    ModuleName, NodeStatus, NodeStatusQuery, NodeStatusTotalCount,
-};
+use std::collections::{HashMap, HashSet};
+
 use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
     Context, Object, Result,
 };
 use review_database::UniqueKey;
 use roxy::ResourceUsage;
-use std::collections::{HashMap, HashSet};
+
+use super::{
+    super::{BoxedAgentManager, Role, RoleGuard},
+    ModuleName, NodeStatus, NodeStatusQuery, NodeStatusTotalCount,
+};
 
 #[Object]
 impl NodeStatusQuery {
@@ -237,12 +239,14 @@ async fn load(
 
 #[cfg(test)]
 mod tests {
-    use crate::graphql::{AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema};
+    use std::collections::HashMap;
+
     use assert_json_diff::assert_json_eq;
     use axum::async_trait;
     use roxy::ResourceUsage;
     use serde_json::json;
-    use std::collections::HashMap;
+
+    use crate::graphql::{AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema};
 
     struct MockAgentManager {
         pub online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,

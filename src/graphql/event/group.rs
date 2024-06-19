@@ -1,14 +1,16 @@
-use super::{from_filter_input, EventListFilterInput};
-use crate::graphql::{Role, RoleGuard};
-use async_graphql::{Context, Object, OutputType, Result, SimpleObject};
-use database::{EventCategory, IndexedTable, Iterable};
-use review_database::{self as database, Direction, Event, EventFilter};
 use std::{
     collections::HashMap,
     num::NonZeroU8,
     sync::{Arc, Mutex},
 };
+
+use async_graphql::{Context, Object, OutputType, Result, SimpleObject};
+use database::{EventCategory, IndexedTable, Iterable};
+use review_database::{self as database, Direction, Event, EventFilter};
 use tracing::warn;
+
+use super::{from_filter_input, EventListFilterInput};
+use crate::graphql::{Role, RoleGuard};
 
 #[derive(Default)]
 pub(in crate::graphql) struct EventGroupQuery;
@@ -431,10 +433,12 @@ fn load_networks(
 
 #[cfg(test)]
 mod tests {
-    use crate::graphql::TestSchema;
+    use std::net::Ipv4Addr;
+
     use chrono::{DateTime, NaiveDate, Utc};
     use review_database::{event::DnsEventFields, EventKind, EventMessage};
-    use std::net::Ipv4Addr;
+
+    use crate::graphql::TestSchema;
 
     /// Creates an event message at `timestamp` with the given source and
     /// destination `IPv4` addresses.

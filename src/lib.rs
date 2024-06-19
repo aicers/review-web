@@ -3,8 +3,14 @@ pub mod auth;
 pub mod backend;
 pub mod graphql;
 
-use crate::auth::{validate_token, AuthError};
-use crate::backend::{AgentManager, CertManager};
+use std::{
+    fs::read,
+    io,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
+
 use async_graphql::{
     http::{playground_source, GraphQLPlaygroundConfig},
     Data,
@@ -25,19 +31,15 @@ use graphql::RoleGuard;
 use review_database::{Database, Store};
 use rustls::{pki_types::CertificateDer, ClientConfig, RootCertStore};
 use serde_json::json;
-use std::{
-    fs::read,
-    io,
-    net::SocketAddr,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-};
 use tokio::{
     sync::{Notify, RwLock},
     task::JoinHandle,
 };
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing::error;
+
+use crate::auth::{validate_token, AuthError};
+use crate::backend::{AgentManager, CertManager};
 
 /// Parameters for a web server.
 pub struct ServerConfig {

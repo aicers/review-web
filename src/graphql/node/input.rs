@@ -1,7 +1,9 @@
-use super::PortNumber;
+use std::{collections::HashMap, net::IpAddr};
+
 use anyhow::Context as AnyhowContext;
 use async_graphql::{types::ID, InputObject, Result};
-use std::{collections::HashMap, net::IpAddr};
+
+use super::PortNumber;
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, InputObject)]

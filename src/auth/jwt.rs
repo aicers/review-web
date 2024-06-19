@@ -1,15 +1,17 @@
-use super::{store::token_exists_in_store, AuthError};
-use crate::Store;
+use std::{
+    str::FromStr,
+    sync::{Arc, RwLock},
+};
+
 use anyhow::anyhow;
 use async_graphql::Result;
 use chrono::{NaiveDateTime, TimeDelta};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use review_database as database;
 use serde::{Deserialize, Serialize};
-use std::{
-    str::FromStr,
-    sync::{Arc, RwLock},
-};
+
+use super::{store::token_exists_in_store, AuthError};
+use crate::Store;
 
 lazy_static::lazy_static! {
     static ref JWT_EXPIRES_IN: Arc<RwLock<u32>> = Arc::new(RwLock::new(3600));

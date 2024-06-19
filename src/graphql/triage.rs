@@ -1,11 +1,12 @@
 mod policy;
 pub(super) mod response;
 
-use super::{Role, RoleGuard};
 use async_graphql::{Enum, InputObject, Object, ID};
 use chrono::{DateTime, Utc};
 use review_database as database;
 use serde::Deserialize;
+
+use super::{Role, RoleGuard};
 
 #[derive(Default)]
 pub(super) struct TriagePolicyQuery;
