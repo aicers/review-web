@@ -462,23 +462,23 @@ impl NodeStatus {
     async fn id(&self) -> ID {
         ID(self.id.to_string())
     }
-
+    /// The RAM size in bytes within the range representable by a `u64`
     async fn total_memory(&self) -> Option<StringNumber<u64>> {
         self.total_memory.map(StringNumber)
     }
-
+    /// The amount of used RAM in bytes within the range representable by a `u64`
     async fn used_memory(&self) -> Option<StringNumber<u64>> {
         self.used_memory.map(StringNumber)
     }
-
+    /// The total disk space in bytes within the range representable by a `u64`
     async fn total_disk_space(&self) -> Option<StringNumber<u64>> {
         self.total_disk_space.map(StringNumber)
     }
-
+    /// The total disk space in bytes that is currently used within the range representable by a `u64`
     async fn used_disk_space(&self) -> Option<StringNumber<u64>> {
         self.used_disk_space.map(StringNumber)
     }
-
+    /// The round-trip time in microseconds to a host, within the range representable by an `i64`
     async fn ping(&self) -> Option<StringNumber<i64>> {
         self.ping.map(StringNumber)
     }
