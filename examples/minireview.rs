@@ -19,7 +19,7 @@ use review_database::{migrate_data_dir, Database, Store};
 use review_web::{
     self as web,
     backend::{AgentManager, CertManager},
-    graphql::{Process, ResourceUsage, SamplingPolicy},
+    graphql::{account::set_initial_admin_password, Process, ResourceUsage, SamplingPolicy},
 };
 use serde::Deserialize;
 use tokio::{
@@ -321,13 +321,10 @@ async fn run(config: Config) -> Result<Arc<Notify>> {
     let db = Database::new(config.database_url(), &config.ca_certs())
         .await
         .context("failed to connect to the PostgreSQL database")?;
-    let store = {
-        let store = Store::new(config.data_dir(), config.backup_dir())
-            .map(RwLock::new)
-            .map(Arc::new)
-            .context("failed to connect to database")?;
-        store
-    };
+    let store = Store::new(config.data_dir(), config.backup_dir())?;
+    let _ = set_initial_admin_password(&store)?;
+    let store = Arc::new(RwLock::new(store));
+
     let agent_manager = Manager {};
     let cert_reload_handle = Arc::new(Notify::new());
 
