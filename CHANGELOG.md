@@ -43,6 +43,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     requests are submitted.
   - Add `--config group_imports=StdExternalCrate` to the CI process like:
     - `cargo fmt -- --check --config group_imports=StdExternalCrate`
+- Updated version of rustls to "0.23" and fixed related code due to reqwest
+  version update.
 
 ### Fixed
 

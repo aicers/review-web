@@ -30,7 +30,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 review-database = { git = "https://github.com/petabi/review-database.git", rev = "78ff219" }
 review-protocol = { git = "https://github.com/petabi/review-protocol.git", tag = "0.3.0" }
 roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.2.1" }
-rustls = "0.22" #should be the same version as what reqwest depends on
+rustls = "0.23" #should be the same version as what reqwest depends on
 rustls-native-certs = "0.7"
 rustls-pemfile = "2.0"
 serde = { version = "1", features = ["derive"] }
