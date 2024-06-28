@@ -59,25 +59,8 @@ impl NodeControlMutation {
             return Err("There is nothing to apply.".into());
         }
 
-        let review_config_setted = match &node.settings_draft {
-            Some(settings_draft) if settings_draft.review => {
-                // TODO: Trigger `set_review_config()`; Configs that can be set
-                // for REview are `revew_port` and `review_web_port`.
-                // `set_review_config` is expected to exist in REview.
-                // `set_review_config()` will write the update to a temporary
-                // file. Until the `set_review_config()` is implemented, the
-                // `review_config_setted` is temporarily fixed to true, but
-                // after implementation, it should be set according to the
-                // return value of `set_review_config()`.
-                false
-            }
-            _ => false,
-        };
         let config_setted_modules = send_set_config_requests(agents, &node).await;
-        let success_modules = if let Ok(mut config_setted_modules) = config_setted_modules {
-            if review_config_setted {
-                config_setted_modules.push(ModuleName::Review);
-            }
+        let success_modules = if let Ok(config_setted_modules) = config_setted_modules {
             update_node(ctx, i, node.clone(), &config_setted_modules).await?;
 
             if let Some(customer_id) = should_broadcast_customer_change(&node) {
@@ -87,19 +70,6 @@ impl NodeControlMutation {
         } else {
             return Err("Failed to apply node settings".into());
         };
-
-        if review_config_setted {
-            // TODO: Spawn a task to trigger `reload_review()` after a few
-            // seconds like below. `reload_review()` is expected to exist in
-            // REview. It reads the temp file written by `set_review_config()`.
-            // At reload, the temporary file replaces the original config file.
-            /*
-            tokio::spawn(async {
-              tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-              reload_review();
-            });
-            */
-        }
 
         Ok(ApplyResult {
             id,
@@ -125,7 +95,7 @@ async fn send_set_config_requests(
 
     let mut result_combined: Vec<ModuleName> = vec![];
 
-    for (module_name, config) in target_app_configs(settings_draft)? {
+    for (module_name, config) in target_app_configs(settings_draft) {
         if send_set_config_request(
             agents,
             &settings_draft.hostname,
@@ -160,36 +130,21 @@ async fn send_set_config_request(
 
 fn target_app_configs(
     settings_draft: &NodeSettings,
-) -> anyhow::Result<Vec<(ModuleName, review_protocol::types::Config)>> {
+) -> Vec<(ModuleName, review_protocol::types::Config)> {
     let mut configurations = Vec::new();
 
     if settings_draft.piglet {
-        configurations.push((ModuleName::Piglet, build_piglet_config(settings_draft)?));
+        configurations.push((ModuleName::Piglet, build_piglet_config(settings_draft)));
     }
 
     if settings_draft.hog {
-        configurations.push((ModuleName::Hog, build_hog_config(settings_draft)?));
+        configurations.push((ModuleName::Hog, build_hog_config(settings_draft)));
     }
 
-    if settings_draft.reconverge {
-        configurations.push((
-            ModuleName::Reconverge,
-            build_reconverge_config(settings_draft)?,
-        ));
-    }
-
-    Ok(configurations)
+    configurations
 }
 
-fn build_piglet_config(
-    settings_draft: &NodeSettings,
-) -> anyhow::Result<review_protocol::types::Config> {
-    let review_address = build_socket_address(
-        settings_draft.piglet_review_ip,
-        settings_draft.piglet_review_port,
-    )
-    .ok_or_else(|| anyhow::anyhow!("piglet review address is not set"))?;
-
+fn build_piglet_config(settings_draft: &NodeSettings) -> review_protocol::types::Config {
     let giganto_address = build_socket_address(
         settings_draft.piglet_giganto_ip,
         settings_draft.piglet_giganto_port,
@@ -197,37 +152,24 @@ fn build_piglet_config(
     let log_options = build_log_options(settings_draft);
     let http_file_types = build_http_file_types(settings_draft);
 
-    Ok(review_protocol::types::Config::Piglet(
-        review_protocol::types::PigletConfig {
-            review_address,
-            giganto_address,
-            log_options,
-            http_file_types,
-        },
-    ))
+    review_protocol::types::Config::Piglet(review_protocol::types::PigletConfig {
+        giganto_address,
+        log_options,
+        http_file_types,
+    })
 }
 
-fn build_hog_config(
-    settings_draft: &NodeSettings,
-) -> anyhow::Result<review_protocol::types::Config> {
-    let review_address =
-        build_socket_address(settings_draft.hog_review_ip, settings_draft.hog_review_port)
-            .ok_or_else(|| anyhow::anyhow!("hog review address is not set"))?;
+fn build_hog_config(settings_draft: &NodeSettings) -> review_protocol::types::Config {
     let giganto_address = build_socket_address(
         settings_draft.hog_giganto_ip,
         settings_draft.hog_giganto_port,
     );
-    let active_protocols = build_active_protocols(settings_draft);
-    let active_sources = build_active_sources(settings_draft);
 
-    Ok(review_protocol::types::Config::Hog(
-        review_protocol::types::HogConfig {
-            review_address,
-            giganto_address,
-            active_protocols,
-            active_sources,
-        },
-    ))
+    review_protocol::types::Config::Hog(review_protocol::types::HogConfig {
+        giganto_address,
+        active_protocols: settings_draft.protocols.clone(),
+        active_sources: settings_draft.sensors.clone(),
+    })
 }
 
 fn build_log_options(settings_draft: &NodeSettings) -> Option<Vec<String>> {
@@ -261,8 +203,8 @@ fn build_http_file_types(settings_draft: &NodeSettings) -> Option<Vec<String>> {
         (settings_draft.office, "office"),
         (settings_draft.exe, "exe"),
         (settings_draft.pdf, "pdf"),
-        (settings_draft.html, "html"),
         (settings_draft.txt, "txt"),
+        (settings_draft.vbs, "vbs"),
     ];
 
     let http_file_types = condition_to_http_file_types
@@ -283,63 +225,12 @@ fn build_http_file_types(settings_draft: &NodeSettings) -> Option<Vec<String>> {
     }
 }
 
-fn build_active_protocols(settings_draft: &NodeSettings) -> Option<Vec<String>> {
-    if settings_draft.protocols {
-        Some(
-            settings_draft
-                .protocol_list
-                .iter()
-                .filter_map(|(k, v)| if *v { Some(k.clone()) } else { None })
-                .collect::<Vec<String>>(),
-        )
-    } else {
-        None
-    }
-}
-
-fn build_active_sources(settings_draft: &NodeSettings) -> Option<Vec<String>> {
-    if settings_draft.sensors {
-        Some(
-            settings_draft
-                .sensor_list
-                .iter()
-                .filter_map(|(k, v)| if *v { Some(k.clone()) } else { None })
-                .collect::<Vec<String>>(),
-        )
-    } else {
-        None
-    }
-}
-
-fn build_reconverge_config(
-    settings_draft: &NodeSettings,
-) -> anyhow::Result<review_protocol::types::Config> {
-    let review_address = build_socket_address(
-        settings_draft.reconverge_review_ip,
-        settings_draft.reconverge_review_port,
-    )
-    .ok_or_else(|| anyhow::anyhow!("reconverge review address is not set"))?;
-
-    let giganto_address = build_socket_address(
-        settings_draft.reconverge_giganto_ip,
-        settings_draft.reconverge_giganto_port,
-    );
-
-    Ok(review_protocol::types::Config::Reconverge(
-        review_protocol::types::ReconvergeConfig {
-            review_address,
-            giganto_address,
-        },
-    ))
-}
-
 fn build_socket_address(ip: Option<IpAddr>, port: Option<u16>) -> Option<SocketAddr> {
     ip.and_then(|ip| port.map(|port| SocketAddr::new(ip, port)))
 }
 
 #[allow(clippy::struct_excessive_bools)]
 struct ModuleSpecificSettingUpdateIndicator {
-    review: bool,
     hog: bool,
     reconverge: bool,
     piglet: bool,
@@ -347,7 +238,7 @@ struct ModuleSpecificSettingUpdateIndicator {
 
 impl ModuleSpecificSettingUpdateIndicator {
     fn all_true(&self) -> bool {
-        self.review && self.hog && self.reconverge && self.piglet
+        self.hog && self.reconverge && self.piglet
     }
 }
 
@@ -370,11 +261,6 @@ async fn update_node(
 
     if let Some(settings_draft) = &updated_node.settings_draft {
         let update_module_specific_settings = ModuleSpecificSettingUpdateIndicator {
-            review: okay_to_update_module_specific_settings(
-                settings_draft.review,
-                config_setted_modules,
-                ModuleName::Review,
-            ),
             hog: okay_to_update_module_specific_settings(
                 settings_draft.hog,
                 config_setted_modules,
@@ -431,40 +317,22 @@ fn update_module_specfic_settings(
     let mut updated_settings = updated_node.settings.take().unwrap_or_default();
 
     if let Some(settings_draft) = updated_node.settings_draft.as_mut() {
-        if update_module_specific_settings.review {
-            updated_settings.review = settings_draft.review;
-            updated_settings.review_port = settings_draft.review_port;
-            updated_settings.review_web_port = settings_draft.review_web_port;
-        }
-
         if update_module_specific_settings.hog {
             updated_settings.hog = settings_draft.hog;
-            updated_settings.hog_review_ip = settings_draft.hog_review_ip;
-            updated_settings.hog_review_port = settings_draft.hog_review_port;
             updated_settings.hog_giganto_ip = settings_draft.hog_giganto_ip;
             updated_settings.hog_giganto_port = settings_draft.hog_giganto_port;
-            updated_settings.protocols = settings_draft.protocols;
             updated_settings
-                .protocol_list
-                .clone_from(&settings_draft.protocol_list);
-            updated_settings.sensors = settings_draft.sensors;
-            updated_settings
-                .sensor_list
-                .clone_from(&settings_draft.sensor_list);
+                .protocols
+                .clone_from(&settings_draft.protocols);
+            updated_settings.sensors.clone_from(&settings_draft.sensors);
         }
 
         if update_module_specific_settings.reconverge {
             updated_settings.reconverge = settings_draft.reconverge;
-            updated_settings.reconverge_review_ip = settings_draft.reconverge_review_ip;
-            updated_settings.reconverge_review_port = settings_draft.reconverge_review_port;
-            updated_settings.reconverge_giganto_ip = settings_draft.reconverge_giganto_ip;
-            updated_settings.reconverge_giganto_port = settings_draft.reconverge_giganto_port;
         }
 
         if update_module_specific_settings.piglet {
             updated_settings.piglet = settings_draft.piglet;
-            updated_settings.piglet_review_ip = settings_draft.piglet_review_ip;
-            updated_settings.piglet_review_port = settings_draft.piglet_review_port;
             updated_settings.piglet_giganto_ip = settings_draft.piglet_giganto_ip;
             updated_settings.piglet_giganto_port = settings_draft.piglet_giganto_port;
             updated_settings.save_packets = settings_draft.save_packets;
@@ -472,8 +340,8 @@ fn update_module_specfic_settings(
             updated_settings.office = settings_draft.office;
             updated_settings.exe = settings_draft.exe;
             updated_settings.pdf = settings_draft.pdf;
-            updated_settings.html = settings_draft.html;
             updated_settings.txt = settings_draft.txt;
+            updated_settings.vbs = settings_draft.vbs;
             updated_settings.smtp_eml = settings_draft.smtp_eml;
             updated_settings.ftp = settings_draft.ftp;
         }
@@ -483,7 +351,10 @@ fn update_module_specfic_settings(
 }
 
 fn should_broadcast_customer_change(node: &Node) -> Option<u32> {
-    let is_review = node.settings_draft.as_ref().is_some_and(|s| s.review);
+    let is_review = node
+        .settings_draft
+        .as_ref()
+        .is_some_and(|s| super::is_review(&s.hostname));
 
     let old_customer_id: Option<u32> = node.settings.as_ref().map(|s| s.customer_id);
     let new_customer_id: Option<u32> = node.settings_draft.as_ref().map(|s| s.customer_id);
@@ -534,21 +405,16 @@ mod tests {
                         customerId: 0,
                         description: "This is the admin node running review.",
                         hostname: "admin.aice-security.com",
-                        review: true,
-                        reviewPort: 1111,
-                        reviewWebPort: 1112,
                         piglet: false,
                         pigletGigantoIp: null,
                         pigletGigantoPort: null,
-                        pigletReviewIp: null,
-                        pigletReviewPort: null,
                         savePackets: false,
                         http: false,
                         office: false,
                         exe: false,
                         pdf: false,
-                        html: false,
                         txt: false,
+                        vbs: false,
                         smtpEml: false,
                         ftp: false,
                         giganto: false,
@@ -560,19 +426,11 @@ mod tests {
                         gigantoGraphqlPort: null,
                         retentionPeriod: null,
                         reconverge: false,
-                        reconvergeReviewIp: null,
-                        reconvergeReviewPort: null,
-                        reconvergeGigantoIp: null,
-                        reconvergeGigantoPort: null,
                         hog: false,
-                        hogReviewIp: null,
-                        hogReviewPort: null,
                         hogGigantoIp: null,
                         hogGigantoPort: null,
-                        protocols: false,
-                        protocolList: {},
-                        sensors: false,
-                        sensorList: {},
+                        protocols: [],
+                        sensors: [],
                     )
                 }"#,
             )
@@ -594,29 +452,23 @@ mod tests {
                                 customerId
                                 description
                                 hostname
-                                review
-                                reviewPort
-                                reviewWebPort
                                 piglet
                                 giganto
                                 reconverge
                                 hog
-                                protocolList
-                                sensorList
+                                protocols
+                                sensors
                             }
                             settingsDraft {
                                 customerId
                                 description
                                 hostname
-                                review
-                                reviewPort
-                                reviewWebPort
                                 piglet
                                 giganto
                                 reconverge
                                 hog
-                                protocolList
-                                sensorList
+                                protocols
+                                sensors
                             }
                         }
                       }
@@ -640,15 +492,12 @@ mod tests {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
                                     "hostname": "admin.aice-security.com",
-                                    "review": true,
-                                    "reviewPort": 1111,
-                                    "reviewWebPort": 1112,
                                     "piglet": false,
                                     "giganto": false,
                                     "reconverge": false,
                                     "hog": false,
-                                    "protocolList": {},
-                                    "sensorList": {},
+                                    "protocols": [],
+                                    "sensors": [],
                                 },
                             }
                         }
@@ -688,29 +537,23 @@ mod tests {
                                 customerId
                                 description
                                 hostname
-                                review
-                                reviewPort
-                                reviewWebPort
                                 piglet
                                 giganto
                                 reconverge
                                 hog
-                                protocolList
-                                sensorList
+                                protocols
+                                sensors
                             }
                             settingsDraft {
                                 customerId
                                 description
                                 hostname
-                                review
-                                reviewPort
-                                reviewWebPort
                                 piglet
                                 giganto
                                 reconverge
                                 hog
-                                protocolList
-                                sensorList
+                                protocols
+                                sensors
                             }
                         }
                       }
@@ -733,30 +576,14 @@ mod tests {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
                                     "hostname": "admin.aice-security.com",
-                                    "review": false,
-                                    "reviewPort": null,
-                                    "reviewWebPort": null,
                                     "piglet": false,
                                     "giganto": false,
                                     "reconverge": false,
                                     "hog": false,
-                                    "protocolList": {},
-                                    "sensorList": {},
+                                    "protocols": [],
+                                    "sensors": [],
                                 },
-                                "settingsDraft": {
-                                    "customerId": "0",
-                                    "description": "This is the admin node running review.",
-                                    "hostname": "admin.aice-security.com",
-                                    "review": true,
-                                    "reviewPort": 1111,
-                                    "reviewWebPort": 1112,
-                                    "piglet": false,
-                                    "giganto": false,
-                                    "reconverge": false,
-                                    "hog": false,
-                                    "protocolList": {},
-                                    "sensorList": {},
-                                },
+                                "settingsDraft": null,
                             }
                         }
                     ]
@@ -777,21 +604,16 @@ mod tests {
                                 customerId: "0",
                                 description: "This is the admin node running review.",
                                 hostname: "admin.aice-security.com",
-                                review: false,
-                                reviewPort: null,
-                                reviewWebPort: null,
                                 piglet: false,
                                 pigletGigantoIp: null,
                                 pigletGigantoPort: null,
-                                pigletReviewIp: null,
-                                pigletReviewPort: null,
                                 savePackets: false,
                                 http: false,
                                 office: false,
                                 exe: false,
                                 pdf: false,
-                                html: false,
                                 txt: false,
+                                vbs: false,
                                 smtpEml: false,
                                 ftp: false,
                                 giganto: false,
@@ -803,64 +625,13 @@ mod tests {
                                 gigantoGraphqlPort: null,
                                 retentionPeriod: null,
                                 reconverge: false,
-                                reconvergeReviewIp: null,
-                                reconvergeReviewPort: null,
-                                reconvergeGigantoIp: null,
-                                reconvergeGigantoPort: null,
                                 hog: false,
-                                hogReviewIp: null,
-                                hogReviewPort: null,
                                 hogGigantoIp: null,
                                 hogGigantoPort: null,
-                                protocols: false,
-                                protocolList: {},
-                                sensors: false,
-                                sensorList: {},
+                                protocols: [],
+                                sensors: [],
                             },
-                            settingsDraft: {
-                                customerId: "0",
-                                description: "This is the admin node running review.",
-                                hostname: "admin.aice-security.com",
-                                review: true,
-                                reviewPort: 1111,
-                                reviewWebPort: 1112,
-                                piglet: false,
-                                pigletGigantoIp: null,
-                                pigletGigantoPort: null,
-                                pigletReviewIp: null,
-                                pigletReviewPort: null,
-                                savePackets: false,
-                                http: false,
-                                office: false,
-                                exe: false,
-                                pdf: false,
-                                html: false,
-                                txt: false,
-                                smtpEml: false,
-                                ftp: false,
-                                giganto: false,
-                                gigantoIngestionIp: null,
-                                gigantoIngestionPort: null,
-                                gigantoPublishIp: null,
-                                gigantoPublishPort: null,
-                                gigantoGraphqlIp: null,
-                                gigantoGraphqlPort: null,
-                                retentionPeriod: null,
-                                reconverge: false,
-                                reconvergeReviewIp: null,
-                                reconvergeReviewPort: null,
-                                reconvergeGigantoIp: null,
-                                reconvergeGigantoPort: null,
-                                hog: false,
-                                hogReviewIp: null,
-                                hogReviewPort: null,
-                                hogGigantoIp: null,
-                                hogGigantoPort: null,
-                                protocols: false,
-                                protocolList: {},
-                                sensors: false,
-                                sensorList: {},
-                            }
+                            settingsDraft: null
                         },
                         new: {
                             nameDraft: "admin node with new name",
@@ -868,21 +639,16 @@ mod tests {
                                 customerId: "0",
                                 description: "This is the admin node running review.",
                                 hostname: "admin.aice-security.com",
-                                review: true,
-                                reviewPort: 2222,
-                                reviewWebPort: 2223,
                                 piglet: false,
                                 pigletGigantoIp: null,
                                 pigletGigantoPort: null,
-                                pigletReviewIp: null,
-                                pigletReviewPort: null,
                                 savePackets: false,
                                 http: false,
                                 office: false,
                                 exe: false,
                                 pdf: false,
-                                html: false,
                                 txt: false,
+                                vbs: false,
                                 smtpEml: false,
                                 ftp: false,
                                 giganto: false,
@@ -894,19 +660,11 @@ mod tests {
                                 gigantoGraphqlPort: null,
                                 retentionPeriod: null,
                                 reconverge: false,
-                                reconvergeReviewIp: null,
-                                reconvergeReviewPort: null,
-                                reconvergeGigantoIp: null,
-                                reconvergeGigantoPort: null,
                                 hog: false,
-                                hogReviewIp: null,
-                                hogReviewPort: null,
                                 hogGigantoIp: null,
                                 hogGigantoPort: null,
-                                protocols: false,
-                                protocolList: {},
-                                sensors: false,
-                                sensorList: {},
+                                protocols: [],
+                                sensors: [],
                             }
                         }
                     )
@@ -946,29 +704,23 @@ mod tests {
                                 customerId
                                 description
                                 hostname
-                                review
-                                reviewPort
-                                reviewWebPort
                                 piglet
                                 giganto
                                 reconverge
                                 hog
-                                protocolList
-                                sensorList
+                                protocols
+                                sensors
                             }
                             settingsDraft {
                                 customerId
                                 description
                                 hostname
-                                review
-                                reviewPort
-                                reviewWebPort
                                 piglet
                                 giganto
                                 reconverge
                                 hog
-                                protocolList
-                                sensorList
+                                protocols
+                                sensors
                             }
                         }
                       }
@@ -991,30 +743,14 @@ mod tests {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
                                     "hostname": "admin.aice-security.com",
-                                    "review": false,
-                                    "reviewPort": null,
-                                    "reviewWebPort": null,
                                     "piglet": false,
                                     "giganto": false,
                                     "reconverge": false,
                                     "hog": false,
-                                    "protocolList": {},
-                                    "sensorList": {},
+                                    "protocols": [],
+                                    "sensors": [],
                                 },
-                                "settingsDraft": {
-                                    "customerId": "0",
-                                    "description": "This is the admin node running review.",
-                                    "hostname": "admin.aice-security.com",
-                                    "review": true,
-                                    "reviewPort": 2222,
-                                    "reviewWebPort": 2223,
-                                    "piglet": false,
-                                    "giganto": false,
-                                    "reconverge": false,
-                                    "hog": false,
-                                    "protocolList": {},
-                                    "sensorList": {},
-                                },
+                                "settingsDraft": null,
                             }
                         }
                     ]
@@ -1173,7 +909,7 @@ mod tests {
     #[tokio::test]
     async fn test_node_apply_with_online_apps() {
         let mut online_apps_by_host_id = HashMap::new();
-        insert_apps("host1", &["review", "piglet"], &mut online_apps_by_host_id);
+        insert_apps("host1", &["piglet"], &mut online_apps_by_host_id);
         insert_apps(
             "host2",
             &["giganto", "hog", "reconverge"],
@@ -1193,7 +929,7 @@ mod tests {
         let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
         assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 0}}"#);
 
-        // insert node with review, piglet
+        // insert node with piglet
         let res = schema
             .execute(
                 r#"mutation {
@@ -1202,21 +938,16 @@ mod tests {
                         customerId: 0,
                         description: "This is the admin node running review.",
                         hostname: "host1",
-                        review: true,
-                        reviewPort: 1111,
-                        reviewWebPort: 1112,
                         piglet: true,
                         pigletGigantoIp: "0.0.0.0",
                         pigletGigantoPort: 5555,
-                        pigletReviewIp: "0.0.0.0",
-                        pigletReviewPort: 1111,
                         savePackets: false,
                         http: false,
                         office: false,
                         exe: false,
                         pdf: false,
-                        html: false,
                         txt: false,
+                        vbs: false,
                         smtpEml: false,
                         ftp: false,
                         giganto: false,
@@ -1228,19 +959,11 @@ mod tests {
                         gigantoGraphqlPort: null,
                         retentionPeriod: null,
                         reconverge: false,
-                        reconvergeReviewIp: null,
-                        reconvergeReviewPort: null,
-                        reconvergeGigantoIp: null,
-                        reconvergeGigantoPort: null,
                         hog: false,
-                        hogReviewIp: null,
-                        hogReviewPort: null,
                         hogGigantoIp: null,
                         hogGigantoPort: null,
-                        protocols: false,
-                        protocolList: {},
-                        sensors: false,
-                        sensorList: {},
+                        protocols: null,
+                        sensors: null,
                     )
                 }"#,
             )
@@ -1262,7 +985,6 @@ mod tests {
                                 customerId
                                 description
                                 hostname
-                                review
                                 piglet
                                 giganto
                                 reconverge
@@ -1272,7 +994,6 @@ mod tests {
                                 customerId
                                 description
                                 hostname
-                                review
                                 piglet
                                 giganto
                                 reconverge
@@ -1300,7 +1021,6 @@ mod tests {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
                                     "hostname": "host1",
-                                    "review": true,
                                     "piglet": true,
                                     "giganto": false,
                                     "reconverge": false,
@@ -1344,7 +1064,6 @@ mod tests {
                                 customerId
                                 description
                                 hostname
-                                review
                                 piglet
                                 giganto
                                 reconverge
@@ -1354,7 +1073,6 @@ mod tests {
                                 customerId
                                 description
                                 hostname
-                                review
                                 piglet
                                 giganto
                                 reconverge
@@ -1381,22 +1099,12 @@ mod tests {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
                                     "hostname": "host1",
-                                    "review": false,
                                     "piglet": true,
                                     "giganto": false,
                                     "reconverge": false,
                                     "hog": false,
                                 },
-                                "settingsDraft": {
-                                    "customerId": "0",
-                                    "description": "This is the admin node running review.",
-                                    "hostname": "host1",
-                                    "review": true,
-                                    "piglet": true,
-                                    "giganto": false,
-                                    "reconverge": false,
-                                    "hog": false,
-                                },
+                                "settingsDraft": null,
                             }
                         }
                     ]

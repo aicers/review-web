@@ -438,7 +438,7 @@ mod tests {
     use crate::graphql::TestSchema;
 
     #[tokio::test]
-    async fn test_samplig_policy() {
+    async fn test_sampling_policy() {
         let schema = TestSchema::new().await;
 
         let res = schema.execute(r#"{samplingPolicyList{totalCount}}"#).await;
