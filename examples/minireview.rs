@@ -322,7 +322,8 @@ async fn run(config: Config) -> Result<Arc<Notify>> {
         .await
         .context("failed to connect to the PostgreSQL database")?;
     let store = Store::new(config.data_dir(), config.backup_dir())?;
-    let _ = set_initial_admin_password(&store)?;
+    // Ignores the error if the initial admin password is already set.
+    let _ = set_initial_admin_password(&store);
     let store = Arc::new(RwLock::new(store));
 
     let agent_manager = Manager {};
