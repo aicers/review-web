@@ -52,7 +52,7 @@ impl NodeQuery {
         let Some(node) = map.get_by_id(i)? else {
             return Err("no such node".into());
         };
-        Ok(node.into())
+        Ok(node.0.into())
     }
 }
 
@@ -70,36 +70,6 @@ impl NodeMutation {
         customer_id: ID,
         description: String,
         hostname: String,
-
-        piglet: bool,
-        piglet_giganto_ip: Option<String>,
-        piglet_giganto_port: Option<PortNumber>,
-        save_packets: bool,
-        http: bool,
-        office: bool,
-        exe: bool,
-        pdf: bool,
-        txt: bool,
-        vbs: bool,
-        smtp_eml: bool,
-        ftp: bool,
-
-        giganto: bool,
-        giganto_ingestion_ip: Option<String>,
-        giganto_ingestion_port: Option<PortNumber>,
-        giganto_publish_ip: Option<String>,
-        giganto_publish_port: Option<PortNumber>,
-        giganto_graphql_ip: Option<String>,
-        giganto_graphql_port: Option<PortNumber>,
-        retention_period: Option<u16>,
-
-        reconverge: bool,
-
-        hog: bool,
-        hog_giganto_ip: Option<String>,
-        hog_giganto_port: Option<PortNumber>,
-        protocols: Option<Vec<String>>,
-        sensors: Option<Vec<String>>,
     ) -> Result<ID> {
         let (id, customer_id) = {
             let store = crate::graphql::get_store(ctx).await?;
@@ -113,57 +83,14 @@ impl NodeMutation {
                 id: u32::MAX,
                 name,
                 name_draft: None,
-                settings: None,
-                settings_draft: Some(review_database::NodeSettings {
+                profile: None,
+                profile_draft: Some(review_database::NodeProfile {
                     customer_id,
                     description,
                     hostname: hostname.clone(),
-
-                    piglet,
-                    piglet_giganto_ip: parse_str_to_ip(
-                        piglet_giganto_ip.as_deref(),
-                        "invalid IP address: storage",
-                    )?,
-                    piglet_giganto_port,
-                    save_packets,
-                    http,
-                    office,
-                    exe,
-                    pdf,
-                    txt,
-                    vbs,
-                    smtp_eml,
-                    ftp,
-
-                    giganto,
-                    giganto_ingestion_ip: parse_str_to_ip(
-                        giganto_ingestion_ip.as_deref(),
-                        "invalid IP address: receiving",
-                    )?,
-                    giganto_ingestion_port,
-                    giganto_publish_ip: parse_str_to_ip(
-                        giganto_publish_ip.as_deref(),
-                        "invalid IP address: sending",
-                    )?,
-                    giganto_publish_port,
-                    giganto_graphql_ip: parse_str_to_ip(
-                        giganto_graphql_ip.as_deref(),
-                        "invalid IP address: web",
-                    )?,
-                    giganto_graphql_port,
-                    retention_period,
-
-                    reconverge,
-
-                    hog,
-                    hog_giganto_ip: parse_str_to_ip(
-                        hog_giganto_ip.as_deref(),
-                        "invalid IP address: storage",
-                    )?,
-                    hog_giganto_port,
-                    protocols,
-                    sensors,
                 }),
+                agents: vec![], // TODO before PR - temp value
+                giganto: None,   // TODO before PR - temp value
                 creation_time: Utc::now(),
             };
             let id = map.put(value)?;
@@ -199,7 +126,7 @@ impl NodeMutation {
             let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
             let key = map.remove(i)?;
 
-            let name = match String::from_utf8(key) {
+            let name = match String::from_utf8(key.0) {
                 Ok(key) => key,
                 Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
             };
@@ -258,97 +185,97 @@ async fn load(
 /// # Errors
 ///
 /// Returns an error if the node settings could not be retrieved.
-#[allow(clippy::too_many_lines)]
-pub fn get_node_settings(db: &Store) -> Result<Vec<Setting>> {
-    let map = db.node_map();
-    let mut output = Vec::new();
-    for res in map.iter(Direction::Forward, None) {
-        let node = res.map_err(|_| "invalid value in database")?;
+// #[allow(clippy::too_many_lines)]
+// pub fn get_node_settings(db: &Store) -> Result<Vec<Setting>> {
+//     let map = db.node_map();
+//     let mut output = Vec::new();
+//     for res in map.iter(Direction::Forward, None) {
+//         let node = res.map_err(|_| "invalid value in database")?;
 
-        let node_settings = node.settings.ok_or("Applied node settings do not exist")?;
+//         let node_settings = node.profile.ok_or("Applied node settings do not exist")?;
 
-        let piglet: Option<ServerAddress> = if node_settings.piglet {
-            Some(ServerAddress {
-                web: None,
-                // Set to the `None` since the review address fields has been removed.
-                rpc: None,
-                public: Some(SocketAddr::new(
-                    node_settings
-                        .piglet_giganto_ip
-                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_settings.piglet_giganto_port.unwrap_or_default(),
-                )),
-                ing: None,
-            })
-        } else {
-            None
-        };
-        let giganto = if node_settings.giganto {
-            Some(ServerAddress {
-                web: Some(SocketAddr::new(
-                    node_settings
-                        .giganto_graphql_ip
-                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_settings.giganto_graphql_port.unwrap_or_default(),
-                )),
-                rpc: None,
-                public: Some(SocketAddr::new(
-                    node_settings
-                        .giganto_publish_ip
-                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_settings.giganto_publish_port.unwrap_or_default(),
-                )),
-                ing: Some(SocketAddr::new(
-                    node_settings
-                        .giganto_ingestion_ip
-                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_settings.giganto_ingestion_port.unwrap_or_default(),
-                )),
-            })
-        } else {
-            None
-        };
+//         let piglet: Option<ServerAddress> = if node_settings.piglet {
+//             Some(ServerAddress {
+//                 web: None,
+//                 // Set to the `None` since the review address fields has been removed.
+//                 rpc: None,
+//                 public: Some(SocketAddr::new(
+//                     node_settings
+//                         .piglet_giganto_ip
+//                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+//                     node_settings.piglet_giganto_port.unwrap_or_default(),
+//                 )),
+//                 ing: None,
+//             })
+//         } else {
+//             None
+//         };
+//         let giganto = if node_settings.giganto {
+//             Some(ServerAddress {
+//                 web: Some(SocketAddr::new(
+//                     node_settings
+//                         .giganto_graphql_ip
+//                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+//                     node_settings.giganto_graphql_port.unwrap_or_default(),
+//                 )),
+//                 rpc: None,
+//                 public: Some(SocketAddr::new(
+//                     node_settings
+//                         .giganto_publish_ip
+//                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+//                     node_settings.giganto_publish_port.unwrap_or_default(),
+//                 )),
+//                 ing: Some(SocketAddr::new(
+//                     node_settings
+//                         .giganto_ingestion_ip
+//                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+//                     node_settings.giganto_ingestion_port.unwrap_or_default(),
+//                 )),
+//             })
+//         } else {
+//             None
+//         };
 
-        let reconverge = if node_settings.reconverge {
-            Some(ServerAddress {
-                web: None,
-                // Set to the `None` since the review address fields has been removed.
-                rpc: None,
-                // Set to the `None` since the giganto address fields has been removed.
-                public: None,
-                ing: None,
-            })
-        } else {
-            None
-        };
-        let hog = if node_settings.hog {
-            Some(ServerAddress {
-                web: None,
-                // Set to the `None` since the review address fields has been removed.
-                rpc: None,
-                public: Some(SocketAddr::new(
-                    node_settings
-                        .hog_giganto_ip
-                        .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-                    node_settings.hog_giganto_port.unwrap_or_default(),
-                )),
-                ing: None,
-            })
-        } else {
-            None
-        };
+//         let reconverge = if node_settings.reconverge {
+//             Some(ServerAddress {
+//                 web: None,
+//                 // Set to the `None` since the review address fields has been removed.
+//                 rpc: None,
+//                 // Set to the `None` since the giganto address fields has been removed.
+//                 public: None,
+//                 ing: None,
+//             })
+//         } else {
+//             None
+//         };
+//         let hog = if node_settings.hog {
+//             Some(ServerAddress {
+//                 web: None,
+//                 // Set to the `None` since the review address fields has been removed.
+//                 rpc: None,
+//                 public: Some(SocketAddr::new(
+//                     node_settings
+//                         .hog_giganto_ip
+//                         .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+//                     node_settings.hog_giganto_port.unwrap_or_default(),
+//                 )),
+//                 ing: None,
+//             })
+//         } else {
+//             None
+//         };
 
-        output.push(Setting {
-            name: node_settings.hostname,
-            piglet,
-            giganto,
-            hog,
-            reconverge,
-        });
-    }
+//         output.push(Setting {
+//             name: node_settings.hostname,
+//             piglet,
+//             giganto,
+//             hog,
+//             reconverge,
+//         });
+//     }
 
-    Ok(output)
-}
+//     Ok(output)
+// }
 
 /// Returns the customer id of review node.
 ///
@@ -361,7 +288,7 @@ pub fn get_customer_id_of_review_host(db: &Store) -> Result<Option<u32>> {
     for entry in map.iter(Direction::Forward, None) {
         let node = entry.map_err(|_| "invalid value in database")?;
 
-        if let Some(node_settings) = &node.settings {
+        if let Some(node_settings) = &node.profile {
             if super::is_review(&node_settings.hostname) {
                 return Ok(Some(node_settings.customer_id));
             }

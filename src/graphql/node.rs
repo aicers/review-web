@@ -14,7 +14,7 @@ use async_graphql::{
 };
 use bincode::Options;
 use chrono::{DateTime, TimeZone, Utc};
-pub use crud::{get_customer_id_of_review_host, get_node_settings};
+pub use crud::get_customer_id_of_review_host;
 use input::NodeInput;
 use ipnet::Ipv4Net;
 use review_database::Indexable;
@@ -112,76 +112,14 @@ pub struct NodeSettings {
     customer_id: u32,
     description: String,
     pub(super) hostname: String,
-
-    piglet: bool,
-    #[graphql(skip)]
-    piglet_giganto_ip: Option<IpAddr>,
-    piglet_giganto_port: Option<PortNumber>,
-    save_packets: bool,
-    http: bool,
-    office: bool,
-    exe: bool,
-    pdf: bool,
-    txt: bool,
-    vbs: bool,
-    smtp_eml: bool,
-    ftp: bool,
-
-    giganto: bool,
-    #[graphql(skip)]
-    giganto_ingestion_ip: Option<IpAddr>,
-    giganto_ingestion_port: Option<PortNumber>,
-    #[graphql(skip)]
-    giganto_publish_ip: Option<IpAddr>,
-    giganto_publish_port: Option<PortNumber>,
-    #[graphql(skip)]
-    giganto_graphql_ip: Option<IpAddr>,
-    giganto_graphql_port: Option<PortNumber>,
-    retention_period: Option<u16>,
-
-    reconverge: bool,
-
-    hog: bool,
-    #[graphql(skip)]
-    hog_giganto_ip: Option<IpAddr>,
-    hog_giganto_port: Option<PortNumber>,
-
-    protocols: Option<Vec<String>>,
-    sensors: Option<Vec<String>>,
 }
 
-impl From<review_database::NodeSettings> for NodeSettings {
-    fn from(input: review_database::NodeSettings) -> Self {
+impl From<review_database::NodeProfile> for NodeSettings {
+    fn from(input: review_database::NodeProfile) -> Self {
         Self {
             customer_id: input.customer_id,
             description: input.description.clone(),
             hostname: input.hostname.clone(),
-            piglet: input.piglet,
-            piglet_giganto_ip: input.piglet_giganto_ip,
-            piglet_giganto_port: input.piglet_giganto_port,
-            save_packets: input.save_packets,
-            http: input.http,
-            office: input.office,
-            exe: input.exe,
-            pdf: input.pdf,
-            txt: input.txt,
-            vbs: input.vbs,
-            smtp_eml: input.smtp_eml,
-            ftp: input.ftp,
-            giganto: input.giganto,
-            giganto_ingestion_ip: input.giganto_ingestion_ip,
-            giganto_ingestion_port: input.giganto_ingestion_port,
-            giganto_publish_ip: input.giganto_publish_ip,
-            giganto_publish_port: input.giganto_publish_port,
-            giganto_graphql_ip: input.giganto_graphql_ip,
-            giganto_graphql_port: input.giganto_graphql_port,
-            retention_period: input.retention_period,
-            reconverge: input.reconverge,
-            hog: input.hog,
-            hog_giganto_ip: input.hog_giganto_ip,
-            hog_giganto_port: input.hog_giganto_port,
-            protocols: input.protocols,
-            sensors: input.sensors,
         }
     }
 }
@@ -204,8 +142,8 @@ impl From<review_database::Node> for Node {
             id: input.id,
             name: input.name,
             name_draft: input.name_draft,
-            settings: input.settings.map(Into::into),
-            settings_draft: input.settings_draft.map(Into::into),
+            settings: input.profile.map(Into::into),
+            settings_draft: input.profile_draft.map(Into::into),
             creation_time: input.creation_time,
         }
     }
@@ -222,26 +160,6 @@ impl Node {
 impl NodeSettings {
     async fn customer_id(&self) -> ID {
         ID(self.customer_id.to_string())
-    }
-
-    async fn piglet_giganto_ip(&self) -> Option<String> {
-        self.piglet_giganto_ip.as_ref().map(ToString::to_string)
-    }
-
-    async fn giganto_ingestion_ip(&self) -> Option<String> {
-        self.giganto_ingestion_ip.as_ref().map(ToString::to_string)
-    }
-
-    async fn giganto_publish_ip(&self) -> Option<String> {
-        self.giganto_publish_ip.as_ref().map(ToString::to_string)
-    }
-
-    async fn giganto_graphql_ip(&self) -> Option<String> {
-        self.giganto_graphql_ip.as_ref().map(ToString::to_string)
-    }
-
-    async fn hog_giganto_ip(&self) -> Option<String> {
-        self.hog_giganto_ip.as_ref().map(ToString::to_string)
     }
 }
 

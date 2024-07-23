@@ -799,7 +799,7 @@ fn from_filter_input(store: &Store, input: &EventListFilterInput) -> anyhow::Res
     let categories = if let Some(categories_input) = &input.categories {
         let mut categories = Vec::with_capacity(categories_input.len());
         for category in categories_input {
-            categories.push(EventCategory::try_from(*category).map_err(|e| anyhow!(e))?);
+            categories.push(EventCategory::from_u8(*category).ok_or_else(|| anyhow!("invalid category"))?);
         }
         Some(categories)
     } else {
@@ -931,7 +931,7 @@ fn internal_customer_networks(
 }
 
 fn convert_sensors(
-    map: &IndexedTable<database::Node>,
+    map: &database::NodeTable,
     sensors: &[ID],
 ) -> anyhow::Result<Vec<String>> {
     let mut converted_sensors: Vec<String> = Vec::with_capacity(sensors.len());
@@ -944,7 +944,7 @@ fn convert_sensors(
             bail!("no such sensor")
         };
 
-        if let Some(node_settings) = node.settings {
+        if let Some(node_settings) = node.0.profile {
             if !node_settings.hostname.is_empty() {
                 converted_sensors.push(node_settings.hostname.clone());
             }

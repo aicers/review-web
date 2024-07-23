@@ -92,7 +92,8 @@ async fn load(
             ping,
             piglet_config,
             hog_config,
-        ) = match ev.settings.as_ref().map(|settings| &settings.hostname) {
+        ) = match ev.profile.as_ref().map(|profile| &profile.hostname)
+        {
             Some(hostname) => {
                 let matches_review_host =
                     !review_hostname.is_empty() && &review_hostname == hostname;
@@ -197,8 +198,10 @@ async fn load(
                 None, None, None, None, None, None, None, None, None, None, None, None,
             ),
         };
+
+        let key = ev.unique_key().clone();
         connection.edges.push(Edge::new(
-            crate::graphql::encode_cursor(&ev.unique_key()),
+            crate::graphql::encode_cursor(&key),
             NodeStatus::new(
                 ev.id,
                 ev.name,

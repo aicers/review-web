@@ -1,7 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
 
 use async_graphql::{Context, Object, Result, SimpleObject, ID};
-use review_database::{Node, NodeSettings};
+use review_database::{Node, NodeProfile};
 use tracing::{error, info};
 
 use super::{
@@ -55,15 +55,15 @@ impl NodeControlMutation {
                 .ok_or_else(|| async_graphql::Error::new(format!("Node with ID {i} not found",)))?
         };
 
-        if node.name_draft.is_none() && node.settings_draft.is_none() {
+        if node.0.name_draft.is_none() && node.0.profile_draft.is_none() {
             return Err("There is nothing to apply.".into());
         }
 
-        let config_setted_modules = send_set_config_requests(agents, &node).await;
+        let config_setted_modules = send_set_config_requests(agents, &node.0).await;
         let success_modules = if let Ok(config_setted_modules) = config_setted_modules {
-            update_node(ctx, i, node.clone(), &config_setted_modules).await?;
+            update_node(ctx, i, node.0.clone(), &config_setted_modules).await?;
 
-            if let Some(customer_id) = should_broadcast_customer_change(&node) {
+            if let Some(customer_id) = should_broadcast_customer_change(&node.0) {
                 broadcast_customer_change(customer_id, ctx).await?;
             }
             config_setted_modules
@@ -89,7 +89,7 @@ async fn send_set_config_requests(
     node: &Node,
 ) -> anyhow::Result<Vec<ModuleName>> {
     let settings_draft = node
-        .settings_draft
+        .profile_draft
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("There is nothing to be applied."))?;
 
@@ -129,101 +129,13 @@ async fn send_set_config_request(
 }
 
 fn target_app_configs(
-    settings_draft: &NodeSettings,
+    settings_draft: &NodeProfile,
 ) -> Vec<(ModuleName, review_protocol::types::Config)> {
     let mut configurations = Vec::new();
-
-    if settings_draft.piglet {
-        configurations.push((ModuleName::Piglet, build_piglet_config(settings_draft)));
-    }
-
-    if settings_draft.hog {
-        configurations.push((ModuleName::Hog, build_hog_config(settings_draft)));
-    }
 
     configurations
 }
 
-fn build_piglet_config(settings_draft: &NodeSettings) -> review_protocol::types::Config {
-    let giganto_address = build_socket_address(
-        settings_draft.piglet_giganto_ip,
-        settings_draft.piglet_giganto_port,
-    );
-    let log_options = build_log_options(settings_draft);
-    let http_file_types = build_http_file_types(settings_draft);
-
-    review_protocol::types::Config::Piglet(review_protocol::types::PigletConfig {
-        giganto_address,
-        log_options,
-        http_file_types,
-    })
-}
-
-fn build_hog_config(settings_draft: &NodeSettings) -> review_protocol::types::Config {
-    let giganto_address = build_socket_address(
-        settings_draft.hog_giganto_ip,
-        settings_draft.hog_giganto_port,
-    );
-
-    review_protocol::types::Config::Hog(review_protocol::types::HogConfig {
-        giganto_address,
-        active_protocols: settings_draft.protocols.clone(),
-        active_sources: settings_draft.sensors.clone(),
-    })
-}
-
-fn build_log_options(settings_draft: &NodeSettings) -> Option<Vec<String>> {
-    let condition_to_log_option = [
-        (settings_draft.save_packets, "dump"),
-        (settings_draft.http, "http"),
-        (settings_draft.smtp_eml, "eml"),
-        (settings_draft.ftp, "ftp"),
-    ];
-
-    let log_options = condition_to_log_option
-        .iter()
-        .filter_map(|(cond, value)| {
-            if *cond {
-                Some((*value).to_string())
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<String>>();
-
-    if log_options.is_empty() {
-        None
-    } else {
-        Some(log_options)
-    }
-}
-
-fn build_http_file_types(settings_draft: &NodeSettings) -> Option<Vec<String>> {
-    let condition_to_http_file_types = [
-        (settings_draft.office, "office"),
-        (settings_draft.exe, "exe"),
-        (settings_draft.pdf, "pdf"),
-        (settings_draft.txt, "txt"),
-        (settings_draft.vbs, "vbs"),
-    ];
-
-    let http_file_types = condition_to_http_file_types
-        .iter()
-        .filter_map(|(cond, value)| {
-            if *cond {
-                Some((*value).to_string())
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<String>>();
-
-    if http_file_types.is_empty() {
-        None
-    } else {
-        Some(http_file_types)
-    }
-}
 
 fn build_socket_address(ip: Option<IpAddr>, port: Option<u16>) -> Option<SocketAddr> {
     ip.and_then(|ip| port.map(|port| SocketAddr::new(ip, port)))
@@ -250,37 +162,26 @@ fn okay_to_update_module_specific_settings(
     !setting_draft_value || config_setted_modules.iter().any(|x| *x == expected_module)
 }
 
-async fn update_node(
+async fn update_node(  // TODO before PR - update this function
     ctx: &Context<'_>,
     i: u32,
     node: Node,
-    config_setted_modules: &[ModuleName],
+    _config_setted_modules: &[ModuleName],
 ) -> Result<()> {
     let mut updated_node = node.clone();
     updated_node.name = updated_node.name_draft.take().unwrap_or(updated_node.name);
 
-    if let Some(settings_draft) = &updated_node.settings_draft {
-        let update_module_specific_settings = ModuleSpecificSettingUpdateIndicator {
-            hog: okay_to_update_module_specific_settings(
-                settings_draft.hog,
-                config_setted_modules,
-                ModuleName::Hog,
-            ),
-            reconverge: okay_to_update_module_specific_settings(
-                settings_draft.reconverge,
-                config_setted_modules,
-                ModuleName::Reconverge,
-            ),
-            piglet: okay_to_update_module_specific_settings(
-                settings_draft.piglet,
-                config_setted_modules,
-                ModuleName::Piglet,
-            ),
+    if let Some(_settings_draft) = &updated_node.profile_draft {
+
+        let update_module_specific_settings = ModuleSpecificSettingUpdateIndicator {  // TODO before PR - temp value
+            hog: true,
+            reconverge: true,
+            piglet: true,
         };
 
         if update_module_specific_settings.all_true() {
             // All fields in the `settings` can simply be replaced with fields in `settings_draft`.
-            updated_node.settings = updated_node.settings_draft.take();
+            updated_node.profile = updated_node.profile_draft.take();
         } else {
             update_common_node_settings(&mut updated_node);
             update_module_specfic_settings(&mut updated_node, &update_module_specific_settings);
@@ -296,8 +197,8 @@ async fn update_node(
 }
 
 fn update_common_node_settings(updated_node: &mut Node) {
-    let mut updated_settings = updated_node.settings.take().unwrap_or_default();
-    if let Some(settings_draft) = updated_node.settings_draft.as_ref() {
+    let mut updated_settings = updated_node.profile.take().unwrap_or_default();
+    if let Some(settings_draft) = updated_node.profile_draft.as_ref() {
         // These are common node settings fields, that are not tied to specific modules
         updated_settings.customer_id = settings_draft.customer_id;
         updated_settings
@@ -307,57 +208,25 @@ fn update_common_node_settings(updated_node: &mut Node) {
             .hostname
             .clone_from(&settings_draft.hostname);
     }
-    updated_node.settings = Some(updated_settings);
+    updated_node.profile = Some(updated_settings);
 }
 
 fn update_module_specfic_settings(
     updated_node: &mut Node,
-    update_module_specific_settings: &ModuleSpecificSettingUpdateIndicator,
+    _update_module_specific_settings: &ModuleSpecificSettingUpdateIndicator,
 ) {
-    let mut updated_settings = updated_node.settings.take().unwrap_or_default();
-
-    if let Some(settings_draft) = updated_node.settings_draft.as_mut() {
-        if update_module_specific_settings.hog {
-            updated_settings.hog = settings_draft.hog;
-            updated_settings.hog_giganto_ip = settings_draft.hog_giganto_ip;
-            updated_settings.hog_giganto_port = settings_draft.hog_giganto_port;
-            updated_settings
-                .protocols
-                .clone_from(&settings_draft.protocols);
-            updated_settings.sensors.clone_from(&settings_draft.sensors);
-        }
-
-        if update_module_specific_settings.reconverge {
-            updated_settings.reconverge = settings_draft.reconverge;
-        }
-
-        if update_module_specific_settings.piglet {
-            updated_settings.piglet = settings_draft.piglet;
-            updated_settings.piglet_giganto_ip = settings_draft.piglet_giganto_ip;
-            updated_settings.piglet_giganto_port = settings_draft.piglet_giganto_port;
-            updated_settings.save_packets = settings_draft.save_packets;
-            updated_settings.http = settings_draft.http;
-            updated_settings.office = settings_draft.office;
-            updated_settings.exe = settings_draft.exe;
-            updated_settings.pdf = settings_draft.pdf;
-            updated_settings.txt = settings_draft.txt;
-            updated_settings.vbs = settings_draft.vbs;
-            updated_settings.smtp_eml = settings_draft.smtp_eml;
-            updated_settings.ftp = settings_draft.ftp;
-        }
-    }
-
-    updated_node.settings = Some(updated_settings);
+    let mut updated_settings = updated_node.profile.take().unwrap_or_default();
+    updated_node.profile = Some(updated_settings);
 }
 
 fn should_broadcast_customer_change(node: &Node) -> Option<u32> {
     let is_review = node
-        .settings_draft
+        .profile_draft
         .as_ref()
         .is_some_and(|s| super::is_review(&s.hostname));
 
-    let old_customer_id: Option<u32> = node.settings.as_ref().map(|s| s.customer_id);
-    let new_customer_id: Option<u32> = node.settings_draft.as_ref().map(|s| s.customer_id);
+    let old_customer_id: Option<u32> = node.profile.as_ref().map(|s| s.customer_id);
+    let new_customer_id: Option<u32> = node.profile_draft.as_ref().map(|s| s.customer_id);
 
     if is_review && (old_customer_id != new_customer_id) {
         new_customer_id
