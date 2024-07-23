@@ -5,7 +5,8 @@ use std::{
 };
 
 use async_graphql::{Context, Object, OutputType, Result, SimpleObject};
-use database::{EventCategory, IndexedTable, Iterable};
+use database::{IndexedTable, Iterable};
+use num_traits::ToPrimitive;
 use review_database::{self as database, Direction, Event, EventFilter};
 use tracing::warn;
 
@@ -30,7 +31,7 @@ impl EventGroupQuery {
         #[graphql(validator(minimum = 1))] first: i32,
     ) -> Result<EventCounts<u8>> {
         let (values, counts) = count_events(ctx, &filter, Event::count_category, first).await?;
-        let values = values.into_iter().map(EventCategory::into).collect();
+        let values = values.into_iter().filter_map(|v| v.to_u8()).collect();
         Ok(EventCounts { values, counts })
     }
 

@@ -799,7 +799,9 @@ fn from_filter_input(store: &Store, input: &EventListFilterInput) -> anyhow::Res
     let categories = if let Some(categories_input) = &input.categories {
         let mut categories = Vec::with_capacity(categories_input.len());
         for category in categories_input {
-            categories.push(EventCategory::try_from(*category).map_err(|e| anyhow!(e))?);
+            categories.push(
+                EventCategory::from_u8(*category).ok_or_else(|| anyhow!("Invalid category"))?,
+            );
         }
         Some(categories)
     } else {
@@ -930,23 +932,20 @@ fn internal_customer_networks(
     Ok(customer_networks)
 }
 
-fn convert_sensors(
-    map: &IndexedTable<database::Node>,
-    sensors: &[ID],
-) -> anyhow::Result<Vec<String>> {
+fn convert_sensors(map: &database::NodeTable, sensors: &[ID]) -> anyhow::Result<Vec<String>> {
     let mut converted_sensors: Vec<String> = Vec::with_capacity(sensors.len());
     for id in sensors {
         let i = id
             .as_str()
             .parse::<u32>()
             .context(format!("invalid ID: {}", id.as_str()))?;
-        let Some(node) = map.get_by_id(i)? else {
+        let Some((node, _invalid_agents)) = map.get_by_id(i)? else {
             bail!("no such sensor")
         };
 
-        if let Some(node_settings) = node.settings {
-            if !node_settings.hostname.is_empty() {
-                converted_sensors.push(node_settings.hostname.clone());
+        if let Some(node_profile) = node.profile {
+            if !node_profile.hostname.is_empty() {
+                converted_sensors.push(node_profile.hostname.clone());
             }
         }
     }
@@ -1217,6 +1216,95 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00"}}], totalCount: 1}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn filter_by_categories_and_sensors() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute(
+                "{eventList(filter: {}){edges{node{... on DnsCovertChannel{query}}}totalCount}}",
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            "{eventList: {edges: [], totalCount: 0}}"
+        );
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "collector1",
+                        customerId: 0,
+                        description: "This is the collector node",
+                        hostname: "collector1",
+                        agents: [{
+                            key: "piglet@collector1"
+                            kind: PIGLET
+                            status: ENABLED
+                        }]
+                        giganto: null
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+        let _ = schema
+            .execute(
+                r#"mutation {
+                    applyNode(id: "0") {
+                        id
+                        successModules
+                    }
+                }"#,
+            )
+            .await;
+
+        let store = schema.store().await;
+        let db = store.events();
+        let ts1 = NaiveDate::from_ymd_opt(2018, 1, 26)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(ts1, 1, 2)).unwrap();
+        let ts2 = NaiveDate::from_ymd_opt(2018, 1, 27)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(ts2, 3, 4)).unwrap();
+        let ts3 = NaiveDate::from_ymd_opt(2018, 1, 28)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(ts3, 5, 6)).unwrap();
+
+        let query = format!(
+            "{{ \
+                eventList( \
+                    filter: {{ \
+                        start:\"{}\", end:\"{}\", \
+                        categories: 7, \
+                        sensors: [0], \
+                    }}, \
+                ) {{ \
+                    edges {{ node {{... on DnsCovertChannel {{ time, source }} }} }} \
+                    totalCount \
+                }} \
+            }}",
+            ts2, ts3
+        );
+        let res = schema.execute(&query).await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00", source: "collector1"}}], totalCount: 1}}"#
         );
     }
 

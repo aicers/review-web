@@ -92,7 +92,7 @@ async fn load(
             ping,
             piglet_config,
             hog_config,
-        ) = match ev.settings.as_ref().map(|settings| &settings.hostname) {
+        ) = match ev.profile.as_ref().map(|profile| &profile.hostname) {
             Some(hostname) => {
                 let matches_review_host =
                     !review_hostname.is_empty() && &review_hostname == hostname;
@@ -354,23 +354,17 @@ mod tests {
                         customerId: 0,
                         description: "This is the admin node running review.",
                         hostname: "host1",
-                        piglet: true,
-                        pigletGigantoIp: "0.0.0.0",
-                        pigletGigantoPort: 5555,
-                        savePackets: false,
-                        http: false,
-                        office: false,
-                        exe: false,
-                        pdf: false,
-                        txt: false,
-                        vbs: false,
-                        smtpEml: false,
-                        ftp: false,
-                        giganto: false,
-                        reconverge: false,
-                        hog: false,
-                        protocols: null,
-                        sensors: null,
+                        agents: [{
+                            key: "reconverge@analysis"
+                            kind: RECONVERGE
+                            status: ENABLED
+                        },
+                        {
+                            key: "piglet@collect"
+                            kind: PIGLET
+                            status: ENABLED
+                        }]
+                        giganto: null
                     )
                 }"#,
             )
@@ -389,7 +383,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{applyNode: {id: "0", successModules: [PIGLET]}}"#
+            r#"{applyNode: {id: "0", successModules: []}}"#
         );
 
         let res = schema
@@ -400,23 +394,17 @@ mod tests {
                         customerId: 0,
                         description: "This is the reconverge, hog node.",
                         hostname: "host2",
-                        piglet: false,
-                        savePackets: false,
-                        http: false,
-                        office: false,
-                        exe: false,
-                        pdf: false,
-                        txt: false,
-                        vbs: false,
-                        smtpEml: false,
-                        ftp: false,
-                        giganto: false,
-                        reconverge: false,
-                        hog: true,
-                        hogGigantoIp: "0.0.0.0",
-                        hogGigantoPort: 5555,
-                        protocols: null,
-                        sensors: null,
+                        agents: [{
+                            key: "reconverge@analysis"
+                            kind: RECONVERGE
+                            status: ENABLED
+                        },
+                        {
+                            key: "piglet@collect"
+                            kind: PIGLET
+                            status: ENABLED
+                        }]
+                        giganto: null
                     )
                 }"#,
             )
@@ -435,7 +423,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{applyNode: {id: "1", successModules: [HOG]}}"#
+            r#"{applyNode: {id: "1", successModules: []}}"#
         );
 
         // check node status list
@@ -528,32 +516,17 @@ mod tests {
                         customerId: 0,
                         description: "This is the admin node running review.",
                         hostname: "admin.aice-security.com",
-                        piglet: false,
-                        pigletGigantoIp: null,
-                        pigletGigantoPort: null,
-                        savePackets: false,
-                        http: false,
-                        office: false,
-                        exe: false,
-                        pdf: false,
-                        txt: false,
-                        vbs: false,
-                        smtpEml: false,
-                        ftp: false,
-                        giganto: false,
-                        gigantoIngestionIp: null,
-                        gigantoIngestionPort: null,
-                        gigantoPublishIp: null,
-                        gigantoPublishPort: null,
-                        gigantoGraphqlIp: null,
-                        gigantoGraphqlPort: null,
-                        retentionPeriod: null,
-                        reconverge: false,
-                        hog: false,
-                        hogGigantoIp: null,
-                        hogGigantoPort: null,
-                        protocols: null,
-                        sensors: null,
+                        agents: [{
+                            key: "reconverge@analysis"
+                            kind: RECONVERGE
+                            status: ENABLED
+                        },
+                        {
+                            key: "piglet@collect"
+                            kind: PIGLET
+                            status: ENABLED
+                        }]
+                        giganto: null
                     )
                 }"#,
             )
@@ -568,32 +541,17 @@ mod tests {
                         customerId: 0,
                         description: "This is the admin node running review.",
                         hostname: "admin.aice-security.com",
-                        piglet: false,
-                        pigletGigantoIp: null,
-                        pigletGigantoPort: null,
-                        savePackets: false,
-                        http: false,
-                        office: false,
-                        exe: false,
-                        pdf: false,
-                        txt: false,
-                        vbs: false,
-                        smtpEml: false,
-                        ftp: false,
-                        giganto: false,
-                        gigantoIngestionIp: null,
-                        gigantoIngestionPort: null,
-                        gigantoPublishIp: null,
-                        gigantoPublishPort: null,
-                        gigantoGraphqlIp: null,
-                        gigantoGraphqlPort: null,
-                        retentionPeriod: null,
-                        reconverge: false,
-                        hog: false,
-                        hogGigantoIp: null,
-                        hogGigantoPort: null,
-                        protocols: null,
-                        sensors: null,
+                        agents: [{
+                            key: "reconverge@analysis"
+                            kind: RECONVERGE
+                            status: ENABLED
+                        },
+                        {
+                            key: "piglet@collect"
+                            kind: PIGLET
+                            status: ENABLED
+                        }]
+                        giganto: null
                     )
                 }"#,
             )
@@ -608,32 +566,17 @@ mod tests {
                         customerId: 0,
                         description: "This is the admin node running review.",
                         hostname: "admin.aice-security.com",
-                        piglet: false,
-                        pigletGigantoIp: null,
-                        pigletGigantoPort: null,
-                        savePackets: false,
-                        http: false,
-                        office: false,
-                        exe: false,
-                        pdf: false,
-                        txt: false,
-                        vbs: false,
-                        smtpEml: false,
-                        ftp: false,
-                        giganto: false,
-                        gigantoIngestionIp: null,
-                        gigantoIngestionPort: null,
-                        gigantoPublishIp: null,
-                        gigantoPublishPort: null,
-                        gigantoGraphqlIp: null,
-                        gigantoGraphqlPort: null,
-                        retentionPeriod: null,
-                        reconverge: false,
-                        hog: false,
-                        hogGigantoIp: null,
-                        hogGigantoPort: null,
-                        protocols: null,
-                        sensors: null,
+                        agents: [{
+                            key: "reconverge@analysis"
+                            kind: RECONVERGE
+                            status: ENABLED
+                        },
+                        {
+                            key: "piglet@collect"
+                            kind: PIGLET
+                            status: ENABLED
+                        }]
+                        giganto: null
                     )
                 }"#,
             )
@@ -648,32 +591,17 @@ mod tests {
                         customerId: 0,
                         description: "This is the admin node running review.",
                         hostname: "admin.aice-security.com",
-                        piglet: false,
-                        pigletGigantoIp: null,
-                        pigletGigantoPort: null,
-                        savePackets: false,
-                        http: false,
-                        office: false,
-                        exe: false,
-                        pdf: false,
-                        txt: false,
-                        vbs: false,
-                        smtpEml: false,
-                        ftp: false,
-                        giganto: false,
-                        gigantoIngestionIp: null,
-                        gigantoIngestionPort: null,
-                        gigantoPublishIp: null,
-                        gigantoPublishPort: null,
-                        gigantoGraphqlIp: null,
-                        gigantoGraphqlPort: null,
-                        retentionPeriod: null,
-                        reconverge: false,
-                        hog: false,
-                        hogGigantoIp: null,
-                        hogGigantoPort: null,
-                        protocols: null,
-                        sensors: null,
+                        agents: [{
+                            key: "reconverge@analysis"
+                            kind: RECONVERGE
+                            status: ENABLED
+                        },
+                        {
+                            key: "piglet@collect"
+                            kind: PIGLET
+                            status: ENABLED
+                        }]
+                        giganto: null
                         )
                     }"#,
             )
@@ -688,32 +616,17 @@ mod tests {
                         customerId: 0,
                         description: "This is the admin node running review.",
                         hostname: "admin.aice-security.com",
-                        piglet: false,
-                        pigletGigantoIp: null,
-                        pigletGigantoPort: null,
-                        savePackets: false,
-                        http: false,
-                        office: false,
-                        exe: false,
-                        pdf: false,
-                        txt: false,
-                        vbs: false,
-                        smtpEml: false,
-                        ftp: false,
-                        giganto: false,
-                        gigantoIngestionIp: null,
-                        gigantoIngestionPort: null,
-                        gigantoPublishIp: null,
-                        gigantoPublishPort: null,
-                        gigantoGraphqlIp: null,
-                        gigantoGraphqlPort: null,
-                        retentionPeriod: null,
-                        reconverge: false,
-                        hog: false,
-                        hogGigantoIp: null,
-                        hogGigantoPort: null,
-                        protocols: null,
-                        sensors: null,
+                        agents: [{
+                            key: "reconverge@analysis"
+                            kind: RECONVERGE
+                            status: ENABLED
+                        },
+                        {
+                            key: "piglet@collect"
+                            kind: PIGLET
+                            status: ENABLED
+                        }]
+                        giganto: null
                     )
             }"#,
             )

@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use review_database::{self as database, Store};
 use tracing::error;
 
-use super::{get_customer_id_of_review_host, BoxedAgentManager, Role, RoleGuard};
+use super::{get_customer_id_of_node, BoxedAgentManager, Role, RoleGuard};
 
 #[derive(Default)]
 pub(super) struct CustomerQuery;
@@ -105,7 +105,7 @@ impl CustomerMutation {
             let map = store.customer_map();
             let network_map = store.network_map();
 
-            let customer_id = get_customer_id_of_review_host(&store).ok().flatten();
+            let customer_id = get_customer_id_of_node(&store).ok().flatten();
             let mut registered_customer_is_removed = false;
             let mut removed = Vec::<String>::with_capacity(ids.len());
             for id in ids {
@@ -162,7 +162,7 @@ impl CustomerMutation {
             let mut networks = vec![];
             let mut ip_ranges = vec![];
             if let Some(new_networks) = new.networks {
-                let customer_id = get_customer_id_of_review_host(&store).ok().flatten();
+                let customer_id = get_customer_id_of_node(&store).ok().flatten();
                 if customer_id == Some(i) {
                     for nn in new_networks {
                         let v = nn.network_group;
