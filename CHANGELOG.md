@@ -16,6 +16,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   during sign-in.
 - Added ip access control based on the `allow_access_from` field of `Account`
   during sign-in.
+- Added new detected events:
+  - `BlockListBootp`, `BlockListDhcp`, `SuspiciousTlsTraffic`
 
 ### Changed
 
@@ -51,6 +53,12 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   following fields set to `None`:
   - `Setting::{piglet, reconverge, hog}::rpc`
   - `Setting::reconverge::public`
+- Inserted `category` fields to all the the detected events.
+- Inserted new fields to `TorConnection` event.
+  - `orig_filenames`, `orig_mime_types`, `resp_filenames`, `resp_mime_types`,
+    `post_body`, `state`
+- Inserted new fields to `BlockListConn` event.
+  - `orig_l2_bytes`, `resp_l2_bytes`
 
 ### Fixed
 
