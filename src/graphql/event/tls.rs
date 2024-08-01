@@ -165,6 +165,10 @@ impl BlockListTls {
         self.inner.last_alert
     }
 
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
+    }
+
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
         self.inner
             .triage_scores

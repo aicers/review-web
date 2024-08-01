@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use review_database as database;
 
 use super::{country_code, find_ip_customer, find_ip_network, TriageScore};
-use crate::graphql::{customer::Customer, network::Network};
+use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct FtpBruteForce {
@@ -84,6 +84,10 @@ impl FtpBruteForce {
 
     async fn is_internal(&self) -> bool {
         self.inner.is_internal
+    }
+
+    async fn category(&self) -> ThreatCategory {
+        &self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -219,6 +223,10 @@ impl FtpPlainText {
 
     async fn file_id(&self) -> &str {
         &self.inner.file_id
+    }
+
+    async fn category(&self) -> ThreatCategory {
+        &self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -358,6 +366,10 @@ impl BlockListFtp {
 
     async fn file_id(&self) -> &str {
         &self.inner.file_id
+    }
+
+    async fn category(&self) -> ThreatCategory {
+        &self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {

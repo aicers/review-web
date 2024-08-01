@@ -133,6 +133,10 @@ impl BlockListSsh {
         &self.inner.server_shka
     }
 
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
+    }
+
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
         self.inner
             .triage_scores

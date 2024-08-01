@@ -464,6 +464,7 @@ mod tests {
             ra_flag: false,
             ttl: Vec::new(),
             confidence: 0.8,
+            category: EventCategory::CommandAndControl,
         };
         EventMessage {
             time: timestamp,
