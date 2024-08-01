@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use review_database as database;
 
 use super::{country_code, find_ip_customer, find_ip_network, TriageScore};
-use crate::graphql::{customer::Customer, network::Network};
+use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct HttpThreat {
@@ -210,6 +210,10 @@ impl HttpThreat {
         self.inner.confidence
     }
 
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
+    }
+
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
         self.inner
             .triage_scores
@@ -294,6 +298,10 @@ impl RepeatedHttpSessions {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
+    }
+
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -452,6 +460,34 @@ impl TorConnection {
 
     async fn cache_control(&self) -> &str {
         &self.inner.cache_control
+    }
+
+    async fn orig_filenames(&self) -> Vec<String> {
+        self.inner.orig_filenames.clone()
+    }
+
+    async fn orig_mime_types(&self) -> Vec<String> {
+        self.inner.orig_mime_types.clone()
+    }
+
+    async fn resp_filenames(&self) -> Vec<String> {
+        self.inner.resp_filenames.clone()
+    }
+
+    async fn resp_mime_types(&self) -> Vec<String> {
+        self.inner.resp_mime_types.clone()
+    }
+
+    async fn post_body(&self) -> Vec<u8> {
+        self.inner.post_body.clone()
+    }
+
+    async fn state(&self) -> &str {
+        &self.inner.state
+    }
+
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -636,6 +672,10 @@ impl DomainGenerationAlgorithm {
         self.inner.confidence
     }
 
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
+    }
+
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
         self.inner
             .triage_scores
@@ -812,6 +852,10 @@ impl NonBrowser {
 
     async fn state(&self) -> &str {
         &self.inner.state
+    }
+
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -996,6 +1040,10 @@ impl BlockListHttp {
 
     async fn state(&self) -> &str {
         &self.inner.state
+    }
+
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {

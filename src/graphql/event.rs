@@ -46,15 +46,27 @@ use tracing::{error, warn};
 
 pub(super) use self::group::EventGroupQuery;
 use self::{
-    conn::BlockListConn, conn::ExternalDdos, conn::MultiHostPortScan, conn::PortScan,
-    dcerpc::BlockListDceRpc, dns::BlockListDns, dns::CryptocurrencyMiningPool,
-    dns::DnsCovertChannel, dns::LockyRansomware, ftp::BlockListFtp, ftp::FtpBruteForce,
-    ftp::FtpPlainText, http::BlockListHttp, http::DomainGenerationAlgorithm, http::HttpThreat,
-    http::NonBrowser, http::RepeatedHttpSessions, http::TorConnection, kerberos::BlockListKerberos,
-    ldap::BlockListLdap, ldap::LdapBruteForce, ldap::LdapPlainText, log::ExtraThreat,
-    mqtt::BlockListMqtt, network::NetworkThreat, nfs::BlockListNfs, ntlm::BlockListNtlm,
-    rdp::BlockListRdp, rdp::RdpBruteForce, smb::BlockListSmb, smtp::BlockListSmtp,
-    ssh::BlockListSsh, sysmon::WindowsThreat, tls::BlockListTls,
+    conn::{BlockListConn, ExternalDdos, MultiHostPortScan, PortScan},
+    dcerpc::BlockListDceRpc,
+    dns::{BlockListDns, CryptocurrencyMiningPool, DnsCovertChannel, LockyRansomware},
+    ftp::{BlockListFtp, FtpBruteForce, FtpPlainText},
+    http::{
+        BlockListHttp, DomainGenerationAlgorithm, HttpThreat, NonBrowser, RepeatedHttpSessions,
+        TorConnection,
+    },
+    kerberos::BlockListKerberos,
+    ldap::{BlockListLdap, LdapBruteForce, LdapPlainText},
+    log::ExtraThreat,
+    mqtt::BlockListMqtt,
+    network::NetworkThreat,
+    nfs::BlockListNfs,
+    ntlm::BlockListNtlm,
+    rdp::{BlockListRdp, RdpBruteForce},
+    smb::BlockListSmb,
+    smtp::BlockListSmtp,
+    ssh::BlockListSsh,
+    sysmon::WindowsThreat,
+    tls::BlockListTls,
 };
 use super::{
     customer::{Customer, HostNetworkGroupInput},
@@ -1131,7 +1143,7 @@ mod tests {
 
     use chrono::{DateTime, NaiveDate, Utc};
     use futures_util::StreamExt;
-    use review_database::{event::DnsEventFields, EventKind, EventMessage};
+    use review_database::{event::DnsEventFields, EventCategory, EventKind, EventMessage};
 
     use crate::graphql::TestSchema;
 
@@ -1159,6 +1171,7 @@ mod tests {
             ra_flag: false,
             ttl: Vec::new(),
             confidence: 0.8,
+            category: EventCategory::CommandAndControl,
         };
         EventMessage {
             time: timestamp,
@@ -1656,6 +1669,7 @@ mod tests {
             ra_flag: false,
             ttl: Vec::new(),
             confidence: 0.8,
+            category: EventCategory::CommandAndControl,
         };
         let message = EventMessage {
             time: timestamp,

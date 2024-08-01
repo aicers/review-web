@@ -71,6 +71,12 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   `accountList` API responses now include this field. The `insertAccount` and
   `updateAccount` GraphQL API endpoints are also updated to support the field.
 - Added `category` field to TI db and rules.
+- Added `category` fields to all the the detected events.
+- Added new fields to `TorConnection` event.
+  - `orig_filenames`, `orig_mime_types`, `resp_filenames`, `resp_mime_types`,
+    `post_body`, `state`
+- Added new fields to `BlockListConn` event.
+  - `orig_l2_bytes`, `resp_l2_bytes`
 
 ### Fixed
 

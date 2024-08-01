@@ -437,7 +437,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use chrono::{DateTime, NaiveDate, Utc};
-    use review_database::{event::DnsEventFields, EventKind, EventMessage};
+    use review_database::{event::DnsEventFields, EventCategory, EventKind, EventMessage};
 
     use crate::graphql::TestSchema;
 
@@ -465,6 +465,7 @@ mod tests {
             ra_flag: false,
             ttl: Vec::new(),
             confidence: 0.8,
+            category: EventCategory::CommandAndControl,
         };
         EventMessage {
             time: timestamp,
