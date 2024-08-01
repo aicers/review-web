@@ -799,7 +799,7 @@ fn from_filter_input(store: &Store, input: &EventListFilterInput) -> anyhow::Res
     let categories = if let Some(categories_input) = &input.categories {
         let mut categories = Vec::with_capacity(categories_input.len());
         for category in categories_input {
-            categories.push(EventCategory::try_from(*category).map_err(|e| anyhow!(e))?);
+            categories.push(EventCategory::from(*category));
         }
         Some(categories)
     } else {
