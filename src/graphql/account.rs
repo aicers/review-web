@@ -140,6 +140,7 @@ impl AccountMutation {
         role: Role,
         name: String,
         department: String,
+        language: Option<String>,
         allow_access_from: Option<Vec<String>>,
         max_parallel_sessions: Option<u32>,
     ) -> Result<String> {
@@ -160,6 +161,7 @@ impl AccountMutation {
             database::Role::from(role),
             name,
             department,
+            language,
             allow_access_from,
             max_parallel_sessions,
         )?;
@@ -620,6 +622,7 @@ fn initial_credential() -> anyhow::Result<types::Account> {
         database::Role::SystemAdministrator,
         "System Administrator".to_owned(),
         String::new(),
+        None,
         None,
         None,
     )?;
