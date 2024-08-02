@@ -5,12 +5,12 @@ use review_database as database;
 use super::{country_code, find_ip_customer, find_ip_network, TriageScore};
 use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
-pub(super) struct BlockListSmb {
-    inner: database::BlockListSmb,
+pub(super) struct BlockListBootp {
+    inner: database::BlockListBootp,
 }
 
 #[Object]
-impl BlockListSmb {
+impl BlockListBootp {
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -81,48 +81,53 @@ impl BlockListSmb {
         self.inner.last_time
     }
 
-    async fn command(&self) -> u8 {
-        self.inner.command
+    async fn op(&self) -> u8 {
+        self.inner.op
     }
 
-    async fn path(&self) -> &str {
-        &self.inner.path
+    async fn htype(&self) -> u8 {
+        self.inner.htype
     }
 
-    async fn service(&self) -> &str {
-        &self.inner.service
+    async fn hops(&self) -> u8 {
+        self.inner.hops
     }
 
-    async fn file_name(&self) -> &str {
-        &self.inner.file_name
+    async fn xid(&self) -> u32 {
+        self.inner.xid
     }
 
-    async fn file_size(&self) -> u64 {
-        self.inner.file_size
+    async fn ciaddr(&self) -> String {
+        self.inner.ciaddr.to_string()
     }
 
-    async fn resource_type(&self) -> u16 {
-        self.inner.resource_type
+    async fn yiaddr(&self) -> String {
+        self.inner.yiaddr.to_string()
     }
 
-    async fn fid(&self) -> u16 {
-        self.inner.fid
+    async fn siaddr(&self) -> String {
+        self.inner.siaddr.to_string()
     }
 
-    async fn create_time(&self) -> i64 {
-        self.inner.create_time
+    async fn giaddr(&self) -> String {
+        self.inner.giaddr.to_string()
     }
 
-    async fn access_time(&self) -> i64 {
-        self.inner.access_time
+    async fn chaddr(&self) -> String {
+        self.inner
+            .chaddr
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect::<Vec<String>>()
+            .join(":")
     }
 
-    async fn write_time(&self) -> i64 {
-        self.inner.write_time
+    async fn sname(&self) -> &str {
+        &self.inner.sname
     }
 
-    async fn change_time(&self) -> i64 {
-        self.inner.change_time
+    async fn file(&self) -> &str {
+        &self.inner.file
     }
 
     async fn category(&self) -> ThreatCategory {
@@ -137,8 +142,8 @@ impl BlockListSmb {
     }
 }
 
-impl From<database::BlockListSmb> for BlockListSmb {
-    fn from(inner: database::BlockListSmb) -> Self {
+impl From<database::BlockListBootp> for BlockListBootp {
+    fn from(inner: database::BlockListBootp) -> Self {
         Self { inner }
     }
 }

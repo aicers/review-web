@@ -1,5 +1,7 @@
+mod bootp;
 mod conn;
 mod dcerpc;
+mod dhcp;
 mod dns;
 mod ftp;
 mod group;
@@ -46,15 +48,16 @@ use tracing::{error, warn};
 
 pub(super) use self::group::EventGroupQuery;
 use self::{
-    conn::BlockListConn, conn::ExternalDdos, conn::MultiHostPortScan, conn::PortScan,
-    dcerpc::BlockListDceRpc, dns::BlockListDns, dns::CryptocurrencyMiningPool,
-    dns::DnsCovertChannel, dns::LockyRansomware, ftp::BlockListFtp, ftp::FtpBruteForce,
-    ftp::FtpPlainText, http::BlockListHttp, http::DomainGenerationAlgorithm, http::HttpThreat,
-    http::NonBrowser, http::RepeatedHttpSessions, http::TorConnection, kerberos::BlockListKerberos,
-    ldap::BlockListLdap, ldap::LdapBruteForce, ldap::LdapPlainText, log::ExtraThreat,
-    mqtt::BlockListMqtt, network::NetworkThreat, nfs::BlockListNfs, ntlm::BlockListNtlm,
-    rdp::BlockListRdp, rdp::RdpBruteForce, smb::BlockListSmb, smtp::BlockListSmtp,
-    ssh::BlockListSsh, sysmon::WindowsThreat, tls::BlockListTls,
+    bootp::BlockListBootp, conn::BlockListConn, conn::ExternalDdos, conn::MultiHostPortScan,
+    conn::PortScan, dcerpc::BlockListDceRpc, dhcp::BlockListDhcp, dns::BlockListDns,
+    dns::CryptocurrencyMiningPool, dns::DnsCovertChannel, dns::LockyRansomware, ftp::BlockListFtp,
+    ftp::FtpBruteForce, ftp::FtpPlainText, http::BlockListHttp, http::DomainGenerationAlgorithm,
+    http::HttpThreat, http::NonBrowser, http::RepeatedHttpSessions, http::TorConnection,
+    kerberos::BlockListKerberos, ldap::BlockListLdap, ldap::LdapBruteForce, ldap::LdapPlainText,
+    log::ExtraThreat, mqtt::BlockListMqtt, network::NetworkThreat, nfs::BlockListNfs,
+    ntlm::BlockListNtlm, rdp::BlockListRdp, rdp::RdpBruteForce, smb::BlockListSmb,
+    smtp::BlockListSmtp, ssh::BlockListSsh, sysmon::WindowsThreat, tls::BlockListTls,
+    tls::SuspiciousTlsTraffic,
 };
 use super::{
     customer::{Customer, HostNetworkGroupInput},
@@ -134,7 +137,9 @@ async fn fetch_events(
     let mut non_browser_time = start_time;
     let mut external_ddos_time = start_time;
     let mut cryptocurrency_time = start_time;
+    let mut block_list_bootp_time = start_time;
     let mut block_list_conn_time = start_time;
+    let mut block_list_dhcp_time = start_time;
     let mut block_list_dns_time = start_time;
     let mut block_list_dcerpc_time = start_time;
     let mut block_list_ftp_time = start_time;
@@ -153,6 +158,7 @@ async fn fetch_events(
     let mut network_threat_time = start_time;
     let mut extra_threat_time = start_time;
     let mut locky_ransomware_time = start_time;
+    let mut suspicious_tls_time = start_time;
 
     loop {
         itv.tick().await;
@@ -173,7 +179,9 @@ async fn fetch_events(
             .min(non_browser_time)
             .min(external_ddos_time)
             .min(cryptocurrency_time)
+            .min(block_list_bootp_time)
             .min(block_list_conn_time)
+            .min(block_list_dhcp_time)
             .min(block_list_dns_time)
             .min(block_list_dcerpc_time)
             .min(block_list_ftp_time)
@@ -191,7 +199,8 @@ async fn fetch_events(
             .min(windows_threat_time)
             .min(network_threat_time)
             .min(extra_threat_time)
-            .min(locky_ransomware_time);
+            .min(locky_ransomware_time)
+            .min(suspicious_tls_time);
 
         // Fetch event iterator based on time
         let start = i128::from(start) << 64;
@@ -298,10 +307,22 @@ async fn fetch_events(
                         cryptocurrency_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
+                EventKind::BlockListBootp => {
+                    if event_time >= block_list_bootp_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_bootp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
                 EventKind::BlockListConn => {
                     if event_time >= block_list_conn_time {
                         tx.unbounded_send(value.into())?;
                         block_list_conn_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::BlockListDhcp => {
+                    if event_time >= block_list_dhcp_time {
+                        tx.unbounded_send(value.into())?;
+                        block_list_dhcp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
                 EventKind::BlockListDns => {
@@ -410,6 +431,12 @@ async fn fetch_events(
                     if event_time >= locky_ransomware_time {
                         tx.unbounded_send(value.into())?;
                         locky_ransomware_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::SuspiciousTlsTraffic => {
+                    if event_time >= suspicious_tls_time {
+                        tx.unbounded_send(value.into())?;
+                        suspicious_tls_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
             }
@@ -543,6 +570,12 @@ enum Event {
     ExtraThreat(ExtraThreat),
 
     LockyRansomware(LockyRansomware),
+
+    BlockListBootp(BlockListBootp),
+
+    BlockListDhcp(BlockListDhcp),
+
+    SuspiciousTlsTraffic(SuspiciousTlsTraffic),
 }
 
 impl From<database::Event> for Event {
@@ -570,7 +603,9 @@ impl From<database::Event> for Event {
                 Event::CryptocurrencyMiningPool(event.into())
             }
             database::Event::BlockList(record_type) => match record_type {
+                RecordType::Bootp(event) => Event::BlockListBootp(event.into()),
                 RecordType::Conn(event) => Event::BlockListConn(event.into()),
+                RecordType::Dhcp(event) => Event::BlockListDhcp(event.into()),
                 RecordType::Dns(event) => Event::BlockListDns(event.into()),
                 RecordType::DceRpc(event) => Event::BlockListDceRpc(event.into()),
                 RecordType::Ftp(event) => Event::BlockListFtp(event.into()),
@@ -590,6 +625,9 @@ impl From<database::Event> for Event {
             database::Event::NetworkThreat(event) => Event::NetworkThreat(event.into()),
             database::Event::ExtraThreat(event) => Event::ExtraThreat(event.into()),
             database::Event::LockyRansomware(event) => Event::LockyRansomware(event.into()),
+            database::Event::SuspiciousTlsTraffic(event) => {
+                Event::SuspiciousTlsTraffic(event.into())
+            }
         }
     }
 }
@@ -799,7 +837,7 @@ fn from_filter_input(store: &Store, input: &EventListFilterInput) -> anyhow::Res
     let categories = if let Some(categories_input) = &input.categories {
         let mut categories = Vec::with_capacity(categories_input.len());
         for category in categories_input {
-            categories.push(EventCategory::try_from(*category).map_err(|e| anyhow!(e))?);
+            categories.push(EventCategory::from(*category));
         }
         Some(categories)
     } else {
@@ -1132,7 +1170,9 @@ mod tests {
 
     use chrono::{DateTime, NaiveDate, Utc};
     use futures_util::StreamExt;
-    use review_database::{event::DnsEventFields, EventKind, EventMessage};
+    use review_database::{
+        event::DnsEventFields, BlockListTlsFields, EventKind, EventMessage, SuspiciousTlsTraffic,
+    };
 
     use crate::graphql::TestSchema;
 
@@ -1160,6 +1200,7 @@ mod tests {
             ra_flag: false,
             ttl: Vec::new(),
             confidence: 0.8,
+            category: EventCategory::CommandAndControl,
         };
         EventMessage {
             time: timestamp,
@@ -1568,6 +1609,7 @@ mod tests {
             ra_flag: false,
             ttl: Vec::new(),
             confidence: 0.8,
+            category: EventCategory::CommandAndControl,
         };
         let message = EventMessage {
             time: timestamp,
@@ -1589,6 +1631,72 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1", rtt: 10, query: "domain"}}]}}"#
+        );
+    }
+
+    #[test]
+    async fn event_list_suspicious_tls_traffic() {
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        let db = store.events();
+        let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let fields = BlockListTlsFields {
+            source: "collector1".to_string(),
+            src_addr: Ipv4Addr::from(1).into(),
+            src_port: 10000,
+            dst_addr: Ipv4Addr::from(2).into(),
+            dst_port: 443,
+            proto: 6,
+            last_time: timestamp,
+            server_name: "example.com".into(),
+            alpn_protocol: "h2".into(),
+            ja3: "ja3".into(),
+            version: "TLSv1.2".into(),
+            client_cipher_suites: vec![1234],
+            client_extensions: vec![5678],
+            cipher: 1234,
+            extensions: vec![5678],
+            ja3s: "ja3s".into(),
+            serial: "serial".into(),
+            subject_country: "US".into(),
+            subject_org_name: "org".into(),
+            subject_common_name: "common".into(),
+            validity_not_before: timestamp,
+            validity_not_after: timestamp,
+            subject_alt_name: "alt".into(),
+            issuer_country: "US".into(),
+            issuer_org_name: "org".into(),
+            issuer_org_unit_name: "unit".into(),
+            issuer_common_name: "common".into(),
+            last_alert: 3,
+            category: EventCategory::CommandAndControl,
+        };
+
+        let message = EventMessage {
+            time: timestamp,
+            kind: EventKind::SuspiciousTlsTraffic,
+            fields: bincode::serialize(&fields).expect("serializable"),
+        };
+        db.put(&message).unwrap();
+        let query = format!(
+            "{{ \
+                eventList(filter: {{
+                    start:\"{}\"
+                }}) {{ \
+                    edges {{ node {{... on SuspiciousTlsTraffic {{ srcAddr,cipher,subjectCountry }} }} }} \
+                }} \
+            }}",
+            timestamp
+        );
+        let res = schema.execute(&query).await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1", cipher: 1234, subjectCountry: "US"}}]}}"#
         );
     }
 }

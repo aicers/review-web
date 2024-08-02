@@ -5,12 +5,12 @@ use review_database as database;
 use super::{country_code, find_ip_customer, find_ip_network, TriageScore};
 use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
-pub(super) struct BlockListSmb {
-    inner: database::BlockListSmb,
+pub(super) struct BlockListDhcp {
+    inner: database::BlockListDhcp,
 }
 
 #[Object]
-impl BlockListSmb {
+impl BlockListDhcp {
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -81,48 +81,76 @@ impl BlockListSmb {
         self.inner.last_time
     }
 
-    async fn command(&self) -> u8 {
-        self.inner.command
+    async fn msg_type(&self) -> u8 {
+        self.inner.msg_type
     }
 
-    async fn path(&self) -> &str {
-        &self.inner.path
+    async fn ciaddr(&self) -> String {
+        self.inner.ciaddr.to_string()
     }
 
-    async fn service(&self) -> &str {
-        &self.inner.service
+    async fn yiaddr(&self) -> String {
+        self.inner.yiaddr.to_string()
     }
 
-    async fn file_name(&self) -> &str {
-        &self.inner.file_name
+    async fn siaddr(&self) -> String {
+        self.inner.siaddr.to_string()
     }
 
-    async fn file_size(&self) -> u64 {
-        self.inner.file_size
+    async fn giaddr(&self) -> String {
+        self.inner.giaddr.to_string()
     }
 
-    async fn resource_type(&self) -> u16 {
-        self.inner.resource_type
+    async fn subnet_mask(&self) -> String {
+        self.inner.subnet_mask.to_string()
     }
 
-    async fn fid(&self) -> u16 {
-        self.inner.fid
+    async fn router(&self) -> String {
+        vector_to_string(&self.inner.router)
     }
 
-    async fn create_time(&self) -> i64 {
-        self.inner.create_time
+    async fn domain_name_server(&self) -> String {
+        vector_to_string(&self.inner.domain_name_server)
     }
 
-    async fn access_time(&self) -> i64 {
-        self.inner.access_time
+    async fn req_ip_addr(&self) -> String {
+        self.inner.req_ip_addr.to_string()
     }
 
-    async fn write_time(&self) -> i64 {
-        self.inner.write_time
+    async fn lease_time(&self) -> u32 {
+        self.inner.lease_time
     }
 
-    async fn change_time(&self) -> i64 {
-        self.inner.change_time
+    async fn server_id(&self) -> String {
+        self.inner.server_id.to_string()
+    }
+
+    async fn param_req_list(&self) -> String {
+        vector_to_string(&self.inner.param_req_list)
+    }
+
+    async fn message(&self) -> &str {
+        &self.inner.message
+    }
+
+    async fn renewal_time(&self) -> u32 {
+        self.inner.renewal_time
+    }
+
+    async fn rebinding_time(&self) -> u32 {
+        self.inner.rebinding_time
+    }
+
+    async fn class_id(&self) -> String {
+        to_hex_string(&self.inner.class_id)
+    }
+
+    async fn client_id_type(&self) -> u8 {
+        self.inner.client_id_type
+    }
+
+    async fn client_id(&self) -> String {
+        to_hex_string(&self.inner.client_id)
     }
 
     async fn category(&self) -> ThreatCategory {
@@ -137,8 +165,23 @@ impl BlockListSmb {
     }
 }
 
-impl From<database::BlockListSmb> for BlockListSmb {
-    fn from(inner: database::BlockListSmb) -> Self {
+impl From<database::BlockListDhcp> for BlockListDhcp {
+    fn from(inner: database::BlockListDhcp) -> Self {
         Self { inner }
     }
+}
+
+fn to_hex_string(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|x| format!("{x:02x}"))
+        .collect::<Vec<String>>()
+        .join(":")
+}
+
+fn vector_to_string<T: std::fmt::Display>(vec: &[T]) -> String {
+    vec.iter()
+        .map(|x| x.to_string())
+        .collect::<Vec<String>>()
+        .join(", ")
 }

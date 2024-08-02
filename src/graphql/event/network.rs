@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use review_database as database;
 
 use super::{country_code, find_ip_customer, find_ip_network, TriageScore};
-use crate::graphql::{customer::Customer, network::Network};
+use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct NetworkThreat {
@@ -112,6 +112,10 @@ impl NetworkThreat {
 
     async fn confidence(&self) -> f32 {
         self.inner.confidence
+    }
+
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {

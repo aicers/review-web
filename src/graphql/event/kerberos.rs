@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use review_database as database;
 
 use super::{country_code, find_ip_customer, find_ip_network, TriageScore};
-use crate::graphql::{customer::Customer, network::Network};
+use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
 pub(super) struct BlockListKerberos {
     inner: database::BlockListKerberos,
@@ -115,6 +115,10 @@ impl BlockListKerberos {
 
     async fn service_name(&self) -> Vec<String> {
         self.inner.service_name.clone()
+    }
+
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {

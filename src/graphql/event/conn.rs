@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use review_database as database;
 
 use super::{country_code, find_ip_customer, find_ip_network, TriageScore};
-use crate::graphql::{customer::Customer, network::Network};
+use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct PortScan {
@@ -76,6 +76,10 @@ impl PortScan {
 
     async fn last_time(&self) -> DateTime<Utc> {
         self.inner.last_time
+    }
+
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -183,6 +187,10 @@ impl MultiHostPortScan {
         self.inner.last_time
     }
 
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
+    }
+
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
         self.inner
             .triage_scores
@@ -282,6 +290,10 @@ impl ExternalDdos {
 
     async fn last_time(&self) -> DateTime<Utc> {
         self.inner.last_time
+    }
+
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -396,6 +408,18 @@ impl BlockListConn {
 
     async fn resp_pkts(&self) -> u64 {
         self.inner.resp_pkts
+    }
+
+    async fn orig_l2_bytes(&self) -> u64 {
+        self.inner.orig_l2_bytes
+    }
+
+    async fn resp_l2_bytes(&self) -> u64 {
+        self.inner.resp_l2_bytes
+    }
+
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {

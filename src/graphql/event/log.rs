@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use review_database as database;
 
 use super::TriageScore;
+use crate::graphql::triage::ThreatCategory;
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct ExtraThreat {
@@ -49,6 +50,10 @@ impl ExtraThreat {
 
     async fn confidence(&self) -> f32 {
         self.inner.confidence
+    }
+
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
