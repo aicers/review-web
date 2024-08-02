@@ -86,15 +86,15 @@ impl BlockListBootp {
     }
 
     async fn htype(&self) -> u8 {
-        &self.inner.htype
+        self.inner.htype
     }
 
     async fn hops(&self) -> u8 {
-        &self.inner.hops
+        self.inner.hops
     }
 
     async fn xid(&self) -> u32 {
-        &self.inner.xid
+        self.inner.xid
     }
 
     async fn ciaddr(&self) -> String {
@@ -118,6 +118,7 @@ impl BlockListBootp {
             .chaddr
             .iter()
             .map(|x| format!("{x:02x}"))
+            .collect::<Vec<String>>()
             .join(":")
     }
 
@@ -130,7 +131,7 @@ impl BlockListBootp {
     }
 
     async fn category(&self) -> ThreatCategory {
-        self.inner.category
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {

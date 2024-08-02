@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 mod policy;
 pub(super) mod response;
 

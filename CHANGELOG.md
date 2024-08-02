@@ -59,6 +59,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     `post_body`, `state`
 - Inserted new fields to `BlockListConn` event.
   - `orig_l2_bytes`, `resp_l2_bytes`
+- Inserted `category` field to TI db and rules.
 
 ### Fixed
 

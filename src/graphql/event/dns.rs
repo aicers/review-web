@@ -135,7 +135,7 @@ impl DnsCovertChannel {
     }
 
     async fn category(&self) -> ThreatCategory {
-        &self.inner.category
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -282,7 +282,7 @@ impl LockyRansomware {
     }
 
     async fn category(&self) -> ThreatCategory {
-        &self.inner.category
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -424,7 +424,7 @@ impl CryptocurrencyMiningPool {
     }
 
     async fn category(&self) -> ThreatCategory {
-        &self.inner.category
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {

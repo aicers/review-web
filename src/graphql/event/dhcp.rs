@@ -106,21 +106,11 @@ impl BlockListDhcp {
     }
 
     async fn router(&self) -> String {
-        self.inner
-            .router
-            .iter()
-            .map(|ip| ip.to_string())
-            .collect::<Vec<String>>()
-            .join(", ")
+        vector_to_string(&self.inner.router)
     }
 
     async fn domain_name_server(&self) -> String {
-        self.inner
-            .domain_name_server
-            .iter()
-            .map(|ip| ip.to_string())
-            .collect::<Vec<String>>()
-            .join(", ")
+        vector_to_string(&self.inner.domain_name_server)
     }
 
     async fn req_ip_addr(&self) -> String {
@@ -136,12 +126,7 @@ impl BlockListDhcp {
     }
 
     async fn param_req_list(&self) -> String {
-        self.inner
-            .param_req_list
-            .iter()
-            .map(|x| x.to_string())
-            .collect::<Vec<String>>()
-            .join(", ")
+        vector_to_string(&self.inner.param_req_list)
     }
 
     async fn message(&self) -> &str {
@@ -157,12 +142,7 @@ impl BlockListDhcp {
     }
 
     async fn class_id(&self) -> String {
-        self.inner
-            .class_id
-            .iter()
-            .map(|x| format!("{x:02x}"))
-            .collect::<Vec<String>>()
-            .join(":")
+        to_hex_string(&self.inner.class_id)
     }
 
     async fn client_id_type(&self) -> u8 {
@@ -170,16 +150,11 @@ impl BlockListDhcp {
     }
 
     async fn client_id(&self) -> String {
-        self.inner
-            .client_id
-            .iter()
-            .map(|x| format!("{x:02x}"))
-            .collect::<Vec<String>>()
-            .join(":")
+        to_hex_string(&self.inner.client_id)
     }
 
     async fn category(&self) -> ThreatCategory {
-        self.inner.category
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -194,4 +169,19 @@ impl From<database::BlockListDhcp> for BlockListDhcp {
     fn from(inner: database::BlockListDhcp) -> Self {
         Self { inner }
     }
+}
+
+fn to_hex_string(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|x| format!("{x:02x}"))
+        .collect::<Vec<String>>()
+        .join(":")
+}
+
+fn vector_to_string<T: std::fmt::Display>(vec: &[T]) -> String {
+    vec.iter()
+        .map(|x| x.to_string())
+        .collect::<Vec<String>>()
+        .join(", ")
 }

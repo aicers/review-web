@@ -81,7 +81,7 @@ impl RdpBruteForce {
     }
 
     async fn category(&self) -> ThreatCategory {
-        &self.inner.category.into()
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -179,7 +179,7 @@ impl BlockListRdp {
     }
 
     async fn category(&self) -> ThreatCategory {
-        &self.inner.category.into()
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {

@@ -203,7 +203,7 @@ impl HttpThreat {
     }
 
     async fn category(&self) -> ThreatCategory {
-        &self.inner.category.into()
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -293,7 +293,7 @@ impl RepeatedHttpSessions {
     }
 
     async fn category(&self) -> ThreatCategory {
-        &self.inner.category.into()
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -475,7 +475,7 @@ impl TorConnection {
     }
 
     async fn category(&self) -> ThreatCategory {
-        &self.inner.category.into()
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -657,7 +657,7 @@ impl DomainGenerationAlgorithm {
     }
 
     async fn category(&self) -> ThreatCategory {
-        &self.inner.category.into()
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -835,7 +835,7 @@ impl NonBrowser {
     }
 
     async fn category(&self) -> ThreatCategory {
-        &self.inner.category.into()
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -1017,7 +1017,7 @@ impl BlockListHttp {
     }
 
     async fn category(&self) -> ThreatCategory {
-        &self.inner.category.into()
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {

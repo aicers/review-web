@@ -87,7 +87,7 @@ impl FtpBruteForce {
     }
 
     async fn category(&self) -> ThreatCategory {
-        &self.inner.category.into()
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -226,7 +226,7 @@ impl FtpPlainText {
     }
 
     async fn category(&self) -> ThreatCategory {
-        &self.inner.category.into()
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
@@ -369,7 +369,7 @@ impl BlockListFtp {
     }
 
     async fn category(&self) -> ThreatCategory {
-        &self.inner.category.into()
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {

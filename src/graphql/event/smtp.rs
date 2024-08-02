@@ -110,7 +110,7 @@ impl BlockListSmtp {
     }
 
     async fn category(&self) -> ThreatCategory {
-        &self.inner.category.into()
+        self.inner.category.into()
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {

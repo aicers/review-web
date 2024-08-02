@@ -48,15 +48,16 @@ use tracing::{error, warn};
 
 pub(super) use self::group::EventGroupQuery;
 use self::{
-    conn::BlockListConn, conn::ExternalDdos, conn::MultiHostPortScan, conn::PortScan,
-    dcerpc::BlockListDceRpc, dns::BlockListDns, dns::CryptocurrencyMiningPool,
-    dns::DnsCovertChannel, dns::LockyRansomware, ftp::BlockListFtp, ftp::FtpBruteForce,
-    ftp::FtpPlainText, http::BlockListHttp, http::DomainGenerationAlgorithm, http::HttpThreat,
-    http::NonBrowser, http::RepeatedHttpSessions, http::TorConnection, kerberos::BlockListKerberos,
-    ldap::BlockListLdap, ldap::LdapBruteForce, ldap::LdapPlainText, log::ExtraThreat,
-    mqtt::BlockListMqtt, network::NetworkThreat, nfs::BlockListNfs, ntlm::BlockListNtlm,
-    rdp::BlockListRdp, rdp::RdpBruteForce, smb::BlockListSmb, smtp::BlockListSmtp,
-    ssh::BlockListSsh, sysmon::WindowsThreat, tls::BlockListTls,
+    bootp::BlockListBootp, conn::BlockListConn, conn::ExternalDdos, conn::MultiHostPortScan,
+    conn::PortScan, dcerpc::BlockListDceRpc, dhcp::BlockListDhcp, dns::BlockListDns,
+    dns::CryptocurrencyMiningPool, dns::DnsCovertChannel, dns::LockyRansomware, ftp::BlockListFtp,
+    ftp::FtpBruteForce, ftp::FtpPlainText, http::BlockListHttp, http::DomainGenerationAlgorithm,
+    http::HttpThreat, http::NonBrowser, http::RepeatedHttpSessions, http::TorConnection,
+    kerberos::BlockListKerberos, ldap::BlockListLdap, ldap::LdapBruteForce, ldap::LdapPlainText,
+    log::ExtraThreat, mqtt::BlockListMqtt, network::NetworkThreat, nfs::BlockListNfs,
+    ntlm::BlockListNtlm, rdp::BlockListRdp, rdp::RdpBruteForce, smb::BlockListSmb,
+    smtp::BlockListSmtp, ssh::BlockListSsh, sysmon::WindowsThreat, tls::BlockListTls,
+    tls::SuspiciousTlsTraffic,
 };
 use super::{
     customer::{Customer, HostNetworkGroupInput},
@@ -570,9 +571,9 @@ enum Event {
 
     LockyRansomware(LockyRansomware),
 
-    BlockListBootp(bootp::BlockListBootp),
+    BlockListBootp(BlockListBootp),
 
-    BlockListDhcp(dhcp::BlockListDhcp),
+    BlockListDhcp(BlockListDhcp),
 
     SuspiciousTlsTraffic(SuspiciousTlsTraffic),
 }
