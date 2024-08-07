@@ -194,6 +194,7 @@ impl AccountMutation {
                     &None,
                     &None,
                     &None,
+                    &None,
                 )?;
                 return Ok(username);
             }
@@ -235,6 +236,7 @@ impl AccountMutation {
         role: Option<UpdateRole>,
         name: Option<UpdateName>,
         department: Option<UpdateDepartment>,
+        language: Option<UpdateLanguage>,
         allow_access_from: Option<UpdateAllowAccessFrom>,
         max_parallel_sessions: Option<UpdateMaxParallelSessions>,
     ) -> Result<String> {
@@ -242,6 +244,7 @@ impl AccountMutation {
             && role.is_none()
             && name.is_none()
             && department.is_none()
+            && language.is_none()
             && allow_access_from.is_none()
             && max_parallel_sessions.is_none()
         {
@@ -251,6 +254,7 @@ impl AccountMutation {
         let role = role.map(|r| (database::Role::from(r.old), database::Role::from(r.new)));
         let name = name.map(|n| (n.old, n.new));
         let dept = department.map(|d| (d.old, d.new));
+        let language = language.map(|d| (d.old, d.new));
         let allow_access_from = if let Some(ip_addrs) = allow_access_from {
             let old = if let Some(old) = ip_addrs.old {
                 Some(strings_to_ip_addrs(&old)?)
@@ -276,6 +280,7 @@ impl AccountMutation {
             role,
             &name,
             &dept,
+            &language,
             &allow_access_from,
             &max_parallel_sessions,
         )?;
@@ -467,6 +472,10 @@ impl Account {
         &self.inner.department
     }
 
+    async fn language(&self) -> Option<String> {
+        self.inner.language.clone()
+    }
+
     async fn creation_time(&self) -> DateTime<Utc> {
         self.inner.creation_time()
     }
@@ -536,6 +545,12 @@ struct UpdateName {
 struct UpdateDepartment {
     old: String,
     new: String,
+}
+
+#[derive(InputObject)]
+struct UpdateLanguage {
+    old: Option<String>,
+    new: Option<String>,
 }
 
 /// The old and new values of `allowAccessFrom` to update.

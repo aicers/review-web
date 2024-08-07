@@ -48,6 +48,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Modified the `Node`, `NodeProfile` fields.
   - Modified `Node` related CRUD APIs.
 - Updated review-database to 0.29.0.
+- Modified the functions that inserts and updates the account to include the language
+  selected by the user.
 
 ### Fixed
 
