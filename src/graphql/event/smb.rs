@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result};
+use async_graphql::{Context, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
@@ -97,8 +97,8 @@ impl BlockListSmb {
         &self.inner.file_name
     }
 
-    async fn file_size(&self) -> u64 {
-        self.inner.file_size
+    async fn file_size(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.file_size)
     }
 
     async fn resource_type(&self) -> u16 {
