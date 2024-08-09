@@ -10,14 +10,17 @@ use std::{
 };
 
 use async_graphql::{
-    types::ID, ComplexObject, Context, InputObject, Object, Result, SimpleObject, StringNumber,
+    types::ID, ComplexObject, Context, Enum, InputObject, Object, Result, SimpleObject,
+    StringNumber,
 };
 use bincode::Options;
 use chrono::{DateTime, TimeZone, Utc};
-pub use crud::{get_customer_id_of_review_host, get_node_settings};
+#[allow(clippy::module_name_repetitions)]
+pub use crud::get_customer_id_of_node;
+use database::Indexable;
 use input::NodeInput;
 use ipnet::Ipv4Net;
-use review_database::Indexable;
+use review_database as database;
 use roxy::Process as RoxyProcess;
 use serde::{Deserialize, Serialize};
 
@@ -104,144 +107,129 @@ impl TryFrom<&NicInput> for Nic {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq, Default)]
-#[graphql(complex)]
-#[allow(clippy::struct_excessive_bools, clippy::module_name_repetitions)]
-pub struct NodeSettings {
-    #[graphql(skip)]
-    customer_id: u32,
-    description: String,
-    pub(super) hostname: String,
-
-    piglet: bool,
-    #[graphql(skip)]
-    piglet_giganto_ip: Option<IpAddr>,
-    piglet_giganto_port: Option<PortNumber>,
-    save_packets: bool,
-    http: bool,
-    office: bool,
-    exe: bool,
-    pdf: bool,
-    txt: bool,
-    vbs: bool,
-    smtp_eml: bool,
-    ftp: bool,
-
-    giganto: bool,
-    #[graphql(skip)]
-    giganto_ingestion_ip: Option<IpAddr>,
-    giganto_ingestion_port: Option<PortNumber>,
-    #[graphql(skip)]
-    giganto_publish_ip: Option<IpAddr>,
-    giganto_publish_port: Option<PortNumber>,
-    #[graphql(skip)]
-    giganto_graphql_ip: Option<IpAddr>,
-    giganto_graphql_port: Option<PortNumber>,
-    retention_period: Option<u16>,
-
-    reconverge: bool,
-
-    hog: bool,
-    #[graphql(skip)]
-    hog_giganto_ip: Option<IpAddr>,
-    hog_giganto_port: Option<PortNumber>,
-
-    protocols: Option<Vec<String>>,
-    sensors: Option<Vec<String>>,
+#[derive(Clone, Deserialize, PartialEq, Serialize, Copy, Eq, Enum)]
+#[graphql(remote = "database::AgentKind")]
+pub enum AgentKind {
+    Reconverge,
+    Piglet,
+    Hog,
 }
 
-impl From<review_database::NodeSettings> for NodeSettings {
-    fn from(input: review_database::NodeSettings) -> Self {
+#[derive(Clone, PartialEq, Deserialize, Serialize, Enum, Copy, Eq)]
+#[graphql(remote = "database::AgentStatus")]
+pub enum AgentStatus {
+    Disabled,
+    Enabled,
+    ReloadFailed,
+    Unknown,
+}
+
+#[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
+pub struct Agent {
+    pub node: u32,
+    pub key: String,
+    pub kind: AgentKind,
+    pub status: AgentStatus,
+    pub config: Option<String>,
+    pub draft: Option<String>,
+}
+
+impl From<&database::Agent> for Agent {
+    fn from(input: &database::Agent) -> Self {
         Self {
-            customer_id: input.customer_id,
-            description: input.description.clone(),
-            hostname: input.hostname.clone(),
-            piglet: input.piglet,
-            piglet_giganto_ip: input.piglet_giganto_ip,
-            piglet_giganto_port: input.piglet_giganto_port,
-            save_packets: input.save_packets,
-            http: input.http,
-            office: input.office,
-            exe: input.exe,
-            pdf: input.pdf,
-            txt: input.txt,
-            vbs: input.vbs,
-            smtp_eml: input.smtp_eml,
-            ftp: input.ftp,
-            giganto: input.giganto,
-            giganto_ingestion_ip: input.giganto_ingestion_ip,
-            giganto_ingestion_port: input.giganto_ingestion_port,
-            giganto_publish_ip: input.giganto_publish_ip,
-            giganto_publish_port: input.giganto_publish_port,
-            giganto_graphql_ip: input.giganto_graphql_ip,
-            giganto_graphql_port: input.giganto_graphql_port,
-            retention_period: input.retention_period,
-            reconverge: input.reconverge,
-            hog: input.hog,
-            hog_giganto_ip: input.hog_giganto_ip,
-            hog_giganto_port: input.hog_giganto_port,
-            protocols: input.protocols,
-            sensors: input.sensors,
+            node: input.node,
+            key: input.key.clone(),
+            kind: input.kind.into(),
+            status: input.status.into(),
+            config: input.config.clone().map(|c| c.to_string()),
+            draft: input.draft.clone().map(|c| c.to_string()),
         }
     }
 }
 
 #[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
-#[graphql(complex)]
-pub(super) struct Node {
-    #[graphql(skip)]
-    pub id: u32,
-    name: String,
-    name_draft: Option<String>,
-    pub settings: Option<NodeSettings>,
-    pub settings_draft: Option<NodeSettings>,
-    creation_time: DateTime<Utc>,
+pub struct Giganto {
+    pub status: AgentStatus,
+    pub draft: Option<String>,
 }
 
-impl From<review_database::Node> for Node {
-    fn from(input: review_database::Node) -> Self {
+impl From<database::Giganto> for Giganto {
+    fn from(input: database::Giganto) -> Self {
         Self {
-            id: input.id,
-            name: input.name,
-            name_draft: input.name_draft,
-            settings: input.settings.map(Into::into),
-            settings_draft: input.settings_draft.map(Into::into),
-            creation_time: input.creation_time,
+            status: input.status.into(),
+            draft: input.draft.map(|c| c.to_string()),
         }
     }
 }
 
-#[ComplexObject]
-impl Node {
-    async fn id(&self) -> ID {
-        ID(self.id.to_string())
+#[derive(Clone, Deserialize, Serialize, PartialEq, Default)]
+#[allow(clippy::module_name_repetitions)]
+pub struct NodeProfile {
+    pub inner: review_database::NodeProfile,
+}
+
+impl From<&review_database::NodeProfile> for NodeProfile {
+    fn from(inner: &review_database::NodeProfile) -> Self {
+        Self {
+            inner: inner.clone(),
+        }
     }
 }
 
-#[ComplexObject]
-impl NodeSettings {
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+pub(super) struct Node {
+    pub inner: review_database::Node,
+}
+
+impl From<review_database::Node> for Node {
+    fn from(inner: review_database::Node) -> Self {
+        Self { inner }
+    }
+}
+
+#[Object]
+impl Node {
+    async fn id(&self) -> ID {
+        ID(self.inner.id.to_string())
+    }
+
+    async fn name(&self) -> &str {
+        &self.inner.name
+    }
+
+    async fn name_draft(&self) -> Option<&str> {
+        self.inner.name_draft.as_deref()
+    }
+
+    async fn profile(&self) -> Option<NodeProfile> {
+        self.inner.profile.as_ref().map(Into::into)
+    }
+
+    async fn profile_draft(&self) -> Option<NodeProfile> {
+        self.inner.profile_draft.as_ref().map(Into::into)
+    }
+
+    async fn agents(&self) -> Vec<Agent> {
+        self.inner.agents.iter().map(Into::into).collect()
+    }
+
+    async fn giganto(&self) -> Option<Giganto> {
+        self.inner.giganto.clone().map(Into::into)
+    }
+}
+
+#[Object]
+impl NodeProfile {
     async fn customer_id(&self) -> ID {
-        ID(self.customer_id.to_string())
+        ID(self.inner.customer_id.to_string())
     }
 
-    async fn piglet_giganto_ip(&self) -> Option<String> {
-        self.piglet_giganto_ip.as_ref().map(ToString::to_string)
+    async fn description(&self) -> &str {
+        &self.inner.description
     }
 
-    async fn giganto_ingestion_ip(&self) -> Option<String> {
-        self.giganto_ingestion_ip.as_ref().map(ToString::to_string)
-    }
-
-    async fn giganto_publish_ip(&self) -> Option<String> {
-        self.giganto_publish_ip.as_ref().map(ToString::to_string)
-    }
-
-    async fn giganto_graphql_ip(&self) -> Option<String> {
-        self.giganto_graphql_ip.as_ref().map(ToString::to_string)
-    }
-
-    async fn hog_giganto_ip(&self) -> Option<String> {
-        self.hog_giganto_ip.as_ref().map(ToString::to_string)
+    async fn hostname(&self) -> &str {
+        &self.inner.hostname
     }
 }
 
@@ -460,33 +448,6 @@ impl Indexable for NodeStatus {
     fn set_index(&mut self, index: u32) {
         self.id = index;
     }
-}
-
-#[derive(Serialize)]
-pub struct Setting {
-    name: String,
-    // ingest, publish address of Piglet. web_addr is not used
-    piglet: Option<ServerAddress>,
-    // graphql, ingest, publish address of Giganto
-    giganto: Option<ServerAddress>,
-    // ingest, publish address of Hog. web_addr is not used
-    hog: Option<ServerAddress>,
-    // ingest, publish address of REconverge. web_addr is not used
-    reconverge: Option<ServerAddress>,
-}
-
-#[derive(Serialize)]
-pub struct ServerAddress {
-    web: Option<SocketAddr>,
-    rpc: Option<SocketAddr>,
-    public: Option<SocketAddr>,
-    ing: Option<SocketAddr>,
-}
-
-#[derive(Serialize)]
-pub struct ServerPort {
-    rpc_port: PortNumber,
-    web_port: PortNumber,
 }
 
 #[derive(Clone, Deserialize, Serialize, SimpleObject)]

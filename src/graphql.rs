@@ -56,7 +56,7 @@ pub use self::allow_network::get_allow_networks;
 pub use self::block_network::get_block_networks;
 pub use self::cert::ParsedCertificate;
 pub use self::customer::get_customer_networks;
-pub use self::node::{get_customer_id_of_review_host, get_node_settings};
+pub use self::node::get_customer_id_of_node;
 pub use self::sampling::{
     Interval as SamplingInterval, Kind as SamplingKind, Period as SamplingPeriod,
     Policy as SamplingPolicy,
@@ -205,8 +205,8 @@ const DEFAULT_CUTOFF_RATE: f64 = 0.1;
 const DEFAULT_TRENDI_ORDER: i32 = 4;
 
 #[allow(clippy::type_complexity)] // since this is called within `load` only
-fn load_nodes<I, R>(
-    table: &I,
+fn load_nodes<'a, T, I, R>(
+    table: &'a T,
     after: Option<String>,
     before: Option<String>,
     first: Option<usize>,
@@ -214,8 +214,9 @@ fn load_nodes<I, R>(
     prefix: Option<&[u8]>,
 ) -> Result<(Vec<R>, bool, bool)>
 where
-    I: database::Iterable<R>,
-    R: database::types::FromKeyValue + database::UniqueKey,
+    T: database::Iterable<'a, I>,
+    I: std::iter::Iterator<Item = anyhow::Result<R>>,
+    R: database::UniqueKey,
 {
     let (after, before, first, last) = validate_and_process_pagination_params(
         after,
@@ -267,8 +268,8 @@ fn encode_cursor(cursor: &[u8]) -> String {
     BASE64.encode(cursor)
 }
 
-fn load_edges<I, R, N, A, NodesField>(
-    table: &I,
+fn load_edges<'a, T, I, R, N, A, NodesField>(
+    table: &'a T,
     after: Option<String>,
     before: Option<String>,
     first: Option<usize>,
@@ -276,8 +277,9 @@ fn load_edges<I, R, N, A, NodesField>(
     additional_fields: A,
 ) -> Result<Connection<String, N, A, EmptyFields, NodesField>>
 where
-    I: database::Iterable<R>,
-    R: database::types::FromKeyValue + database::UniqueKey,
+    T: database::Iterable<'a, I>,
+    I: std::iter::Iterator<Item = anyhow::Result<R>>,
+    R: database::UniqueKey,
     N: From<R> + OutputType,
     A: ObjectType,
     NodesField: ConnectionNameType,
@@ -328,8 +330,8 @@ where
     Ok(connection)
 }
 
-fn collect_edges<I, R>(
-    table: &I,
+fn collect_edges<'a, T, I, R>(
+    table: &'a T,
     dir: Direction,
     from: Option<Vec<u8>>,
     to: Option<Vec<u8>>,
@@ -337,8 +339,9 @@ fn collect_edges<I, R>(
     count: usize,
 ) -> (Vec<anyhow::Result<R>>, bool)
 where
-    I: database::Iterable<R>,
-    R: database::types::FromKeyValue + database::UniqueKey,
+    T: database::Iterable<'a, I>,
+    I: std::iter::Iterator<Item = anyhow::Result<R>>,
+    R: database::UniqueKey,
 {
     let edges: Box<dyn Iterator<Item = _>> = if let Some(cursor) = from {
         let iter = if let Some(prefix) = prefix {
