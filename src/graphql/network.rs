@@ -203,8 +203,12 @@ impl Network {
         Ok(customers)
     }
 
-    async fn tag_ids(&self) -> &[u32] {
-        self.inner.tag_ids()
+    async fn tag_ids(&self) -> Vec<ID> {
+        self.inner
+            .tag_ids()
+            .iter()
+            .map(|&id| ID(id.to_string()))
+            .collect()
     }
 
     async fn creation_time(&self) -> DateTime<Utc> {
@@ -245,7 +249,6 @@ async fn load(
 #[cfg(test)]
 mod tests {
     use crate::graphql::TestSchema;
-
     #[tokio::test]
     async fn remove_networks() {
         let schema = TestSchema::new().await;
@@ -337,5 +340,27 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{updateNetwork: "0"}"#);
+    }
+
+    #[tokio::test]
+    async fn select_networks() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNetwork(name: "n1", description: "", networks: {
+                        hosts: [], networks: [], ranges: []
+                    }, customerIds: [], tagIds: [0, 1, 2])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
+        let res = schema
+            .execute(r#"{networkList{edges{node{name tagIds}}totalCount}}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{networkList: {edges: [{node: {name: "n1", tagIds: ["0", "1", "2"]}}], totalCount: 1}}"#
+        );
     }
 }

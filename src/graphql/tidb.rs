@@ -1,4 +1,4 @@
-use async_graphql::{Context, Enum, Object, Result, SimpleObject};
+use async_graphql::{Context, Enum, Object, Result, SimpleObject, ID};
 use review_database::{self as database};
 
 use super::{Role, RoleGuard};
@@ -135,8 +135,8 @@ struct Tidb {
 #[Object]
 impl Tidb {
     /// The database ID of the Tidb.
-    async fn id(&self) -> u32 {
-        self.inner.id
+    async fn id(&self) -> ID {
+        ID(self.inner.id.to_string())
     }
 
     /// The name of the Tidb.
@@ -186,8 +186,8 @@ struct TidbRule {
 
 #[Object]
 impl TidbRule {
-    async fn rule_id(&self) -> u32 {
-        self.inner.rule_id
+    async fn rule_id(&self) -> ID {
+        ID(self.inner.rule_id.to_string())
     }
 
     async fn name(&self) -> &str {
