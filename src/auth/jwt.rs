@@ -1,6 +1,6 @@
 use std::{
     str::FromStr,
-    sync::{Arc, RwLock},
+    sync::{Arc, LazyLock, RwLock},
 };
 
 use anyhow::anyhow;
@@ -13,10 +13,8 @@ use serde::{Deserialize, Serialize};
 use super::{store::token_exists_in_store, AuthError};
 use crate::Store;
 
-lazy_static::lazy_static! {
-    static ref JWT_EXPIRES_IN: Arc<RwLock<u32>> = Arc::new(RwLock::new(3600));
-    static ref JWT_SECRET: Arc<RwLock<Vec<u8>>> = Arc::new(RwLock::new(vec![]));
-}
+static JWT_EXPIRES_IN: LazyLock<Arc<RwLock<u32>>> = LazyLock::new(|| Arc::new(RwLock::new(3600)));
+static JWT_SECRET: LazyLock<Arc<RwLock<Vec<u8>>>> = LazyLock::new(|| Arc::new(RwLock::new(vec![])));
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Claims {
