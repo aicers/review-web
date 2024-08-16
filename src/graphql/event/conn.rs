@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result};
+use async_graphql::{Context, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
@@ -374,28 +374,28 @@ impl BlockListConn {
         self.inner.conn_state.clone()
     }
 
-    async fn duration(&self) -> i64 {
-        self.inner.duration
+    async fn duration(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.duration)
     }
 
     async fn service(&self) -> String {
         self.inner.service.clone()
     }
 
-    async fn orig_bytes(&self) -> u64 {
-        self.inner.orig_bytes
+    async fn orig_bytes(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.orig_bytes)
     }
 
-    async fn resp_bytes(&self) -> u64 {
-        self.inner.resp_bytes
+    async fn resp_bytes(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.resp_bytes)
     }
 
-    async fn orig_pkts(&self) -> u64 {
-        self.inner.orig_pkts
+    async fn orig_pkts(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.orig_pkts)
     }
 
-    async fn resp_pkts(&self) -> u64 {
-        self.inner.resp_pkts
+    async fn resp_pkts(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.resp_pkts)
     }
 
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {

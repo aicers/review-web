@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result};
+use async_graphql::{Context, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
@@ -213,8 +213,8 @@ impl FtpPlainText {
         &self.inner.file
     }
 
-    async fn file_size(&self) -> u64 {
-        self.inner.file_size
+    async fn file_size(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.file_size)
     }
 
     async fn file_id(&self) -> &str {
@@ -308,8 +308,8 @@ impl BlockListFtp {
         self.inner.proto
     }
 
-    async fn last_time(&self) -> i64 {
-        self.inner.last_time
+    async fn last_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.last_time)
     }
 
     async fn user(&self) -> &str {
@@ -352,8 +352,8 @@ impl BlockListFtp {
         &self.inner.file
     }
 
-    async fn file_size(&self) -> u64 {
-        self.inner.file_size
+    async fn file_size(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.file_size)
     }
 
     async fn file_id(&self) -> &str {
