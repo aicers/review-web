@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 mod policy;
 pub(super) mod response;
 
@@ -111,6 +113,7 @@ pub enum ResponseKind {
 #[graphql(remote = "database::EventCategory")]
 #[repr(u8)]
 pub enum ThreatCategory {
+    Unknown = 0,
     Reconnaissance = 1,
     InitialAccess,
     Execution,
@@ -120,6 +123,7 @@ pub enum ThreatCategory {
     CommandAndControl,
     Exfiltration,
     Impact,
+    #[deprecated(note = "Use `Reconnaissance` instead.")]
     HttpThreat,
 }
 

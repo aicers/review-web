@@ -47,6 +47,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   version update.
 - Modified the `Node`, `NodeProfile` fields.
   - Modified `Node` related CRUD APIs.
+- Updated review-database to 0.29.1.
 
 ### Fixed
 
