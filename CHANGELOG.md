@@ -50,6 +50,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   - Removed `get_node_settings` function as it is no longer used.
   - Renamed `get_customer_id_of_review_host` to `get_customer_id_of_node`.
 - Updated review-database to 0.29.1.
+- Changed GraphQL API `preserveOutliers` to use `PreserveOutliersOutput` in its response.
+  - Instead of returning the count of successfully marked outliers, this endpoint
+    now returns a list of outliers that were not marked as saved.
 - In `BlockListSmb`, `Network`, `SamplingPolicy`, `Tidb`, and `TidbRule`,
   changed GraphQL APIs to return `StringNumber` or `ID` instead of integers
   beyond `i32`.
