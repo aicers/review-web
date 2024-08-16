@@ -22,7 +22,6 @@ http = "1.1"
 ip2location = "0.5"
 ipnet = { version = "2", features = ["serde"] }
 jsonwebtoken = "9"
-lazy_static = "1"
 num-traits = "0.2"
 reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls-native-roots",
