@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result};
+use async_graphql::{Context, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::{self as database};
 
@@ -113,9 +113,10 @@ impl ModelIndicator {
         self.inner.model_id
     }
 
-    /// The size of the model indicator.
-    async fn size(&self) -> usize {
-        self.inner.tokens.len()
+    /// The size of the model indicator in string within the representable
+    /// range of a `usize`
+    async fn size(&self) -> StringNumber<usize> {
+        StringNumber(self.inner.tokens.len())
     }
 
     /// The last modified time of the model indicator.
