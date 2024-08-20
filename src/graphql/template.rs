@@ -2,7 +2,7 @@ use std::convert::{TryFrom, TryInto};
 
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
-    Context, Enum, InputObject, Object, Result, Union,
+    Context, Enum, InputObject, Object, Result, StringNumber, Union,
 };
 use serde::{Deserialize, Serialize};
 
@@ -252,8 +252,13 @@ impl StructuredClusteringTemplate {
         self.inner.format.as_deref()
     }
 
-    async fn time_intervals(&self) -> Option<&[i64]> {
-        self.inner.time_intervals.as_deref()
+    /// The time interval of the template in string represantable by a vector of `i64`.
+    async fn time_intervals(&self) -> Option<Vec<StringNumber<i64>>> {
+        self.inner.time_intervals.as_ref().map(|v| {
+            v.iter()
+                .map(|i| StringNumber(*i))
+                .collect::<Vec<StringNumber<i64>>>()
+        })
     }
 
     async fn numbers_of_top_n(&self) -> Option<&[i32]> {
@@ -356,7 +361,7 @@ mod tests {
     use crate::graphql::TestSchema;
 
     #[tokio::test]
-    async fn test_template() {
+    async fn test_unstructured_template() {
         let schema = TestSchema::new().await;
         let res = schema.execute(r#"{templateList{totalCount}}"#).await;
         assert_eq!(res.data.to_string(), r#"{templateList: {totalCount: 0}}"#);
@@ -438,6 +443,111 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             r#"{templateList: {edges: [{node: {algorithm: DISTRIBUTION}}], totalCount: 1}}"#
+        );
+
+        let res = schema
+            .execute(r#"mutation { removeTemplate(name: "t1") }"#)
+            .await;
+        assert_eq!(res.data.to_string(), r#"{removeTemplate: "t1"}"#);
+
+        let res = schema.execute(r#"{templateList{totalCount}}"#).await;
+        assert_eq!(res.data.to_string(), r#"{templateList: {totalCount: 0}}"#);
+    }
+
+    #[tokio::test]
+    async fn test_structured_template() {
+        let schema = TestSchema::new().await;
+        let res = schema.execute(r#"{templateList{totalCount}}"#).await;
+        assert_eq!(res.data.to_string(), r#"{templateList: {totalCount: 0}}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertTemplate(structured: {
+                        name: "t1",
+                        description: "test",
+                        algorithm: "OPTICS",
+                        eps: 0.5,
+                        format: "json",
+                        timeIntervals: [1, 2, 3],
+                        numbersOfTopN: [1, 2, 3]
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTemplate: "t1"}"#);
+
+        let res = schema.execute(r#"{templateList{totalCount}}"#).await;
+        assert_eq!(res.data.to_string(), r#"{templateList: {totalCount: 1}}"#);
+
+        let res = schema
+            .execute(
+                r#"{
+                templateList {
+                    edges {
+                        node {
+                            ... on StructuredClusteringTemplate {
+                                name
+                                timeIntervals
+                            }
+                        }
+                    }
+                totalCount
+            }
+        }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{templateList: {edges: [{node: {name: "t1", timeIntervals: ["1", "2", "3"]}}], totalCount: 1}}"#
+        );
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                updateTemplate(oldStructured: {
+                    name: "t1",
+                    description: "test",
+                    algorithm: "OPTICS",
+                    eps: 0.5,
+                    format: "json",
+                    timeIntervals: [1, 2, 3],
+                    numbersOfTopN: [1, 2, 3]
+                },
+                newStructured: {
+                    name: "t1",
+                    description: "test",
+                    algorithm: "OPTICS",
+                    eps: 0.5,
+                    format: "json",
+                    timeIntervals: [1, 2, 4],
+                    numbersOfTopN: [1, 2, 4]
+                })
+            }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{updateTemplate: true}"#);
+
+        let res = schema
+            .execute(
+                r#"{
+                templateList {
+                    edges {
+                        node {
+                            ... on StructuredClusteringTemplate {
+                                algorithm
+                                timeIntervals
+                            }
+                        }
+                    }
+                totalCount
+            }
+        }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{templateList: {edges: [{node: {algorithm: OPTICS, timeIntervals: ["1", "2", "4"]}}], totalCount: 1}}"#
         );
 
         let res = schema

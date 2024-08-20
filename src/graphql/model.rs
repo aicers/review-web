@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
     types::ID,
-    Context, Object, Result, SimpleObject,
+    Context, Object, Result, SimpleObject, StringNumber,
 };
 use chrono::NaiveDateTime;
 use database::Store;
@@ -488,8 +488,9 @@ impl<'a> ElementCount<'a> {
         &self.inner.value
     }
 
-    async fn count(&self) -> i64 {
-        self.inner.count
+    /// The count of element in string representable by a `i64`.
+    async fn count(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.count)
     }
 }
 
@@ -530,8 +531,10 @@ pub(crate) struct TopElementCountsByColumn {
 
 #[Object]
 impl TopElementCountsByColumn {
-    async fn column_index(&self) -> usize {
-        self.inner.column_index
+    /// The column index of top element counts by column in string
+    /// representable within the range of a `usize`.
+    async fn column_index(&self) -> StringNumber<usize> {
+        StringNumber(self.inner.column_index)
     }
 
     async fn counts(&self) -> Vec<ElementCount> {
@@ -551,8 +554,10 @@ struct TopMultimaps {
 
 #[Object]
 impl TopMultimaps {
-    async fn n_index(&self) -> usize {
-        self.inner.n_index
+    /// The n index of multi map in string representable within the range of a
+    /// `usize`.
+    async fn n_index(&self) -> StringNumber<usize> {
+        StringNumber(self.inner.n_index)
     }
 
     async fn selected(&self) -> Vec<TopColumnsOfCluster> {
@@ -615,20 +620,26 @@ impl ClusterTrend {
         &self.series
     }
 
-    async fn trend(&self) -> &[usize] {
-        &self.trend
+    /// The cluster trend in a vector of string representable by a vector of
+    /// `usize`.
+    async fn trend(&self) -> Vec<StringNumber<usize>> {
+        self.trend.iter().map(|x| StringNumber(*x)).collect()
     }
 
     async fn lines(&self) -> &[LineSegment] {
         &self.lines
     }
 
-    async fn number_of_ups(&self) -> usize {
-        self.number_of_ups
+    /// The number of ups of cluster trend in string represantable by a `
+    /// usize`.
+    async fn number_of_ups(&self) -> StringNumber<usize> {
+        StringNumber(self.number_of_ups)
     }
 
-    async fn number_of_downs(&self) -> usize {
-        self.number_of_downs
+    /// The number of downs of cluster trend in string represantable by a
+    /// `usize`.
+    async fn number_of_downs(&self) -> StringNumber<usize> {
+        StringNumber(self.number_of_downs)
     }
 
     async fn maximum_slope(&self) -> f64 {
@@ -639,12 +650,16 @@ impl ClusterTrend {
         self.minimum_slope
     }
 
-    async fn longest_up_span(&self) -> usize {
-        self.longest_up_span
+    /// The longest up span of cluster trend in string represantable by a
+    /// `usize`.
+    async fn longest_up_span(&self) -> StringNumber<usize> {
+        StringNumber(self.longest_up_span)
     }
 
-    async fn longest_down_span(&self) -> usize {
-        self.longest_down_span
+    /// The longest down span of cluster trend in string represantable by a
+    /// `usize`.
+    async fn longest_down_span(&self) -> StringNumber<usize> {
+        StringNumber(self.longest_down_span)
     }
 }
 
