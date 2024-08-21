@@ -47,6 +47,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   version update.
 - Modified the `Node`, `NodeProfile` fields.
   - Modified `Node` related CRUD APIs.
+  - Removed `get_node_settings` function as it is no longer used.
+  - Renamed `get_customer_id_of_review_host` to `get_customer_id_of_node`.
 - Updated review-database to 0.29.1.
 
 ### Fixed
