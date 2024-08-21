@@ -106,7 +106,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
 
         let res = schema.execute(r#"{network(id: "0") {tagIds}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{network: {tagIds: [0]}}"#);
+        assert_eq!(res.data.to_string(), r#"{network: {tagIds: ["0"]}}"#);
 
         let res = schema
             .execute(

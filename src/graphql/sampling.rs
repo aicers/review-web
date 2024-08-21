@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     types::ID,
-    Context, Enum, InputObject, Object, Result,
+    Context, Enum, InputObject, Object, Result, StringNumber,
 };
 use chrono::{DateTime, Utc};
 use review_database::{Direction, Iterable};
@@ -162,8 +162,8 @@ impl SamplingPolicy {
         self.inner.dst_ip.as_ref().map(ToString::to_string)
     }
 
-    async fn column(&self) -> Option<u32> {
-        self.inner.column
+    async fn column(&self) -> Option<StringNumber<u32>> {
+        self.inner.column.map(StringNumber)
     }
 
     async fn immutable(&self) -> bool {
