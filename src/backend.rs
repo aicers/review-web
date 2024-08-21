@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -55,8 +55,8 @@ pub trait AgentManager: Send + Sync {
     async fn halt(&self, _hostname: &str) -> Result<(), anyhow::Error>;
 
     /// Sends a ping message to the given host and waits for a response. Returns
-    /// the round-trip time in microseconds.
-    async fn ping(&self, _hostname: &str) -> Result<i64, anyhow::Error>;
+    /// the round-trip time.
+    async fn ping(&self, _hostname: &str) -> Result<Duration, anyhow::Error>;
 
     /// Reboots the node with the given hostname.
     async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error>;

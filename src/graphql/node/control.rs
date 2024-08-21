@@ -232,7 +232,7 @@ async fn broadcast_customer_change(customer_id: u32, ctx: &Context<'_>) -> Resul
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, time::Duration};
 
     use assert_json_diff::assert_json_eq;
     use async_trait::async_trait;
@@ -661,7 +661,7 @@ mod tests {
             Ok(())
         }
 
-        async fn ping(&self, hostname: &str) -> Result<i64, anyhow::Error> {
+        async fn ping(&self, hostname: &str) -> Result<Duration, anyhow::Error> {
             anyhow::bail!("{hostname} is unreachable")
         }
 
