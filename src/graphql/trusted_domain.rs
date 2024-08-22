@@ -1,7 +1,7 @@
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
     connection::{Connection, EmptyFields},
-    Context, Object, Result, SimpleObject,
+    Context, InputObject, Object, Result, SimpleObject,
 };
 
 use super::{AgentManager, BoxedAgentManager, Role, RoleGuard};
@@ -63,6 +63,29 @@ impl TrustedDomainMutation {
         Ok(name)
     }
 
+    /// Updates a trusted domain, returning the new value.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    async fn update_trusted_domain(
+        &self,
+        ctx: &Context<'_>,
+        old: TrustedDomainInput,
+        new: TrustedDomainInput,
+    ) -> Result<String> {
+        let name = {
+            let store = crate::graphql::get_store(ctx).await?;
+            let map = store.trusted_domain_map();
+            let old = review_database::TrustedDomain::from(old);
+            let new = review_database::TrustedDomain::from(new);
+            map.update(&old, &new)?;
+            new.name
+        };
+
+        let agent_manager = ctx.data::<BoxedAgentManager>()?;
+        agent_manager.broadcast_trusted_domains().await?;
+        Ok(name)
+    }
+
     /// Removes a trusted domain, returning the old value if it existed.
     #[graphql(
         guard = "RoleGuard::new(Role::SystemAdministrator).or(RoleGuard::new(Role::SecurityAdministrator))"
@@ -95,6 +118,21 @@ impl From<review_database::TrustedDomain> for TrustedDomain {
     }
 }
 
+#[derive(InputObject)]
+pub(super) struct TrustedDomainInput {
+    name: String,
+    remarks: String,
+}
+
+impl From<TrustedDomainInput> for review_database::TrustedDomain {
+    fn from(input: TrustedDomainInput) -> Self {
+        Self {
+            name: input.name,
+            remarks: input.remarks,
+        }
+    }
+}
+
 async fn load(
     ctx: &Context<'_>,
     after: Option<OpaqueCursor<Vec<u8>>>,
@@ -109,7 +147,9 @@ async fn load(
 
 #[cfg(test)]
 mod tests {
-    use crate::graphql::TestSchema;
+    use std::net::SocketAddr;
+
+    use crate::graphql::{BoxedAgentManager, MockAgentManager, TestSchema};
 
     #[tokio::test]
     async fn trusted_domain_list() {
@@ -156,6 +196,50 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             r#"{trustedDomainList: {edges: [{node: {name: "example2.org"}}]}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn update_trusted_domain() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let test_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        let schema = TestSchema::new_with(agent_manager, Some(test_addr)).await;
+        let insert_query = r#"
+              mutation {
+                insertTrustedDomain(
+                    name: "test.com"
+                    remarks: "origin_remarks"
+                )
+              }
+              "#;
+        let update_query = r#"
+              mutation {
+                updateTrustedDomain(
+                    old: {
+                        name: "test.com"
+                        remarks: "origin_remarks"
+                    }
+                    new: {
+                        name: "test2.com"
+                        remarks: "updated_remarks"
+                    }
+                )
+              }
+              "#;
+
+        let res = schema.execute(update_query).await;
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "no such entry".to_string()
+        );
+
+        let res = schema.execute(insert_query).await;
+        assert_eq!(res.data.to_string(), r#"{insertTrustedDomain: "test.com"}"#);
+
+        let res = schema.execute(update_query).await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{updateTrustedDomain: "test2.com"}"#
         );
     }
 }

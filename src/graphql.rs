@@ -716,6 +716,7 @@ mod tests {
     #[tokio::test]
     async fn unimplemented_agent_manager() {
         let agent_manager = super::MockAgentManager {};
+        assert!(agent_manager.broadcast_trusted_domains().await.is_ok());
         assert!(agent_manager
             .broadcast_trusted_user_agent_list(&[])
             .await
