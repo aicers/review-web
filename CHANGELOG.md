@@ -16,6 +16,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   during sign-in.
 - Added ip access control based on the `allow_access_from` field of `Account`
   during sign-in.
+- Added the `updateTrustedDomain` GraphQL API to modify the list of trusted domains.
 
 ### Changed
 
