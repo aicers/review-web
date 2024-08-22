@@ -62,7 +62,9 @@ async fn load(
             );
         }
         if let Ok(rtt) = agents.ping(hostname).await {
-            ping.insert(hostname.clone(), rtt);
+            let clamped_micros = i64::try_from(std::cmp::min(rtt.as_micros(), i64::MAX as u128))
+                .expect("within i64 range");
+            ping.insert(hostname.clone(), clamped_micros);
         }
     }
 
@@ -222,7 +224,7 @@ async fn load(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, time::Duration};
 
     use assert_json_diff::assert_json_eq;
     use axum::async_trait;
@@ -303,8 +305,8 @@ mod tests {
             unimplemented!()
         }
 
-        async fn ping(&self, _hostname: &str) -> Result<i64, anyhow::Error> {
-            Ok(10)
+        async fn ping(&self, _hostname: &str) -> Result<Duration, anyhow::Error> {
+            Ok(Duration::from_micros(10))
         }
 
         async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error> {

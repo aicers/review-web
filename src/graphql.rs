@@ -577,7 +577,7 @@ impl AgentManager for MockAgentManager {
         unimplemented!()
     }
 
-    async fn ping(&self, _hostname: &str) -> Result<i64, anyhow::Error> {
+    async fn ping(&self, _hostname: &str) -> Result<std::time::Duration, anyhow::Error> {
         unimplemented!()
     }
 

@@ -56,6 +56,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - In `BlockListSmb`, `Network`, `SamplingPolicy`, `Tidb`, and `TidbRule`,
   changed GraphQL APIs to return `StringNumber` or `ID` instead of integers
   beyond `i32`.
+- Refactor `AgentManager::ping` to return `Duration` instead of `i64`. This
+  refactor improves the flexibility and accuracy of the `ping` method, making it
+  more robust and aligned with Rust's time handling conventions.
 
 ### Fixed
 

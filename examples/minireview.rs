@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
     process::exit,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use anyhow::{anyhow, bail, Context, Error, Result};
@@ -118,7 +119,7 @@ impl AgentManager for Manager {
         bail!("Host {hostname} is unreachable")
     }
 
-    async fn ping(&self, hostname: &str) -> Result<i64, Error> {
+    async fn ping(&self, hostname: &str) -> Result<Duration, Error> {
         bail!("Host {hostname} is unreachable")
     }
 
