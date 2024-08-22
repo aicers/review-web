@@ -127,13 +127,8 @@ impl AgentManager for Manager {
         bail!("Host {hostname} is unreachable")
     }
 
-    async fn set_config(
-        &self,
-        hostname: &str,
-        agent_id: &str,
-        _config: &review_protocol::types::Config,
-    ) -> Result<(), Error> {
-        bail!("Agent {agent_id}@{hostname} is unreachable")
+    async fn update_config(&self, agent_key: &str) -> Result<(), Error> {
+        bail!("Agent {agent_key} is unreachable")
     }
 
     async fn update_traffic_filter_rules(

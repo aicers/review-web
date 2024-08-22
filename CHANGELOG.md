@@ -16,6 +16,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   during sign-in.
 - Added ip access control based on the `allow_access_from` field of `Account`
   during sign-in.
+- Added `AgentManager::update_config` method to notify agents to update their
+  configurations.
 
 ### Changed
 
@@ -72,6 +74,25 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     `post_body`, `state`
 - Added new fields to `BlockListConn` event.
   - `orig_l2_bytes`, `resp_l2_bytes`
+- Updated the `applyNode` GraphQL API to align with the new node and agent
+  management approach.
+  - The API updates the database with draft values, notifies agents to update
+    their configurations, and logs the changes, as long as each step is needed.
+  - The `successModules` field has been removed from the API response. Instead,
+    the response now includes `gigantoDraft`, representing the draft
+    configuration of the Giganto module. If `gigantoDraft` is `None`, it means
+    either the node does not have the Giganto module or the draft for the
+    Giganto is unavailable. In the latter case, this indicates that the Giganto
+    should be disabled, resulting in the node no longer having the Giganto
+    module.
+
+### Removed
+
+- The `AgentManager::set_config` method has been removed, due to the new
+  configuration management approach. The central management server no longer
+  sends updates directly to agents. Instead, it notifies them through the
+  `update_config` method, prompting agents to request the updated configuration
+  from the management server.
 
 ### Fixed
 

@@ -61,13 +61,8 @@ pub trait AgentManager: Send + Sync {
     /// Reboots the node with the given hostname.
     async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error>;
 
-    /// Sets the configuration of the given agent.
-    async fn set_config(
-        &self,
-        _hostname: &str,
-        _agent_id: &str,
-        _config: &Config,
-    ) -> Result<(), anyhow::Error>;
+    /// Notifies agents to update their configuration.
+    async fn update_config(&self, _agent_key: &str) -> Result<(), anyhow::Error>;
 
     /// Updates the traffic filter rules for the given host.
     async fn update_traffic_filter_rules(

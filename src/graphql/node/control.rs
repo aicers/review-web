@@ -1,14 +1,13 @@
 use async_graphql::{Context, Object, Result, SimpleObject, ID};
-use review_database::{Node, NodeProfile};
+use futures::future::join_all;
+use review_database::Node;
 use tracing::{error, info};
 
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard},
-    ModuleName, NodeControlMutation,
+    NodeControlMutation,
 };
 use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks};
-
-const MAX_SET_CONFIG_TRY_COUNT: u32 = 3;
 
 #[Object]
 impl NodeControlMutation {
@@ -39,172 +38,228 @@ impl NodeControlMutation {
         }
     }
 
-    // TODO: Apply node issue #251
+    /// Applies the draft configuration to the node with the given ID.
+    ///
+    /// This function updates the node's `name` with `name_draft`, `profile` with `profile_draft`,
+    /// and `config` values of agents with their `draft` values.
+    ///
+    /// Returns success as long as the database update is successful, regardless of the outcome of
+    /// notifying agents or broadcasting customer ID changes. The response includes a `gigantoDraft`
+    /// field, which represents the draft configuration of the Giganto module associated with the
+    /// node.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
-    async fn apply_node(&self, ctx: &Context<'_>, id: ID) -> Result<ApplyResult> {
+    async fn apply_node(&self, ctx: &Context<'_>, id: ID) -> Result<ApplyNodeResponse> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-        let agents = ctx.data::<BoxedAgentManager>()?;
 
-        let (node, _invalid_agents) = {
+        let (node, invalid_agents) = {
             let store = crate::graphql::get_store(ctx).await?;
             let node_map = store.node_map();
             node_map
                 .get_by_id(i)?
-                .ok_or_else(|| async_graphql::Error::new(format!("Node with ID {i} not found",)))?
+                .ok_or_else(|| async_graphql::Error::new(format!("Node with ID {i} not found")))?
         };
 
-        if node.name_draft.is_none() && node.profile_draft.is_none() {
-            return Err("There is nothing to apply.".into());
+        if !invalid_agents.is_empty() {
+            return Err(async_graphql::Error::new(format!(
+                "Node {i} cannot be applied due to invalid agents: {invalid_agents:?}"
+            )));
         }
 
-        let config_setted_modules = send_set_config_requests(agents, &node).await;
-        let success_modules = if let Ok(config_setted_modules) = config_setted_modules {
-            update_node(ctx, i, node.clone(), &config_setted_modules).await?;
+        if node.name_draft.is_none() {
+            // Since the `name` of the node is used as the key in the database, the `name_draft`
+            // must be present to apply the node.
+            return Err("Node is not valid for apply".into());
+        }
 
-            if let Some(customer_id) = should_broadcast_customer_change(&node) {
-                broadcast_customer_change(customer_id, ctx).await?;
+        let giganto_draft = node
+            .giganto
+            .as_ref()
+            .and_then(|g| g.draft.as_ref().map(ToString::to_string));
+
+        let apply_scope = node_apply_scope(&node);
+
+        if apply_scope.db {
+            if let Some(ref target_agents) = apply_scope.agents {
+                update_db(ctx, &node, &target_agents.updates, &target_agents.disables).await?;
+            } else {
+                update_db(ctx, &node, &[], &[]).await?;
+            };
+
+            info!(
+                "[{}] Node ID {i} - Node's drafts are applied.\nName: {:?}, Name draft: {:?}\nProfile: {:?}, Profile draft: {:?}",
+                chrono::Utc::now(),
+                node.name,
+                node.name_draft,
+                node.profile,
+                node.profile_draft,
+            );
+
+            broadcast_customer_change_if_needed(ctx, &node).await;
+        }
+
+        if let Some(ref target_agents) = apply_scope.agents {
+            let agent_manager = ctx.data::<BoxedAgentManager>()?;
+            if let Err(e) = notify_agents(
+                agent_manager,
+                &target_agents.updates,
+                &target_agents.disables,
+            )
+            .await
+            {
+                error!("Failed to notify agents for node {i} to be updated. However, the failure does not affect the node application operation.\nDetails:\n{e:?}",);
             }
-            config_setted_modules
-        } else {
-            return Err("Failed to apply node profile".into());
-        };
 
-        Ok(ApplyResult {
-            id,
-            success_modules,
-        })
+            info!(
+                "[{}] Node ID {i} - Node's agents are notified to be updated.\n{:?}",
+                chrono::Utc::now(),
+                node.agents.iter().filter_map(|agent| {
+                    if target_agents.updates.contains(&agent.key.as_str()) {
+                        Some(format!(
+                            "\nAgent key: {}, Config: {:?}, Draft: {:?}",
+                            agent.key, agent.config, agent.draft
+                        ))
+                    } else {
+                        None
+                    }
+                })
+            );
+        }
+
+        Ok(ApplyNodeResponse { id, giganto_draft })
     }
 }
 
 #[derive(SimpleObject, Clone)]
-pub struct ApplyResult {
+pub struct ApplyNodeResponse {
+    /// The ID of the node to which the draft was applied.
     pub id: ID,
-    pub success_modules: Vec<ModuleName>,
+
+    /// The draft of the Giganto module, associated with the node.
+    ///
+    /// If `None`, it means either the node does not have the Giganto module or the draft for the
+    /// Giganto module is not available. In the latter case, this indicates that the Giganto should
+    /// be disabled.
+    pub giganto_draft: Option<String>,
 }
 
-async fn send_set_config_requests(
-    agents: &BoxedAgentManager,
-    node: &Node,
-) -> anyhow::Result<Vec<ModuleName>> {
-    let profile_draft = node
-        .profile_draft
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("There is nothing to be applied."))?;
-
-    let mut result_combined: Vec<ModuleName> = vec![];
-
-    for (module_name, config) in target_app_configs(profile_draft) {
-        if send_set_config_request(
-            agents,
-            &profile_draft.hostname,
-            module_name.as_ref(),
-            &config,
-        )
-        .await?
-        {
-            result_combined.push(module_name);
-        }
-    }
-
-    Ok(result_combined)
-}
-
-async fn send_set_config_request(
-    agents: &BoxedAgentManager,
-    hostname: &str,
-    module_name: &str,
-    config: &review_protocol::types::Config,
-) -> anyhow::Result<bool> {
-    for _ in 0..MAX_SET_CONFIG_TRY_COUNT {
-        let set_config_response = agents.set_config(hostname, module_name, config).await;
-        if set_config_response.is_ok() {
-            return Ok(true);
-        }
-        info!("Failed to set config for module {module_name}. Retrying...");
-    }
-
-    Ok(false)
-}
-
-fn target_app_configs(
-    _profile_draft: &NodeProfile,
-) -> Vec<(ModuleName, review_protocol::types::Config)> {
-    Vec::new() // TODO
-}
-
-#[allow(clippy::struct_excessive_bools)]
-struct ModuleSpecificProfileUpdateIndicator {
-    hog: bool,
-    reconverge: bool,
-    piglet: bool,
-}
-
-impl ModuleSpecificProfileUpdateIndicator {
-    fn all_true(&self) -> bool {
-        self.hog && self.reconverge && self.piglet
-    }
-}
-
-async fn update_node(
-    ctx: &Context<'_>,
-    i: u32,
-    node: Node,
-    _config_setted_modules: &[ModuleName],
+async fn notify_agents(
+    agent_manager: &BoxedAgentManager,
+    update_agent_keys: &[&str],
+    disable_agent_keys: &[&str],
 ) -> Result<()> {
-    let mut updated_node = node.clone();
-    updated_node.name = updated_node.name_draft.take().unwrap_or(updated_node.name);
+    let update_futures = update_agent_keys.iter().map(|agent_key| async move {
+        agent_manager.update_config(agent_key).await.map_err(|e| {
+            async_graphql::Error::new(format!(
+                "Failed to notify agent for config update {agent_key}: {e}"
+            ))
+        })
+    });
 
-    if let Some(_profile_draft) = &updated_node.profile_draft {
-        let update_module_specific_profile_indicator = ModuleSpecificProfileUpdateIndicator {
-            hog: true, // TODO
-            reconverge: true,
-            piglet: true,
-        };
+    // TODO: We need to implement the logic to disable agents. For now, we will only log the
+    // message.
+    info!("Agents {disable_agent_keys:?} need to be notified to be disabled, but disabling logic is not yet implemented");
 
-        if update_module_specific_profile_indicator.all_true() {
-            // All fields in the `profile` can simply be replaced with fields in `profile_draft`.
-            updated_node.profile = updated_node.profile_draft.take();
-        } else {
-            update_common_node_profile(&mut updated_node);
-            update_module_specific_profile(
-                &mut updated_node,
-                &update_module_specific_profile_indicator,
-            );
-        }
+    let notification_results: Vec<Result<_>> = join_all(update_futures).await;
+
+    let errors: Vec<String> = notification_results
+        .into_iter()
+        .filter_map(|result| result.err().map(|e| e.message))
+        .collect();
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(async_graphql::Error::new(errors.join("\n")))
     }
+}
 
+struct NodeApplyScope<'a> {
+    db: bool,
+    agents: Option<NotificationTarget<'a>>,
+}
+
+struct NotificationTarget<'a> {
+    pub updates: Vec<&'a str>,
+    pub disables: Vec<&'a str>,
+}
+
+fn node_apply_scope(node: &Node) -> NodeApplyScope {
+    let is_name_changed = node.name_draft.as_ref() != Some(&node.name);
+    let is_profile_changed = node.profile_draft != node.profile;
+    let is_any_agent_changed = node.agents.iter().any(|agent| agent.draft != agent.config);
+
+    let target_agents = if is_any_agent_changed {
+        let mut updates = Vec::new();
+        let mut disables = Vec::new();
+        node.agents.iter().for_each(|agent| {
+            if agent.draft.is_none() {
+                disables.push(agent.key.as_str());
+            } else if agent.draft != agent.config {
+                updates.push(agent.key.as_str());
+            }
+        });
+        Some(NotificationTarget { updates, disables })
+    } else {
+        None
+    };
+
+    NodeApplyScope {
+        db: is_name_changed || is_profile_changed || is_any_agent_changed,
+        agents: target_agents,
+    }
+}
+
+async fn update_db(
+    ctx: &Context<'_>,
+    node: &Node,
+    update_agent_keys: &[&str],
+    disable_agent_keys: &[&str],
+) -> Result<()> {
     let store = crate::graphql::get_store(ctx).await?;
     let mut map = store.node_map();
 
-    let old: review_database::NodeUpdate = node.into();
-    let new: review_database::NodeUpdate = updated_node.into();
-    Ok(map.update(i, &old, &new)?)
+    let mut update = node.clone();
+    update
+        .name
+        .clone_from(update.name_draft.as_ref().ok_or("Name draft must exist")?);
+
+    update.profile.clone_from(&update.profile_draft);
+
+    // Update agents, removing those whose keys are in `disable_agent_keys`
+    update.agents = update
+        .agents
+        .iter()
+        .filter_map(|agent| {
+            if disable_agent_keys.contains(&agent.key.as_str()) {
+                None
+            } else if update_agent_keys.contains(&agent.key.as_str()) {
+                let mut updated_agent = agent.clone();
+                updated_agent.config.clone_from(&updated_agent.draft);
+                Some(updated_agent)
+            } else {
+                Some(agent.clone())
+            }
+        })
+        .collect();
+
+    let old = node.clone().into();
+    let new = update.into();
+    Ok(map.update(node.id, &old, &new)?)
 }
 
-fn update_common_node_profile(updated_node: &mut Node) {
-    let mut updated_profile = updated_node.profile.take().unwrap_or_default();
-    if let Some(profile_draft) = updated_node.profile_draft.as_ref() {
-        // These are common node profile fields, that are not tied to specific modules
-        updated_profile.customer_id = profile_draft.customer_id;
-        updated_profile
-            .description
-            .clone_from(&profile_draft.description);
-        updated_profile.hostname.clone_from(&profile_draft.hostname);
+async fn broadcast_customer_change_if_needed(ctx: &Context<'_>, node: &Node) {
+    if let Some(customer_id) = customer_id_to_broadcast(node) {
+        if let Err(e) = broadcast_customer_change(ctx, customer_id).await {
+            error!(
+                "Failed to broadcast customer change for customer ID {customer_id} on node {}. The failure did not affect the node application operation. Error: {e:?}",
+                node.id,
+            );
+        }
     }
-    updated_node.profile = Some(updated_profile);
 }
 
-fn update_module_specific_profile(
-    updated_node: &mut Node,
-    _update_module_specific_profile: &ModuleSpecificProfileUpdateIndicator,
-) {
-    let updated_profile = updated_node.profile.take().unwrap_or_default();
-
-    updated_node.profile = Some(updated_profile);
-}
-
-fn should_broadcast_customer_change(node: &Node) -> Option<u32> {
+fn customer_id_to_broadcast(node: &Node) -> Option<u32> {
     let is_review = node
         .profile_draft
         .as_ref()
@@ -220,7 +275,7 @@ fn should_broadcast_customer_change(node: &Node) -> Option<u32> {
     }
 }
 
-async fn broadcast_customer_change(customer_id: u32, ctx: &Context<'_>) -> Result<()> {
+async fn broadcast_customer_change(ctx: &Context<'_>, customer_id: u32) -> Result<()> {
     let store = crate::graphql::get_store(ctx).await?;
     let networks = get_customer_networks(&store, customer_id)?;
     if let Err(e) = broadcast_customer_networks(ctx, &networks).await {
@@ -238,13 +293,17 @@ mod tests {
     use async_trait::async_trait;
     use ipnet::IpNet;
     use serde_json::json;
-    use tokio::sync::mpsc::{self, Sender};
 
     use crate::graphql::{AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema};
 
     #[tokio::test]
-    async fn test_node_apply() {
-        let schema = TestSchema::new().await;
+    async fn test_apply_node() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["reconverge@analysis", "piglet@collect"],
+        });
+
+        let schema = TestSchema::new_with(agent_manager, None).await;
 
         // check empty
         let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
@@ -362,20 +421,20 @@ mod tests {
             })
         );
 
-        // apply node
+        // apply node - expected to update db and notify agent
         let res = schema
             .execute(
                 r#"mutation {
                     applyNode(id: "0") {
                         id
-                        successModules
+                        gigantoDraft
                     }
                 }"#,
             )
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{applyNode: {id: "0", successModules: []}}"#
+            r#"{applyNode: {id: "0", gigantoDraft: null}}"#
         );
 
         // check node list after apply
@@ -427,20 +486,24 @@ mod tests {
                             "node": {
                                 "id": "0",
                                 "name": "admin node",
-                                "nameDraft": null,
+                                "nameDraft": "admin node",
                                 "profile": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
                                     "hostname": "admin.aice-security.com",
                                 },
-                                "profileDraft": null,
+                                "profileDraft": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "admin.aice-security.com",
+                                },
                                 "agents": [
                                     {
                                       "node": 0,
                                       "key": "reconverge@analysis",
                                       "kind": "RECONVERGE",
                                       "status": "ENABLED",
-                                      "config": null,
+                                      "config": "test = 'toml'",
                                       "draft": "test = 'toml'"
                                     },
                                     {
@@ -448,7 +511,7 @@ mod tests {
                                       "key": "piglet@collect",
                                       "kind": "PIGLET",
                                       "status": "ENABLED",
-                                      "config": null,
+                                      "config": "test = 'toml'",
                                       "draft": "test = 'toml'"
                                     }
                                   ],
@@ -468,26 +531,30 @@ mod tests {
                         id: "0"
                         old: {
                             name: "admin node",
-                            nameDraft: null,
+                            nameDraft: "admin node",
                             profile: {
-                                customerId: "0",
+                                customerId: 0,
                                 description: "This is the admin node running review.",
                                 hostname: "admin.aice-security.com",
-                            },
-                            profileDraft: null,
+                            }
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "admin.aice-security.com",
+                            }
                             agents: [
                                 {
                                     key: "reconverge@analysis",
                                     kind: "RECONVERGE",
                                     status: "ENABLED",
-                                    config: null,
+                                    config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
                                     key: "piglet@collect",
                                     kind: "PIGLET",
                                     status: "ENABLED",
-                                    config: null,
+                                    config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 }
                             ],
@@ -496,10 +563,27 @@ mod tests {
                         new: {
                             nameDraft: "admin node with new name",
                             profileDraft: {
-                                customerId: "0",
+                                customerId: 0,
                                 description: "This is the admin node running review.",
                                 hostname: "admin.aice-security.com",
                             }
+                            agents: [
+                                {
+                                    key: "reconverge@analysis",
+                                    kind: "RECONVERGE",
+                                    status: "ENABLED",
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                },
+                                {
+                                    key: "piglet@collect",
+                                    kind: "PIGLET",
+                                    status: "ENABLED",
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            giganto: null,
                         }
                     )
                 }"#,
@@ -507,20 +591,107 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
 
-        // apply node
+        // check node list after update
+        let res = schema
+            .execute(
+                r#"query {
+                    nodeList(first: 10) {
+                      totalCount
+                      edges {
+                        node {
+                            id
+                            name
+                            nameDraft
+                            profile {
+                                customerId
+                                description
+                                hostname
+                            }
+                            profileDraft {
+                                customerId
+                                description
+                                hostname
+                            }
+                            agents {
+                                node
+                                key
+                                kind
+                                status
+                                config
+                                draft
+                            }
+                            giganto {
+                                status
+                                draft
+                            }
+                        }
+                      }
+                    }
+                  }"#,
+            )
+            .await;
+
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeList": {
+                    "totalCount": 1,
+                    "edges": [
+                        {
+                            "node": {
+                                "id": "0",
+                                "name": "admin node",
+                                "nameDraft": "admin node with new name",
+                                "profile": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "admin.aice-security.com",
+                                },
+                                "profileDraft": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "admin.aice-security.com",
+                                },
+                                "agents": [
+                                    {
+                                      "node": 0,
+                                      "key": "reconverge@analysis",
+                                      "kind": "RECONVERGE",
+                                      "status": "ENABLED",
+                                      "config": "test = 'toml'",
+                                      "draft": "test = 'toml'"
+                                    },
+                                    {
+                                      "node": 0,
+                                      "key": "piglet@collect",
+                                      "kind": "PIGLET",
+                                      "status": "ENABLED",
+                                      "config": "test = 'toml'",
+                                      "draft": "test = 'toml'"
+                                    }
+                                  ],
+                                "giganto": null,
+                            }
+                        }
+                    ]
+                }
+            })
+        );
+
+        // apply node - expected to update db
         let res = schema
             .execute(
                 r#"mutation {
                     applyNode(id: "0") {
                         id
-                        successModules
+                        gigantoDraft
                     }
                 }"#,
             )
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{applyNode: {id: "0", successModules: []}}"#
+            r#"{applyNode: {id: "0", gigantoDraft: null}}"#
         );
 
         // check node list after apply
@@ -544,6 +715,18 @@ mod tests {
                                 description
                                 hostname
                             }
+                            agents {
+                                node
+                                key
+                                kind
+                                status
+                                config
+                                draft
+                            }
+                            giganto {
+                                status
+                                draft
+                            }
                         }
                       }
                     }
@@ -560,13 +743,480 @@ mod tests {
                             "node": {
                                 "id": "0",
                                 "name": "admin node with new name",
-                                "nameDraft": null,
+                                "nameDraft": "admin node with new name",
                                 "profile": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
                                     "hostname": "admin.aice-security.com",
                                 },
-                                "profileDraft": null,
+                                "profileDraft": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "admin.aice-security.com",
+                                },
+                                "agents": [
+                                    {
+                                      "node": 0,
+                                      "key": "reconverge@analysis",
+                                      "kind": "RECONVERGE",
+                                      "status": "ENABLED",
+                                      "config": "test = 'toml'",
+                                      "draft": "test = 'toml'"
+                                    },
+                                    {
+                                      "node": 0,
+                                      "key": "piglet@collect",
+                                      "kind": "PIGLET",
+                                      "status": "ENABLED",
+                                      "config": "test = 'toml'",
+                                      "draft": "test = 'toml'"
+                                    }
+                                ],
+                                "giganto": null
+                            }
+                        }
+                    ]
+                }
+            })
+        );
+
+        // update giganto draft
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateNodeDraft(
+                        id: "0"
+                        old: {
+                            name: "admin node with new name",
+                            nameDraft: "admin node with new name",
+                            profile: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "admin.aice-security.com",
+                            }
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "admin.aice-security.com",
+                            }
+                            agents: [
+                                {
+                                    key: "reconverge@analysis",
+                                    kind: "RECONVERGE",
+                                    status: "ENABLED",
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                },
+                                {
+                                    key: "piglet@collect",
+                                    kind: "PIGLET",
+                                    status: "ENABLED",
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            giganto: null,
+                        },
+                        new: {
+                            nameDraft: "admin node with new name",
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "admin.aice-security.com",
+                            }
+                            agents: [
+                                {
+                                    key: "reconverge@analysis",
+                                    kind: "RECONVERGE",
+                                    status: "ENABLED",
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                },
+                                {
+                                    key: "piglet@collect",
+                                    kind: "PIGLET",
+                                    status: "ENABLED",
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            giganto: {
+                                status: ENABLED,
+                                draft: "test = 'giganto_toml'"
+                            }
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
+
+        // apply node - expected to neither update nor notify agent, but return gigantoDraft
+        // successfully
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(id: "0") {
+                        id
+                        gigantoDraft
+                    }
+                }"#,
+            )
+            .await;
+
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "applyNode": {
+                    "id": "0",
+                    "gigantoDraft": "test = 'giganto_toml'"
+                }
+            })
+        );
+
+        // check node list after apply
+        let res = schema
+            .execute(
+                r#"query {
+                    nodeList(first: 10) {
+                        totalCount
+                        edges {
+                            node {
+                                id
+                                name
+                                nameDraft
+                                profile {
+                                    customerId
+                                    description
+                                    hostname
+                                }
+                                profileDraft {
+                                    customerId
+                                    description
+                                    hostname
+                                }
+                                agents {
+                                    node
+                                    key
+                                    kind
+                                    status
+                                    config
+                                    draft
+                                }
+                                giganto {
+                                    status
+                                    draft
+                                }
+                            }
+                        }
+                    }
+                }"#,
+            )
+            .await;
+
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeList": {
+                    "totalCount": 1,
+                    "edges": [
+                        {
+                            "node": {
+                                "id": "0",
+                                "name": "admin node with new name",
+                                "nameDraft": "admin node with new name",
+                                "profile": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "admin.aice-security.com",
+                                },
+                                "profileDraft": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "admin.aice-security.com",
+                                },
+                                "agents": [
+                                    {
+                                        "node": 0,
+                                        "key": "reconverge@analysis",
+                                        "kind": "RECONVERGE",
+                                        "status": "ENABLED",
+                                        "config": "test = 'toml'",
+                                        "draft": "test = 'toml'"
+                                    },
+                                    {
+                                        "node": 0,
+                                        "key": "piglet@collect",
+                                        "kind": "PIGLET",
+                                        "status": "ENABLED",
+                                        "config": "test = 'toml'",
+                                        "draft": "test = 'toml'"
+                                    }
+                                ],
+                                "giganto": {
+                                    "status": "ENABLED",
+                                    "draft": "test = 'giganto_toml'"
+                                }
+                            }
+                        }
+                    ]
+                }
+            })
+        );
+
+        // update node to disable one of the agents (piglet@collect) in next apply
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateNodeDraft(
+                        id: "0"
+                        old: {
+                            name: "admin node with new name",
+                            nameDraft: "admin node with new name",
+                            profile: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "admin.aice-security.com",
+                            }
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "admin.aice-security.com",
+                            }
+                            agents: [
+                                {
+                                    key: "reconverge@analysis",
+                                    kind: "RECONVERGE",
+                                    status: "ENABLED",
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                },
+                                {
+                                    key: "piglet@collect",
+                                    kind: "PIGLET",
+                                    status: "ENABLED",
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            giganto: {
+                                status: "ENABLED",
+                                draft: "test = 'giganto_toml'"
+                            }
+                        },
+                        new: {
+                            nameDraft: "admin node with new name",
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "admin.aice-security.com",
+                            }
+                            agents: [
+                                {
+                                    key: "reconverge@analysis",
+                                    kind: "RECONVERGE",
+                                    status: "ENABLED",
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                },
+                                {
+                                    key: "piglet@collect",
+                                    kind: "PIGLET",
+                                    status: "ENABLED",
+                                    config: "test = 'toml'",
+                                    draft: null
+                                }
+                            ],
+                            giganto: {
+                                status: "ENABLED",
+                                draft: "test = 'giganto_toml'"
+                            }
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
+
+        // check node list after update
+        let res = schema
+            .execute(
+                r#"query {
+                    nodeList(first: 10) {
+                      totalCount
+                      edges {
+                        node {
+                            id
+                            name
+                            nameDraft
+                            profile {
+                                customerId
+                                description
+                                hostname
+                            }
+                            profileDraft {
+                                customerId
+                                description
+                                hostname
+                            }
+                            agents {
+                                node
+                                key
+                                kind
+                                status
+                                config
+                                draft
+                            }
+                            giganto {
+                                status
+                                draft
+                            }
+                        }
+                      }
+                    }
+                  }"#,
+            )
+            .await;
+
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeList": {
+                    "totalCount": 1,
+                    "edges": [
+                        {
+                            "node": {
+                                "id": "0",
+                                "name": "admin node with new name",
+                                "nameDraft": "admin node with new name",
+                                "profile": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "admin.aice-security.com",
+                                },
+                                "profileDraft": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "admin.aice-security.com",
+                                },
+                                "agents": [
+                                    {
+                                      "node": 0,
+                                      "key": "reconverge@analysis",
+                                      "kind": "RECONVERGE",
+                                      "status": "ENABLED",
+                                      "config": "test = 'toml'",
+                                      "draft": "test = 'toml'"
+                                    },
+                                    {
+                                      "node": 0,
+                                      "key": "piglet@collect",
+                                      "kind": "PIGLET",
+                                      "status": "ENABLED",
+                                      "config": "test = 'toml'",
+                                      "draft": null
+                                    }
+                                  ],
+                                "giganto": {
+                                    "status": "ENABLED",
+                                    "draft": "test = 'giganto_toml'"
+                                },
+                            }
+                        }
+                    ]
+                }
+            })
+        );
+
+        // apply node - expected to update db and notify agent, and also piglet is expected to be
+        // removed from the `agents` vector.
+        let res = schema
+            .execute(
+                r#"mutation {
+                        applyNode(id: "0") {
+                            id
+                        }
+                    }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{applyNode: {id: "0"}}"#);
+
+        // check node list after apply
+        let res = schema
+            .execute(
+                r#"query {
+                        nodeList(first: 10) {
+                          totalCount
+                          edges {
+                            node {
+                                id
+                                name
+                                nameDraft
+                                profile {
+                                    customerId
+                                    description
+                                    hostname
+                                }
+                                profileDraft {
+                                    customerId
+                                    description
+                                    hostname
+                                }
+                                agents {
+                                    node
+                                    key
+                                    kind
+                                    status
+                                    config
+                                    draft
+                                }
+                                giganto {
+                                    status
+                                    draft
+                                }
+                            }
+                          }
+                        }
+                      }"#,
+            )
+            .await;
+
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeList": {
+                    "totalCount": 1,
+                    "edges": [
+                        {
+                            "node": {
+                                "id": "0",
+                                "name": "admin node with new name",
+                                "nameDraft": "admin node with new name",
+                                "profile": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "admin.aice-security.com",
+                                },
+                                "profileDraft": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "admin.aice-security.com",
+                                },
+                                "agents": [
+                                    {
+                                      "node": 0,
+                                      "key": "reconverge@analysis",
+                                      "kind": "RECONVERGE",
+                                      "status": "ENABLED",
+                                      "config": "test = 'toml'",
+                                      "draft": "test = 'toml'"
+                                    }
+                                ],
+                                "giganto": {
+                                    "status": "ENABLED",
+                                    "draft": "test = 'giganto_toml'"
+                                }
                             }
                         }
                     ]
@@ -575,18 +1225,82 @@ mod tests {
         );
     }
 
-    struct MockAgentManager {
-        pub online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,
-        pub send_result_checker: Sender<String>,
+    #[tokio::test]
+    async fn test_apply_node_error_due_to_invalid_drafts() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["reconverge@analysis", "piglet@collect"],
+        });
+
+        let schema = TestSchema::new_with(agent_manager, None).await;
+
+        // insert node
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "admin node",
+                        customerId: 0,
+                        description: "This is the admin node running review.",
+                        hostname: "admin.aice-security.com",
+                        agents: [{
+                            key: "reconverge@analysis"
+                            kind: RECONVERGE
+                            status: ENABLED
+                            config: null
+                            draft: "test = 'toml'"
+                        },
+                        {
+                            key: "piglet@collect"
+                            kind: PIGLET
+                            status: ENABLED
+                            config: null
+                            draft: "test = 'toml'"
+                        }]
+                        giganto: null
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Simulate a situation where `name_draft` is set to `None`
+        let (node, _invalid_agents) = schema
+            .store()
+            .await
+            .node_map()
+            .get_by_id(0)
+            .unwrap()
+            .unwrap();
+        let mut update = node.clone();
+        update.name_draft = None;
+
+        let old = node.clone().into();
+        let new = update.into();
+        let _ = schema.store().await.node_map().update(node.id, &old, &new);
+
+        // Apply node
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(id: "0") {
+                        id
+                        gigantoDraft
+                    }
+                }"#,
+            )
+            .await;
+
+        // Check that the operation failed
+        assert!(res.is_err());
     }
 
-    impl MockAgentManager {
-        pub async fn insert_result(&self, result_key: &str) {
-            self.send_result_checker
-                .send(result_key.to_string())
-                .await
-                .expect("send result failed");
-        }
+    #[tokio::test]
+    async fn test_apply_node_disables_agents() {}
+
+    struct MockAgentManager {
+        pub online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,
+        pub available_agents: Vec<&'static str>,
     }
 
     #[async_trait]
@@ -669,15 +1383,12 @@ mod tests {
             anyhow::bail!("{hostname} is unreachable")
         }
 
-        async fn set_config(
-            &self,
-            hostname: &str,
-            agent_id: &str,
-            _config: &review_protocol::types::Config,
-        ) -> Result<(), anyhow::Error> {
-            self.insert_result(format!("{agent_id}@{hostname}").as_str())
-                .await;
-            Ok(())
+        async fn update_config(&self, agent_key: &str) -> Result<(), anyhow::Error> {
+            if self.available_agents.contains(&agent_key) {
+                Ok(())
+            } else {
+                anyhow::bail!("Notifying agent {agent_key} to update config failed")
+            }
         }
 
         async fn update_traffic_filter_rules(
@@ -700,13 +1411,11 @@ mod tests {
     #[tokio::test]
     async fn test_node_shutdown() {
         let mut online_apps_by_host_id = HashMap::new();
-        insert_apps("localhost", &["hog"], &mut online_apps_by_host_id);
-
-        let (send_result_checker, _recv_result_checker) = mpsc::channel(10);
+        insert_apps("analysis", &["hog"], &mut online_apps_by_host_id);
 
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id,
-            send_result_checker,
+            available_agents: vec!["hog@analysis"],
         });
 
         let schema = TestSchema::new_with(agent_manager, None).await;
@@ -715,11 +1424,11 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                nodeShutdown(hostname:"localhost")
+                nodeShutdown(hostname:"analysis")
             }"#,
             )
             .await;
 
-        assert_eq!(res.data.to_string(), r#"{nodeShutdown: "localhost"}"#);
+        assert_eq!(res.data.to_string(), r#"{nodeShutdown: "analysis"}"#);
     }
 }
