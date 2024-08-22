@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
     types::ID,
-    ComplexObject, Context, InputObject, Object, Result, SimpleObject, Subscription,
+    ComplexObject, Context, InputObject, Object, Result, SimpleObject, StringNumber, Subscription,
 };
 use bincode::Options;
 use chrono::{offset::LocalResult, DateTime, NaiveDateTime, TimeZone, Utc};
@@ -121,19 +121,19 @@ impl OutlierMutation {
         &self,
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] input: Vec<PreserveOutliersInput>,
-    ) -> Result<usize> {
+    ) -> Result<Vec<PreserveOutliersOutput>> {
         let store = super::get_store(ctx).await?;
         let map = store.outlier_map();
-        let mut updated = vec![];
+        let mut outdated_items: Vec<PreserveOutliersOutput> = vec![];
         for outlier_key in input {
-            let outlier_id = (outlier_key.id, outlier_key.source.clone());
+            let preserve: PreserveOutliersInput = outlier_key.clone();
             let key: review_database::OutlierInfoKey = outlier_key.into();
-            if map.update_is_saved(&key)? {
-                updated.push(outlier_id);
+            if !(map.update_is_saved(&key)?) {
+                outdated_items.push(PreserveOutliersOutput::from(preserve));
             }
         }
 
-        Ok(updated.len())
+        Ok(outdated_items)
     }
 }
 
@@ -321,7 +321,7 @@ impl RankedOutlier {
     }
 }
 
-#[derive(Debug, InputObject)]
+#[derive(Debug, Clone, InputObject)]
 struct PreserveOutliersInput {
     id: i64,
     model_id: i32,
@@ -339,6 +339,44 @@ impl From<PreserveOutliersInput> for review_database::OutlierInfoKey {
             id: input.id,
             source: input.source,
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PreserveOutliersOutput {
+    id: i64,
+    model_id: i32,
+    timestamp: i64,
+    source: String,
+}
+
+impl From<PreserveOutliersInput> for PreserveOutliersOutput {
+    fn from(input: PreserveOutliersInput) -> Self {
+        Self {
+            model_id: input.model_id,
+            timestamp: input.timestamp,
+            id: input.id,
+            source: input.source,
+        }
+    }
+}
+
+#[Object]
+impl PreserveOutliersOutput {
+    async fn id(&self) -> ID {
+        ID(self.id.to_string())
+    }
+
+    async fn model_id(&self) -> i32 {
+        self.model_id
+    }
+
+    async fn timestamp(&self) -> StringNumber<i64> {
+        StringNumber(self.timestamp)
+    }
+
+    async fn source(&self) -> String {
+        self.source.to_string()
     }
 }
 
@@ -970,10 +1008,18 @@ mod tests {
         let to_preserve = format!("[{{id: {to_save}, modelId: {model}, timestamp: {}, rank: {to_save}, source: \"test\"}}]", t.timestamp_nanos_opt().unwrap());
         let res = schema
             .execute(&format!(
-                "mutation {{preserveOutliers(input: {to_preserve})}}"
+                "mutation {{
+                    preserveOutliers(input: {to_preserve}) {{
+                        id
+                        modelId
+                        timestamp
+                        source
+                    }}
+                }}"
             ))
             .await;
-        assert_eq!(res.data.to_string(), "{preserveOutliers: 1}");
+        let expect = format!("{{preserveOutliers: []}}");
+        assert_eq!(res.data.to_string(), expect);
 
         let saved = start + 1;
         let to_preserve = format!(
@@ -982,9 +1028,17 @@ mod tests {
         );
         let res = schema
             .execute(&format!(
-                "mutation {{preserveOutliers(input: {to_preserve})}}"
+                "mutation {{
+                    preserveOutliers(input: {to_preserve}) {{
+                        id
+                        modelId
+                        timestamp
+                        source
+                    }}
+                }}"
             ))
             .await;
-        assert_eq!(res.data.to_string(), "{preserveOutliers: 0}");
+        let expect = format!("{{preserveOutliers: [{{id: \"{saved}\", modelId: {model}, timestamp: \"{}\", source: \"test\"}}]}}", t.timestamp_nanos_opt().unwrap());
+        assert_eq!(res.data.to_string(), expect);
     }
 }
