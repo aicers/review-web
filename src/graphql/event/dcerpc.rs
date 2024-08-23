@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result};
+use async_graphql::{Context, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
@@ -77,12 +77,12 @@ impl BlockListDceRpc {
         self.inner.proto
     }
 
-    async fn last_time(&self) -> i64 {
-        self.inner.last_time
+    async fn last_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.last_time)
     }
 
-    async fn rtt(&self) -> i64 {
-        self.inner.rtt
+    async fn rtt(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.rtt)
     }
 
     async fn named_pipe(&self) -> &str {

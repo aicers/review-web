@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result};
+use async_graphql::{Context, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
@@ -94,8 +94,8 @@ impl DnsCovertChannel {
         self.inner.trans_id
     }
 
-    async fn rtt(&self) -> i64 {
-        self.inner.rtt
+    async fn rtt(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.rtt)
     }
 
     async fn qclass(&self) -> u16 {
@@ -237,8 +237,8 @@ impl LockyRansomware {
         self.inner.trans_id
     }
 
-    async fn rtt(&self) -> i64 {
-        self.inner.rtt
+    async fn rtt(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.rtt)
     }
 
     async fn qclass(&self) -> u16 {
@@ -375,8 +375,8 @@ impl CryptocurrencyMiningPool {
         self.inner.trans_id
     }
 
-    async fn rtt(&self) -> i64 {
-        self.inner.rtt
+    async fn rtt(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.rtt)
     }
 
     async fn qclass(&self) -> u16 {
@@ -501,8 +501,8 @@ impl BlockListDns {
         self.inner.proto
     }
 
-    async fn last_time(&self) -> i64 {
-        self.inner.last_time
+    async fn last_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.last_time)
     }
 
     async fn query(&self) -> &str {
@@ -517,8 +517,8 @@ impl BlockListDns {
         self.inner.trans_id
     }
 
-    async fn rtt(&self) -> i64 {
-        self.inner.rtt
+    async fn rtt(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.rtt)
     }
 
     async fn qclass(&self) -> u16 {

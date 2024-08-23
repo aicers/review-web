@@ -1676,7 +1676,7 @@ mod tests {
         let res = schema.execute(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1", rtt: 10, query: "domain"}}]}}"#
+            r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1", rtt: "10", query: "domain"}}]}}"#
         );
     }
 }

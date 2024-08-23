@@ -53,7 +53,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Changed GraphQL API `preserveOutliers` to use `PreserveOutliersOutput` in its response.
   - Instead of returning the count of successfully marked outliers, this endpoint
     now returns a list of outliers that were not marked as saved.
-- In `BlockListSmb`, `Network`, `SamplingPolicy`, `Tidb`, and `TidbRule`,
+- In `BlockListSmb`, `Network`, `SamplingPolicy`, `Tidb`, `TidbRule`,
+  `BlockListConn`, `BlockListDceRpc`, `DnsCovertChannel`, `LockyRansomware`,
+  `CryptocurrencyMiningPool`, `BlockListDns`, `FtpPlainText` and `BlockListFtp`
   changed GraphQL APIs to return `StringNumber` or `ID` instead of integers
   beyond `i32`.
 - Refactor `AgentManager::ping` to return `Duration` instead of `i64`. This
