@@ -47,7 +47,7 @@ async fn load(
     let agents = ctx.data::<BoxedAgentManager>()?;
     let apps = agents.online_apps_by_host_id().await?;
     let mut usages: HashMap<String, ResourceUsage> = HashMap::new();
-    let mut ping: HashMap<String, i64> = HashMap::new();
+    let mut ping = HashMap::new();
     for hostname in apps.keys() {
         if let Ok(usage) = agents.get_resource_usage(hostname).await {
             usages.insert(
@@ -62,9 +62,7 @@ async fn load(
             );
         }
         if let Ok(rtt) = agents.ping(hostname).await {
-            let clamped_micros = i64::try_from(std::cmp::min(rtt.as_micros(), i64::MAX as u128))
-                .expect("within i64 range");
-            ping.insert(hostname.clone(), clamped_micros);
+            ping.insert(hostname.clone(), rtt);
         }
     }
 
@@ -473,7 +471,7 @@ mod tests {
                                 "usedMemory": "100",
                                 "totalDiskSpace": "1000",
                                 "usedDiskSpace": "100",
-                                "ping": "10",
+                                "ping": 0.00001,
                                 "review": true,
                                 "piglet": true,
                                 "pigletConfig": null,
@@ -490,7 +488,7 @@ mod tests {
                                 "usedMemory": "100",
                                 "totalDiskSpace": "1000",
                                 "usedDiskSpace": "100",
-                                "ping": "10",
+                                "ping": 0.00001,
                                 "review": false,
                                 "piglet": false,
                                 "pigletConfig": null,
