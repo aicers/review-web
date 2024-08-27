@@ -61,6 +61,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Refactor `AgentManager::ping` to return `Duration` instead of `i64`. This
   refactor improves the flexibility and accuracy of the `ping` method, making it
   more robust and aligned with Rust's time handling conventions.
+- In the GraphQL API, modified the `ping` field in `NodeStatus` to return a
+  `Float` (seconds) instead of a `StringNumber` (microseconds). This provides a
+  more standard representation of round-trip time and improves compatibility
+  with GraphQL clients.
 - Added a `language` field to the `Account`. Consequently, the `account` and
   `accountList` API responses now include this field. The `insertAccount` and
   `updateAccount` GraphQL API endpoints are also updated to support the field.

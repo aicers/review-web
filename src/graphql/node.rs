@@ -7,6 +7,7 @@ mod status;
 use std::{
     borrow::Cow,
     net::{IpAddr, SocketAddr},
+    time::Duration,
 };
 
 use async_graphql::{
@@ -328,9 +329,9 @@ pub(super) struct NodeStatus {
     #[graphql(skip)]
     used_disk_space: Option<u64>,
 
-    /// The ping value for a specific node.
+    /// The round-trip time to the node.
     #[graphql(skip)]
-    ping: Option<i64>,
+    ping: Option<Duration>,
 
     /// Whether review is online or not.
     review: Option<bool>,
@@ -372,9 +373,9 @@ impl NodeStatus {
     async fn used_disk_space(&self) -> Option<StringNumber<u64>> {
         self.used_disk_space.map(StringNumber)
     }
-    /// The round-trip time in microseconds to a host, within the range representable by an `i64`
-    async fn ping(&self) -> Option<StringNumber<i64>> {
-        self.ping.map(StringNumber)
+    /// The round-trip time to the node in seconds.
+    async fn ping(&self) -> Option<f64> {
+        self.ping.map(|d| d.as_secs_f64())
     }
 }
 
@@ -388,7 +389,7 @@ impl NodeStatus {
         used_memory: Option<u64>,
         total_disk_space: Option<u64>,
         used_disk_space: Option<u64>,
-        ping: Option<i64>,
+        ping: Option<Duration>,
         review: Option<bool>,
         piglet: Option<bool>,
         piglet_config: Option<PigletConfig>,
