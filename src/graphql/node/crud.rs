@@ -457,4 +457,199 @@ mod tests {
         let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
         assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 0}}"#);
     }
+
+    #[tokio::test]
+    async fn update_node_name() {
+        let schema = TestSchema::new().await;
+
+        // check empty
+        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 0}}"#);
+
+        // insert node
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "admin node",
+                        customerId: 0,
+                        description: "This is the admin node running review.",
+                        hostname: "admin.aice-security.com",
+                        agents: [{
+                            key: "reconverge@analysis"
+                            kind: RECONVERGE
+                            status: ENABLED
+                        },
+                        {
+                            key: "piglet@collect"
+                            kind: PIGLET
+                            status: ENABLED
+                        }]
+                        giganto: null
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // check node count after insert
+        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 1}}"#);
+
+        // check inserted node
+        let res = schema
+            .execute(
+                r#"{node(id: "0") {
+                    id
+                    name
+                    nameDraft
+                    profile {
+                        customerId
+                        description
+                        hostname
+                    }
+                    profileDraft {
+                        customerId
+                        description
+                        hostname
+                    }
+                    agents {
+                        key
+                        kind
+                        status
+                    }
+                    giganto {
+                        status
+                        draft
+                    }
+                }}"#,
+            )
+            .await;
+
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "node": {
+                    "id": "0",
+                    "name": "admin node",
+                    "nameDraft": "admin node",
+                    "profile": null,
+                    "profileDraft": {
+                        "customerId": "0",
+                        "description": "This is the admin node running review.",
+                        "hostname": "admin.aice-security.com",
+                    },
+                    "agents": [{
+                        "key": "reconverge@analysis",
+                        "kind": "RECONVERGE",
+                        "status": "ENABLED",
+                    },
+                    {
+                        "key": "piglet@collect",
+                        "kind": "PIGLET",
+                        "status": "ENABLED",
+                    }],
+                    "giganto": null
+                }
+            })
+        );
+
+        // update node (update name, update profile_draft to null)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateNodeDraft(
+                        id: "0"
+                        old: {
+                            name: "admin node",
+                            nameDraft: "admin node",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "admin.aice-security.com",
+                            }
+                            agents: [
+                                {
+                                    key: "reconverge@analysis",
+                                    kind: "RECONVERGE",
+                                    status: "ENABLED",
+                                    config: null,
+                                    draft: null
+                                },
+                                {
+                                    key: "piglet@collect",
+                                    kind: "PIGLET",
+                                    status: "ENABLED",
+                                    config: null,
+                                    draft: null
+                                }
+                            ],
+                            giganto: null,
+                        },
+                        new: {
+                            nameDraft: "AdminNode",
+                            agents: [
+                                {
+                                    key: "reconverge@analysis",
+                                    kind: "RECONVERGE",
+                                    status: "ENABLED",
+                                    config: null,
+                                    draft: null
+                                },
+                                {
+                                    key: "piglet@collect",
+                                    kind: "PIGLET",
+                                    status: "ENABLED",
+                                    config: null,
+                                    draft: null
+                                }
+                            ],
+                            giganto: null,
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
+
+        // check node count after update
+        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 1}}"#);
+
+        // check updated node
+        let res = schema
+            .execute(
+                r#"{node(id: "0") {
+                    id
+                    name
+                    nameDraft
+                    profile {
+                        customerId
+                        description
+                        hostname
+                    }
+                    profileDraft {
+                        customerId
+                        description
+                        hostname
+                    }
+
+                }}"#,
+            )
+            .await;
+
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "node": {
+                    "id": "0",
+                    "name": "admin node", // stays the same
+                    "nameDraft": "AdminNode", // updated
+                    "profile": null,
+                    "profileDraft": null, // updated
+                }
+            })
+        );
+    }
 }
