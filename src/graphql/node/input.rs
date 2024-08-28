@@ -101,13 +101,14 @@ pub(super) fn create_draft_update(
     old: &NodeInput,
     new: NodeDraftInput,
 ) -> Result<review_database::NodeUpdate> {
-    let (name_draft, profile_draft) = if let Some(draft) = new.profile_draft {
-        if new.name_draft.is_empty() {
-            return Err("missing name draft".into());
-        }
-        (Some(new.name_draft), Some(draft.try_into()?))
+    if new.name_draft.is_empty() {
+        return Err("missing name draft".into());
+    }
+
+    let profile_draft = if let Some(draft) = new.profile_draft {
+        Some(draft.try_into()?)
     } else {
-        (None, None)
+        None
     };
 
     let agents: Vec<review_database::Agent> = if let Some(agents) = new.agents {
@@ -120,7 +121,7 @@ pub(super) fn create_draft_update(
 
     Ok(review_database::NodeUpdate {
         name: Some(old.name.clone()),
-        name_draft,
+        name_draft: Some(new.name_draft),
         profile: old.profile.clone().map(TryInto::try_into).transpose()?,
         profile_draft,
         agents,
