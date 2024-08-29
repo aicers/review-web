@@ -7,6 +7,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+ 
+- Added `signInWithNewPassword` GraphQL API for signing in with a new password.
+
 ### Changed
 
 - Modified the `AgentManager` trait to accept `HostNetworkGroup` directly
