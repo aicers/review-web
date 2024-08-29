@@ -12,7 +12,7 @@ use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use review_database::{
     self as database,
     types::{self},
-    Direction, Iterable, Store,
+    Direction, Iterable, Store, Table,
 };
 use serde::Serialize;
 use tracing::info;
@@ -302,7 +302,16 @@ impl AccountMutation {
         Ok(username)
     }
 
-    /// Authenticates with the given username and password
+    /// Authenticates with the given username and password.
+    ///
+    /// If the `lastSigninTime` value of the `account` is `None`, the operation will fail, and
+    /// it should be guided to call `signInWithNewPassword` GraphQL API.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the password is invalid, this is the first sign-in attempt, the access
+    /// doesn't originate from a permitted IP address, or the number of sessions exceeds the
+    /// maximum limit.
     async fn sign_in(
         &self,
         ctx: &Context<'_>,
@@ -314,62 +323,45 @@ impl AccountMutation {
         let client_ip = get_client_ip(ctx);
 
         if let Some(mut account) = account_map.get(&username)? {
-            if let Some(allow_access_from) = account.allow_access_from.as_ref() {
-                if let Some(socket) = client_ip {
-                    let ip = socket.ip();
-                    if !allow_access_from.contains(&ip) {
-                        info!("access denied for {username} from IP: {ip}");
-                        return Err("access denied from this IP".into());
-                    }
-                } else {
-                    info!("unable to retrieve client IP for {username}");
-                    return Err("unable to retrieve client IP".into());
-                }
-            }
+            validate_password(&account, &username, &password)?;
+            validate_last_signin_time(&account, &username)?;
+            validate_allow_access_from(&account, &client_ip, &username)?;
+            validate_max_parallel_sessions(&account, &store, &username)?;
 
-            if account.verify_password(&password) {
-                if let Some(max_parallel_sessions) = account.max_parallel_sessions {
-                    let access_token_map = store.access_token_map();
-                    let count = access_token_map
-                        .iter(Direction::Forward, Some(username.as_bytes()))
-                        .filter_map(|res| {
-                            if let Ok(access_token) = res {
-                                if access_token.username == username {
-                                    Some(access_token)
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        })
-                        .count();
-                    if count >= max_parallel_sessions as usize {
-                        info!("maximum parallel sessions exceeded for {username}");
-                        return Err("maximum parallel sessions exceeded".into());
-                    }
-                }
+            sign_in_actions(&mut account, &store, &account_map, &client_ip, &username)
+        } else {
+            info!("{username} is not a valid username");
+            Err("incorrect username or password".into())
+        }
+    }
 
-                let (token, expiration_time) =
-                    create_token(account.username.clone(), account.role.to_string())?;
-                account.update_last_signin_time();
-                account_map.put(&account)?;
+    /// Authenticates with the given username and password, then updates to the new password.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the password or the new password are invalid, the access
+    /// doesn't originate from a permitted IP address, or the number of sessions exceeds the
+    /// maximum limit.
+    async fn sign_in_with_new_password(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+        password: String,
+        new_password: String,
+    ) -> Result<AuthPayload> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let account_map = store.account_map();
+        let client_ip = get_client_ip(ctx);
 
-                insert_token(&store, &token, &username)?;
+        if let Some(mut account) = account_map.get(&username)? {
+            validate_password(&account, &username, &password)?;
+            validate_allow_access_from(&account, &client_ip, &username)?;
+            validate_max_parallel_sessions(&account, &store, &username)?;
+            validate_update_new_password(&password, &new_password, &username)?;
 
-                if let Some(socket) = client_ip {
-                    info!("{username} signed in from IP: {}", socket.ip());
-                } else {
-                    info!("{username} signed in");
-                }
-                Ok(AuthPayload {
-                    token,
-                    expiration_time,
-                })
-            } else {
-                info!("wrong password for {username}");
-                Err("incorrect username or password".into())
-            }
+            account.update_password(&new_password)?;
+
+            sign_in_actions(&mut account, &store, &account_map, &client_ip, &username)
         } else {
             info!("{username} is not a valid username");
             Err("incorrect username or password".into())
@@ -462,6 +454,104 @@ impl AccountMutation {
 
         Ok(new_language)
     }
+}
+
+fn validate_password(account: &types::Account, username: &str, password: &str) -> Result<()> {
+    if !account.verify_password(password) {
+        info!("wrong password for {username}");
+        return Err("incorrect username or password".into());
+    }
+    Ok(())
+}
+
+fn validate_last_signin_time(account: &types::Account, username: &str) -> Result<()> {
+    if account.last_signin_time().is_none() {
+        info!("a password change is required to proceed for {username}");
+        return Err("a password change is required to proceed".into());
+    }
+    Ok(())
+}
+
+fn validate_allow_access_from(
+    account: &types::Account,
+    client_ip: &Option<SocketAddr>,
+    username: &str,
+) -> Result<()> {
+    if let Some(allow_access_from) = account.allow_access_from.as_ref() {
+        if let Some(socket) = client_ip {
+            let ip = socket.ip();
+            if !allow_access_from.contains(&ip) {
+                info!("access denied for {username} from IP: {ip}");
+                return Err("access denied from this IP".into());
+            }
+        } else {
+            info!("unable to retrieve client IP for {username}");
+            return Err("unable to retrieve client IP".into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_max_parallel_sessions(
+    account: &types::Account,
+    store: &Store,
+    username: &str,
+) -> Result<()> {
+    if let Some(max_parallel_sessions) = account.max_parallel_sessions {
+        let access_token_map = store.access_token_map();
+        let count = access_token_map
+            .iter(Direction::Forward, Some(username.as_bytes()))
+            .filter_map(|res| {
+                if let Ok(access_token) = res {
+                    if access_token.username == username {
+                        Some(access_token)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .count();
+        if count >= max_parallel_sessions as usize {
+            info!("maximum parallel sessions exceeded for {username}");
+            return Err("maximum parallel sessions exceeded".into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_update_new_password(password: &str, new_password: &str, username: &str) -> Result<()> {
+    if password.eq(new_password) {
+        info!("password is the same as the previous one for {username}");
+        return Err("password is the same as the previous one".into());
+    }
+    Ok(())
+}
+
+fn sign_in_actions(
+    account: &mut types::Account,
+    store: &Store,
+    account_map: &Table<types::Account>,
+    client_ip: &Option<SocketAddr>,
+    username: &str,
+) -> Result<AuthPayload> {
+    let (token, expiration_time) =
+        create_token(account.username.clone(), account.role.to_string())?;
+    account.update_last_signin_time();
+    account_map.put(account)?;
+
+    insert_token(store, &token, username)?;
+
+    if let Some(socket) = client_ip {
+        info!("{username} signed in from IP: {}", socket.ip());
+    } else {
+        info!("{username} signed in");
+    }
+    Ok(AuthPayload {
+        token,
+        expiration_time,
+    })
 }
 
 /// Returns the expiration time according to the account policy.
@@ -677,7 +767,7 @@ pub fn reset_admin_password(store: &Store) -> anyhow::Result<()> {
 fn initial_credential() -> anyhow::Result<types::Account> {
     let (username, password) = read_review_admin()?;
 
-    let initial_account = review_database::types::Account::new(
+    let initial_account = types::Account::new(
         &username,
         &password,
         database::Role::SystemAdministrator,
@@ -728,6 +818,14 @@ mod tests {
         account::{read_review_admin, REVIEW_ADMIN},
         BoxedAgentManager, MockAgentManager, RoleGuard, TestSchema,
     };
+
+    async fn update_account_last_signin_time(schema: &TestSchema, name: &str) {
+        let store = schema.store().await;
+        let map = store.account_map();
+        let mut account = map.get(name).unwrap().unwrap();
+        account.update_last_signin_time();
+        let _ = map.put(&account).is_ok();
+    }
 
     #[tokio::test]
     #[serial]
@@ -1055,6 +1153,7 @@ mod tests {
         assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
 
         let schema = TestSchema::new().await;
+        update_account_last_signin_time(&schema, "admin").await;
         let res = schema
             .execute(
                 r#"mutation {
@@ -1358,6 +1457,8 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertAccount: "u1"}"#);
 
+        update_account_last_signin_time(&schema, "u1").await;
+
         let res = schema
             .execute(
                 r#"mutation {
@@ -1433,6 +1534,8 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertAccount: "u1"}"#);
 
+        update_account_last_signin_time(&schema, "u1").await;
+
         let res = schema
             .execute(
                 r#"mutation {
@@ -1467,6 +1570,8 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertAccount: "u1"}"#);
+
+        update_account_last_signin_time(&schema, "u1").await;
 
         let res = schema
             .execute(
@@ -1591,6 +1696,170 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             r#"{account: {username: "username", role: SECURITY_ADMINISTRATOR, name: "John Doe", department: "Security", language: "ko-KR"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn password_required_proceed() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "u2",
+                        password: "pw2",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "User One",
+                        department: "Test",
+                        maxParallelSessions: 2
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "u2"}"#);
+
+        let query = r#"mutation {
+                    signIn(username: "u2", password: "pw2") {
+                        token
+                    }
+              }"#;
+        let res = schema.execute(query).await;
+
+        assert_eq!(
+            res.errors.first().unwrap().message.to_string(),
+            "a password change is required to proceed".to_string()
+        );
+
+        update_account_last_signin_time(&schema, "u2").await;
+
+        let res = schema.execute(query).await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn sign_in_with_new_password_proceed() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "u3",
+                        password: "pw3",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "User One",
+                        department: "Test",
+                        maxParallelSessions: 2
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "u3"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signIn(username: "u3", password: "pw3") {
+                        token
+                    }
+                }"#,
+            )
+            .await;
+
+        assert_eq!(
+            res.errors.first().unwrap().message.to_string(),
+            "a password change is required to proceed".to_string()
+        );
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signInWithNewPassword(username: "u3", password: "pw3") {
+                        token
+                    }
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.errors.first().unwrap().message.to_string(),
+            "Field \"signInWithNewPassword\" argument \"newPassword\" of type \"Mutation\" is \
+            required but not provided"
+                .to_string()
+        );
+
+        let query = r#"mutation {
+                    signInWithNewPassword(username: "u1", password: "pw1", newPassword: "pw2") {
+                        token
+                    }
+              }"#;
+        let res = schema.execute(query).await;
+        assert_eq!(
+            res.errors.first().unwrap().message.to_string(),
+            "incorrect username or password".to_string()
+        );
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signInWithNewPassword(username: "u3", password: "pw3", newPassword: "pw3") {
+                        token
+                    }
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.errors.first().unwrap().message.to_string(),
+            "password is the same as the previous one".to_string()
+        );
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signInWithNewPassword(username: "u3", password: "pw3", newPassword: "pw4") {
+                        token
+                    }
+                }"#,
+            )
+            .await;
+        assert!(res.is_ok());
+
+        let store = schema.store().await;
+        let map = store.account_map();
+        let account = map.get("u3").unwrap().unwrap();
+        assert!(account.verify_password("pw4"));
+    }
+
+    #[tokio::test]
+    async fn password_validate_proceed() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "u2",
+                        password: "pw2",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "User One",
+                        department: "Test",
+                        maxParallelSessions: 2
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "u2"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signIn(username: "u2", password: "pw3") {
+                        token
+                    }
+                }"#,
+            )
+            .await;
+
+        assert_eq!(
+            res.errors.first().unwrap().message.to_string(),
+            "incorrect username or password".to_string()
         );
     }
 }
