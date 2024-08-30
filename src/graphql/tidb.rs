@@ -1,7 +1,7 @@
 use async_graphql::{Context, Enum, Object, Result, SimpleObject, ID};
 use review_database::{self as database};
 
-use super::{Role, RoleGuard};
+use super::{triage::ThreatCategory, Role, RoleGuard};
 
 #[derive(Default)]
 pub(super) struct TidbQuery;
@@ -154,6 +154,11 @@ impl Tidb {
         self.inner.kind.into()
     }
 
+    /// The MITRE category of the Tidb.
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
+    }
+
     /// The version of the Tidb.
     async fn version(&self) -> &str {
         &self.inner.version
@@ -188,6 +193,10 @@ struct TidbRule {
 impl TidbRule {
     async fn rule_id(&self) -> ID {
         ID(self.inner.rule_id.to_string())
+    }
+
+    async fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
     }
 
     async fn name(&self) -> &str {
@@ -247,7 +256,7 @@ mod tests {
     async fn isud_tidb() {
         let schema = TestSchema::new().await;
 
-        let query_tidblist = r#"{tidbList{name,version}}"#;
+        let query_tidblist = r#"{tidbList{name,version,category}}"#;
         let res = schema.execute(query_tidblist).await;
         assert_eq!(res.data.to_string(), r#"{tidbList: []}"#);
     }
