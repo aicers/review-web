@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result};
+use async_graphql::{Context, Object, Result, StringNumber, ID};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
@@ -114,12 +114,16 @@ impl HttpThreat {
         &self.inner.user_agent
     }
 
-    async fn request_len(&self) -> usize {
-        self.inner.request_len
+    /// The length of the request in string within the range representable
+    /// by a `usize`.
+    async fn request_len(&self) -> StringNumber<usize> {
+        StringNumber(self.inner.request_len)
     }
 
-    async fn response_len(&self) -> usize {
-        self.inner.response_len
+    /// The length of the response in string within the range representable
+    /// by a `usize`.
+    async fn response_len(&self) -> StringNumber<usize> {
+        StringNumber(self.inner.response_len)
     }
 
     async fn status_code(&self) -> u16 {
@@ -182,16 +186,20 @@ impl HttpThreat {
         &self.inner.db_name
     }
 
-    async fn rule_id(&self) -> u32 {
-        self.inner.rule_id
+    /// The rule id of the event in string wthin the range representable
+    /// by a `u32`.
+    async fn rule_id(&self) -> ID {
+        ID(self.inner.rule_id.to_string())
     }
 
     async fn matched_to(&self) -> &str {
         &self.inner.matched_to
     }
 
-    async fn cluster_id(&self) -> usize {
-        self.inner.cluster_id
+    /// The cluster id of the event in string wthin the range representable
+    /// by a `usize`.
+    async fn cluster_id(&self) -> ID {
+        ID(self.inner.cluster_id.to_string())
     }
 
     async fn attack_kind(&self) -> &str {
@@ -402,12 +410,16 @@ impl TorConnection {
         &self.inner.user_agent
     }
 
-    async fn request_len(&self) -> usize {
-        self.inner.request_len
+    /// The length of the request in string within the range representable
+    /// by a `usize`.
+    async fn request_len(&self) -> StringNumber<usize> {
+        StringNumber(self.inner.request_len)
     }
 
-    async fn response_len(&self) -> usize {
-        self.inner.response_len
+    /// The length of the response in string within the range representable
+    /// by a `usize`.
+    async fn response_len(&self) -> StringNumber<usize> {
+        StringNumber(self.inner.response_len)
     }
 
     async fn status_code(&self) -> u16 {
@@ -552,12 +564,16 @@ impl DomainGenerationAlgorithm {
         &self.inner.user_agent
     }
 
-    async fn request_len(&self) -> usize {
-        self.inner.request_len
+    /// The length of the request in string within the range representable
+    /// by a `usize`.
+    async fn request_len(&self) -> StringNumber<usize> {
+        StringNumber(self.inner.request_len)
     }
 
-    async fn response_len(&self) -> usize {
-        self.inner.response_len
+    /// The length of the response in string within the range representable
+    /// by a `usize`.
+    async fn response_len(&self) -> StringNumber<usize> {
+        StringNumber(self.inner.response_len)
     }
 
     async fn status_code(&self) -> u16 {
@@ -730,12 +746,16 @@ impl NonBrowser {
         &self.inner.user_agent
     }
 
-    async fn request_len(&self) -> usize {
-        self.inner.request_len
+    /// The length of the request in string within the range representable
+    /// by a `usize`.
+    async fn request_len(&self) -> StringNumber<usize> {
+        StringNumber(self.inner.request_len)
     }
 
-    async fn response_len(&self) -> usize {
-        self.inner.response_len
+    /// The length of the response in string within the range representable
+    /// by a `usize`.
+    async fn response_len(&self) -> StringNumber<usize> {
+        StringNumber(self.inner.response_len)
     }
 
     async fn status_code(&self) -> u16 {
@@ -880,8 +900,10 @@ impl BlockListHttp {
         self.inner.proto
     }
 
-    async fn last_time(&self) -> i64 {
-        self.inner.last_time
+    /// The last time of the event in string within the range representable
+    /// by a `i64`.
+    async fn last_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.last_time)
     }
 
     async fn method(&self) -> &str {
@@ -908,12 +930,16 @@ impl BlockListHttp {
         &self.inner.user_agent
     }
 
-    async fn request_len(&self) -> usize {
-        self.inner.request_len
+    /// The range of the request in string within the range representable
+    ///  by a `usize`.
+    async fn request_len(&self) -> StringNumber<usize> {
+        StringNumber(self.inner.request_len)
     }
 
-    async fn response_len(&self) -> usize {
-        self.inner.response_len
+    /// The range of the response in string within the range representable
+    /// by a `usize`.
+    async fn response_len(&self) -> StringNumber<usize> {
+        StringNumber(self.inner.response_len)
     }
 
     async fn status_code(&self) -> u16 {

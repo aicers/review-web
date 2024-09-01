@@ -1,4 +1,4 @@
-use async_graphql::Object;
+use async_graphql::{Object, ID};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
@@ -31,16 +31,20 @@ impl ExtraThreat {
         &self.inner.db_name
     }
 
-    async fn rule_id(&self) -> u32 {
-        self.inner.rule_id
+    /// The rule id of the event in string wthin the range representable
+    /// by a `u32`.
+    async fn rule_id(&self) -> ID {
+        ID(self.inner.rule_id.to_string())
     }
 
     async fn matched_to(&self) -> &str {
         &self.inner.matched_to
     }
 
-    async fn cluster_id(&self) -> usize {
-        self.inner.cluster_id
+    /// The cluster id of the event in string wthin the range representable
+    /// by a `usize`.
+    async fn cluster_id(&self) -> ID {
+        ID(self.inner.cluster_id.to_string())
     }
 
     async fn attack_kind(&self) -> &str {

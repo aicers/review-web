@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result};
+use async_graphql::{Context, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
@@ -77,20 +77,28 @@ impl BlockListKerberos {
         self.inner.proto
     }
 
-    async fn last_time(&self) -> i64 {
-        self.inner.last_time
+    /// The last time the event was seen in string wthin the range
+    /// representable by a `i64`.
+    async fn last_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.last_time)
     }
 
-    async fn client_time(&self) -> i64 {
-        self.inner.client_time
+    /// The client time in string wthin the range representable
+    /// by a `i64`.
+    async fn client_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.client_time)
     }
 
-    async fn server_time(&self) -> i64 {
-        self.inner.server_time
+    /// The server time in string wthin the range representable
+    /// by a `i64`.
+    async fn server_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.server_time)
     }
 
-    async fn error_code(&self) -> u32 {
-        self.inner.error_code
+    /// The error code in string wthin the range representable
+    /// by a `u32`.
+    async fn error_code(&self) -> StringNumber<u32> {
+        StringNumber(self.inner.error_code)
     }
 
     async fn client_realm(&self) -> &str {
