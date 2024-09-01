@@ -26,7 +26,7 @@ num-traits = "0.2"
 reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls-native-roots",
 ] }
-review-database = { git = "https://github.com/petabi/review-database.git", rev = "66ccdd49" }
+review-database = { git = "https://github.com/petabi/review-database.git", rev = "bc20b74" } #TODO Need to modify the version.
 review-protocol = { git = "https://github.com/petabi/review-protocol.git", rev = "4a6ea44" }
 roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.2.1" }
 rustls = "0.23" #should be the same version as what reqwest depends on
@@ -41,6 +41,7 @@ tokio = "1"
 tower-http = { version = "0.5", features = ["fs", "trace"] }
 tracing = "0.1"
 vinum = { git = "https://github.com/vinesystems/vinum.git", tag = "1.0.3" }
+regex = "1.10.6"
 
 [dev-dependencies]
 assert-json-diff = "2.0.2"
