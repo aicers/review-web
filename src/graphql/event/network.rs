@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result};
+use async_graphql::{Context, Object, Result, StringNumber, ID};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
@@ -82,8 +82,10 @@ impl NetworkThreat {
         &self.inner.service
     }
 
-    async fn last_time(&self) -> i64 {
-        self.inner.last_time
+    /// The last time the event was seen in string within the representable
+    /// range of `i64`.
+    async fn last_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.last_time)
     }
 
     async fn content(&self) -> &str {
@@ -94,16 +96,20 @@ impl NetworkThreat {
         &self.inner.db_name
     }
 
-    async fn rule_id(&self) -> u32 {
-        self.inner.rule_id
+    /// The rule ID of the event in string within the representable
+    /// range of `u32`.
+    async fn rule_id(&self) -> ID {
+        ID(self.inner.rule_id.to_string())
     }
 
     async fn matched_to(&self) -> &str {
         &self.inner.matched_to
     }
 
-    async fn cluster_id(&self) -> usize {
-        self.inner.cluster_id
+    /// The cluster ID of the event in string within the representable
+    /// range of `usize`.
+    async fn cluster_id(&self) -> ID {
+        ID(self.inner.cluster_id.to_string())
     }
 
     async fn attack_kind(&self) -> &str {

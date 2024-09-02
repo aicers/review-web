@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_graphql::{
     connection::{query, Connection, Edge, EmptyFields},
     types::ID,
-    ComplexObject, Context, Object, Result, SimpleObject,
+    ComplexObject, Context, Object, Result, SimpleObject, StringNumber,
 };
 use chrono::NaiveDateTime;
 use chrono::{DateTime, Utc};
@@ -294,8 +294,10 @@ struct ColumnTimeSeries<'a> {
 
 #[Object]
 impl ColumnTimeSeries<'_> {
-    async fn column_index(&self) -> usize {
-        self.inner.column_index
+    /// The column index of the time series in string within the representable
+    /// range of `usize`.
+    async fn column_index(&self) -> StringNumber<usize> {
+        StringNumber(self.inner.column_index)
     }
 
     async fn series(&self) -> Vec<TimeCount> {

@@ -81,6 +81,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - Correct the release date of `0.20.0` to `2024-04-25`.
+- Fixed `Int` type precision error that occurs when graphql API have instances
+  that are greater than `i32` (`u32`,`u64`,`isize`,`usize`,`i64`) for
+  `NetworkThreat`,`AccountTotalCount`,`ClusterTotalCount`,`ColumnTimeSeries`,
+  `ModelIndicator`.
 
 ## [0.20.0] - 2024-04-25
 

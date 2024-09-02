@@ -6,7 +6,7 @@ use std::{
 use anyhow::anyhow;
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
-    Context, Enum, InputObject, Object, Result, SimpleObject,
+    Context, Enum, InputObject, Object, Result, SimpleObject, StringNumber,
 };
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use review_database::{
@@ -491,8 +491,10 @@ impl Account {
             .map(|ips| ips.iter().map(ToString::to_string).collect::<Vec<String>>())
     }
 
-    async fn max_parallel_sessions(&self) -> Option<u32> {
-        self.inner.max_parallel_sessions
+    /// The max sessions that can be run in parallel in string within the
+    /// representable range of `u32`.
+    async fn max_parallel_sessions(&self) -> Option<StringNumber<u32>> {
+        self.inner.max_parallel_sessions.map(StringNumber)
     }
 }
 
