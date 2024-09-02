@@ -53,13 +53,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Changed GraphQL API `preserveOutliers` to use `PreserveOutliersOutput` in its response.
   - Instead of returning the count of successfully marked outliers, this endpoint
     now returns a list of outliers that were not marked as saved.
-- In `BlockListSmb`, `Network`, `SamplingPolicy`, `Tidb`, `TidbRule`,
-  `BlockListLdap`,`LdapPlainText`,`LdapBruteForce`,`BlockListKerberos`,
-  `HttpThreat`,`TorConnection`,`DomainGenerationAlgorithm`,`NonBrowser`,
-  `BlockListHttp`,`ExtraThreat`, `BlockListConn`, `BlockListDceRpc`,
-  `DnsCovertChannel`, `LockyRansomware`,`CryptocurrencyMiningPool`,
-  `BlockListDns`, `FtpPlainText` and `BlockListFtp` changed GraphQL APIs to
-  return `StringNumber` or `ID` instead of integers beyond `i32`.
+- Changed GraphQL APIs to return `StringNumber` or `ID` instead of integers
+  beyond `i32` in all applicable APIs.
 - Refactor `AgentManager::ping` to return `Duration` instead of `i64`. This
   refactor improves the flexibility and accuracy of the `ping` method, making it
   more robust and aligned with Rust's time handling conventions.
@@ -81,10 +76,6 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - Correct the release date of `0.20.0` to `2024-04-25`.
-- Fixed `Int` type precision error that occurs when graphql API have instances
-  that are greater than `i32` (`u32`,`u64`,`isize`,`usize`,`i64`) for
-  `NetworkThreat`,`AccountTotalCount`,`ClusterTotalCount`,`ColumnTimeSeries`,
-  `ModelIndicator`.
 
 ## [0.20.0] - 2024-04-25
 

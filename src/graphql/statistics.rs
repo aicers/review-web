@@ -1,7 +1,7 @@
 use async_graphql::{
     connection::{query, Connection, ConnectionNameType, Edge, EmptyFields},
     types::ID,
-    Context, Object, Result,
+    Context, Object, Result, StringNumber,
 };
 use chrono::{DateTime, NaiveDateTime};
 use num_traits::ToPrimitive;
@@ -126,12 +126,16 @@ impl Round {
         i64_to_naive_date_time(self.inner.inner.id)
     }
 
-    async fn first_event_id(&self) -> i64 {
-        self.inner.inner.earliest
+    /// The first event id in the round within a string represantable by a
+    ///  `i64`.
+    async fn first_event_id(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.inner.earliest)
     }
 
-    async fn last_event_id(&self) -> i64 {
-        self.inner.inner.latest
+    /// The last event id in the round within a string represantable by a
+    /// `i64`.
+    async fn last_event_id(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.inner.latest)
     }
 }
 
