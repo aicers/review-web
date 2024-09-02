@@ -356,12 +356,9 @@ fn build_client_config<P: AsRef<Path>>(
         }
     }
 
-    let mut builder = ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::aws_lc_rs::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()?
-    .with_root_certificates(root_store)
-    .with_no_client_auth();
+    let mut builder = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
     builder.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
     Ok(builder)
 }
