@@ -311,12 +311,7 @@ mod tests {
             unimplemented!()
         }
 
-        async fn set_config(
-            &self,
-            _hostname: &str,
-            _agent_id: &str,
-            _config: &review_protocol::types::Config,
-        ) -> Result<(), anyhow::Error> {
+        async fn update_config(&self, _agent_key: &str) -> Result<(), anyhow::Error> {
             Ok(())
         }
     }
@@ -376,14 +371,14 @@ mod tests {
                 r#"mutation {
                     applyNode(id: "0") {
                         id
-                        successModules
+                        gigantoDraft
                     }
                 }"#,
             )
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{applyNode: {id: "0", successModules: []}}"#
+            r#"{applyNode: {id: "0", gigantoDraft: null}}"#
         );
 
         let res = schema
@@ -416,14 +411,14 @@ mod tests {
                 r#"mutation {
                     applyNode(id: "1") {
                         id
-                        successModules
+                        gigantoDraft
                     }
                 }"#,
             )
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{applyNode: {id: "1", successModules: []}}"#
+            r#"{applyNode: {id: "1", gigantoDraft: null}}"#
         );
 
         // check node status list

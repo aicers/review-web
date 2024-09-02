@@ -1269,7 +1269,7 @@ mod tests {
                 r#"mutation {
                     applyNode(id: "0") {
                         id
-                        successModules
+                        gigantoDraft
                     }
                 }"#,
             )

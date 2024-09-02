@@ -585,12 +585,7 @@ impl AgentManager for MockAgentManager {
         unimplemented!()
     }
 
-    async fn set_config(
-        &self,
-        _hostname: &str,
-        _agent_id: &str,
-        _config: &review_protocol::types::Config,
-    ) -> Result<(), anyhow::Error> {
+    async fn update_config(&self, _agent_key: &str) -> Result<(), anyhow::Error> {
         unimplemented!()
     }
 }
