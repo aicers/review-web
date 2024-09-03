@@ -18,6 +18,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   during sign-in.
 - Added `AgentManager::update_config` method to notify agents to update their
   configurations.
+- Added new detected events:
+  - `BlockListBootp`, `BlockListDhcp`, `SuspiciousTlsTraffic`
 
 ### Changed
 
