@@ -20,6 +20,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   configurations.
 - Added new detected events:
   - `BlockListBootp`, `BlockListDhcp`, `SuspiciousTlsTraffic`
+- Added the `language` GraphQL API to get the user's UI language selection, and
+  the `updateLanguage` GraphQL API to modify it.
 
 ### Changed
 

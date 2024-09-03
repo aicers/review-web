@@ -121,6 +121,20 @@ impl AccountQuery {
 
         expiration_time(&store)
     }
+
+    /// Retrieves the user's language selection by username.
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
+        .or(RoleGuard::new(super::Role::SecurityAdministrator))
+        .or(RoleGuard::new(super::Role::SecurityManager))
+        .or(RoleGuard::new(super::Role::SecurityMonitor))")]
+    async fn language(&self, ctx: &Context<'_>, username: String) -> Result<Option<String>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.account_map();
+
+        map.get(&username)?
+            .ok_or_else::<async_graphql::Error, _>(|| "Account not found".into())
+            .map(|account| account.language)
+    }
 }
 
 #[derive(Default)]
@@ -417,6 +431,35 @@ impl AccountMutation {
 
         update_jwt_expires_in(expires_in)?;
         Ok(time)
+    }
+
+    /// Updates only the user's language setting.
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
+        .or(RoleGuard::new(super::Role::SecurityAdministrator))
+        .or(RoleGuard::new(super::Role::SecurityManager))
+        .or(RoleGuard::new(super::Role::SecurityMonitor))")]
+    async fn update_language(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+        language: UpdateLanguage,
+    ) -> Result<Option<String>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.account_map();
+        let new_language = language.new.clone();
+
+        map.update(
+            username.as_bytes(),
+            &None,
+            None,
+            &None,
+            &None,
+            &Some((language.old, language.new)),
+            &None,
+            &None,
+        )?;
+
+        Ok(new_language)
     }
 }
 
@@ -1435,5 +1478,118 @@ mod tests {
             .await;
 
         assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn language() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "username",
+                        password: "password",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "John Doe",
+                        department: "Security",
+                        language: "en-US"
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "username"}"#);
+
+        let res = schema
+            .execute(
+                r#"query {
+                    language(
+                        username: "username"
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{language: "en-US"}"#);
+    }
+
+    #[tokio::test]
+    async fn update_language() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "username",
+                        password: "password",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "John Doe",
+                        department: "Security",
+                        language: "en-US"
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "username"}"#);
+
+        let res = schema
+            .execute(
+                r#"
+                query {
+                     account(username: "username") {
+                        username
+                        role
+                        name
+                        department
+                        language
+                    }
+                }"#,
+            )
+            .await;
+
+        assert_eq!(
+            res.data.to_string(),
+            r#"{account: {username: "username", role: SECURITY_ADMINISTRATOR, name: "John Doe", department: "Security", language: "en-US"}}"#
+        );
+
+        let res = schema
+            .execute(
+                r#"
+                mutation {
+                    updateLanguage(
+                        username: "username",
+                        language: {
+                            old: "en-US",
+                            new: "ko-KR"
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{updateLanguage: "ko-KR"}"#);
+
+        let res = schema
+            .execute(
+                r#"
+                query {
+                     account(username: "username") {
+                        username
+                        role
+                        name
+                        department
+                        language
+                    }
+                }"#,
+            )
+            .await;
+
+        assert_eq!(
+            res.data.to_string(),
+            r#"{account: {username: "username", role: SECURITY_ADMINISTRATOR, name: "John Doe", department: "Security", language: "ko-KR"}}"#
+        );
     }
 }
