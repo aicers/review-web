@@ -89,6 +89,27 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     Giganto is unavailable. In the latter case, this indicates that the Giganto
     should be disabled, resulting in the node no longer having the Giganto
     module.
+- Updated the `nodeStatusList` GraphQL API to align with the new node and agent
+  management approach. Key changes include:
+  - For nodes with the Manager module, the `ping` field now consistently returns
+    0.0 instead of `None`. This change reflects the negligible round-trip time
+    when the node has the Manager module, clarifying that the node is reachable
+    and avoiding the potential misinterpretation that `None` might suggest the
+    node is unreachable.
+  - The API response now includes an `agents` field that provides detailed
+    information about the agents on the node. This field is in `AgentSnapshot`,
+    which contains `kind`, `storedStatus`, `config`, and `draft` attributes for
+    each agent.
+    - The `storedStatus` field now replaces the previous `piglet`, `reconverge`,
+      and `learner` fields. `storedStatus` represents the agent's status as
+      stored in the database. With the removal of agent-specific status fields,
+      GraphQL clients now need to use the `kind` field to identify the agent
+      type.
+    - The `config` and `draft` fields replace the old `pigletConfig` and
+    `hogConfig` fields. Providing both `config` and `draft` allows GraphQL
+    clients to clearly differentiate between an agent's active configuration and
+    its draft configuration, offering the flexibility to utilize both sets of
+    information as needed.
 
 ### Removed
 

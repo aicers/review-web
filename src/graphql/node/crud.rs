@@ -96,7 +96,7 @@ impl NodeMutation {
             let id = map.put(value)?;
             (id, customer_id)
         };
-        if super::is_review(&hostname) {
+        if super::matches_manager_hostname(&hostname) {
             let store = crate::graphql::get_store(ctx).await?;
 
             if let Ok(networks) = get_customer_networks(&store, customer_id) {
@@ -179,7 +179,7 @@ pub fn get_customer_id_of_node(db: &Store) -> Result<Option<u32>> {
         let node = entry.map_err(|_| "invalid value in database")?;
 
         if let Some(node_profile) = &node.profile {
-            if super::is_review(&node_profile.hostname) {
+            if super::matches_manager_hostname(&node_profile.hostname) {
                 return Ok(Some(node_profile.customer_id));
             }
         }

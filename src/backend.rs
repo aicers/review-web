@@ -33,6 +33,10 @@ pub trait AgentManager: Send + Sync {
         Err(anyhow!("Not supported"))
     }
 
+    /// Returns a list of online applications grouped by host ID.
+    ///
+    /// The result is a `HashMap` where the key is the hostname and the value is a list of tuples.
+    /// Each tuple contains the key of the agent and the name of the application.
     async fn online_apps_by_host_id(
         &self,
     ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error>; // (hostname, (agent_key, app_name))

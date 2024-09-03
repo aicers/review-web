@@ -301,13 +301,29 @@ impl From<review_protocol::types::PigletConfig> for PigletConfig {
     }
 }
 
+#[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
+pub struct AgentSnapshot {
+    kind: AgentKind,
+    stored_status: AgentStatus,
+
+    /// Serialized TOML string containing the configuration of the agent.
+    config: Option<String>,
+
+    /// Serialized TOML string containing the draft configuration of the agent.
+    draft: Option<String>,
+}
+
 #[derive(Clone, Deserialize, Serialize, SimpleObject)]
 #[graphql(complex)]
 pub(super) struct NodeStatus {
     #[graphql(skip)]
     id: u32,
 
-    /// The hostname of the node.
+    /// The name of the node.
+    ///
+    /// This is the user-defined name for the node, which may or may not be the same as the node's
+    /// hostname. The name should not be confused with the node's hostname, even though they could
+    /// be identical by coincidence.
     name: String,
 
     /// The average CPU usage in percent.
@@ -333,23 +349,12 @@ pub(super) struct NodeStatus {
     #[graphql(skip)]
     ping: Option<Duration>,
 
-    /// Whether review is online or not.
-    review: Option<bool>,
+    /// Indicates whether the Manager server is running on this node or not.
+    manager: bool,
 
-    /// Whether piglet is online or not.
-    piglet: Option<bool>,
-
-    /// actual piglet configuration
-    piglet_config: Option<PigletConfig>,
-
-    /// Whether reconverge is online or not.
-    reconverge: Option<bool>,
-
-    /// Whether hog is online or not.
-    hog: Option<bool>,
-
-    /// actual hog configuration
-    hog_config: Option<HogConfig>,
+    /// The list of agents running on the node. `AgentSnapshot` contains the agent's kind, stored
+    /// status in the database, and config and draft configurations.
+    agents: Vec<AgentSnapshot>,
 }
 
 #[ComplexObject]
@@ -357,19 +362,20 @@ impl NodeStatus {
     async fn id(&self) -> ID {
         ID(self.id.to_string())
     }
-    /// The RAM size in bytes within the range representable by a `u64`
+    /// The RAM size in bytes within the range representable by a `u64`.
     async fn total_memory(&self) -> Option<StringNumber<u64>> {
         self.total_memory.map(StringNumber)
     }
-    /// The amount of used RAM in bytes within the range representable by a `u64`
+    /// The amount of used RAM in bytes within the range representable by a `u64`.
     async fn used_memory(&self) -> Option<StringNumber<u64>> {
         self.used_memory.map(StringNumber)
     }
-    /// The total disk space in bytes within the range representable by a `u64`
+    /// The total disk space in bytes within the range representable by a `u64`.
     async fn total_disk_space(&self) -> Option<StringNumber<u64>> {
         self.total_disk_space.map(StringNumber)
     }
-    /// The total disk space in bytes that is currently used within the range representable by a `u64`
+    /// The total disk space in bytes that is currently used within the range representable by a
+    /// `u64`.
     async fn used_disk_space(&self) -> Option<StringNumber<u64>> {
         self.used_disk_space.map(StringNumber)
     }
@@ -390,12 +396,8 @@ impl NodeStatus {
         total_disk_space: Option<u64>,
         used_disk_space: Option<u64>,
         ping: Option<Duration>,
-        review: Option<bool>,
-        piglet: Option<bool>,
-        piglet_config: Option<PigletConfig>,
-        reconverge: Option<bool>,
-        hog: Option<bool>,
-        hog_config: Option<HogConfig>,
+        manager: bool,
+        agents: Vec<AgentSnapshot>,
     ) -> Self {
         Self {
             id,
@@ -406,12 +408,8 @@ impl NodeStatus {
             total_disk_space,
             used_disk_space,
             ping,
-            review,
-            piglet,
-            piglet_config,
-            reconverge,
-            hog,
-            hog_config,
+            manager,
+            agents,
         }
     }
 }
@@ -472,26 +470,9 @@ impl From<RoxyProcess> for Process {
     }
 }
 
-#[derive(
-    async_graphql::Enum,
-    Copy,
-    Clone,
-    Eq,
-    PartialEq,
-    strum_macros::Display,
-    strum_macros::EnumString,
-    strum_macros::AsRefStr,
-)]
-#[strum(serialize_all = "snake_case")]
-pub enum ModuleName {
-    Hog,
-    Piglet,
-    Reconverge,
-    Review,
-}
-
-pub fn is_review(hostname: &str) -> bool {
-    let review_hostname = roxy::hostname();
-
-    !review_hostname.is_empty() && review_hostname == hostname
+pub fn matches_manager_hostname(hostname: &str) -> bool {
+    // Current machine's hostname is the Manager server's hostname, because this code always runs on
+    // the Manager server.
+    let manager_hostname = roxy::hostname();
+    !manager_hostname.is_empty() && manager_hostname == hostname
 }
