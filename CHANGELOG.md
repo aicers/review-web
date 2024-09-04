@@ -22,6 +22,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   - `BlockListBootp`, `BlockListDhcp`, `SuspiciousTlsTraffic`
 - Added the `language` GraphQL API to get the user's UI language selection, and
   the `updateLanguage` GraphQL API to modify it.
+- Added `signInWithNewPassword` GraphQL API for signing in with a new password.
 
 ### Changed
 
@@ -110,6 +111,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     clients to clearly differentiate between an agent's active configuration and
     its draft configuration, offering the flexibility to utilize both sets of
     information as needed.
+- Changed the `signIn` to reject the first sign-in attempt unless it is done
+  through the new `signInWithNewPassword` API.
 
 ### Removed
 
