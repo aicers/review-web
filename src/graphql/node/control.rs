@@ -260,15 +260,15 @@ async fn broadcast_customer_change_if_needed(ctx: &Context<'_>, node: &Node) {
 }
 
 fn customer_id_to_broadcast(node: &Node) -> Option<u32> {
-    let is_review = node
+    let is_manager = node
         .profile_draft
         .as_ref()
-        .is_some_and(|s| super::is_review(&s.hostname));
+        .is_some_and(|s| super::matches_manager_hostname(&s.hostname));
 
     let old_customer_id: Option<u32> = node.profile.as_ref().map(|s| s.customer_id);
     let new_customer_id: Option<u32> = node.profile_draft.as_ref().map(|s| s.customer_id);
 
-    if is_review && (old_customer_id != new_customer_id) {
+    if is_manager && (old_customer_id != new_customer_id) {
         new_customer_id
     } else {
         None
