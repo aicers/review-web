@@ -5,15 +5,15 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.21.0] - 2024-09-05
 
 ### Added
 
 - Added `Config` to the public API under the `backend` module to ensure all
   types used by the public traits `AgentManager` and `CertManager` are
   accessible.
-- Added session limitation based on the `max_parallel_sessions` field of `Account`
-  during sign-in.
+- Added session limitation based on the `max_parallel_sessions` field of
+  `Account` during sign-in.
 - Added ip access control based on the `allow_access_from` field of `Account`
   during sign-in.
 - Added `AgentManager::update_config` method to notify agents to update their
@@ -25,59 +25,50 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Change admin account to read environment variable `REVIEW_ADMIN` from hardcoded
-  value.
+- Changed to retrieve the admin account's name and password from the
+  `REVIEW_ADMIN` environment variable, which is in `username:password` format,
+  instead of using hardcoded credentials.
 - Moved `AgentManager` and `CertManager` traits from the `graphql` module to a
   newly created `backend` module. This change better organizes the code
   structure by separating concerns, as these traits are not directly related to
   the GraphQL API but are instead utilized within it.
-- Update `TestSchema` to accept `test_addr` for simulating client IP.
-- Update dependencies version.
-- Fix code based on a dependency update.
-  - Fix code associated with changed fields in events detected in HTTP, SMTP,
-    CONN, NTLM, SSH, and TLS protocols.
-  - Fix code based on changes in test code results.
-  - Split the contents of the `Mutation` and `Query` structures into
-    substructures to fix an issue where a "Requirement evaluation overflow"
-    error occurs when implementing the `MergedObject` trait on the `Mutation`
-    and `query` structures after an update of async-graphql. this is a bug in
-    async-graphql 7.0.2 and later, and will be merged back into one structure
-    when async-graphql is patched for that bug in the future.
-- Apply rustfmt's option `group_imports=StdExternalCrate`.
-  - Modify the code with the command `cargo fmt -- --config group_imports=StdExternalCrate`.
-    This command must be applied automatically or manually before all future pull
-    requests are submitted.
-  - Add `--config group_imports=StdExternalCrate` to the CI process like:
-    - `cargo fmt -- --check --config group_imports=StdExternalCrate`
-- Updated version of rustls to "0.23" and fixed related code due to reqwest
-  version update.
-- Modified the `Node`, `NodeProfile` fields.
-  - Modified `Node` related CRUD APIs.
-  - Removed `get_node_settings` function as it is no longer used.
-  - Renamed `get_customer_id_of_review_host` to `get_customer_id_of_node`.
-- Updated review-database to 0.29.1.
-- Changed GraphQL API `preserveOutliers` to use `PreserveOutliersOutput` in its response.
-  - Instead of returning the count of successfully marked outliers, this endpoint
-    now returns a list of outliers that were not marked as saved.
+- Updated depedencies, including:
+  - Updated review-database to 0.30.0. As part of this update, the fields of
+    detected events, including `BlockListConn`, `HttpThreat`, `BlockListNtlm`,
+    `BlockListSmtp`, `BlockListSsh`, and `BlockListTls`, and `TorConnection` to
+    align with the updated version of review-database.
+  - Updated review-protocol to 0.4.2.
+  - Updated rustls to version 0.23 and reqwest to version 0.12. These updates
+    were made together to ensure the reqwest version used by the rustls library
+    matches the version directly depended on by this module.
+  - Updated async-graphql to 7. As part of this update, the `Mutation` and
+    `Query` structures were split into substructures to avoid the "Requirement
+    evaluation overflow" error when implementing the `MergedObject` trait. This
+    is a bug in async-graphql 7.0.2 and later, and these structures will be
+    merged back into one structure when async-graphql is patched for that bug in
+    the future.
+- Modified the `Node` and `NodeProfile` fields, along with updating
+  `Node`-related CRUD APIs to align with the updated schema. The changes reflect
+  the introduction of the new `Agent` table, which stores configuration data in
+  TOML format strings.
+- Added `category` field to TI db and rules.
+- Added `category` fields to all the the detected events.
+- Changed GraphQL API `preserveOutliers` to use `PreserveOutliersOutput` in its
+  response.
+  - Instead of returning the count of successfully marked outliers, this
+    endpoint now returns a list of outliers that were not marked as saved.
 - Changed GraphQL APIs to return `StringNumber` or `ID` instead of integers
   beyond `i32` in all applicable APIs.
-- Refactor `AgentManager::ping` to return `Duration` instead of `i64`. This
+- Refactored `AgentManager::ping` to return `Duration` instead of `i64`. This
   refactor improves the flexibility and accuracy of the `ping` method, making it
   more robust and aligned with Rust's time handling conventions.
 - In the GraphQL API, modified the `ping` field in `NodeStatus` to return a
   `Float` (seconds) instead of a `Int` (microseconds). This change improves
-  precision when converting the internal representation of the `ping` field to
-  a GraphQL-compatible type.
+  precision when converting the internal representation of the `ping` field to a
+  GraphQL-compatible type.
 - Added a `language` field to the `Account`. Consequently, the `account` and
   `accountList` API responses now include this field. The `insertAccount` and
   `updateAccount` GraphQL API endpoints are also updated to support the field.
-- Added `category` field to TI db and rules.
-- Added `category` fields to all the the detected events.
-- Added new fields to `TorConnection` event.
-  - `orig_filenames`, `orig_mime_types`, `resp_filenames`, `resp_mime_types`,
-    `post_body`, `state`
-- Added new fields to `BlockListConn` event.
-  - `orig_l2_bytes`, `resp_l2_bytes`
 - Updated the `applyNode` GraphQL API to align with the new node and agent
   management approach.
   - The API updates the database with draft values, notifies agents to update
@@ -106,13 +97,14 @@ Versioning](https://semver.org/spec/v2.0.0.html).
       GraphQL clients now need to use the `kind` field to identify the agent
       type.
     - The `config` and `draft` fields replace the old `pigletConfig` and
-    `hogConfig` fields. Providing both `config` and `draft` allows GraphQL
-    clients to clearly differentiate between an agent's active configuration and
-    its draft configuration, offering the flexibility to utilize both sets of
-    information as needed.
+      `hogConfig` fields. Providing both `config` and `draft` allows GraphQL
+      clients to clearly differentiate between an agent's active configuration
+      and its draft configuration, offering the flexibility to utilize both sets
+      of information as needed.
 
 ### Removed
 
+- Removed `get_node_settings` function as it is no longer used.
 - The `AgentManager::set_config` method has been removed, due to the new
   configuration management approach. The central management server no longer
   sends updates directly to agents. Instead, it notifies them through the
@@ -121,7 +113,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Correct the release date of `0.20.0` to `2024-04-25`.
+- Corrected the release date of `0.20.0` to `2024-04-25`.
 
 ## [0.20.0] - 2024-04-25
 
@@ -658,7 +650,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - An initial version.
 
-[Unreleased]: https://github.com/aicers/review-web/compare/0.20.0...main
+[0.21.0]: https://github.com/aicers/review-web/compare/0.20.0...0.21.0
 [0.20.0]: https://github.com/aicers/review-web/compare/0.19.0...0.20.0
 [0.19.0]: https://github.com/aicers/review-web/compare/0.18.0...0.19.0
 [0.18.0]: https://github.com/aicers/review-web/compare/0.17.0...0.18.0
