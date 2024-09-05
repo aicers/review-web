@@ -39,7 +39,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     align with the updated version of review-database.
   - Updated review-protocol to 0.4.2.
   - Updated rustls to version 0.23 and reqwest to version 0.12. These updates
-    were made together to ensure the reqwest version used by the rustls library
+    were made together to ensure the rustls version used by the reqwest library
     matches the version directly depended on by this module.
   - Updated async-graphql to 7. As part of this update, the `Mutation` and
     `Query` structures were split into substructures to avoid the "Requirement
