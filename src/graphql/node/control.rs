@@ -111,18 +111,21 @@ impl NodeControlMutation {
             }
 
             info!(
-                "[{}] Node ID {i} - Node's agents are notified to be updated.\n{:?}",
+                "[{}] Node ID {i} - Node's agents are notified to be updated.{}",
                 chrono::Utc::now(),
-                node.agents.iter().filter_map(|agent| {
-                    if target_agents.updates.contains(&agent.key.as_str()) {
-                        Some(format!(
-                            "\nAgent key: {}, Config: {:?}, Draft: {:?}",
-                            agent.key, agent.config, agent.draft
-                        ))
-                    } else {
-                        None
-                    }
-                })
+                node.agents
+                    .iter()
+                    .filter_map(|agent| {
+                        if target_agents.updates.contains(&agent.key.as_str()) {
+                            Some(format!(
+                                "\nAgent key: {}, Config: {:?}, Draft: {:?}",
+                                agent.key, agent.config, agent.draft
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<String>(),
             );
         }
 
