@@ -99,31 +99,38 @@ impl NodeControlMutation {
         }
 
         if let Some(ref target_agents) = apply_scope.agents {
-            let agent_manager = ctx.data::<BoxedAgentManager>()?;
-            if let Err(e) = notify_agents(
-                agent_manager,
-                &target_agents.updates,
-                &target_agents.disables,
-            )
-            .await
-            {
-                error!("Failed to notify agents for node {i} to be updated. However, the failure does not affect the node application operation.\nDetails:\n{e:?}",);
-            }
+            let hostname = {
+                let store = crate::graphql::get_store(ctx).await?;
+                let node_map = store.node_map();
+                let (node, _) = node_map.get_by_id(i)?.ok_or_else(|| {
+                    async_graphql::Error::new(format!("Node with ID {i} not found"))
+                })?;
+                node.profile.map(|p| p.hostname).unwrap_or_default()
+            };
 
-            info!(
-                "[{}] Node ID {i} - Node's agents are notified to be updated.\n{:?}",
-                chrono::Utc::now(),
-                node.agents.iter().filter_map(|agent| {
-                    if target_agents.updates.contains(&agent.key.as_str()) {
-                        Some(format!(
-                            "\nAgent key: {}, Config: {:?}, Draft: {:?}",
-                            agent.key, agent.config, agent.draft
-                        ))
-                    } else {
-                        None
-                    }
-                })
-            );
+            if hostname.is_empty() {
+                info!(
+                    "Node ID {i} - Node's agents are not notified because the hostname is empty."
+                );
+            } else {
+                let agent_manager = ctx.data::<BoxedAgentManager>()?;
+                if let Err(e) = notify_agents(
+                    agent_manager,
+                    hostname.as_str(),
+                    &target_agents.updates,
+                    &target_agents.disables,
+                )
+                .await
+                {
+                    error!("Failed to notify agents for node {i} to be updated. This failure may impact configuration synchronization.\nDetails: {e:?}");
+                }
+
+                info!(
+                    "[{}] Node ID {i} - Node's agents are notified to be updated. {:?}",
+                    chrono::Utc::now(),
+                    target_agents.updates,
+                );
+            }
         }
 
         Ok(ApplyNodeResponse { id, giganto_draft })
@@ -145,20 +152,24 @@ pub struct ApplyNodeResponse {
 
 async fn notify_agents(
     agent_manager: &BoxedAgentManager,
-    update_agent_keys: &[&str],
-    disable_agent_keys: &[&str],
+    hostname: &str,
+    update_agent_ids: &[&str],
+    disable_agent_ids: &[&str],
 ) -> Result<()> {
-    let update_futures = update_agent_keys.iter().map(|agent_key| async move {
-        agent_manager.update_config(agent_key).await.map_err(|e| {
-            async_graphql::Error::new(format!(
-                "Failed to notify agent for config update {agent_key}: {e}"
-            ))
-        })
+    let update_futures = update_agent_ids.iter().map(|agent_id| async move {
+        let agent_key = format!("{agent_id}@{hostname}");
+        agent_manager
+            .update_config(agent_key.as_str())
+            .await
+            .map_err(|e| {
+                async_graphql::Error::new(format!(
+                    "Failed to notify agent for config update {agent_key}: {e}"
+                ))
+            })
     });
 
-    // TODO: We need to implement the logic to disable agents. For now, we will only log the
-    // message.
-    info!("Agents {disable_agent_keys:?} need to be notified to be disabled, but disabling logic is not yet implemented");
+    // TODO: #281
+    info!("Agents {disable_agent_ids:?} need to be notified to be disabled");
 
     let notification_results: Vec<Result<_>> = join_all(update_futures).await;
 
@@ -213,8 +224,8 @@ fn node_apply_scope(node: &Node) -> NodeApplyScope {
 async fn update_db(
     ctx: &Context<'_>,
     node: &Node,
-    update_agent_keys: &[&str],
-    disable_agent_keys: &[&str],
+    update_agent_ids: &[&str],
+    disable_agent_ids: &[&str],
 ) -> Result<()> {
     let store = crate::graphql::get_store(ctx).await?;
     let mut map = store.node_map();
@@ -226,14 +237,14 @@ async fn update_db(
 
     update.profile.clone_from(&update.profile_draft);
 
-    // Update agents, removing those whose keys are in `disable_agent_keys`
+    // Update agents, removing those whose keys are in `disable_agent_ids`
     update.agents = update
         .agents
         .iter()
         .filter_map(|agent| {
-            if disable_agent_keys.contains(&agent.key.as_str()) {
+            if disable_agent_ids.contains(&agent.key.as_str()) {
                 None
-            } else if update_agent_keys.contains(&agent.key.as_str()) {
+            } else if update_agent_ids.contains(&agent.key.as_str()) {
                 let mut updated_agent = agent.clone();
                 updated_agent.config.clone_from(&updated_agent.draft);
                 Some(updated_agent)
@@ -300,7 +311,7 @@ mod tests {
     async fn test_apply_node() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["reconverge@analysis", "piglet@collect"],
+            available_agents: vec!["reconverge@all-in-one", "piglet@all-in-one"],
         });
 
         let schema = TestSchema::new_with(agent_manager, None).await;
@@ -317,16 +328,16 @@ mod tests {
                         name: "admin node",
                         customerId: 0,
                         description: "This is the admin node running review.",
-                        hostname: "admin.aice-security.com",
+                        hostname: "all-in-one",
                         agents: [{
-                            key: "reconverge@analysis"
+                            key: "reconverge"
                             kind: RECONVERGE
                             status: ENABLED
                             config: null
                             draft: "test = 'toml'"
                         },
                         {
-                            key: "piglet@collect"
+                            key: "piglet"
                             kind: PIGLET
                             status: ENABLED
                             config: null
@@ -393,12 +404,12 @@ mod tests {
                                 "profileDraft": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
-                                    "hostname": "admin.aice-security.com",
+                                    "hostname": "all-in-one",
                                 },
                                 "agents": [
                                     {
                                       "node": 0,
-                                      "key": "reconverge@analysis",
+                                      "key": "reconverge",
                                       "kind": "RECONVERGE",
                                       "status": "ENABLED",
                                       "config": null,
@@ -406,7 +417,7 @@ mod tests {
                                     },
                                     {
                                       "node": 0,
-                                      "key": "piglet@collect",
+                                      "key": "piglet",
                                       "kind": "PIGLET",
                                       "status": "ENABLED",
                                       "config": null,
@@ -490,17 +501,17 @@ mod tests {
                                 "profile": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
-                                    "hostname": "admin.aice-security.com",
+                                    "hostname": "all-in-one",
                                 },
                                 "profileDraft": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
-                                    "hostname": "admin.aice-security.com",
+                                    "hostname": "all-in-one",
                                 },
                                 "agents": [
                                     {
                                       "node": 0,
-                                      "key": "reconverge@analysis",
+                                      "key": "reconverge",
                                       "kind": "RECONVERGE",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
@@ -508,7 +519,7 @@ mod tests {
                                     },
                                     {
                                       "node": 0,
-                                      "key": "piglet@collect",
+                                      "key": "piglet",
                                       "kind": "PIGLET",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
@@ -535,23 +546,23 @@ mod tests {
                             profile: {
                                 customerId: 0,
                                 description: "This is the admin node running review.",
-                                hostname: "admin.aice-security.com",
+                                hostname: "all-in-one",
                             }
                             profileDraft: {
                                 customerId: 0,
                                 description: "This is the admin node running review.",
-                                hostname: "admin.aice-security.com",
+                                hostname: "all-in-one",
                             }
                             agents: [
                                 {
-                                    key: "reconverge@analysis",
+                                    key: "reconverge",
                                     kind: "RECONVERGE",
                                     status: "ENABLED",
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet@collect",
+                                    key: "piglet",
                                     kind: "PIGLET",
                                     status: "ENABLED",
                                     config: "test = 'toml'",
@@ -565,18 +576,18 @@ mod tests {
                             profileDraft: {
                                 customerId: 0,
                                 description: "This is the admin node running review.",
-                                hostname: "admin.aice-security.com",
+                                hostname: "all-in-one",
                             }
                             agents: [
                                 {
-                                    key: "reconverge@analysis",
+                                    key: "reconverge",
                                     kind: "RECONVERGE",
                                     status: "ENABLED",
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet@collect",
+                                    key: "piglet",
                                     kind: "PIGLET",
                                     status: "ENABLED",
                                     config: "test = 'toml'",
@@ -645,17 +656,17 @@ mod tests {
                                 "profile": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
-                                    "hostname": "admin.aice-security.com",
+                                    "hostname": "all-in-one",
                                 },
                                 "profileDraft": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
-                                    "hostname": "admin.aice-security.com",
+                                    "hostname": "all-in-one",
                                 },
                                 "agents": [
                                     {
                                       "node": 0,
-                                      "key": "reconverge@analysis",
+                                      "key": "reconverge",
                                       "kind": "RECONVERGE",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
@@ -663,7 +674,7 @@ mod tests {
                                     },
                                     {
                                       "node": 0,
-                                      "key": "piglet@collect",
+                                      "key": "piglet",
                                       "kind": "PIGLET",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
@@ -747,17 +758,17 @@ mod tests {
                                 "profile": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
-                                    "hostname": "admin.aice-security.com",
+                                    "hostname": "all-in-one",
                                 },
                                 "profileDraft": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
-                                    "hostname": "admin.aice-security.com",
+                                    "hostname": "all-in-one",
                                 },
                                 "agents": [
                                     {
                                       "node": 0,
-                                      "key": "reconverge@analysis",
+                                      "key": "reconverge",
                                       "kind": "RECONVERGE",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
@@ -765,7 +776,7 @@ mod tests {
                                     },
                                     {
                                       "node": 0,
-                                      "key": "piglet@collect",
+                                      "key": "piglet",
                                       "kind": "PIGLET",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
@@ -792,23 +803,23 @@ mod tests {
                             profile: {
                                 customerId: 0,
                                 description: "This is the admin node running review.",
-                                hostname: "admin.aice-security.com",
+                                hostname: "all-in-one",
                             }
                             profileDraft: {
                                 customerId: 0,
                                 description: "This is the admin node running review.",
-                                hostname: "admin.aice-security.com",
+                                hostname: "all-in-one",
                             }
                             agents: [
                                 {
-                                    key: "reconverge@analysis",
+                                    key: "reconverge",
                                     kind: "RECONVERGE",
                                     status: "ENABLED",
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet@collect",
+                                    key: "piglet",
                                     kind: "PIGLET",
                                     status: "ENABLED",
                                     config: "test = 'toml'",
@@ -822,18 +833,18 @@ mod tests {
                             profileDraft: {
                                 customerId: 0,
                                 description: "This is the admin node running review.",
-                                hostname: "admin.aice-security.com",
+                                hostname: "all-in-one",
                             }
                             agents: [
                                 {
-                                    key: "reconverge@analysis",
+                                    key: "reconverge",
                                     kind: "RECONVERGE",
                                     status: "ENABLED",
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet@collect",
+                                    key: "piglet",
                                     kind: "PIGLET",
                                     status: "ENABLED",
                                     config: "test = 'toml'",
@@ -929,17 +940,17 @@ mod tests {
                                 "profile": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
-                                    "hostname": "admin.aice-security.com",
+                                    "hostname": "all-in-one",
                                 },
                                 "profileDraft": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
-                                    "hostname": "admin.aice-security.com",
+                                    "hostname": "all-in-one",
                                 },
                                 "agents": [
                                     {
                                         "node": 0,
-                                        "key": "reconverge@analysis",
+                                        "key": "reconverge",
                                         "kind": "RECONVERGE",
                                         "status": "ENABLED",
                                         "config": "test = 'toml'",
@@ -947,7 +958,7 @@ mod tests {
                                     },
                                     {
                                         "node": 0,
-                                        "key": "piglet@collect",
+                                        "key": "piglet",
                                         "kind": "PIGLET",
                                         "status": "ENABLED",
                                         "config": "test = 'toml'",
@@ -965,7 +976,7 @@ mod tests {
             })
         );
 
-        // update node to disable one of the agents (piglet@collect) in next apply
+        // update node to disable one of the agents (piglet@all-in-one) in next apply
         let res = schema
             .execute(
                 r#"mutation {
@@ -977,23 +988,23 @@ mod tests {
                             profile: {
                                 customerId: 0,
                                 description: "This is the admin node running review.",
-                                hostname: "admin.aice-security.com",
+                                hostname: "all-in-one",
                             }
                             profileDraft: {
                                 customerId: 0,
                                 description: "This is the admin node running review.",
-                                hostname: "admin.aice-security.com",
+                                hostname: "all-in-one",
                             }
                             agents: [
                                 {
-                                    key: "reconverge@analysis",
+                                    key: "reconverge",
                                     kind: "RECONVERGE",
                                     status: "ENABLED",
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet@collect",
+                                    key: "piglet",
                                     kind: "PIGLET",
                                     status: "ENABLED",
                                     config: "test = 'toml'",
@@ -1010,18 +1021,18 @@ mod tests {
                             profileDraft: {
                                 customerId: 0,
                                 description: "This is the admin node running review.",
-                                hostname: "admin.aice-security.com",
+                                hostname: "all-in-one",
                             }
                             agents: [
                                 {
-                                    key: "reconverge@analysis",
+                                    key: "reconverge",
                                     kind: "RECONVERGE",
                                     status: "ENABLED",
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet@collect",
+                                    key: "piglet",
                                     kind: "PIGLET",
                                     status: "ENABLED",
                                     config: "test = 'toml'",
@@ -1093,17 +1104,17 @@ mod tests {
                                 "profile": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
-                                    "hostname": "admin.aice-security.com",
+                                    "hostname": "all-in-one",
                                 },
                                 "profileDraft": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
-                                    "hostname": "admin.aice-security.com",
+                                    "hostname": "all-in-one",
                                 },
                                 "agents": [
                                     {
                                       "node": 0,
-                                      "key": "reconverge@analysis",
+                                      "key": "reconverge",
                                       "kind": "RECONVERGE",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
@@ -1111,7 +1122,7 @@ mod tests {
                                     },
                                     {
                                       "node": 0,
-                                      "key": "piglet@collect",
+                                      "key": "piglet",
                                       "kind": "PIGLET",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
@@ -1196,17 +1207,17 @@ mod tests {
                                 "profile": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
-                                    "hostname": "admin.aice-security.com",
+                                    "hostname": "all-in-one",
                                 },
                                 "profileDraft": {
                                     "customerId": "0",
                                     "description": "This is the admin node running review.",
-                                    "hostname": "admin.aice-security.com",
+                                    "hostname": "all-in-one",
                                 },
                                 "agents": [
                                     {
                                       "node": 0,
-                                      "key": "reconverge@analysis",
+                                      "key": "reconverge",
                                       "kind": "RECONVERGE",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
@@ -1229,7 +1240,7 @@ mod tests {
     async fn test_apply_node_error_due_to_invalid_drafts() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["reconverge@analysis", "piglet@collect"],
+            available_agents: vec!["reconverge@all-in-one", "piglet@all-in-one"],
         });
 
         let schema = TestSchema::new_with(agent_manager, None).await;
@@ -1242,16 +1253,16 @@ mod tests {
                         name: "admin node",
                         customerId: 0,
                         description: "This is the admin node running review.",
-                        hostname: "admin.aice-security.com",
+                        hostname: "all-in-one",
                         agents: [{
-                            key: "reconverge@analysis"
+                            key: "reconverge"
                             kind: RECONVERGE
                             status: ENABLED
                             config: null
                             draft: "test = 'toml'"
                         },
                         {
-                            key: "piglet@collect"
+                            key: "piglet"
                             kind: PIGLET
                             status: ENABLED
                             config: null
@@ -1296,7 +1307,114 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_apply_node_disables_agents() {}
+    async fn test_apply_node_empty_hostname() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["reconverge@all-in-one", "piglet@all-in-one"],
+        });
+
+        let schema = TestSchema::new_with(agent_manager, None).await;
+
+        // insert node
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "admin node",
+                        customerId: 0,
+                        description: "This is the admin node running review.",
+                        hostname: "",
+                        agents: [{
+                            key: "reconverge"
+                            kind: RECONVERGE
+                            status: ENABLED
+                            config: null
+                            draft: "test = 'toml'"
+                        },
+                        {
+                            key: "piglet"
+                            kind: PIGLET
+                            status: ENABLED
+                            config: null
+                            draft: "test = 'toml'"
+                        }]
+                        giganto: null
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Apply node
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(id: "0") {
+                        id
+                        gigantoDraft
+                    }
+                }"#,
+            )
+            .await;
+
+        // Check that the operation succeeds
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_apply_node_with_agent_manager_failures() {
+        let agent_manager: BoxedAgentManager = Box::new(FailingMockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["reconverge@all-in-one", "piglet@all-in-one"],
+        });
+
+        let schema = TestSchema::new_with(agent_manager, None).await;
+
+        // insert node
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "admin node",
+                        customerId: 0,
+                        description: "This is the admin node running review.",
+                        hostname: "all-in-one",
+                        agents: [{
+                            key: "reconverge"
+                            kind: RECONVERGE
+                            status: ENABLED
+                            config: null
+                            draft: "test = 'toml'"
+                        },
+                        {
+                            key: "piglet"
+                            kind: PIGLET
+                            status: ENABLED
+                            config: null
+                            draft: "test = 'toml'"
+                        }]
+                        giganto: null
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Apply node
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(id: "0") {
+                        id
+                        gigantoDraft
+                    }
+                }"#,
+            )
+            .await;
+
+        // Check that the operation succeeds
+        assert!(res.is_ok());
+    }
 
     struct MockAgentManager {
         pub online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,
@@ -1406,6 +1524,104 @@ mod tests {
             .map(|&app| (format!("{}@{}", app, host), app.to_string()))
             .collect();
         map.insert(host.to_string(), entries);
+    }
+
+    struct FailingMockAgentManager {
+        pub online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,
+        pub available_agents: Vec<&'static str>,
+    }
+
+    #[async_trait]
+    impl AgentManager for FailingMockAgentManager {
+        async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
+            anyhow::bail!("not expected to be called")
+        }
+        async fn broadcast_trusted_user_agent_list(
+            &self,
+            _list: &[u8],
+        ) -> Result<(), anyhow::Error> {
+            anyhow::bail!("not expected to be called")
+        }
+        async fn broadcast_internal_networks(
+            &self,
+            _networks: &[u8],
+        ) -> Result<Vec<String>, anyhow::Error> {
+            anyhow::bail!("Failed to broadcast internal networks")
+        }
+
+        async fn broadcast_allow_networks(
+            &self,
+            _networks: &[u8],
+        ) -> Result<Vec<String>, anyhow::Error> {
+            anyhow::bail!("Failed to broadcast allow networks")
+        }
+
+        async fn broadcast_block_networks(
+            &self,
+            _networks: &[u8],
+        ) -> Result<Vec<String>, anyhow::Error> {
+            anyhow::bail!("Failed to broadcast block networks")
+        }
+
+        async fn online_apps_by_host_id(
+            &self,
+        ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error> {
+            Ok(self.online_apps_by_host_id.clone())
+        }
+
+        async fn broadcast_crusher_sampling_policy(
+            &self,
+            _sampling_policies: &[SamplingPolicy],
+        ) -> Result<(), anyhow::Error> {
+            anyhow::bail!("Failed to broadcast crusher sampling policy")
+        }
+
+        /// Returns the configuration of the given agent.
+        async fn get_config(
+            &self,
+            hostname: &str,
+            _agent_id: &str,
+        ) -> Result<review_protocol::types::Config, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn get_process_list(
+            &self,
+            hostname: &str,
+        ) -> Result<Vec<roxy::Process>, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn get_resource_usage(
+            &self,
+            hostname: &str,
+        ) -> Result<roxy::ResourceUsage, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn halt(&self, _hostname: &str) -> Result<(), anyhow::Error> {
+            anyhow::bail!("Failed to halt")
+        }
+
+        async fn ping(&self, hostname: &str) -> Result<Duration, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn reboot(&self, hostname: &str) -> Result<(), anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn update_config(&self, agent_key: &str) -> Result<(), anyhow::Error> {
+            anyhow::bail!("Notifying agent {agent_key} to update config failed")
+        }
+
+        async fn update_traffic_filter_rules(
+            &self,
+            _key: &str,
+            _rules: &[(IpNet, Option<Vec<u16>>, Option<Vec<u16>>)],
+        ) -> Result<(), anyhow::Error> {
+            anyhow::bail!("not expected to be called")
+        }
     }
 
     #[tokio::test]
