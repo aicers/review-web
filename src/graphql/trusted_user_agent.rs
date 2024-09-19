@@ -1,11 +1,10 @@
-use anyhow::Context as _;
 use async_graphql::{
     connection::{query, Connection, EmptyFields},
     Context, Object, Result, SimpleObject,
 };
 use bincode::Options;
 use chrono::{DateTime, Utc};
-use database::{types::FromKeyValue, Direction, Iterable};
+use database::{Direction, Iterable};
 use review_database::{self as database, Store};
 
 use super::{BoxedAgentManager, Role, RoleGuard};
@@ -127,21 +126,6 @@ impl From<review_database::TrustedUserAgent> for TrustedUserAgent {
             user_agent: input.user_agent,
             updated_at: input.updated_at,
         }
-    }
-}
-
-impl FromKeyValue for TrustedUserAgent {
-    fn from_key_value(key: &[u8], value: &[u8]) -> Result<Self, anyhow::Error> {
-        let user_agent =
-            String::from_utf8(key.to_vec()).context("invalid user-agent in database")?;
-        let updated_at = String::from_utf8(value.to_vec())
-            .context("invalid timestamp in database")?
-            .parse()
-            .context("invalid timestamp in database")?;
-        Ok(TrustedUserAgent {
-            user_agent,
-            updated_at,
-        })
     }
 }
 
