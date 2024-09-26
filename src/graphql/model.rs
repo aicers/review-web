@@ -136,30 +136,24 @@ impl ModelQuery {
         Ok(time_series)
     }
 
+    #[allow(unused_variables)] // This will be deleted in the future (#309)
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
     async fn top_clusters_by_score(
         &self,
-        ctx: &Context<'_>,
+        _ctx: &Context<'_>,
         model: i32,
         size: Option<i32>,
         time: Option<NaiveDateTime>,
     ) -> Result<ClusterScoreSet> {
-        const DEFAULT_SIZE: i32 = 30;
-        let size = size
-            .unwrap_or(DEFAULT_SIZE)
-            .to_usize()
-            .ok_or("invalid size")?;
-        let db = ctx.data::<Database>()?;
-        let types = db.get_column_types_of_model(model).await?;
-
-        let db = ctx.data::<Database>()?;
-        let inner = db
-            .get_top_clusters_by_score(model, size, time, &types)
-            .await?;
-        Ok(ClusterScoreSet { inner })
+        Ok(ClusterScoreSet {
+            inner: database::ClusterScoreSet {
+                top_n_sum: Vec::new(),
+                top_n_rate: Vec::new(),
+            },
+        })
     }
 
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
