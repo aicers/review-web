@@ -522,6 +522,10 @@ struct MockAgentManager {}
 #[cfg(test)]
 #[async_trait::async_trait]
 impl AgentManager for MockAgentManager {
+    async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+
     async fn broadcast_internal_networks(
         &self,
         _networks: &[u8],
@@ -666,7 +670,6 @@ mod tests {
     #[tokio::test]
     async fn unimplemented_agent_manager() {
         let agent_manager = super::MockAgentManager {};
-        assert!(agent_manager.broadcast_trusted_domains().await.is_err());
         assert!(agent_manager
             .broadcast_trusted_user_agent_list(&[])
             .await
