@@ -116,5 +116,44 @@ mod tests {
             .execute(r#"{trustedDomainList{edges{node{name}}}}"#)
             .await;
         assert_eq!(res.data.to_string(), r#"{trustedDomainList: {edges: []}}"#);
+
+        let res = schema
+            .execute(r#"mutation{insertTrustedDomain(name:"example1.com",remarks:"test")}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTrustedDomain: "example1.com"}"#
+        );
+        let res = schema
+            .execute(r#"mutation{insertTrustedDomain(name:"example2.org",remarks:"test")}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTrustedDomain: "example2.org"}"#
+        );
+
+        let res = schema
+            .execute(r#"{trustedDomainList{edges{node{name}}}}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{trustedDomainList: {edges: [{node: {name: "example1.com"}}, {node: {name: "example2.org"}}]}}"#
+        );
+
+        let res = schema
+            .execute(r#"mutation{removeTrustedDomain(name:"example1.com")}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{removeTrustedDomain: "example1.com"}"#
+        );
+
+        let res = schema
+            .execute(r#"{trustedDomainList{edges{node{name}}}}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{trustedDomainList: {edges: [{node: {name: "example2.org"}}]}}"#
+        );
     }
 }
