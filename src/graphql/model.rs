@@ -149,10 +149,8 @@ impl ModelQuery {
         time: Option<NaiveDateTime>,
     ) -> Result<ClusterScoreSet> {
         Ok(ClusterScoreSet {
-            inner: database::ClusterScoreSet {
-                top_n_sum: Vec::new(),
-                top_n_rate: Vec::new(),
-            },
+            top_n_sum: Vec::new(),
+            top_n_rate: Vec::new(),
         })
     }
 
@@ -334,46 +332,17 @@ fn sort_on_category(category: &str, series: &mut Vec<TopTrendsByColumn>) {
     }
 }
 
-struct ClusterScore<'a> {
-    inner: &'a database::ClusterScore,
+#[derive(SimpleObject)]
+struct ClusterScore {
+    cluster_id: ID,
+    cluster_name: String,
+    score: f64,
 }
 
-#[Object]
-impl<'a> ClusterScore<'a> {
-    async fn cluster_id(&self) -> ID {
-        ID(self.inner.cluster_id.to_string())
-    }
-
-    async fn cluster_name(&self) -> &str {
-        &self.inner.cluster_name
-    }
-
-    async fn score(&self) -> f64 {
-        self.inner.score
-    }
-}
-
+#[derive(SimpleObject)]
 struct ClusterScoreSet {
-    inner: database::ClusterScoreSet,
-}
-
-#[Object]
-impl ClusterScoreSet {
-    async fn top_n_sum(&self) -> Vec<ClusterScore> {
-        self.inner
-            .top_n_sum
-            .iter()
-            .map(|x| ClusterScore { inner: x })
-            .collect()
-    }
-
-    async fn top_n_rate(&self) -> Vec<ClusterScore> {
-        self.inner
-            .top_n_rate
-            .iter()
-            .map(|x| ClusterScore { inner: x })
-            .collect()
-    }
+    top_n_sum: Vec<ClusterScore>,
+    top_n_rate: Vec<ClusterScore>,
 }
 
 struct CsvColumnExtraConfig {
