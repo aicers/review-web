@@ -1365,7 +1365,6 @@ mod tests {
     async fn test_apply_node_with_agent_manager_failures() {
         let agent_manager: BoxedAgentManager = Box::new(FailingMockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["reconverge@all-in-one", "piglet@all-in-one"],
         });
 
         let schema = TestSchema::new_with(agent_manager, None).await;
@@ -1528,7 +1527,6 @@ mod tests {
 
     struct FailingMockAgentManager {
         pub online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,
-        pub available_agents: Vec<&'static str>,
     }
 
     #[async_trait]
