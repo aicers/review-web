@@ -99,14 +99,6 @@ impl AgentManager for Manager {
         bail!("Crusher nodes are unreachable")
     }
 
-    async fn get_config(
-        &self,
-        hostname: &str,
-        agent_id: &str,
-    ) -> Result<review_protocol::types::Config, Error> {
-        bail!("Agent {agent_id}@{hostname} is unreachable")
-    }
-
     async fn get_process_list(&self, hostname: &str) -> Result<Vec<Process>, Error> {
         bail!("Host {hostname} is unreachable")
     }
