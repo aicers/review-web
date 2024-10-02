@@ -7,6 +7,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Updated review-database to 0.31.0.
+
 ### Fixed
 
 - Fixed an issue in the `applyNode` GraphQL API where agents could not be

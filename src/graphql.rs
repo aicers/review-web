@@ -325,7 +325,8 @@ where
         Connection::with_additional_fields(has_previous, has_next, additional_fields);
     connection.edges.extend(nodes.into_iter().map(|node| {
         let Ok(node) = node else { unreachable!() };
-        Edge::new(encode_cursor(&node.unique_key()), node.into())
+        let encoded = encode_cursor(node.unique_key().as_ref());
+        Edge::new(encoded, node.into())
     }));
     Ok(connection)
 }
@@ -351,7 +352,7 @@ where
         };
         let mut edges: Box<dyn Iterator<Item = _>> = Box::new(iter.skip_while(move |item| {
             if let Ok(x) = item {
-                x.unique_key() == cursor
+                x.unique_key().as_ref() == cursor.as_slice()
             } else {
                 false
             }

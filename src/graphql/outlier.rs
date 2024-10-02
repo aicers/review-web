@@ -100,7 +100,7 @@ async fn fetch_ranked_outliers(
                 if is_first_fetch && entry.timestamp < start_time {
                     continue;
                 }
-                model_cursor = entry.unique_key().to_vec();
+                model_cursor = entry.unique_key();
                 tx.unbounded_send(entry.into())?;
             }
             if !model_cursor.is_empty() {
@@ -516,7 +516,7 @@ async fn load(
             has_more = true;
             break;
         }
-        let key = entry.unique_key().to_vec();
+        let key = entry.unique_key();
         if let Some(to) = to {
             if key == to {
                 break;
@@ -642,7 +642,7 @@ async fn load_ranked_outliers_with_filter(
         let key = node.unique_key();
 
         if let Some(to) = to {
-            if to == key.as_ref() {
+            if to == key {
                 continue;
             }
         }

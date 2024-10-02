@@ -78,7 +78,7 @@ async fn load(
             .collect();
 
         connection.edges.push(Edge::new(
-            crate::graphql::encode_cursor(&node.unique_key()),
+            crate::graphql::encode_cursor(node.unique_key()),
             NodeStatus::new(
                 node.id,
                 node.name,
