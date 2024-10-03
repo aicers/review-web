@@ -7,6 +7,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added the `ipLocationList` GraphQL API for multiple addresses.
+
 ### Changed
 
 - Updated review-database to 0.31.0.
@@ -177,14 +181,14 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Removed
 
-- `AgentManager` no longer provides shared behavior for the following methods:
+- The implementor of `AgentManager` is now responsible for providing the
+  appropriate behavior, because `AgentManager` no longer provides shared
+  behavior for the following methods:
   - `broadcast_crusher_sampling_policy`
   - `get_process_list`
   - `get_resource_usage`
   - `ping`
   - `reboot`
-  The implementor of `AgentManager` is now responsible for providing the
-  behavior for these methods.
 - `AgentManager::send_and_recv` and `broadcast_to_crusher` has been removed
   because they exposed the underlying communication mechanism to the caller. The
   caller should now use the specific methods provided by `AgentManager` to
