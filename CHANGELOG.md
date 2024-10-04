@@ -14,6 +14,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Updated review-database to 0.31.0.
+- Updated `nodeStatusList` GraphQL API response to include `nameDraft`,
+  `profile`, `profileDraft`, and `gigantoDraft`, offering a more comprehensive
+  view of the node’s status.
 
 ### Fixed
 
