@@ -562,14 +562,6 @@ impl AgentManager for MockAgentManager {
         unimplemented!()
     }
 
-    async fn get_config(
-        &self,
-        _hostname: &str,
-        _agent_id: &str,
-    ) -> Result<review_protocol::types::Config, anyhow::Error> {
-        unimplemented!()
-    }
-
     async fn get_process_list(&self, _hostname: &str) -> Result<Vec<Process>, anyhow::Error> {
         unimplemented!()
     }

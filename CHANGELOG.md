@@ -20,6 +20,12 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Fixed an issue in the `applyNode` GraphQL API where agents could not be
   properly identified.
 
+### Removed
+
+- The `AgentManager::get_config` method has been removed as part of the new
+  configuration management approach. This aligns with the update to
+  `review-protocol` version 0.7.0.
+
 ## [0.21.0] - 2024-09-05
 
 ### Added

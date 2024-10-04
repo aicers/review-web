@@ -170,14 +170,6 @@ mod tests {
             unimplemented!()
         }
 
-        async fn get_config(
-            &self,
-            hostname: &str,
-            _agent_id: &str,
-        ) -> Result<review_protocol::types::Config, anyhow::Error> {
-            anyhow::bail!("{hostname} is unreachable")
-        }
-
         async fn get_process_list(
             &self,
             _hostname: &str,

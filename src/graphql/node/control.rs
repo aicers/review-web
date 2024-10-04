@@ -1465,15 +1465,6 @@ mod tests {
             Ok(())
         }
 
-        /// Returns the configuration of the given agent.
-        async fn get_config(
-            &self,
-            hostname: &str,
-            _agent_id: &str,
-        ) -> Result<review_protocol::types::Config, anyhow::Error> {
-            anyhow::bail!("{hostname} is unreachable")
-        }
-
         async fn get_process_list(
             &self,
             hostname: &str,
@@ -1572,15 +1563,6 @@ mod tests {
             _sampling_policies: &[SamplingPolicy],
         ) -> Result<(), anyhow::Error> {
             anyhow::bail!("Failed to broadcast crusher sampling policy")
-        }
-
-        /// Returns the configuration of the given agent.
-        async fn get_config(
-            &self,
-            hostname: &str,
-            _agent_id: &str,
-        ) -> Result<review_protocol::types::Config, anyhow::Error> {
-            anyhow::bail!("{hostname} is unreachable")
         }
 
         async fn get_process_list(

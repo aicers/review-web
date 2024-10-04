@@ -3,7 +3,6 @@ use std::{collections::HashMap, path::PathBuf, time::Duration};
 use anyhow::anyhow;
 use async_trait::async_trait;
 use ipnet::IpNet;
-pub use review_protocol::types::Config;
 pub use roxy::{Process, ResourceUsage};
 
 pub use crate::graphql::{ParsedCertificate, SamplingPolicy};
@@ -45,9 +44,6 @@ pub trait AgentManager: Send + Sync {
         &self,
         _sampling_policies: &[SamplingPolicy],
     ) -> Result<(), anyhow::Error>;
-
-    /// Returns the configuration of the given agent.
-    async fn get_config(&self, _hostname: &str, _agent_id: &str) -> Result<Config, anyhow::Error>;
 
     /// Returns the list of processes running on the given host.
     async fn get_process_list(&self, _hostname: &str) -> Result<Vec<Process>, anyhow::Error>;

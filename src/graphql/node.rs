@@ -4,11 +4,7 @@ mod input;
 mod process;
 mod status;
 
-use std::{
-    borrow::Cow,
-    net::{IpAddr, SocketAddr},
-    time::Duration,
-};
+use std::{borrow::Cow, net::IpAddr, time::Duration};
 
 use async_graphql::{
     types::ID, ComplexObject, Context, Enum, InputObject, Object, Result, SimpleObject,
@@ -262,17 +258,6 @@ impl HogConfig {
     }
 }
 
-impl From<review_protocol::types::HogConfig> for HogConfig {
-    fn from(value: review_protocol::types::HogConfig) -> Self {
-        Self {
-            giganto_ip: value.giganto_address.as_ref().map(SocketAddr::ip),
-            giganto_port: value.giganto_address.as_ref().map(SocketAddr::port),
-            active_protocols: value.active_protocols,
-            active_sources: value.active_sources,
-        }
-    }
-}
-
 #[derive(Debug, SimpleObject, Serialize, Deserialize, Clone)]
 #[graphql(complex)]
 struct PigletConfig {
@@ -287,17 +272,6 @@ struct PigletConfig {
 impl PigletConfig {
     async fn giganto_ip(&self) -> Option<String> {
         self.giganto_ip.as_ref().map(ToString::to_string)
-    }
-}
-
-impl From<review_protocol::types::PigletConfig> for PigletConfig {
-    fn from(value: review_protocol::types::PigletConfig) -> Self {
-        Self {
-            giganto_ip: value.giganto_address.as_ref().map(SocketAddr::ip),
-            giganto_port: value.giganto_address.as_ref().map(SocketAddr::port),
-            log_options: value.log_options,
-            http_file_types: value.http_file_types,
-        }
     }
 }
 
