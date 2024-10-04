@@ -299,6 +299,13 @@ pub(super) struct NodeStatus {
     /// hostname. The name should not be confused with the node's hostname, even though they could
     /// be identical by coincidence.
     name: String,
+    name_draft: Option<String>,
+
+    profile: Option<NodeProfile>,
+    profile_draft: Option<NodeProfile>,
+
+    /// The draft of the Giganto module, associated with the node.
+    giganto_draft: Option<String>,
 
     /// The average CPU usage in percent.
     cpu_usage: Option<f32>,
@@ -360,27 +367,38 @@ impl NodeStatus {
 }
 
 impl NodeStatus {
-    #[allow(clippy::too_many_arguments)]
     fn new(
-        id: u32,
-        name: String,
-        cpu_usage: Option<f32>,
-        total_memory: Option<u64>,
-        used_memory: Option<u64>,
-        total_disk_space: Option<u64>,
-        used_disk_space: Option<u64>,
+        node: database::Node,
+        resource_usage: &Option<roxy::ResourceUsage>,
         ping: Option<Duration>,
         manager: bool,
-        agents: Vec<AgentSnapshot>,
     ) -> Self {
+        let agents = node
+            .agents
+            .iter()
+            .map(|agent| AgentSnapshot {
+                kind: agent.kind.into(),
+                stored_status: agent.status.into(),
+                config: agent.config.as_ref().map(ToString::to_string),
+                draft: agent.draft.as_ref().map(ToString::to_string),
+            })
+            .collect();
+
         Self {
-            id,
-            name,
-            cpu_usage,
-            total_memory,
-            used_memory,
-            total_disk_space,
-            used_disk_space,
+            id: node.id,
+            name: node.name,
+            name_draft: node.name_draft,
+            profile: node.profile.as_ref().map(Into::into),
+            profile_draft: node.profile_draft.as_ref().map(Into::into),
+            giganto_draft: node
+                .giganto
+                .as_ref()
+                .and_then(|g| g.draft.as_ref().map(ToString::to_string)),
+            cpu_usage: resource_usage.as_ref().map(|x| x.cpu_usage),
+            total_memory: resource_usage.as_ref().map(|x| x.total_memory),
+            used_memory: resource_usage.as_ref().map(|x| x.used_memory),
+            total_disk_space: resource_usage.as_ref().map(|x| x.total_disk_space),
+            used_disk_space: resource_usage.as_ref().map(|x| x.used_disk_space),
             ping,
             manager,
             agents,

@@ -9,7 +9,7 @@ use roxy::ResourceUsage;
 
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard},
-    matches_manager_hostname, AgentSnapshot, NodeStatus, NodeStatusQuery, NodeStatusTotalCount,
+    matches_manager_hostname, NodeStatus, NodeStatusQuery, NodeStatusTotalCount,
 };
 
 #[Object]
@@ -66,31 +66,9 @@ async fn load(
         let (resource_usage, ping) =
             fetch_resource_usage_and_ping(agent_manager, hostname, is_manager).await;
 
-        let agents = node
-            .agents
-            .iter()
-            .map(|agent| AgentSnapshot {
-                kind: agent.kind.into(),
-                stored_status: agent.status.into(),
-                config: agent.config.as_ref().map(ToString::to_string),
-                draft: agent.draft.as_ref().map(ToString::to_string),
-            })
-            .collect();
-
         connection.edges.push(Edge::new(
             crate::graphql::encode_cursor(node.unique_key()),
-            NodeStatus::new(
-                node.id,
-                node.name,
-                resource_usage.as_ref().map(|x| x.cpu_usage),
-                resource_usage.as_ref().map(|x| x.total_memory),
-                resource_usage.as_ref().map(|x| x.used_memory),
-                resource_usage.as_ref().map(|x| x.total_disk_space),
-                resource_usage.as_ref().map(|x| x.used_disk_space),
-                ping,
-                is_manager,
-                agents,
-            ),
+            NodeStatus::new(node, &resource_usage, ping, is_manager),
         ));
     }
     Ok(connection)
@@ -331,6 +309,18 @@ mod tests {
                         edges {
                             node {
                                 name
+                                nameDraft
+                                profile {
+                                    customerId
+                                    description
+                                    hostname
+                                }
+                                profileDraft {
+                                    customerId
+                                    description
+                                    hostname
+                                }
+                                gigantoDraft
                                 cpuUsage
                                 totalMemory
                                 usedMemory
@@ -359,6 +349,18 @@ mod tests {
                         {
                             "node": {
                                 "name": "node1",
+                                "nameDraft": "node1",
+                                "profile": {
+                                    "customerId": "0",
+                                    "description": "This node has the Manager.",
+                                    "hostname": manager_hostname
+                                },
+                                "profileDraft": {
+                                    "customerId": "0",
+                                    "description": "This node has the Manager.",
+                                    "hostname": manager_hostname
+                                },
+                                "gigantoDraft": null,
                                 "ping": 0.0,
                                 "manager": true,
                                 "agents": [
@@ -374,6 +376,18 @@ mod tests {
                         {
                             "node": {
                                 "name": "node2",
+                                "nameDraft": "node2",
+                                "profile": {
+                                    "customerId": "0",
+                                    "description": "This is the node for the Learner and the Models module.",
+                                    "hostname": "analysis"
+                                },
+                                "profileDraft": {
+                                    "customerId": "0",
+                                    "description": "This is the node for the Learner and the Models module.",
+                                    "hostname": "analysis"
+                                },
+                                "gigantoDraft": null,
                                 "cpuUsage": 20.0,
                                 "totalMemory": "1000",
                                 "usedMemory": "100",
