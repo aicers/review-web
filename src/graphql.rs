@@ -200,14 +200,13 @@ pub(super) struct Subscription(event::EventStream, outlier::OutlierStream);
 #[derive(Debug)]
 pub struct ParseEnumError;
 
-const DEFAULT_CONNECTION_SIZE: usize = 100;
+// const DEFAULT_CONNECTION_SIZE: usize = 100;
 
 // parameters for trend
 const DEFAULT_CUTOFF_RATE: f64 = 0.1;
 const DEFAULT_TRENDI_ORDER: i32 = 4;
 
-#[allow(clippy::type_complexity)] // since this is called within `load` only
-fn load_nodes<'a, T, I, R>(
+fn load_edges_interim<'a, T, I, R>(
     table: &'a T,
     after: Option<String>,
     before: Option<String>,
@@ -220,35 +219,9 @@ where
     I: std::iter::Iterator<Item = anyhow::Result<R>>,
     R: database::UniqueKey,
 {
-    let (after, before, first, last) = validate_and_process_pagination_params(
-        after,
-        before,
-        first.map(|f| i32::try_from(f).expect("valid size")),
-        last.map(|l| i32::try_from(l).expect("valid size")),
-    )?;
-    let (nodes, has_previous, has_next) = if let Some(first) = first {
-        let (nodes, has_more) = collect_edges(
-            table,
-            Direction::Forward,
-            after,
-            before,
-            prefix,
-            first.to_usize().expect("valid size"),
-        );
-        (nodes, false, has_more)
-    } else {
-        let Some(last) = last else { unreachable!() };
-        let (mut nodes, has_more) = collect_edges(
-            table,
-            Direction::Reverse,
-            before,
-            after,
-            prefix,
-            last.to_usize().expect("valid size"),
-        );
-        nodes.reverse();
-        (nodes, has_more, false)
-    };
+    let (nodes, has_previous, has_next) =
+        process_load_edges(table, after, before, first, last, prefix)?;
+
     let nodes = nodes
         .into_iter()
         .map(|res| res.map_err(|e| format!("{e}").into()))
@@ -270,6 +243,54 @@ fn encode_cursor(cursor: &[u8]) -> String {
     BASE64.encode(cursor)
 }
 
+#[allow(clippy::type_complexity)]
+fn decode_cursor_pair(
+    after: Option<String>,
+    before: Option<String>,
+) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+    let after = if let Some(after) = after {
+        Some(decode_cursor(&after).ok_or("invalid cursor `after`")?)
+    } else {
+        None
+    };
+    let before = if let Some(before) = before {
+        Some(decode_cursor(&before).ok_or("invalid cursor `before`")?)
+    } else {
+        None
+    };
+    Ok((after, before))
+}
+
+#[allow(clippy::type_complexity)]
+fn process_load_edges<'a, T, I, R>(
+    table: &'a T,
+    after: Option<String>,
+    before: Option<String>,
+    first: Option<usize>,
+    last: Option<usize>,
+    prefix: Option<&[u8]>,
+) -> Result<(Vec<Result<R, anyhow::Error>>, bool, bool)>
+where
+    T: database::Iterable<'a, I>,
+    I: std::iter::Iterator<Item = anyhow::Result<R>>,
+    R: database::UniqueKey,
+{
+    let (after, before) = decode_cursor_pair(after, before)?;
+    let (nodes, has_previous, has_next) = if let Some(first) = first {
+        let (nodes, has_more) =
+            collect_edges(table, Direction::Forward, after, before, prefix, first);
+        (nodes, false, has_more)
+    } else {
+        let Some(last) = last else { unreachable!() };
+        let (mut nodes, has_more) =
+            collect_edges(table, Direction::Reverse, before, after, prefix, last);
+        nodes.reverse();
+        (nodes, has_more, false)
+    };
+
+    Ok((nodes, has_previous, has_next))
+}
+
 fn load_edges<'a, T, I, R, N, A, NodesField>(
     table: &'a T,
     after: Option<String>,
@@ -286,36 +307,8 @@ where
     A: ObjectType,
     NodesField: ConnectionNameType,
 {
-    let (after, before, first, last) = validate_and_process_pagination_params(
-        after,
-        before,
-        first.map(|f| i32::try_from(f).expect("valid size")),
-        last.map(|l| i32::try_from(l).expect("valid size")),
-    )?;
-
-    let (nodes, has_previous, has_next) = if let Some(first) = first {
-        let (nodes, has_more) = collect_edges(
-            table,
-            Direction::Forward,
-            after,
-            before,
-            None,
-            first.to_usize().expect("valid size"),
-        );
-        (nodes, false, has_more)
-    } else {
-        let Some(last) = last else { unreachable!() };
-        let (mut nodes, has_more) = collect_edges(
-            table,
-            Direction::Reverse,
-            before,
-            after,
-            None,
-            last.to_usize().expect("valid size"),
-        );
-        nodes.reverse();
-        (nodes, has_more, false)
-    };
+    let (nodes, has_previous, has_next) =
+        process_load_edges(table, after, before, first, last, None)?;
 
     for node in &nodes {
         let Err(e) = node else { continue };
@@ -472,51 +465,6 @@ fn get_trend(
     };
     let (b, a) = signal::filter::design::butter(trendi_order, cutoff_frequency);
     signal::filter::filtfilt(&b, &a, &original)
-}
-
-/// Checks after, before, first, and last to see if they follow GraphQL guidelines.
-///
-/// # Errors
-///
-/// Returns an error if the parameters are invalid.
-#[allow(clippy::type_complexity)]
-fn validate_and_process_pagination_params(
-    after: Option<String>,
-    before: Option<String>,
-    mut first: Option<i32>,
-    mut last: Option<i32>,
-) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>, Option<i32>, Option<i32>)> {
-    match (
-        first.is_some(),
-        last.is_some(),
-        before.is_some(),
-        after.is_some(),
-    ) {
-        (true, true, _, _) => return Err("cannot provide both `first` and `last`".into()),
-        (_, _, true, true) => return Err("cannot provide both `before` and `after`".into()),
-        (true, _, true, _) => return Err("cannot provide both `first` and `before`".into()),
-        (_, true, _, true) => return Err("cannot provide both `last` and `after`".into()),
-        (false, false, false, _) => {
-            first = Some(DEFAULT_CONNECTION_SIZE.to_i32().unwrap_or_default());
-        }
-        (false, false, true, false) => {
-            last = Some(DEFAULT_CONNECTION_SIZE.to_i32().unwrap_or_default());
-        }
-        _ => {}
-    }
-
-    let after = if let Some(after) = after {
-        Some(decode_cursor(&after).ok_or("invalid cursor `after`")?)
-    } else {
-        None
-    };
-    let before = if let Some(before) = before {
-        Some(decode_cursor(&before).ok_or("invalid cursor `before`")?)
-    } else {
-        None
-    };
-
-    Ok((after, before, first, last))
 }
 
 #[cfg(test)]

@@ -17,7 +17,6 @@ use tokio::{sync::RwLock, time};
 use tracing::error;
 
 use super::{encode_cursor, model::ModelDigest, Role, RoleGuard};
-use crate::graphql::validate_and_process_pagination_params;
 
 const DEFAULT_OUTLIER_SIZE: usize = 50;
 const DISTANCE_EPSILON: f64 = 0.1;
@@ -261,7 +260,7 @@ async fn load_outliers(
     let store = crate::graphql::get_store(ctx).await?;
     let map = store.outlier_map();
 
-    let (nodes, has_previous, has_next) = super::load_nodes(
+    let (nodes, has_previous, has_next) = super::load_edges_interim(
         &map,
         after,
         before,
@@ -471,13 +470,7 @@ async fn load(
 ) -> Result<Connection<String, Outlier, OutlierTotalCount, EmptyFields>> {
     let store = crate::graphql::get_store(ctx).await?;
     let table = store.outlier_map();
-
-    let (after, before, first, last) = validate_and_process_pagination_params(
-        after,
-        before,
-        first.map(|value| i32::try_from(value).expect("valid size")),
-        last.map(|value| i32::try_from(value).expect("valid size")),
-    )?;
+    let (after, before) = super::decode_cursor_pair(after, before)?;
     let decoded_after = after
         .as_deref()
         .map(|input| bincode::DefaultOptions::new().deserialize(input))
@@ -580,8 +573,7 @@ async fn load_ranked_outliers_with_filter(
 ) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
     let model_id: i32 = model_id.as_str().parse()?;
     let timestamp = time.map(|t| t.and_utc().timestamp_nanos_opt().unwrap_or_default());
-    let (after, before, first, last) =
-        validate_and_process_pagination_params(after, before, first, last)?;
+    let (after, before) = super::decode_cursor_pair(after, before)?;
     let (direction, count, from, to) = if let Some(first) = first {
         (
             Direction::Forward,
