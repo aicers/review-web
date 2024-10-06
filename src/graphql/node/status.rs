@@ -46,7 +46,7 @@ async fn load(
     let (node_list, has_previous, has_next) = {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.node_map();
-        super::super::load_nodes(&map, after, before, first, last, None)?
+        super::super::load_edges_interim(&map, after, before, first, last, None)?
     };
 
     let agent_manager = ctx.data::<BoxedAgentManager>()?;
