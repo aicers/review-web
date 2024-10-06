@@ -1,7 +1,7 @@
 use std::{convert::TryInto, mem::size_of};
 
 use async_graphql::{
-    connection::{query, Connection, EmptyFields},
+    connection::{Connection, EmptyFields},
     types::ID,
     Context, InputObject, Object, Result,
 };
@@ -12,6 +12,7 @@ use super::{
     customer::{Customer, HostNetworkGroup, HostNetworkGroupInput},
     Role, RoleGuard,
 };
+use crate::graphql::query;
 
 #[derive(Default)]
 pub(super) struct NetworkQuery;

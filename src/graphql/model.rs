@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_graphql::{
-    connection::{query, Connection, Edge, EmptyFields},
+    connection::{Connection, Edge, EmptyFields},
     types::ID,
     Context, Object, Result, SimpleObject, StringNumber,
 };
@@ -15,6 +15,7 @@ use super::{
     cluster::TimeCount, data_source::DataSource, fill_vacant_time_slots, get_trend, slicing, Role,
     RoleGuard, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER,
 };
+use crate::graphql::query;
 
 const DEFAULT_MIN_SLOPE: f64 = 10.0;
 const DEFAULT_MIN_ZERO_COUNT_FOR_TREND: u32 = 5;

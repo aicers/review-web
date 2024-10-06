@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_graphql::{
-    connection::{query, Connection, Edge, EmptyFields},
+    connection::{Connection, Edge, EmptyFields},
     types::ID,
     ComplexObject, Context, InputObject, Object, Result, SimpleObject, StringNumber, Subscription,
 };
@@ -16,7 +16,7 @@ use serde::Serialize;
 use tokio::{sync::RwLock, time};
 use tracing::error;
 
-use super::{encode_cursor, model::ModelDigest, Role, RoleGuard};
+use super::{encode_cursor, model::ModelDigest, query, Role, RoleGuard};
 
 const DEFAULT_OUTLIER_SIZE: usize = 50;
 const DISTANCE_EPSILON: f64 = 0.1;
@@ -208,8 +208,16 @@ impl OutlierQuery {
         last: Option<i32>,
     ) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
         let filter = |node: RankedOutlier| if node.saved { Some(node) } else { None };
-
-        load_outliers(ctx, model_id, time, after, before, first, last, filter).await
+        query(
+            after,
+            before,
+            first,
+            last,
+            |after, before, first, last| async move {
+                load_outliers(ctx, model_id, time, after, before, first, last, filter).await
+            },
+        )
+        .await
     }
 
     /// A list of outliers, grouped by clustering time. Within each group,
@@ -230,8 +238,19 @@ impl OutlierQuery {
         last: Option<i32>,
         filter: Option<SearchFilterInput>,
     ) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
-        load_ranked_outliers_with_filter(ctx, model_id, time, after, before, first, last, filter)
-            .await
+        query(
+            after,
+            before,
+            first,
+            last,
+            |after, before, first, last| async move {
+                load_ranked_outliers_with_filter(
+                    ctx, model_id, time, after, before, first, last, filter,
+                )
+                .await
+            },
+        )
+        .await
     }
 }
 
@@ -242,8 +261,8 @@ async fn load_outliers(
     time: Option<NaiveDateTime>,
     after: Option<String>,
     before: Option<String>,
-    first: Option<i32>,
-    last: Option<i32>,
+    first: Option<usize>,
+    last: Option<usize>,
     filter: fn(RankedOutlier) -> Option<RankedOutlier>,
 ) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
     let model_id: i32 = model_id.as_str().parse()?;
@@ -260,14 +279,8 @@ async fn load_outliers(
     let store = crate::graphql::get_store(ctx).await?;
     let map = store.outlier_map();
 
-    let (nodes, has_previous, has_next) = super::load_edges_interim(
-        &map,
-        after,
-        before,
-        first.map(|value| usize::try_from(value).expect("valid size")),
-        last.map(|value| usize::try_from(value).expect("valid size")),
-        Some(&prefix),
-    )?;
+    let (nodes, has_previous, has_next) =
+        super::load_edges_interim(&map, after, before, first, last, Some(&prefix))?;
 
     let mut connection = Connection::with_additional_fields(
         has_previous,
@@ -482,19 +495,9 @@ async fn load(
         .transpose()?
         .map(|(from, _): (&[u8], &[u8])| from);
     let (direction, count, from, to) = if let Some(first) = first {
-        (
-            Direction::Forward,
-            first.to_usize().expect("valid size"),
-            decoded_after,
-            decoded_before,
-        )
+        (Direction::Forward, first, decoded_after, decoded_before)
     } else if let Some(last) = last {
-        (
-            Direction::Reverse,
-            last.to_usize().expect("valid size"),
-            decoded_before,
-            decoded_after,
-        )
+        (Direction::Reverse, last, decoded_before, decoded_after)
     } else {
         unreachable!();
     };
@@ -567,8 +570,8 @@ async fn load_ranked_outliers_with_filter(
     time: Option<NaiveDateTime>,
     after: Option<String>,
     before: Option<String>,
-    first: Option<i32>,
-    last: Option<i32>,
+    first: Option<usize>,
+    last: Option<usize>,
     filter: Option<SearchFilterInput>,
 ) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
     let model_id: i32 = model_id.as_str().parse()?;
@@ -577,14 +580,14 @@ async fn load_ranked_outliers_with_filter(
     let (direction, count, from, to) = if let Some(first) = first {
         (
             Direction::Forward,
-            first.to_usize().expect("valid size"),
+            first,
             after.as_deref(),
             before.as_deref(),
         )
     } else if let Some(last) = last {
         (
             Direction::Reverse,
-            last.to_usize().expect("valid size"),
+            last,
             before.as_deref(),
             after.as_deref(),
         )

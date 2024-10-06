@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::anyhow;
 use async_graphql::{
-    connection::{query, Connection, EmptyFields},
+    connection::{Connection, EmptyFields},
     Context, Enum, InputObject, Object, Result, SimpleObject, StringNumber,
 };
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
@@ -19,6 +19,7 @@ use tracing::info;
 
 use super::RoleGuard;
 use crate::auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in};
+use crate::graphql::query;
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Serialize, SimpleObject)]

@@ -1,9 +1,10 @@
 use async_graphql::{
-    connection::{query, Connection, EmptyFields},
+    connection::{Connection, EmptyFields},
     Context, Object, Result, SimpleObject,
 };
 
 use super::{AgentManager, BoxedAgentManager, Role, RoleGuard};
+use crate::graphql::query;
 
 #[derive(Default)]
 pub(super) struct TrustedDomainQuery;

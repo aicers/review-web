@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 
 use async_graphql::{
-    connection::{query, Connection, EmptyFields},
+    connection::{Connection, EmptyFields},
     types::ID,
     Context, Enum, InputObject, Object, Result, StringNumber,
 };
@@ -10,6 +10,7 @@ use review_database::{Direction, Iterable};
 use serde::{Deserialize, Serialize};
 
 use super::{BoxedAgentManager, Role, RoleGuard};
+use crate::graphql::query;
 
 #[derive(Default)]
 pub(super) struct SamplingPolicyQuery;

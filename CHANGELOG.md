@@ -13,6 +13,16 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   instead of its serialized form. This change decouples review-web from
   dictating the serialized form of `HostNetworkGroup`, which should be handled
   by the review-protocol crate.
+- Instead of `async_graphql::connection::query`, its wrapper `graphql::query` is
+  now used for all GraphQL APIs to support pagination.
+  - The GraphQL APIs `clusters`, `eventList`, and `models` were changed to no
+    longer accept invalid pagination parameters, such as providing both `after`
+    and `before`, by using `graphql::query`.
+
+### Fixed
+
+- Fixed `savedOutliers` and `rankedOutliers` to properly validate pagination
+  parameters.
 
 ## [0.22.0] - 2024-10-04
 

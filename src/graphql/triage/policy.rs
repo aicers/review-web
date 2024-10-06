@@ -1,5 +1,5 @@
 use async_graphql::{
-    connection::{query, Connection, EmptyFields},
+    connection::{Connection, EmptyFields},
     Context, Object, Result, ID,
 };
 use chrono::Utc;
@@ -10,6 +10,7 @@ use super::{
     TriagePolicyMutation, TriagePolicyQuery,
 };
 use super::{Role, RoleGuard};
+use crate::graphql::query;
 
 struct TriagePolicyTotalCount;
 

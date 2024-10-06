@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_graphql::{
-    connection::{query, Connection, Edge, EmptyFields},
+    connection::{Connection, Edge, EmptyFields},
     types::ID,
     ComplexObject, Context, Object, Result, SimpleObject, StringNumber,
 };
@@ -21,6 +21,7 @@ use super::{
     status::Status,
     Role, RoleGuard, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER,
 };
+use crate::graphql::query;
 
 #[derive(Default)]
 pub(super) struct ClusterQuery;

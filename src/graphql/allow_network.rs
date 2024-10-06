@@ -1,5 +1,5 @@
 use async_graphql::{
-    connection::{query, Connection, EmptyFields},
+    connection::{Connection, EmptyFields},
     Context, InputObject, Object, Result, ID,
 };
 use database::Direction;
@@ -10,6 +10,7 @@ use super::{
     customer::{HostNetworkGroup, HostNetworkGroupInput},
     BoxedAgentManager, Role, RoleGuard,
 };
+use crate::graphql::query;
 
 #[derive(Default)]
 pub(super) struct AllowNetworkQuery;

@@ -2,7 +2,7 @@ use std::convert::{TryFrom, TryInto};
 
 use anyhow::Context as AnyhowContext;
 use async_graphql::{
-    connection::{query, Connection, EmptyFields},
+    connection::{Connection, EmptyFields},
     types::ID,
     Context, Enum, InputObject, Object, Result, SimpleObject,
 };
@@ -11,6 +11,7 @@ use review_database::{self as database, Store};
 use tracing::error;
 
 use super::{get_customer_id_of_node, BoxedAgentManager, Role, RoleGuard};
+use crate::graphql::query;
 
 #[derive(Default)]
 pub(super) struct CustomerQuery;
