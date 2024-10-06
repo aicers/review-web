@@ -1,5 +1,5 @@
 use async_graphql::{
-    connection::{query, Connection, EmptyFields},
+    connection::{Connection, EmptyFields},
     Context, Object, Result, SimpleObject,
 };
 use bincode::Options;
@@ -8,6 +8,7 @@ use database::{Direction, Iterable};
 use review_database::{self as database, Store};
 
 use super::{BoxedAgentManager, Role, RoleGuard};
+use crate::graphql::query;
 
 #[derive(Default)]
 pub(super) struct UserAgentQuery;

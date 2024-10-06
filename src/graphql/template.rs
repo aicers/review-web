@@ -1,12 +1,13 @@
 use std::convert::{TryFrom, TryInto};
 
 use async_graphql::{
-    connection::{query, Connection, EmptyFields},
+    connection::{Connection, EmptyFields},
     Context, Enum, InputObject, Object, Result, StringNumber, Union,
 };
 use serde::{Deserialize, Serialize};
 
 use super::{ParseEnumError, Role, RoleGuard};
+use crate::graphql::query;
 
 #[derive(Default)]
 pub(super) struct TemplateQuery;

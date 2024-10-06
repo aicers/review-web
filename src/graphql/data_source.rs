@@ -1,11 +1,12 @@
 use async_graphql::{
-    connection::{query, Connection, EmptyFields},
+    connection::{Connection, EmptyFields},
     types::ID,
     Context, Enum, InputObject, Object, Result,
 };
 use review_database::{self as database};
 
 use super::{Role, RoleGuard};
+use crate::graphql::query;
 
 #[derive(Default)]
 pub(super) struct DataSourceQuery;

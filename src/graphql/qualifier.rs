@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_graphql::{
-    connection::{query, Connection, EmptyFields},
+    connection::{Connection, EmptyFields},
     types::ID,
     Context, Object, Result,
 };
@@ -10,6 +10,7 @@ use review_database::{self as database};
 use tokio::sync::RwLock;
 
 use super::{Role, RoleGuard};
+use crate::graphql::query;
 
 #[derive(Default)]
 pub(super) struct QualifierQuery;

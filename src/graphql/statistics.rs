@@ -1,5 +1,5 @@
 use async_graphql::{
-    connection::{query, Connection, ConnectionNameType, Edge, EmptyFields},
+    connection::{Connection, ConnectionNameType, Edge, EmptyFields},
     types::ID,
     Context, Object, Result, StringNumber,
 };
@@ -9,6 +9,7 @@ use review_database::{BatchInfo, Database};
 use serde_json::Value as JsonValue;
 
 use super::{slicing, Role, RoleGuard};
+use crate::graphql::query;
 
 #[derive(Default)]
 pub(super) struct StatisticsQuery;

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use async_graphql::{
-    connection::{query, Connection, Edge, EmptyFields},
+    connection::{Connection, Edge, EmptyFields},
     Context, Object, Result,
 };
 use review_database::UniqueKey;
@@ -11,6 +11,7 @@ use super::{
     super::{BoxedAgentManager, Role, RoleGuard},
     matches_manager_hostname, NodeStatus, NodeStatusQuery, NodeStatusTotalCount,
 };
+use crate::graphql::query;
 
 #[Object]
 impl NodeStatusQuery {

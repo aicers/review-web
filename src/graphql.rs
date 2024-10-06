@@ -34,6 +34,7 @@ mod triage;
 mod trusted_domain;
 mod trusted_user_agent;
 
+use std::future::Future;
 #[cfg(test)]
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -200,34 +201,67 @@ pub(super) struct Subscription(event::EventStream, outlier::OutlierStream);
 #[derive(Debug)]
 pub struct ParseEnumError;
 
-// const DEFAULT_CONNECTION_SIZE: usize = 100;
+async fn query<Node, ConnectionFields, Name, F, R, E>(
+    after: Option<String>,
+    before: Option<String>,
+    first: Option<i32>,
+    last: Option<i32>,
+    f: F,
+) -> Result<Connection<String, Node, ConnectionFields, EmptyFields, Name>>
+where
+    Node: OutputType,
+    ConnectionFields: ObjectType,
+    Name: ConnectionNameType,
+    F: FnOnce(Option<String>, Option<String>, Option<usize>, Option<usize>) -> R,
+    R: Future<Output = Result<Connection<String, Node, ConnectionFields, EmptyFields, Name>, E>>,
+    E: Into<async_graphql::Error>,
+{
+    let (first, last) = validate_pagination_params(after.is_some(), before.is_some(), first, last)?;
+    async_graphql::connection::query(after, before, first, last, |after, before, first, last| {
+        f(after, before, first, last)
+    })
+    .await
+}
+
+const DEFAULT_CONNECTION_SIZE: i32 = 100;
+
+fn validate_pagination_params(
+    after: bool,
+    before: bool,
+    mut first: Option<i32>,
+    mut last: Option<i32>,
+) -> Result<(Option<i32>, Option<i32>)> {
+    if let Some(first) = first {
+        if first < 0 {
+            return Err("The \"first\" parameter must be a non-negative number".into());
+        }
+    }
+    if let Some(last) = last {
+        if last < 0 {
+            return Err("The \"last\" parameter must be a non-negative number".into());
+        }
+    }
+
+    match (first.is_some(), last.is_some(), before, after) {
+        (true, true, _, _) => return Err("cannot provide both `first` and `last`".into()),
+        (_, _, true, true) => return Err("cannot provide both `before` and `after`".into()),
+        (true, _, true, _) => return Err("cannot provide both `first` and `before`".into()),
+        (_, true, _, true) => return Err("cannot provide both `last` and `after`".into()),
+        (false, false, false, _) => {
+            first = Some(DEFAULT_CONNECTION_SIZE);
+        }
+        (false, false, true, false) => {
+            last = Some(DEFAULT_CONNECTION_SIZE);
+        }
+        _ => {}
+    }
+
+    Ok((first, last))
+}
 
 // parameters for trend
 const DEFAULT_CUTOFF_RATE: f64 = 0.1;
 const DEFAULT_TRENDI_ORDER: i32 = 4;
-
-fn load_edges_interim<'a, T, I, R>(
-    table: &'a T,
-    after: Option<String>,
-    before: Option<String>,
-    first: Option<usize>,
-    last: Option<usize>,
-    prefix: Option<&[u8]>,
-) -> Result<(Vec<R>, bool, bool)>
-where
-    T: database::Iterable<'a, I>,
-    I: std::iter::Iterator<Item = anyhow::Result<R>>,
-    R: database::UniqueKey,
-{
-    let (nodes, has_previous, has_next) =
-        process_load_edges(table, after, before, first, last, prefix)?;
-
-    let nodes = nodes
-        .into_iter()
-        .map(|res| res.map_err(|e| format!("{e}").into()))
-        .collect::<Result<Vec<_>>>()?;
-    Ok((nodes, has_previous, has_next))
-}
 
 async fn get_store<'a>(ctx: &Context<'a>) -> Result<tokio::sync::RwLockReadGuard<'a, Store>> {
     Ok(ctx.data::<Arc<RwLock<Store>>>()?.read().await)
@@ -288,6 +322,29 @@ where
         (nodes, has_more, false)
     };
 
+    Ok((nodes, has_previous, has_next))
+}
+
+fn load_edges_interim<'a, T, I, R>(
+    table: &'a T,
+    after: Option<String>,
+    before: Option<String>,
+    first: Option<usize>,
+    last: Option<usize>,
+    prefix: Option<&[u8]>,
+) -> Result<(Vec<R>, bool, bool)>
+where
+    T: database::Iterable<'a, I>,
+    I: std::iter::Iterator<Item = anyhow::Result<R>>,
+    R: database::UniqueKey,
+{
+    let (nodes, has_previous, has_next) =
+        process_load_edges(table, after, before, first, last, prefix)?;
+
+    let nodes = nodes
+        .into_iter()
+        .map(|res| res.map_err(|e| format!("{e}").into()))
+        .collect::<Result<Vec<_>>>()?;
     Ok((nodes, has_previous, has_next))
 }
 

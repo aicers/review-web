@@ -1,7 +1,7 @@
 #![allow(clippy::fn_params_excessive_bools)]
 
 use async_graphql::{
-    connection::{query, Connection, EmptyFields},
+    connection::{Connection, EmptyFields},
     types::ID,
     Context, Object, Result,
 };
@@ -14,7 +14,7 @@ use super::{
     input::{AgentInput, GigantoInput, NodeDraftInput},
     Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount,
 };
-use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks};
+use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks, query};
 
 #[Object]
 impl NodeQuery {

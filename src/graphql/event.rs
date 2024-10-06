@@ -29,7 +29,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context as AnyhowContext};
 use async_graphql::{
-    connection::{query, Connection, Edge, EmptyFields},
+    connection::{Connection, Edge, EmptyFields},
     Context, InputObject, Object, Result, Subscription, Union, ID,
 };
 use chrono::{DateTime, Utc};
@@ -78,6 +78,7 @@ use super::{
     network::Network,
     Role, RoleGuard,
 };
+use crate::graphql::query;
 
 const DEFAULT_CONNECTION_SIZE: usize = 100;
 const DEFAULT_EVENT_FETCH_TIME: u64 = 20;
