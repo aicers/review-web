@@ -2,7 +2,6 @@ use async_graphql::{
     connection::{query, Connection, EmptyFields},
     Context, InputObject, Object, Result, ID,
 };
-use bincode::Options;
 use database::Direction;
 use review_database::{self as database, Store};
 use serde::{Deserialize, Serialize};
@@ -124,11 +123,10 @@ impl AllowNetworkMutation {
     async fn apply_allow_networks(&self, ctx: &Context<'_>) -> Result<Vec<String>> {
         let store = crate::graphql::get_store(ctx).await?;
 
-        let serialized_networks =
-            bincode::DefaultOptions::new().serialize(&get_allow_networks(&store)?)?;
+        let networks = get_allow_networks(&store)?;
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
         agent_manager
-            .broadcast_allow_networks(&serialized_networks)
+            .broadcast_allow_networks(&networks)
             .await
             .map_err(Into::into)
     }
