@@ -1297,7 +1297,7 @@ mod tests {
                         description: "This is the collector node",
                         hostname: "collector1",
                         agents: [{
-                            key: "piglet@collector1"
+                            key: "piglet"
                             kind: PIGLET
                             status: ENABLED
                         }]
@@ -1310,10 +1310,26 @@ mod tests {
         let _ = schema
             .execute(
                 r#"mutation {
-                    applyNode(id: "0") {
-                        id
-                        gigantoDraft
-                    }
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "collector1",
+                            nameDraft: "collector1",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the collector node",
+                                hostname: "collector1",
+                            }
+                            agents: [
+                                {
+                                    key: "piglet",
+                                    kind: "PIGLET",
+                                    status: "ENABLED"
+                                }
+                            ],
+                        }
+                    )
                 }"#,
             )
             .await;
