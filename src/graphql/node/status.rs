@@ -103,6 +103,7 @@ mod tests {
 
     use assert_json_diff::assert_json_include;
     use axum::async_trait;
+    use review_database::HostNetworkGroup;
     use roxy::ResourceUsage;
     use serde_json::json;
 
@@ -116,21 +117,21 @@ mod tests {
     impl AgentManager for MockAgentManager {
         async fn broadcast_internal_networks(
             &self,
-            _networks: &[u8],
+            _networks: &HostNetworkGroup,
         ) -> Result<Vec<String>, anyhow::Error> {
             anyhow::bail!("not expected to be called")
         }
 
         async fn broadcast_allow_networks(
             &self,
-            _networks: &[u8],
+            _networks: &HostNetworkGroup,
         ) -> Result<Vec<String>, anyhow::Error> {
             unimplemented!()
         }
 
         async fn broadcast_block_networks(
             &self,
-            _networks: &[u8],
+            _networks: &HostNetworkGroup,
         ) -> Result<Vec<String>, anyhow::Error> {
             unimplemented!()
         }

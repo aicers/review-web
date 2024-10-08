@@ -4,7 +4,6 @@ use async_graphql::{
     connection::{query, Connection, EmptyFields},
     Context, InputObject, Object, Result, ID,
 };
-use bincode::Options;
 use database::Direction;
 use review_database::{self as database, Store};
 use serde::{Deserialize, Serialize};
@@ -126,11 +125,10 @@ impl BlockNetworkMutation {
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_block_networks(&self, ctx: &Context<'_>) -> Result<Vec<String>> {
         let db = super::get_store(ctx).await?;
-        let serialized_networks =
-            bincode::DefaultOptions::new().serialize(&get_block_networks(&db)?)?;
+        let networks = get_block_networks(&db)?;
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
         agent_manager
-            .broadcast_block_networks(&serialized_networks)
+            .broadcast_block_networks(&networks)
             .await
             .map_err(Into::into)
     }

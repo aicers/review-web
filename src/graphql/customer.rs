@@ -6,7 +6,6 @@ use async_graphql::{
     types::ID,
     Context, Enum, InputObject, Object, Result, SimpleObject,
 };
-use bincode::Options;
 use chrono::{DateTime, Utc};
 use review_database::{self as database, Store};
 use tracing::error;
@@ -493,10 +492,9 @@ pub async fn broadcast_customer_networks(
     ctx: &Context<'_>,
     networks: &database::HostNetworkGroup,
 ) -> Result<Vec<String>> {
-    let networks = bincode::DefaultOptions::new().serialize(&networks)?;
     let agent_manager = ctx.data::<BoxedAgentManager>()?;
     agent_manager
-        .broadcast_internal_networks(&networks)
+        .broadcast_internal_networks(networks)
         .await
         .map_err(Into::into)
 }

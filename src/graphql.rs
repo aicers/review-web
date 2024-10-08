@@ -46,6 +46,8 @@ use async_graphql::{
 use chrono::TimeDelta;
 use data_encoding::BASE64;
 use num_traits::ToPrimitive;
+#[cfg(test)]
+use review_database::HostNetworkGroup;
 use review_database::{self as database, Database, Direction, Role, Store};
 pub use roxy::{Process, ResourceUsage};
 use tokio::sync::{Notify, RwLock};
@@ -529,19 +531,19 @@ impl AgentManager for MockAgentManager {
 
     async fn broadcast_internal_networks(
         &self,
-        _networks: &[u8],
+        _networks: &HostNetworkGroup,
     ) -> Result<Vec<String>, anyhow::Error> {
         Ok(vec!["hog@hostA".to_string()])
     }
     async fn broadcast_allow_networks(
         &self,
-        _networks: &[u8],
+        _networks: &HostNetworkGroup,
     ) -> Result<Vec<String>, anyhow::Error> {
         Ok(vec!["hog@hostA".to_string(), "hog@hostB".to_string()])
     }
     async fn broadcast_block_networks(
         &self,
-        _networks: &[u8],
+        _networks: &HostNetworkGroup,
     ) -> Result<Vec<String>, anyhow::Error> {
         Ok(vec![
             "hog@hostA".to_string(),

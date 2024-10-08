@@ -303,6 +303,7 @@ mod tests {
     use assert_json_diff::assert_json_eq;
     use async_trait::async_trait;
     use ipnet::IpNet;
+    use review_database::HostNetworkGroup;
     use serde_json::json;
 
     use crate::graphql::{AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema};
@@ -1433,21 +1434,21 @@ mod tests {
         }
         async fn broadcast_internal_networks(
             &self,
-            _networks: &[u8],
+            _networks: &HostNetworkGroup,
         ) -> Result<Vec<String>, anyhow::Error> {
             Ok(vec!["hog@hostA".to_string()])
         }
 
         async fn broadcast_allow_networks(
             &self,
-            _networks: &[u8],
+            _networks: &HostNetworkGroup,
         ) -> Result<Vec<String>, anyhow::Error> {
             Ok(vec![])
         }
 
         async fn broadcast_block_networks(
             &self,
-            _networks: &[u8],
+            _networks: &HostNetworkGroup,
         ) -> Result<Vec<String>, anyhow::Error> {
             Ok(vec![])
         }
@@ -1533,21 +1534,21 @@ mod tests {
         }
         async fn broadcast_internal_networks(
             &self,
-            _networks: &[u8],
+            _networks: &HostNetworkGroup,
         ) -> Result<Vec<String>, anyhow::Error> {
             anyhow::bail!("Failed to broadcast internal networks")
         }
 
         async fn broadcast_allow_networks(
             &self,
-            _networks: &[u8],
+            _networks: &HostNetworkGroup,
         ) -> Result<Vec<String>, anyhow::Error> {
             anyhow::bail!("Failed to broadcast allow networks")
         }
 
         async fn broadcast_block_networks(
             &self,
-            _networks: &[u8],
+            _networks: &HostNetworkGroup,
         ) -> Result<Vec<String>, anyhow::Error> {
             anyhow::bail!("Failed to broadcast block networks")
         }
