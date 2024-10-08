@@ -1,10 +1,12 @@
+use std::fmt;
+
 use anyhow::Context as AnyhowContext;
 use async_graphql::{types::ID, InputObject, Result};
 
 use super::{AgentKind, AgentStatus};
 
 #[allow(clippy::module_name_repetitions)]
-#[derive(Clone, InputObject)]
+#[derive(Clone, InputObject, PartialEq)]
 pub struct NodeProfileInput {
     pub customer_id: ID,
     pub description: String,
@@ -23,14 +25,24 @@ impl TryFrom<NodeProfileInput> for review_database::NodeProfile {
     }
 }
 
+impl fmt::Display for NodeProfileInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{{ customer_id: {}, description: {}, hostname: {} }}",
+            *self.customer_id, self.description, self.hostname
+        )
+    }
+}
+
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, InputObject)]
 pub struct AgentInput {
-    key: String,
     kind: AgentKind,
+    pub(super) key: String,
     status: AgentStatus,
-    config: Option<String>,
-    draft: Option<String>,
+    pub(super) config: Option<String>,
+    pub(super) draft: Option<String>,
 }
 
 impl From<AgentInput> for review_database::Agent {

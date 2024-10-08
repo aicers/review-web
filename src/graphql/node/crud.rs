@@ -213,12 +213,12 @@ mod tests {
                         description: "This is the admin node running review.",
                         hostname: "admin.aice-security.com",
                         agents: [{
-                            key: "reconverge@analysis"
+                            key: "reconverge"
                             kind: RECONVERGE
                             status: ENABLED
                         },
                         {
-                            key: "piglet@collect"
+                            key: "piglet"
                             kind: PIGLET
                             status: ENABLED
                         }]
@@ -277,12 +277,12 @@ mod tests {
                         "hostname": "admin.aice-security.com",
                     },
                     "agents": [{
-                        "key": "reconverge@analysis",
+                        "key": "reconverge",
                         "kind": "RECONVERGE",
                         "status": "ENABLED",
                     },
                     {
-                        "key": "piglet@collect",
+                        "key": "piglet",
                         "kind": "PIGLET",
                         "status": "ENABLED",
                     }],
@@ -308,14 +308,14 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge@analysis",
+                                    key: "reconverge",
                                     kind: "RECONVERGE",
                                     status: "ENABLED",
                                     config: null,
                                     draft: null
                                 },
                                 {
-                                    key: "piglet@collect",
+                                    key: "piglet",
                                     kind: "PIGLET",
                                     status: "ENABLED",
                                     config: null,
@@ -333,14 +333,14 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge@analysis",
+                                    key: "reconverge",
                                     kind: "RECONVERGE",
                                     status: "ENABLED",
                                     config: null,
                                     draft: null
                                 },
                                 {
-                                    key: "piglet@collect",
+                                    key: "piglet",
                                     kind: "PIGLET",
                                     status: "ENABLED",
                                     config: null,
@@ -415,14 +415,14 @@ mod tests {
                         }
                         agents: [
                             {
-                                key: "reconverge@analysis",
+                                key: "reconverge",
                                 kind: "RECONVERGE",
                                 status: "ENABLED",
                                 config: null,
                                 draft: null
                             },
                             {
-                                key: "piglet@collect",
+                                key: "piglet",
                                 kind: "PIGLET",
                                 status: "ENABLED",
                                 config: null,
@@ -476,12 +476,12 @@ mod tests {
                         description: "This is the admin node running review.",
                         hostname: "admin.aice-security.com",
                         agents: [{
-                            key: "reconverge@analysis"
+                            key: "reconverge"
                             kind: RECONVERGE
                             status: ENABLED
                         },
                         {
-                            key: "piglet@collect"
+                            key: "piglet"
                             kind: PIGLET
                             status: ENABLED
                         }]
@@ -540,12 +540,12 @@ mod tests {
                         "hostname": "admin.aice-security.com",
                     },
                     "agents": [{
-                        "key": "reconverge@analysis",
+                        "key": "reconverge",
                         "kind": "RECONVERGE",
                         "status": "ENABLED",
                     },
                     {
-                        "key": "piglet@collect",
+                        "key": "piglet",
                         "kind": "PIGLET",
                         "status": "ENABLED",
                     }],
@@ -571,14 +571,14 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge@analysis",
+                                    key: "reconverge",
                                     kind: "RECONVERGE",
                                     status: "ENABLED",
                                     config: null,
                                     draft: null
                                 },
                                 {
-                                    key: "piglet@collect",
+                                    key: "piglet",
                                     kind: "PIGLET",
                                     status: "ENABLED",
                                     config: null,
@@ -591,14 +591,14 @@ mod tests {
                             nameDraft: "AdminNode",
                             agents: [
                                 {
-                                    key: "reconverge@analysis",
+                                    key: "reconverge",
                                     kind: "RECONVERGE",
                                     status: "ENABLED",
                                     config: null,
                                     draft: null
                                 },
                                 {
-                                    key: "piglet@collect",
+                                    key: "piglet",
                                     kind: "PIGLET",
                                     status: "ENABLED",
                                     config: null,

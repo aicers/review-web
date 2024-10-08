@@ -232,7 +232,7 @@ mod tests {
                     hostname: "{}",
                     agents: [
                         {{
-                            key: "features@{}"
+                            key: "features"
                             kind: PIGLET
                             status: ENABLED
                             draft: "my_val=1"
@@ -241,25 +241,44 @@ mod tests {
                     giganto: null
                 )
             }}"#,
-            manager_hostname, manager_hostname
+            manager_hostname
         );
         let res = schema.execute(&mutation).await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
         let res = schema
             .execute(
-                r#"mutation {
-                    applyNode(id: "0") {
-                        id
-                        gigantoDraft
-                    }
-                }"#,
+                format!(
+                    r#"mutation {{
+                        applyNode(
+                            id: "0"
+                            node: {{
+                                name: "node1",
+                                nameDraft: "node1",
+                                profile: null,
+                                profileDraft: {{
+                                    customerId: 0,
+                                    description: "This node has the Manager.",
+                                    hostname: "{}"
+                                }},
+                                agents: [
+                                    {{
+                                        key: "features"
+                                        kind: PIGLET
+                                        status: ENABLED
+                                        config: null
+                                        draft: "my_val=1"
+                                    }}],
+                                giganto: null
+                            }}
+                        )
+                    }}"#,
+                    manager_hostname
+                )
+                .as_str(),
             )
             .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{applyNode: {id: "0", gigantoDraft: null}}"#
-        );
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
 
         let res = schema
             .execute(
@@ -270,13 +289,13 @@ mod tests {
                         description: "This is the node for the Learner and the Models module.",
                         hostname: "analysis",
                         agents: [{
-                            key: "learner@analysis"
+                            key: "learner"
                             kind: RECONVERGE
                             status: ENABLED
                             draft: "my_val=2"
                         },
                         {
-                            key: "models@analysis"
+                            key: "models"
                             kind: HOG
                             status: ENABLED
                             draft: "my_val=2"
@@ -291,17 +310,38 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                    applyNode(id: "1") {
-                        id
-                        gigantoDraft
-                    }
+                    applyNode(
+                        id: "1"
+                        node: {
+                            name: "node2",
+                            nameDraft: "node2",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the node for the Learner and the Models module.",
+                                hostname: "analysis"
+                            },
+                            agents: [{
+                                key: "learner"
+                                kind: RECONVERGE
+                                status: ENABLED
+                                config: null
+                                draft: "my_val=2"
+                            },
+                            {
+                                key: "models"
+                                kind: HOG
+                                status: ENABLED
+                                config: null
+                                draft: "my_val=2"
+                            }],
+                            giganto: null
+                        }
+                    )
                 }"#,
             )
             .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{applyNode: {id: "1", gigantoDraft: null}}"#
-        );
+        assert_eq!(res.data.to_string(), r#"{applyNode: "1"}"#);
 
         // check node status list
         let res = schema
@@ -445,12 +485,12 @@ mod tests {
                         description: "This node has the Learner and the Models.",
                         hostname: "admin.aice-security.com",
                         agents: [{
-                            key: "learner@analysis"
+                            key: "learner"
                             kind: RECONVERGE
                             status: ENABLED
                         },
                         {
-                            key: "models@analysis"
+                            key: "models"
                             kind: HOG
                             status: ENABLED
                         }]
@@ -470,12 +510,12 @@ mod tests {
                         description: "This node has the Learner and the Models.",
                         hostname: "admin.aice-security.com",
                         agents: [{
-                            key: "learner@analysis"
+                            key: "learner"
                             kind: RECONVERGE
                             status: ENABLED
                         },
                         {
-                            key: "models@analysis"
+                            key: "models"
                             kind: HOG
                             status: ENABLED
                         }]
@@ -495,12 +535,12 @@ mod tests {
                         description: "This node has the Learner and the Models.",
                         hostname: "admin.aice-security.com",
                         agents: [{
-                            key: "learner@analysis"
+                            key: "learner"
                             kind: RECONVERGE
                             status: ENABLED
                         },
                         {
-                            key: "models@analysis"
+                            key: "models"
                             kind: HOG
                             status: ENABLED
                         }]
@@ -520,12 +560,12 @@ mod tests {
                         description: "This node has the Learner and the Models.",
                         hostname: "admin.aice-security.com",
                         agents: [{
-                            key: "learner@analysis"
+                            key: "learner"
                             kind: RECONVERGE
                             status: ENABLED
                         },
                         {
-                            key: "modles@analysis"
+                            key: "models"
                             kind: HOG
                             status: ENABLED
                         }]
