@@ -53,7 +53,7 @@ impl TrustedDomainMutation {
             let store = crate::graphql::get_store(ctx).await?;
             let map = store.trusted_domain_map();
             let entry = review_database::TrustedDomain { name, remarks };
-            map.put(&entry)?;
+            map.upsert(&entry)?;
             entry.name
         };
 
@@ -100,10 +100,16 @@ async fn load(
     before: Option<String>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<String, TrustedDomain, EmptyFields, EmptyFields>> {
+) -> Result<Connection<String, TrustedDomain>> {
     let store = crate::graphql::get_store(ctx).await?;
     let map = store.trusted_domain_map();
-    super::load_edges(&map, after, before, first, last, EmptyFields)
+    super::connection_from_table(
+        &map,
+        after.as_ref().map(|r| r.as_ref()),
+        before.as_ref().map(|r| r.as_ref()),
+        first,
+        last,
+    )
 }
 
 #[cfg(test)]

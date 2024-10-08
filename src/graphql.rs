@@ -348,6 +348,106 @@ where
     Ok((nodes, has_previous, has_next))
 }
 
+/// Builds a `Connection` from a database table.
+///
+/// If both `first` and `last` are provided, `first` will be ignored. In
+/// practive, however, only one of them should be provided, since this function
+/// is called by [`async_graphql::connection::query`][async_graphql], which
+/// enforces this.
+///
+/// [async_graphql]: https://docs.rs/async-graphql/latest
+fn connection_from_table<'db, 'n, 'd, 'k, R, K, V, Node>(
+    table: &database::Table<'db, 'n, 'd, R, K, V>,
+    after: Option<K::SelfType<'k>>,
+    before: Option<K::SelfType<'k>>,
+    first: Option<usize>,
+    last: Option<usize>,
+) -> Result<Connection<String, Node>>
+where
+    R: database::KeyValue<K, V>,
+    K: database::Key + 'static,
+    K::SelfType<'static>: database::Key,
+    V: database::Value + 'static,
+    Node: From<R> + OutputType,
+{
+    let (nodes, has_prev, has_next) = if let Some(last) = last {
+        // Backward pagination
+        let range = if let Some(before) = before {
+            table.range(..before)
+        } else {
+            table.range::<K::SelfType<'static>>(..)
+        }?
+        //.rev() TODO: implement DoubleEndedIterator for database::Range
+        ;
+
+        let iter = range.filter_map(|item| item.ok()).take(last + 1);
+        let mut boundary_hit = false;
+        let (nodes, has_prev) = if let Some(after) = after {
+            let mut nodes = iter
+                .take_while(|item| {
+                    use database::Key;
+                    if K::SelfType::<'_>::compare(
+                        K::as_bytes(&item.db_key()).as_ref(),
+                        K::as_bytes(&after).as_ref(),
+                    ) == std::cmp::Ordering::Greater
+                    {
+                        true
+                    } else {
+                        boundary_hit = true;
+                        false
+                    }
+                })
+                .collect::<Vec<_>>();
+            nodes.reverse();
+            (nodes, boundary_hit)
+        } else {
+            let mut nodes = iter.collect::<Vec<_>>();
+            let has_prev;
+            if nodes.len() > last {
+                has_prev = true;
+                nodes.pop();
+            } else {
+                has_prev = false;
+            }
+            nodes.reverse();
+            (nodes, has_prev)
+        };
+
+        (nodes, has_prev, false)
+    } else {
+        // Forward pagination
+        let first = first.unwrap_or(DEFAULT_CONNECTION_SIZE);
+        let range = if let Some(after) = after {
+            table.range(after..)
+        } else {
+            table.range::<K::SelfType<'static>>(..)
+        };
+        unimplemented!()
+    };
+
+    unimplemented!()
+}
+
+fn edges_from_table<'db, 'n, 'd, 'k, R, K, V>(
+    table: &database::Table<'db, 'n, 'd, R, K, V>,
+    from: Option<K::SelfType<'k>>,
+    to: Option<K::SelfType<'k>>,
+) -> (Vec<anyhow::Result<R>>, bool)
+where
+    R: database::KeyValue<K, V>,
+    K: database::Key + 'static,
+    V: database::Value + 'static,
+{
+    let range = match (from, to) {
+        (Some(from), Some(to)) => table.range(from..to),
+        (Some(from), None) => table.range(from..),
+        (None, Some(to)) => table.range(..to),
+        (None, None) => table.range::<K::SelfType<'static>>(..),
+    };
+
+    unimplemented!()
+}
+
 fn load_edges<'a, T, I, R, N, A, NodesField>(
     table: &'a T,
     after: Option<String>,
