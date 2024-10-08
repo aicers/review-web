@@ -26,7 +26,7 @@ num-traits = "0.2"
 reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls-native-roots",
 ] }
-review-database = { git = "https://github.com/petabi/review-database.git", rev = "1a735e7" }
+review-database = { git = "https://github.com/petabi/review-database.git", rev = "ae55c59" }
 review-protocol = { git = "https://github.com/petabi/review-protocol.git", tag = "0.7.0" }
 roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.2.1" }
 rustls = { version = "0.23", default-features = false, features = [

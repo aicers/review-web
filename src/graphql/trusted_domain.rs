@@ -103,13 +103,7 @@ async fn load(
 ) -> Result<Connection<String, TrustedDomain>> {
     let store = crate::graphql::get_store(ctx).await?;
     let map = store.trusted_domain_map();
-    super::connection_from_table(
-        &map,
-        after.as_ref().map(|r| r.as_ref()),
-        before.as_ref().map(|r| r.as_ref()),
-        first,
-        last,
-    )
+    super::connection_from_table(&map, after, before, first, last)
 }
 
 #[cfg(test)]
