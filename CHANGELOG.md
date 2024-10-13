@@ -18,6 +18,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   - The GraphQL APIs `clusters`, `eventList`, and `models` were changed to no
     longer accept invalid pagination parameters, such as providing both `after`
     and `before`, by using `graphql::query`.
+- The `applyNode` GraphQL API now accepts a `NodeInput` argument, in order to
+  validate that the provided node data matches the current state in the database
+  before applying changes.
 
 ### Fixed
 

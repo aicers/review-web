@@ -1,13 +1,14 @@
-use async_graphql::{Context, Object, Result, SimpleObject, ID};
+use async_graphql::{Context, Object, Result, ID};
 use futures::future::join_all;
-use review_database::Node;
 use tracing::{error, info};
 
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard},
     NodeControlMutation,
 };
-use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks};
+use crate::graphql::{
+    customer::broadcast_customer_networks, get_customer_networks, node::input::NodeInput,
+};
 
 #[Object]
 impl NodeControlMutation {
@@ -44,27 +45,11 @@ impl NodeControlMutation {
     /// and `config` values of agents with their `draft` values.
     ///
     /// Returns success as long as the database update is successful, regardless of the outcome of
-    /// notifying agents or broadcasting customer ID changes. The response includes a `gigantoDraft`
-    /// field, which represents the draft configuration of the Giganto module associated with the
-    /// node.
+    /// notifying agents or broadcasting customer ID changes.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
-    async fn apply_node(&self, ctx: &Context<'_>, id: ID) -> Result<ApplyNodeResponse> {
+    async fn apply_node(&self, ctx: &Context<'_>, id: ID, node: NodeInput) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-
-        let (node, invalid_agents) = {
-            let store = crate::graphql::get_store(ctx).await?;
-            let node_map = store.node_map();
-            node_map
-                .get_by_id(i)?
-                .ok_or_else(|| async_graphql::Error::new(format!("Node with ID {i} not found")))?
-        };
-
-        if !invalid_agents.is_empty() {
-            return Err(async_graphql::Error::new(format!(
-                "Node {i} cannot be applied due to invalid agents: {invalid_agents:?}"
-            )));
-        }
 
         if node.name_draft.is_none() {
             // Since the `name` of the node is used as the key in the database, the `name_draft`
@@ -72,30 +57,32 @@ impl NodeControlMutation {
             return Err("Node is not valid for apply".into());
         }
 
-        let giganto_draft = node
-            .giganto
-            .as_ref()
-            .and_then(|g| g.draft.as_ref().map(ToString::to_string));
-
         let apply_scope = node_apply_scope(&node);
 
         if apply_scope.db {
             if let Some(ref target_agents) = apply_scope.agents {
-                update_db(ctx, &node, &target_agents.updates, &target_agents.disables).await?;
+                update_db(
+                    ctx,
+                    i,
+                    &node,
+                    &target_agents.updates,
+                    &target_agents.disables,
+                )
+                .await?;
             } else {
-                update_db(ctx, &node, &[], &[]).await?;
+                update_db(ctx, i, &node, &[], &[]).await?;
             };
 
             info!(
-                "[{}] Node ID {i} - Node's drafts are applied.\nName: {:?}, Name draft: {:?}\nProfile: {:?}, Profile draft: {:?}",
+                "[{}] Node ID {i} - Node's drafts are applied.\nName: {}, Name draft: {}\nProfile: {}, Profile draft: {}",
                 chrono::Utc::now(),
                 node.name,
-                node.name_draft,
-                node.profile,
-                node.profile_draft,
+                node.name_draft.as_ref().map(ToString::to_string).unwrap_or_default(),
+                node.profile.as_ref().map(ToString::to_string).unwrap_or_default(),
+                node.profile_draft.as_ref().map(ToString::to_string).unwrap_or_default(),
             );
 
-            broadcast_customer_change_if_needed(ctx, &node).await;
+            broadcast_customer_change_if_needed(ctx, i, &node).await;
         }
 
         if let Some(ref target_agents) = apply_scope.agents {
@@ -133,21 +120,8 @@ impl NodeControlMutation {
             }
         }
 
-        Ok(ApplyNodeResponse { id, giganto_draft })
+        Ok(id)
     }
-}
-
-#[derive(SimpleObject, Clone)]
-pub struct ApplyNodeResponse {
-    /// The ID of the node to which the draft was applied.
-    pub id: ID,
-
-    /// The draft of the Giganto module, associated with the node.
-    ///
-    /// If `None`, it means either the node does not have the Giganto module or the draft for the
-    /// Giganto module is not available. In the latter case, this indicates that the Giganto should
-    /// be disabled.
-    pub giganto_draft: Option<String>,
 }
 
 async fn notify_agents(
@@ -195,7 +169,7 @@ struct NotificationTarget<'a> {
     pub disables: Vec<&'a str>,
 }
 
-fn node_apply_scope(node: &Node) -> NodeApplyScope {
+fn node_apply_scope(node: &NodeInput) -> NodeApplyScope {
     let is_name_changed = node.name_draft.as_ref() != Some(&node.name);
     let is_profile_changed = node.profile_draft != node.profile;
     let is_any_agent_changed = node.agents.iter().any(|agent| agent.draft != agent.config);
@@ -223,7 +197,8 @@ fn node_apply_scope(node: &Node) -> NodeApplyScope {
 
 async fn update_db(
     ctx: &Context<'_>,
-    node: &Node,
+    i: u32,
+    node: &NodeInput,
     update_agent_ids: &[&str],
     disable_agent_ids: &[&str],
 ) -> Result<()> {
@@ -254,30 +229,33 @@ async fn update_db(
         })
         .collect();
 
-    let old = node.clone().into();
-    let new = update.into();
-    Ok(map.update(node.id, &old, &new)?)
+    let old = node.clone().try_into()?;
+    let new = update.try_into()?;
+    Ok(map.update(i, &old, &new)?)
 }
 
-async fn broadcast_customer_change_if_needed(ctx: &Context<'_>, node: &Node) {
+async fn broadcast_customer_change_if_needed(ctx: &Context<'_>, i: u32, node: &NodeInput) {
     if let Some(customer_id) = customer_id_to_broadcast(node) {
+        let Ok(customer_id) = customer_id.parse::<u32>() else {
+            error!("Failed to parse customer ID from node {i} for broadcasting customer change");
+            return;
+        };
         if let Err(e) = broadcast_customer_change(ctx, customer_id).await {
             error!(
-                "Failed to broadcast customer change for customer ID {customer_id} on node {}. The failure did not affect the node application operation. Error: {e:?}",
-                node.id,
+                "Failed to broadcast customer change for customer ID {customer_id} on node {i}. The failure did not affect the node application operation. Error: {e:?}",
             );
         }
     }
 }
 
-fn customer_id_to_broadcast(node: &Node) -> Option<u32> {
+fn customer_id_to_broadcast(node: &NodeInput) -> Option<&str> {
     let is_manager = node
         .profile_draft
         .as_ref()
         .is_some_and(|s| super::matches_manager_hostname(&s.hostname));
 
-    let old_customer_id: Option<u32> = node.profile.as_ref().map(|s| s.customer_id);
-    let new_customer_id: Option<u32> = node.profile_draft.as_ref().map(|s| s.customer_id);
+    let old_customer_id = node.profile.as_ref().map(|s| s.customer_id.as_str());
+    let new_customer_id = node.profile_draft.as_ref().map(|s| s.customer_id.as_str());
 
     if is_manager && (old_customer_id != new_customer_id) {
         new_customer_id
@@ -437,17 +415,40 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                    applyNode(id: "0") {
-                        id
-                        gigantoDraft
-                    }
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "admin node",
+                            nameDraft: "admin node",
+                            profile: null,
+                            profileDraft: {
+                                customerId: "0",
+                                description: "This is the admin node running review.",
+                                hostname: "all-in-one"
+                            },
+                            agents: [
+                                {
+                                    key: "reconverge",
+                                    kind: "RECONVERGE",
+                                    status: "ENABLED",
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                },
+                                {
+                                    key: "piglet",
+                                    kind: "PIGLET",
+                                    status: "ENABLED",
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            giganto: null
+                        }
+                    )
                 }"#,
             )
             .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{applyNode: {id: "0", gigantoDraft: null}}"#
-        );
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
 
         // check node list after apply
         let res = schema
@@ -694,17 +695,44 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                    applyNode(id: "0") {
-                        id
-                        gigantoDraft
-                    }
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "admin node",
+                            nameDraft: "admin node with new name",
+                            profile: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "all-in-one",
+                            }
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "all-in-one",
+                            }
+                            agents: [
+                                {
+                                    key: "reconverge",
+                                    kind: "RECONVERGE",
+                                    status: "ENABLED",
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                },
+                                {
+                                    key: "piglet",
+                                    kind: "PIGLET",
+                                    status: "ENABLED",
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            giganto: null
+                        }
+                    )
                 }"#,
             )
             .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{applyNode: {id: "0", gigantoDraft: null}}"#
-        );
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
 
         // check node list after apply
         let res = schema
@@ -864,28 +892,52 @@ mod tests {
 
         assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
 
-        // apply node - expected to neither update nor notify agent, but return gigantoDraft
-        // successfully
+        // apply node - expected to neither update nor notify agent
         let res = schema
             .execute(
                 r#"mutation {
-                    applyNode(id: "0") {
-                        id
-                        gigantoDraft
-                    }
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "admin node with new name",
+                            nameDraft: "admin node with new name",
+                            profile: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "all-in-one",
+                            }
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "all-in-one",
+                            }
+                            agents: [
+                                {
+                                    key: "reconverge",
+                                    kind: "RECONVERGE",
+                                    status: "ENABLED",
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                },
+                                {
+                                    key: "piglet",
+                                    kind: "PIGLET",
+                                    status: "ENABLED",
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            giganto: {
+                                status: ENABLED,
+                                draft: "test = 'giganto_toml'"
+                            }
+                        }
+                    )
                 }"#,
             )
             .await;
 
-        assert_json_eq!(
-            res.data.into_json().unwrap(),
-            json!({
-                "applyNode": {
-                    "id": "0",
-                    "gigantoDraft": "test = 'giganto_toml'"
-                }
-            })
-        );
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
 
         // check node list after apply
         let res = schema
@@ -1146,13 +1198,47 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                        applyNode(id: "0") {
-                            id
-                        }
+                        applyNode(
+                            id: "0"
+                            node: {
+                                name: "admin node with new name",
+                                nameDraft: "admin node with new name",
+                                profile: {
+                                    customerId: 0,
+                                    description: "This is the admin node running review.",
+                                    hostname: "all-in-one",
+                                }
+                                profileDraft: {
+                                    customerId: 0,
+                                    description: "This is the admin node running review.",
+                                    hostname: "all-in-one",
+                                }
+                                agents: [
+                                    {
+                                        key: "reconverge",
+                                        kind: "RECONVERGE",
+                                        status: "ENABLED",
+                                        config: "test = 'toml'",
+                                        draft: "test = 'toml'"
+                                    },
+                                    {
+                                        key: "piglet",
+                                        kind: "PIGLET",
+                                        status: "ENABLED",
+                                        config: "test = 'toml'",
+                                        draft: null
+                                    }
+                                ],
+                                giganto: {
+                                    status: "ENABLED",
+                                    draft: "test = 'giganto_toml'"
+                                }
+                            }
+                        )
                     }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{applyNode: {id: "0"}}"#);
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
 
         // check node list after apply
         let res = schema
@@ -1295,10 +1381,117 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                    applyNode(id: "0") {
-                        id
-                        gigantoDraft
-                    }
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "admin node",
+                            nameDraft: "admin node",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "all-in-one",
+                            }
+                            agents: [
+                                {
+                                    key: "reconverge",
+                                    kind: "RECONVERGE",
+                                    status: "ENABLED",
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                },
+                                {
+                                    key: "piglet",
+                                    kind: "PIGLET",
+                                    status: "ENABLED",
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            giganto: null
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        // Check that the operation failed
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_apply_node_error_due_to_different_node_input() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["reconverge@all-in-one", "piglet@all-in-one"],
+        });
+
+        let schema = TestSchema::new_with(agent_manager, None).await;
+
+        // insert node
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "admin node",
+                        customerId: 0,
+                        description: "This is the admin node running review.",
+                        hostname: "all-in-one",
+                        agents: [{
+                            key: "reconverge"
+                            kind: RECONVERGE
+                            status: ENABLED
+                            config: null
+                            draft: "test = 'toml'"
+                        },
+                        {
+                            key: "piglet"
+                            kind: PIGLET
+                            status: ENABLED
+                            config: null
+                            draft: "test = 'toml'"
+                        }]
+                        giganto: null
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Apply node
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "admin node",
+                            nameDraft: "admin node",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "all-in-one",
+                            }
+                            agents: [
+                                {
+                                    key: "reconverge",
+                                    kind: "RECONVERGE",
+                                    status: "ENABLED",
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                },
+                                {
+                                    key: "piglet",
+                                    kind: "PIGLET",
+                                    status: "ENABLED",
+                                    config: null,
+                                    draft: "test = 'different_toml'"
+                                }
+                            ],
+                            giganto: null
+                        }
+                    )
                 }"#,
             )
             .await;
@@ -1350,10 +1543,36 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                    applyNode(id: "0") {
-                        id
-                        gigantoDraft
-                    }
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "admin node",
+                            nameDraft: "admin node",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "",
+                            }
+                            agents: [
+                                {
+                                    key: "reconverge",
+                                    kind: "RECONVERGE",
+                                    status: "ENABLED",
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                },
+                                {
+                                    key: "piglet",
+                                    kind: "PIGLET",
+                                    status: "ENABLED",
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            giganto: null
+                        }
+                    )
                 }"#,
             )
             .await;
@@ -1404,10 +1623,36 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                    applyNode(id: "0") {
-                        id
-                        gigantoDraft
-                    }
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "admin node",
+                            nameDraft: "admin node",
+                            profile: null
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "all-in-one",
+                            }
+                            agents: [
+                                {
+                                    key: "reconverge",
+                                    kind: "RECONVERGE",
+                                    status: "ENABLED",
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                },
+                                {
+                                    key: "piglet",
+                                    kind: "PIGLET",
+                                    status: "ENABLED",
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            giganto: null
+                        }
+                    )
                 }"#,
             )
             .await;
