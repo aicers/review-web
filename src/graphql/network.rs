@@ -12,7 +12,7 @@ use super::{
     customer::{Customer, HostNetworkGroup, HostNetworkGroupInput},
     Role, RoleGuard,
 };
-use crate::graphql::query;
+use crate::graphql::query_with_constraints;
 
 #[derive(Default)]
 pub(super) struct NetworkQuery;
@@ -32,7 +32,7 @@ impl NetworkQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, Network, NetworkTotalCount, EmptyFields>> {
-        query(
+        query_with_constraints(
             after,
             before,
             first,

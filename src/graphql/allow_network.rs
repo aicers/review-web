@@ -10,7 +10,7 @@ use super::{
     customer::{HostNetworkGroup, HostNetworkGroupInput},
     BoxedAgentManager, Role, RoleGuard,
 };
-use crate::graphql::query;
+use crate::graphql::query_with_constraints;
 
 #[derive(Default)]
 pub(super) struct AllowNetworkQuery;
@@ -30,7 +30,7 @@ impl AllowNetworkQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, AllowNetwork, AllowNetworkTotalCount, EmptyFields>> {
-        query(
+        query_with_constraints(
             after,
             before,
             first,

@@ -7,7 +7,7 @@ use async_graphql::{
 use serde::{Deserialize, Serialize};
 
 use super::{ParseEnumError, Role, RoleGuard};
-use crate::graphql::query;
+use crate::graphql::query_with_constraints;
 
 #[derive(Default)]
 pub(super) struct TemplateQuery;
@@ -27,7 +27,7 @@ impl TemplateQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, Template, TemplateTotalCount, EmptyFields>> {
-        query(
+        query_with_constraints(
             after,
             before,
             first,

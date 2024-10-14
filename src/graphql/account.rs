@@ -19,7 +19,7 @@ use tracing::info;
 
 use super::RoleGuard;
 use crate::auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in};
-use crate::graphql::query;
+use crate::graphql::query_with_constraints;
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Serialize, SimpleObject)]
@@ -59,7 +59,7 @@ impl AccountQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, Account, AccountTotalCount, EmptyFields>> {
-        query(
+        query_with_constraints(
             after,
             before,
             first,
