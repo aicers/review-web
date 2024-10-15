@@ -26,6 +26,13 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Fixed `savedOutliers` and `rankedOutliers` to properly validate pagination
   parameters.
+- Fixed to return results from the `rankedOutliers` GraphQL API in ascending
+  order. This change ensures a consistent pattern for `rankedOutliers` cursors,
+  helping users avoid confusion with various start and end cursor patterns when
+  using query.
+- Fixed the `rankedOutliers` GraphQL API so that when called `rankedOutliers` with
+  a cursor, the `RankedOutlier` value corresponding to that cursor is excluded
+  from the returned results.
 
 ## [0.22.0] - 2024-10-04
 
