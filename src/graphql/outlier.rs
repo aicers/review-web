@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
+use anyhow::anyhow;
 use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
     types::ID,
@@ -632,7 +633,23 @@ async fn load_ranked_outliers_with_filter(
         None
     };
 
-    for res in table.get(model_id, timestamp, direction, from) {
+    let mut ranked_outlier_iter = table.get(model_id, timestamp, direction, from);
+
+    // Check if the current query used cursors.
+    // If cursor is not used, the first ranked outlier should also be included in the results.
+    if let Some(res) = ranked_outlier_iter.next() {
+        let node = res?;
+        let key = node.unique_key();
+        if let Some(from) = from {
+            if from != key {
+                return Err(anyhow!("invalid cursor").into());
+            }
+        } else {
+            nodes.push((encode_cursor(&key), node));
+        }
+    }
+
+    for res in ranked_outlier_iter {
         let node = res?;
         let key = node.unique_key();
 
@@ -700,6 +717,7 @@ async fn load_ranked_outliers_with_filter(
     let (has_previous, has_next) = if first.is_some() {
         (false, has_more)
     } else {
+        nodes.reverse();
         (has_more, false)
     };
 
@@ -877,7 +895,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            format!("{{rankedOutliers: {{nodes: [{{id: \"{}\"}}]}}}}", last - 1,)
+            format!("{{rankedOutliers: {{nodes: [{{id: \"{}\"}}]}}}}", last,)
         );
 
         let res = schema
@@ -890,8 +908,8 @@ mod tests {
             res.data.to_string(),
             format!(
                 "{{rankedOutliers: {{nodes: [{{id: \"{}\"}}, {{id: \"{}\"}}]}}}}",
-                last,
-                last - 1
+                last - 1,
+                last
             )
         );
 
@@ -918,7 +936,7 @@ mod tests {
             panic!("unexpected response: {:?}", page_info);
         };
         assert_eq!(*has_previous_page, true);
-        let Some(Value::String(cursor)) = page_info.get("endCursor") else {
+        let Some(Value::String(cursor)) = page_info.get("startCursor") else {
             panic!("unexpected response: {:?}", page_info);
         };
 
@@ -930,7 +948,7 @@ mod tests {
         .await;
         assert_eq!(
             res.data.to_string(),
-            format!("{{rankedOutliers: {{nodes: [{{id: \"{}\"}}]}}}}", start + 1,)
+            format!("{{rankedOutliers: {{nodes: [{{id: \"{}\"}}]}}}}", start,)
         );
     }
 
