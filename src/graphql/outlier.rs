@@ -635,8 +635,9 @@ async fn load_ranked_outliers_with_filter(
 
     let mut ranked_outlier_iter = table.get(model_id, timestamp, direction, from);
 
-    // Check if the current query used cursors.
-    // If cursor is not used, the first ranked outlier should also be included in the results.
+    // Check whether the current query specifies a cursor. If it does, the first returned item
+    // should be the one immediately after or before the cursor. If not, the very first item should
+    // be returned.
     if let Some(res) = ranked_outlier_iter.next() {
         let node = res?;
         let key = node.unique_key();
