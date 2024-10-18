@@ -14,7 +14,9 @@ use super::{
     input::{AgentInput, GigantoInput, NodeDraftInput},
     Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount,
 };
-use crate::graphql::{customer::broadcast_customer_networks, get_customer_networks, query};
+use crate::graphql::{
+    customer::broadcast_customer_networks, get_customer_networks, query_with_constraints,
+};
 
 #[Object]
 impl NodeQuery {
@@ -29,7 +31,7 @@ impl NodeQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, Node, NodeTotalCount, EmptyFields>> {
-        query(
+        query_with_constraints(
             after,
             before,
             first,

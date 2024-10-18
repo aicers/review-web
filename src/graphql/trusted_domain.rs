@@ -4,7 +4,7 @@ use async_graphql::{
 };
 
 use super::{AgentManager, BoxedAgentManager, Role, RoleGuard};
-use crate::graphql::query;
+use crate::graphql::query_with_constraints;
 
 #[derive(Default)]
 pub(super) struct TrustedDomainQuery;
@@ -24,7 +24,7 @@ impl TrustedDomainQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, TrustedDomain, EmptyFields, EmptyFields>> {
-        query(
+        query_with_constraints(
             after,
             before,
             first,

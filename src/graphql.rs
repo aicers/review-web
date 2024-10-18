@@ -216,47 +216,96 @@ where
     R: Future<Output = Result<Connection<String, Node, ConnectionFields, EmptyFields, Name>, E>>,
     E: Into<async_graphql::Error>,
 {
-    let (first, last) = validate_pagination_params(after.is_some(), before.is_some(), first, last)?;
+    let (first, last) = connection_size(after.is_some(), before.is_some(), first, last)?;
+
     async_graphql::connection::query(after, before, first, last, |after, before, first, last| {
         f(after, before, first, last)
     })
     .await
 }
 
-const DEFAULT_CONNECTION_SIZE: i32 = 100;
+async fn query_with_constraints<Node, ConnectionFields, Name, F, R, E>(
+    after: Option<String>,
+    before: Option<String>,
+    first: Option<i32>,
+    last: Option<i32>,
+    f: F,
+) -> Result<Connection<String, Node, ConnectionFields, EmptyFields, Name>>
+where
+    Node: OutputType,
+    ConnectionFields: ObjectType,
+    Name: ConnectionNameType,
+    F: FnOnce(Option<String>, Option<String>, Option<usize>, Option<usize>) -> R,
+    R: Future<Output = Result<Connection<String, Node, ConnectionFields, EmptyFields, Name>, E>>,
+    E: Into<async_graphql::Error>,
+{
+    extra_validate_pagination_params(
+        after.is_some(),
+        before.is_some(),
+        first.is_some(),
+        last.is_some(),
+    )?;
+    let (first, last) = connection_size(after.is_some(), before.is_some(), first, last)?;
 
-fn validate_pagination_params(
+    async_graphql::connection::query(after, before, first, last, |after, before, first, last| {
+        f(after, before, first, last)
+    })
+    .await
+}
+
+#[derive(Debug, thiserror::Error)]
+enum Error {
+    #[error("Invalid cursor")]
+    InvalidCursor,
+    #[error("The value of first and last must be within 0-100")]
+    InvalidLimitValue,
+    #[error("You must provide a `first` or `last` value to properly paginate a connection.")]
+    InvalidPaginationArgumentsAfterBefore,
+    #[error("`after` and `last` should not be provided at the same time")]
+    InvalidPaginationArgumentsAfterLast,
+    #[error("`before` and `first` should not be provided at the same time")]
+    InvalidPaginationArgumentsBeforeFirst,
+    #[error("Missing validation")]
+    MissingValidation,
+}
+
+const MAX_CONNECTION_SIZE: i32 = 100;
+
+fn connection_size(
     after: bool,
     before: bool,
-    mut first: Option<i32>,
-    mut last: Option<i32>,
-) -> Result<(Option<i32>, Option<i32>)> {
-    if let Some(first) = first {
-        if first < 0 {
-            return Err("The \"first\" parameter must be a non-negative number".into());
-        }
+    first: Option<i32>,
+    last: Option<i32>,
+) -> Result<(Option<i32>, Option<i32>), Error> {
+    match (after, before, first, last) {
+        (true, true, None, None) | (_, false, None, None) => Ok((Some(MAX_CONNECTION_SIZE), None)),
+        (false, true, None, None) => Ok((None, Some(MAX_CONNECTION_SIZE))),
+        (_, _, Some(first), _) => Ok((Some(limit(first)?), None)),
+        (_, _, _, Some(last)) => Ok((None, Some(limit(last)?))),
     }
-    if let Some(last) = last {
-        if last < 0 {
-            return Err("The \"last\" parameter must be a non-negative number".into());
-        }
-    }
+}
 
-    match (first.is_some(), last.is_some(), before, after) {
-        (true, true, _, _) => return Err("cannot provide both `first` and `last`".into()),
-        (_, _, true, true) => return Err("cannot provide both `before` and `after`".into()),
-        (true, _, true, _) => return Err("cannot provide both `first` and `before`".into()),
-        (_, true, _, true) => return Err("cannot provide both `last` and `after`".into()),
-        (false, false, false, _) => {
-            first = Some(DEFAULT_CONNECTION_SIZE);
-        }
-        (false, false, true, false) => {
-            last = Some(DEFAULT_CONNECTION_SIZE);
-        }
-        _ => {}
+fn limit(len: i32) -> Result<i32, Error> {
+    if (0..=MAX_CONNECTION_SIZE).contains(&len) {
+        Ok(len)
+    } else {
+        Err(Error::InvalidLimitValue)
     }
+}
 
-    Ok((first, last))
+#[allow(clippy::fn_params_excessive_bools)]
+fn extra_validate_pagination_params(
+    after: bool,
+    before: bool,
+    first: bool,
+    last: bool,
+) -> Result<(), Error> {
+    match (after, before, first, last) {
+        (true, true, _, _) => Err(Error::InvalidPaginationArgumentsAfterBefore),
+        (true, _, _, true) => Err(Error::InvalidPaginationArgumentsAfterLast),
+        (_, true, true, _) => Err(Error::InvalidPaginationArgumentsBeforeFirst),
+        _ => Ok(()),
+    }
 }
 
 // parameters for trend

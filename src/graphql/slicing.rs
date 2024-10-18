@@ -2,19 +2,7 @@ use std::{fmt, str::FromStr};
 
 use data_encoding::BASE64;
 
-const MAX_SLICE_LEN: usize = 100;
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("Invalid cursor")]
-    InvalidCursor,
-    #[error("The value of first and last must be within 1-100")]
-    InvalidLimitValue,
-    #[error("Invalid or unsupported combination of pagination arguments")]
-    InvalidPaginationArgument,
-    #[error("You must provide a `first` or `last` value to properly paginate a connection.")]
-    MissingPaginationBoundaries,
-}
+use super::Error;
 
 pub fn decode_cursor<T: FromStr>(cursor: &Option<String>) -> Result<Option<(i32, T)>, Error> {
     match cursor.as_ref() {
@@ -40,17 +28,12 @@ pub fn encode_cursor<T: fmt::Display>(id: i32, value: T) -> String {
     BASE64.encode(format!("{id}:{value}").as_bytes())
 }
 
-pub fn limit(first: Option<usize>, last: Option<usize>) -> Result<usize, Error> {
+// This internal method should be called after validating pagination paramerters by either
+// `grapqhl::query` or `grapqhl::query_with_constraints`.
+pub(crate) fn len(first: Option<usize>, last: Option<usize>) -> Result<usize, Error> {
     match (first, last) {
-        (Some(_), Some(_)) => Err(Error::InvalidPaginationArgument),
-        (None, None) => Err(Error::MissingPaginationBoundaries),
-        (Some(len), _) | (_, Some(len)) => {
-            if (0..=MAX_SLICE_LEN).contains(&len) {
-                Ok(len)
-            } else {
-                Err(Error::InvalidLimitValue)
-            }
-        }
+        (Some(len), _) | (_, Some(len)) => Ok(len),
+        _ => Err(Error::MissingValidation),
     }
 }
 

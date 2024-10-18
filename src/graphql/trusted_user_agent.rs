@@ -8,7 +8,7 @@ use database::{Direction, Iterable};
 use review_database::{self as database, Store};
 
 use super::{BoxedAgentManager, Role, RoleGuard};
-use crate::graphql::query;
+use crate::graphql::query_with_constraints;
 
 #[derive(Default)]
 pub(super) struct UserAgentQuery;
@@ -28,7 +28,7 @@ impl UserAgentQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, TrustedUserAgent, TrustedUserAgentTotalCount, EmptyFields>> {
-        query(
+        query_with_constraints(
             after,
             before,
             first,

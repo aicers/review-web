@@ -13,14 +13,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   instead of its serialized form. This change decouples review-web from
   dictating the serialized form of `HostNetworkGroup`, which should be handled
   by the review-protocol crate.
-- Instead of `async_graphql::connection::query`, its wrapper `graphql::query` is
-  now used for all GraphQL APIs to support pagination.
-  - The GraphQL APIs `clusters`, `eventList`, and `models` were changed to no
-    longer accept invalid pagination parameters, such as providing both `after`
-    and `before`, by using `graphql::query`.
 - The `applyNode` GraphQL API now accepts a `NodeInput` argument, in order to
   validate that the provided node data matches the current state in the database
   before applying changes.
+- The default connection size is no longer used. Instead, the maximum connection
+  size is applied if users don't specify a size.
 
 ### Fixed
 

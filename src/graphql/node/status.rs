@@ -11,7 +11,7 @@ use super::{
     super::{BoxedAgentManager, Role, RoleGuard},
     matches_manager_hostname, NodeStatus, NodeStatusQuery, NodeStatusTotalCount,
 };
-use crate::graphql::query;
+use crate::graphql::query_with_constraints;
 
 #[Object]
 impl NodeStatusQuery {
@@ -26,7 +26,7 @@ impl NodeStatusQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, NodeStatus, NodeStatusTotalCount, EmptyFields>> {
-        query(
+        query_with_constraints(
             after,
             before,
             first,

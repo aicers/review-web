@@ -10,7 +10,7 @@ use review_database::{self as database};
 use tokio::sync::RwLock;
 
 use super::{Role, RoleGuard};
-use crate::graphql::query;
+use crate::graphql::query_with_constraints;
 
 #[derive(Default)]
 pub(super) struct QualifierQuery;
@@ -30,7 +30,7 @@ impl QualifierQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, Qualifier, QualifierTotalCount, EmptyFields>> {
-        query(
+        query_with_constraints(
             after,
             before,
             first,

@@ -6,7 +6,7 @@ use async_graphql::{
 use chrono::{DateTime, Utc};
 
 use super::{Role, RoleGuard};
-use crate::graphql::query;
+use crate::graphql::query_with_constraints;
 
 #[allow(clippy::module_name_repetitions)]
 pub struct TriageResponse {
@@ -74,7 +74,7 @@ impl super::TriageResponseQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, TriageResponse, TriageResponseTotalCount, EmptyFields>> {
-        query(
+        query_with_constraints(
             after,
             before,
             first,

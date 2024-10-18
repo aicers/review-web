@@ -11,7 +11,7 @@ use review_database::{self as database, Store};
 use tracing::error;
 
 use super::{get_customer_id_of_node, BoxedAgentManager, Role, RoleGuard};
-use crate::graphql::query;
+use crate::graphql::query_with_constraints;
 
 #[derive(Default)]
 pub(super) struct CustomerQuery;
@@ -29,7 +29,7 @@ impl CustomerQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, Customer, CustomerTotalCount, EmptyFields>> {
-        query(
+        query_with_constraints(
             after,
             before,
             first,
