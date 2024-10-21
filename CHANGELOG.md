@@ -21,6 +21,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - The `applyNode` GraphQL API now accepts a `NodeInput` argument, in order to
   validate that the provided node data matches the current state in the database
   before applying changes.
+- Renamed `ThreatCategory::Unknown` to `Unspecified`.
 
 ### Fixed
 
