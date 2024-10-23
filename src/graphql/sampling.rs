@@ -10,7 +10,7 @@ use review_database::{Direction, Iterable};
 use serde::{Deserialize, Serialize};
 
 use super::{BoxedAgentManager, Role, RoleGuard};
-use crate::graphql::query;
+use crate::graphql::query_with_constraints;
 
 #[derive(Default)]
 pub(super) struct SamplingPolicyQuery;
@@ -240,7 +240,7 @@ impl SamplingPolicyQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, SamplingPolicy, SamplingPolicyTotalCount, EmptyFields>> {
-        query(
+        query_with_constraints(
             after,
             before,
             first,

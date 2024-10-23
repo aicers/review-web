@@ -10,7 +10,7 @@ use super::{
     TriagePolicyMutation, TriagePolicyQuery,
 };
 use super::{Role, RoleGuard};
-use crate::graphql::query;
+use crate::graphql::query_with_constraints;
 
 struct TriagePolicyTotalCount;
 
@@ -36,7 +36,7 @@ impl TriagePolicyQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<String, TriagePolicy, TriagePolicyTotalCount, EmptyFields>> {
-        query(
+        query_with_constraints(
             after,
             before,
             first,

@@ -365,7 +365,7 @@ async fn load(
     let after = slicing::decode_cursor(&after)?;
     let before = slicing::decode_cursor(&before)?;
     let is_first = first.is_some();
-    let limit = slicing::limit(first, last)?;
+    let limit = slicing::len(first, last)?;
     let db = ctx.data::<Database>()?;
     let rows = db
         .load_clusters(

@@ -9,7 +9,7 @@ use review_database::{BatchInfo, Database};
 use serde_json::Value as JsonValue;
 
 use super::{slicing, Role, RoleGuard};
-use crate::graphql::query;
+use crate::graphql::{query, query_with_constraints};
 
 #[derive(Default)]
 pub(super) struct StatisticsQuery;
@@ -74,7 +74,7 @@ impl StatisticsQuery {
     ) -> Result<Connection<String, Round, TotalCountByModel, EmptyFields, RoundByModel>> {
         let model = model.as_str().parse()?;
 
-        query(
+        query_with_constraints(
             after,
             before,
             first,
@@ -157,7 +157,7 @@ async fn load_rounds_by_cluster(
     let after = slicing::decode_cursor(after)?.map(|(_, t)| i64_to_naive_date_time(t));
     let before = slicing::decode_cursor(before)?.map(|(_, t)| i64_to_naive_date_time(t));
     let is_first = first.is_some();
-    let limit = slicing::limit(first, last)?;
+    let limit = slicing::len(first, last)?;
     let db = ctx.data::<Database>()?;
     let (model, batches) = db
         .load_rounds_by_cluster(cluster, &after, &before, is_first, limit + 1)
