@@ -5,7 +5,7 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.23.0] - 2024-10-23
 
 ### Changed
 
@@ -708,7 +708,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - An initial version.
 
-[Unreleased]: https://github.com/aicers/review-web/compare/0.22.0...main
+[0.23.0]: https://github.com/aicers/review-web/compare/0.22.0...0.23.0
 [0.22.0]: https://github.com/aicers/review-web/compare/0.21.0...0.22.0
 [0.21.0]: https://github.com/aicers/review-web/compare/0.20.0...0.21.0
 [0.20.0]: https://github.com/aicers/review-web/compare/0.19.0...0.20.0
