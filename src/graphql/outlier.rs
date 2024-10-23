@@ -11,7 +11,9 @@ use chrono::{offset::LocalResult, DateTime, NaiveDateTime, TimeZone, Utc};
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures_util::stream::Stream;
 use num_traits::ToPrimitive;
-use review_database::{Database, Direction, Store, UniqueKey};
+use review_database::{
+    Database, Direction, IndexedTable, OutlierInfo, Store, TriageResponse, UniqueKey,
+};
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::{sync::RwLock, time};
@@ -19,8 +21,7 @@ use tracing::error;
 
 use super::{encode_cursor, model::ModelDigest, query, Role, RoleGuard};
 
-const DEFAULT_OUTLIER_SIZE: usize = 50;
-const DISTANCE_EPSILON: f64 = 0.1;
+const MAX_EVENT_NUM_OF_OUTLIER: usize = 50;
 const DEFAULT_RANKED_OUTLIER_FETCH_TIME: u64 = 60;
 const MAX_MODEL_LIST_SIZE: usize = 100;
 
@@ -532,7 +533,7 @@ async fn load(
         ));
         batch.1 = key;
         batch.2.size += 1;
-        if batch.2.events.len() < DEFAULT_OUTLIER_SIZE {
+        if batch.2.events.len() < MAX_EVENT_NUM_OF_OUTLIER {
             batch.2.events.push(entry.id);
         }
     }
@@ -564,6 +565,62 @@ pub(crate) fn datetime_from_ts_nano(time: i64) -> Option<DateTime<Utc>> {
     }
 }
 
+fn check_filter_to_ranked_outlier(
+    node: &OutlierInfo,
+    filter: &Option<SearchFilterInput>,
+    tag_id_list: &Option<Vec<u32>>,
+    remarks_map: &IndexedTable<'_, TriageResponse>,
+) -> Result<bool> {
+    if let Some(filter) = filter {
+        if filter.remark.is_some() || tag_id_list.is_some() {
+            if let Some(value) = remarks_map.get(&node.source, &Utc.timestamp_nanos(node.id))? {
+                if let Some(remark) = &filter.remark {
+                    if !value.remarks.contains(remark) {
+                        return Ok(false);
+                    }
+                }
+                if let Some(tag_ids) = &tag_id_list {
+                    if !tag_ids.iter().any(|tag| value.tag_ids().contains(tag)) {
+                        return Ok(false);
+                    }
+                }
+            } else {
+                return Ok(false);
+            }
+        }
+        if let Some(time) = &filter.time {
+            if let Some(start) = time.start {
+                if let Some(end) = time.end {
+                    if node.timestamp < start.timestamp_nanos_opt().unwrap_or_default()
+                        || node.timestamp > end.timestamp_nanos_opt().unwrap_or_default()
+                    {
+                        return Ok(false);
+                    }
+                } else if node.timestamp < start.timestamp_nanos_opt().unwrap_or_default() {
+                    return Ok(false);
+                }
+            } else if let Some(end) = time.end {
+                if node.timestamp > end.timestamp_nanos_opt().unwrap_or_default() {
+                    return Ok(false);
+                }
+            }
+        }
+
+        if let Some(distance) = &filter.distance {
+            if let Some(start) = distance.start {
+                if let Some(end) = distance.end {
+                    if node.distance < start || node.distance > end {
+                        return Ok(false);
+                    }
+                } else if node.distance < start {
+                    return Ok(false);
+                }
+            }
+        }
+    }
+    Ok(true)
+}
+
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 async fn load_ranked_outliers_with_filter(
     ctx: &Context<'_>,
@@ -578,20 +635,10 @@ async fn load_ranked_outliers_with_filter(
     let model_id: i32 = model_id.as_str().parse()?;
     let timestamp = time.map(|t| t.and_utc().timestamp_nanos_opt().unwrap_or_default());
     let (after, before) = super::decode_cursor_pair(after, before)?;
-    let (direction, count, from, to) = if let Some(first) = first {
-        (
-            Direction::Forward,
-            first,
-            after.as_deref(),
-            before.as_deref(),
-        )
+    let (direction, count, from) = if let Some(first) = first {
+        (Direction::Forward, first, after.as_deref())
     } else if let Some(last) = last {
-        (
-            Direction::Reverse,
-            last,
-            before.as_deref(),
-            after.as_deref(),
-        )
+        (Direction::Reverse, last, before.as_deref())
     } else {
         unreachable!();
     };
@@ -645,7 +692,7 @@ async fn load_ranked_outliers_with_filter(
             if from != key {
                 return Err(anyhow!("invalid cursor").into());
             }
-        } else {
+        } else if check_filter_to_ranked_outlier(&node, &filter, &tag_id_list, &remarks_map)? {
             nodes.push((encode_cursor(&key), node));
         }
     }
@@ -653,66 +700,15 @@ async fn load_ranked_outliers_with_filter(
     for res in ranked_outlier_iter {
         let node = res?;
         let key = node.unique_key();
-
-        if let Some(to) = to {
-            if to == key {
-                continue;
-            }
-        }
-        if nodes.len() >= count {
-            has_more = true;
-            continue;
-        }
         let encoded_key = encode_cursor(&key);
 
-        if let Some(filter) = &filter {
-            if filter.remark.is_some() || tag_id_list.is_some() {
-                if let Some(value) = remarks_map.get(&node.source, &Utc.timestamp_nanos(node.id))? {
-                    if let Some(remark) = &filter.remark {
-                        if !value.remarks.contains(remark) {
-                            continue;
-                        }
-                    }
-                    if let Some(tag_ids) = &tag_id_list {
-                        if !tag_ids.iter().any(|tag| value.tag_ids().contains(tag)) {
-                            continue;
-                        }
-                    }
-                } else {
-                    continue;
-                }
+        if check_filter_to_ranked_outlier(&node, &filter, &tag_id_list, &remarks_map)? {
+            if nodes.len() >= count {
+                has_more = true;
+                break;
             }
-            if let Some(time) = &filter.time {
-                if let Some(start) = time.start {
-                    if let Some(end) = time.end {
-                        if node.timestamp < start.timestamp_nanos_opt().unwrap_or_default()
-                            || node.timestamp > end.timestamp_nanos_opt().unwrap_or_default()
-                        {
-                            continue;
-                        }
-                    } else if node.timestamp < start.timestamp_nanos_opt().unwrap_or_default() {
-                        continue;
-                    }
-                } else if let Some(end) = time.end {
-                    if node.timestamp > end.timestamp_nanos_opt().unwrap_or_default() {
-                        continue;
-                    }
-                }
-            }
-
-            if let Some(distance) = &filter.distance {
-                if let Some(start) = distance.start {
-                    if let Some(end) = distance.end {
-                        if node.distance < start || node.distance > end {
-                            continue;
-                        }
-                    } else if (node.distance - start).abs() > DISTANCE_EPSILON {
-                        continue;
-                    }
-                }
-            }
+            nodes.push((encoded_key, node));
         }
-        nodes.push((encoded_key, node));
     }
 
     let (has_previous, has_next) = if first.is_some() {

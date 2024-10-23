@@ -18,6 +18,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   before applying changes.
 - The default connection size is no longer used. Instead, the maximum connection
   size is applied if users don't specify a size.
+- Changed the distance search conditions for `rankedOutliers` GraphQL API.
+  - start only: Search for outliers whose distance value is greater than or
+    equal to the start value.
 
 ### Fixed
 
@@ -27,9 +30,14 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   order. This change ensures a consistent pattern for `rankedOutliers` cursors,
   helping users avoid confusion with various start and end cursor patterns when
   using query.
-- Fixed the `rankedOutliers` GraphQL API so that when called `rankedOutliers` with
-  a cursor, the `RankedOutlier` value corresponding to that cursor is excluded
-  from the returned results.
+- Fixed the `rankedOutliers` GraphQL API
+  - when `rankedOutliers` called with a cursor, the `RankedOutlier` value
+    corresponding to that cursor is excluded from the returned results.
+  - Removed the code associated with the `to` variable because `after` and
+    `before` are not used together in the query.
+  - Removed unnecessary `continue` that is performed after checking the number
+    of outliers. This change will return results faster because not all outliers
+    are checked.
 
 ## [0.22.0] - 2024-10-04
 
