@@ -340,12 +340,13 @@ fn build_client_config<P: AsRef<Path>>(
 ) -> Result<ClientConfig, anyhow::Error> {
     let mut root_store = RootCertStore::empty();
     if with_platform_root {
-        let certs = rustls_native_certs::load_native_certs();
-        for c in certs.certs {
-            root_store.add(c)?;
-        }
-        for e in certs.errors {
-            tracing::warn!("Could not load platform certificate: {:#}", e);
+        match rustls_native_certs::load_native_certs() {
+            Ok(certs) => {
+                for cert in certs {
+                    root_store.add(cert)?;
+                }
+            }
+            Err(e) => tracing::error!("Could not load platform certificates: {:#}", e),
         }
     }
     for root in root_ca {
