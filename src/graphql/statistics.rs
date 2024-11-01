@@ -1,14 +1,17 @@
 use async_graphql::{
-    connection::{Connection, ConnectionNameType, Edge, EmptyFields},
+    connection::{Connection, ConnectionNameType, Edge, EdgeNameType, EmptyFields},
     types::ID,
-    Context, Object, Result, StringNumber,
+    Context, Object, OutputType, Result, StringNumber,
 };
 use chrono::{DateTime, NaiveDateTime};
 use num_traits::ToPrimitive;
 use review_database::{BatchInfo, Database};
 use serde_json::Value as JsonValue;
 
-use super::{slicing, Role, RoleGuard};
+use super::{
+    slicing::{self, IndexedKey},
+    Role, RoleGuard,
+};
 use crate::graphql::{query, query_with_constraints};
 
 #[derive(Default)]
@@ -44,7 +47,16 @@ impl StatisticsQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<String, Round, TotalCountByCluster, EmptyFields, RoundByCluster>> {
+    ) -> Result<
+        Connection<
+            IndexedKey<i64>,
+            Round,
+            TotalCountByCluster,
+            EmptyFields,
+            RoundByCluster,
+            RoundByClusterEdge,
+        >,
+    > {
         let cluster = cluster.as_str().parse()?;
 
         query(
@@ -53,7 +65,7 @@ impl StatisticsQuery {
             first,
             last,
             |after, before, first, last| async move {
-                load_rounds_by_cluster(ctx, cluster, &after, &before, first, last).await
+                load_rounds_by_cluster(ctx, cluster, after, before, first, last).await
             },
         )
         .await
@@ -146,21 +158,42 @@ impl From<BatchInfo> for Round {
     }
 }
 
+struct RoundByClusterEdge;
+
+impl EdgeNameType for RoundByClusterEdge {
+    fn type_name<T: OutputType>() -> String {
+        "RoundByClusterEdge".to_string()
+    }
+}
+
 async fn load_rounds_by_cluster(
     ctx: &Context<'_>,
     cluster: i32,
-    after: &Option<String>,
-    before: &Option<String>,
+    after: Option<IndexedKey<i64>>,
+    before: Option<IndexedKey<i64>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<String, Round, TotalCountByCluster, EmptyFields, RoundByCluster>> {
-    let after = slicing::decode_cursor(after)?.map(|(_, t)| i64_to_naive_date_time(t));
-    let before = slicing::decode_cursor(before)?.map(|(_, t)| i64_to_naive_date_time(t));
+) -> Result<
+    Connection<
+        IndexedKey<i64>,
+        Round,
+        TotalCountByCluster,
+        EmptyFields,
+        RoundByCluster,
+        RoundByClusterEdge,
+    >,
+> {
     let is_first = first.is_some();
     let limit = slicing::len(first, last)?;
     let db = ctx.data::<Database>()?;
     let (model, batches) = db
-        .load_rounds_by_cluster(cluster, &after, &before, is_first, limit + 1)
+        .load_rounds_by_cluster(
+            cluster,
+            &after.map(|k| i64_to_naive_date_time(k.value)),
+            &before.map(|k| i64_to_naive_date_time(k.value)),
+            is_first,
+            limit + 1,
+        )
         .await?;
 
     let (batches, has_previous, has_next) = slicing::page_info(is_first, limit, batches);
@@ -183,10 +216,11 @@ async fn load_rounds_by_cluster(
 
     let mut connection =
         Connection::with_additional_fields(has_previous, has_next, TotalCountByCluster { cluster });
-    connection.edges.extend(batch_infos.into_iter().map(|row| {
-        let cursor = slicing::encode_cursor(cluster, row.inner.id);
-        Edge::new(cursor, row.into())
-    }));
+    connection.edges.extend(
+        batch_infos
+            .into_iter()
+            .map(|row| Edge::new(IndexedKey::new(cluster, row.inner.id), row.into())),
+    );
     Ok(connection)
 }
 

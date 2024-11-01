@@ -34,12 +34,13 @@ mod triage;
 mod trusted_domain;
 mod trusted_user_agent;
 
+use std::fmt;
 use std::future::Future;
 #[cfg(test)]
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
-use async_graphql::connection::ConnectionNameType;
+use async_graphql::connection::{ConnectionNameType, CursorType, EdgeNameType};
 use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
     Context, Guard, MergedObject, MergedSubscription, ObjectType, OutputType, Result,
@@ -201,19 +202,24 @@ pub(super) struct Subscription(event::EventStream, outlier::OutlierStream);
 #[derive(Debug)]
 pub struct ParseEnumError;
 
-async fn query<Node, ConnectionFields, Name, F, R, E>(
+async fn query<Name, EdgeName, Cursor, Node, ConnectionFields, F, R, E>(
     after: Option<String>,
     before: Option<String>,
     first: Option<i32>,
     last: Option<i32>,
     f: F,
-) -> Result<Connection<String, Node, ConnectionFields, EmptyFields, Name>>
+) -> Result<Connection<Cursor, Node, ConnectionFields, EmptyFields, Name, EdgeName>>
 where
+    Name: ConnectionNameType,
+    EdgeName: EdgeNameType,
+    Cursor: CursorType + Send + Sync,
+    <Cursor as CursorType>::Error: fmt::Display + Send + Sync + 'static,
     Node: OutputType,
     ConnectionFields: ObjectType,
-    Name: ConnectionNameType,
-    F: FnOnce(Option<String>, Option<String>, Option<usize>, Option<usize>) -> R,
-    R: Future<Output = Result<Connection<String, Node, ConnectionFields, EmptyFields, Name>, E>>,
+    F: FnOnce(Option<Cursor>, Option<Cursor>, Option<usize>, Option<usize>) -> R,
+    R: Future<
+        Output = Result<Connection<Cursor, Node, ConnectionFields, EmptyFields, Name, EdgeName>, E>,
+    >,
     E: Into<async_graphql::Error>,
 {
     let (first, last) = connection_size(after.is_some(), before.is_some(), first, last)?;
