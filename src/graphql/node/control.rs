@@ -175,15 +175,21 @@ fn node_apply_scope(node: &NodeInput) -> NodeApplyScope {
     let is_any_agent_changed = node.agents.iter().any(|agent| agent.draft != agent.config);
 
     let target_agents = if is_any_agent_changed {
-        let mut updates = Vec::new();
-        let mut disables = Vec::new();
-        node.agents.iter().for_each(|agent| {
-            if agent.draft.is_none() {
-                disables.push(agent.key.as_str());
-            } else if agent.draft != agent.config {
-                updates.push(agent.key.as_str());
-            }
-        });
+        let (disables, updates) = node.agents.iter().fold(
+            (Vec::new(), Vec::new()),
+            |(mut disables, mut updates), agent| {
+                match (&agent.draft, &agent.config) {
+                    (None, _) => disables.push(agent.key.as_str()),
+                    (Some(draft), _)
+                        if Some(draft) != agent.config.as_ref() && !draft.is_empty() =>
+                    {
+                        updates.push(agent.key.as_str());
+                    }
+                    _ => {}
+                }
+                (disables, updates)
+            },
+        );
         Some(NotificationTarget { updates, disables })
     } else {
         None
@@ -1321,6 +1327,73 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[tokio::test]
+    async fn test_apply_node_empty_draft() {
+        // This test ensures that the `applyNode` GraphQL API doesn't notify agents when the agent's
+        // draft is empty. `FailingMockAgentManager` is designed to fail if notifications are
+        // triggered, so we can confirm no notifications occur if the test passes.
+        let agent_manager: BoxedAgentManager = Box::new(FailingMockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+        });
+
+        let schema = TestSchema::new_with(agent_manager, None).await;
+
+        // insert node
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "admin node",
+                        customerId: 0,
+                        description: "This is the admin node running review.",
+                        hostname: "all-in-one",
+                        agents: [{
+                            key: "reconverge"
+                            kind: RECONVERGE
+                            status: ENABLED
+                            config: null
+                            draft: ""
+                        }]
+                        giganto: null
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // apply node
+        let res = schema
+            .execute(
+                r#"mutation {
+                        applyNode(
+                            id: "0"
+                            node: {
+                                name: "admin node",
+                                nameDraft: "admin node",
+                                profile: null,
+                                profileDraft: {
+                                    customerId: "0",
+                                    description: "This is the admin node running review.",
+                                    hostname: "all-in-one"
+                                },
+                                agents: [
+                                    {
+                                        key: "reconverge",
+                                        kind: "RECONVERGE",
+                                        status: "ENABLED",
+                                        config: null,
+                                        draft: ""
+                                    }
+                                ],
+                                giganto: null
+                            }
+                        )
+                    }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
     }
 
     #[tokio::test]
