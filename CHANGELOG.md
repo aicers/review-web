@@ -12,6 +12,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Modified `applyNode` GraphQL API logic to prevent notifying agents that are
   operating with local configuration.
 
+### Fixed
+
+- Added missing `node` field in `samplingPolicy` and `samplingPolicyList`
+  GraphQL API responses in the `SamplingPolicy` object.
+
 ## [0.23.0] - 2024-10-23
 
 ### Changed
