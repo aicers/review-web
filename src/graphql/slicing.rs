@@ -1,31 +1,46 @@
 use std::{fmt, str::FromStr};
 
+use async_graphql::connection::CursorType;
 use data_encoding::BASE64;
 
 use super::Error;
 
-pub fn decode_cursor<T: FromStr>(cursor: &Option<String>) -> Result<Option<(i32, T)>, Error> {
-    match cursor.as_ref() {
-        Some(c) => {
-            let decoded = String::from_utf8(
-                BASE64
-                    .decode(c.as_bytes())
-                    .map_err(|_| Error::InvalidCursor)?,
-            )
-            .map_err(|_| Error::InvalidCursor)?;
-            let Some((id, value)) = decoded.split_once(':') else {
-                return Err(Error::InvalidCursor);
-            };
-            let id = id.parse().map_err(|_| Error::InvalidCursor)?;
-            let value = value.parse::<T>().map_err(|_| Error::InvalidCursor)?;
-            Ok(Some((id, value)))
-        }
-        None => Ok(None),
+pub(super) struct IndexedKey<T> {
+    pub(crate) id: i32,
+    pub(crate) value: T,
+}
+
+impl<T> IndexedKey<T> {
+    pub fn new(id: i32, value: T) -> Self {
+        Self { id, value }
     }
 }
 
-pub fn encode_cursor<T: fmt::Display>(id: i32, value: T) -> String {
-    BASE64.encode(format!("{id}:{value}").as_bytes())
+impl<T> From<IndexedKey<T>> for (i32, T) {
+    fn from(key: IndexedKey<T>) -> Self {
+        (key.id, key.value)
+    }
+}
+
+impl<T: FromStr + fmt::Display> CursorType for IndexedKey<T> {
+    type Error = super::Error;
+
+    fn decode_cursor(s: &str) -> Result<Self, Self::Error> {
+        let decoded = String::from_utf8(
+            BASE64
+                .decode(s.as_bytes())
+                .map_err(|_| Error::InvalidCursor)?,
+        )
+        .map_err(|_| Error::InvalidCursor)?;
+        let (id, value) = decoded.split_once(':').ok_or(Error::InvalidCursor)?;
+        let id = id.parse().map_err(|_| Error::InvalidCursor)?;
+        let value = value.parse::<T>().map_err(|_| Error::InvalidCursor)?;
+        Ok(Self { id, value })
+    }
+
+    fn encode_cursor(&self) -> String {
+        BASE64.encode(format!("{}:{}", self.id, self.value).as_bytes())
+    }
 }
 
 // This internal method should be called after validating pagination paramerters by either

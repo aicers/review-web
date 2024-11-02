@@ -17,7 +17,7 @@ use super::{
     get_trend,
     model::{ModelDigest, TopElementCountsByColumn},
     qualifier::Qualifier,
-    slicing,
+    slicing::{self, IndexedKey},
     status::Status,
     Role, RoleGuard, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER,
 };
@@ -46,7 +46,7 @@ impl ClusterQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<String, Cluster, ClusterTotalCount, EmptyFields>> {
+    ) -> Result<Connection<IndexedKey<i64>, Cluster, ClusterTotalCount, EmptyFields>> {
         let model = model.as_str().parse()?;
         let categories = try_id_args_into_ints(categories)?;
         let detectors = try_id_args_into_ints(detectors)?;
@@ -357,13 +357,11 @@ async fn load(
     detectors: Option<Vec<i32>>,
     qualifiers: Option<Vec<i32>>,
     statuses: Option<Vec<i32>>,
-    after: Option<String>,
-    before: Option<String>,
+    after: Option<IndexedKey<i64>>,
+    before: Option<IndexedKey<i64>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<String, Cluster, ClusterTotalCount, EmptyFields>> {
-    let after = slicing::decode_cursor(&after)?;
-    let before = slicing::decode_cursor(&before)?;
+) -> Result<Connection<IndexedKey<i64>, Cluster, ClusterTotalCount, EmptyFields>> {
     let is_first = first.is_some();
     let limit = slicing::len(first, last)?;
     let db = ctx.data::<Database>()?;
@@ -374,8 +372,8 @@ async fn load(
             detectors.as_deref(),
             qualifiers.as_deref(),
             statuses.as_deref(),
-            &after,
-            &before,
+            &after.map(Into::into),
+            &before.map(Into::into),
             is_first,
             limit,
         )
@@ -394,9 +392,8 @@ async fn load(
         },
     );
     connection.edges.extend(rows.into_iter().map(|c| {
-        let cursor = slicing::encode_cursor(c.id, c.size);
         Edge::new(
-            cursor,
+            IndexedKey::new(c.id, c.size),
             Cluster {
                 id: c.id,
                 name: c.cluster_id,
