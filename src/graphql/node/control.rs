@@ -293,10 +293,11 @@ mod tests {
     use crate::graphql::{AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema};
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn test_apply_node() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["reconverge@all-in-one", "piglet@all-in-one"],
+            available_agents: vec!["unsupervised@all-in-one", "sensor@all-in-one"],
         });
 
         let schema = TestSchema::new_with(agent_manager, None).await;
@@ -315,15 +316,15 @@ mod tests {
                         description: "This is the admin node running review.",
                         hostname: "all-in-one",
                         agents: [{
-                            key: "reconverge"
-                            kind: RECONVERGE
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
                             status: ENABLED
                             config: null
                             draft: "test = 'toml'"
                         },
                         {
-                            key: "piglet"
-                            kind: PIGLET
+                            key: "sensor"
+                            kind: SENSOR
                             status: ENABLED
                             config: null
                             draft: "test = 'toml'"
@@ -394,16 +395,16 @@ mod tests {
                                 "agents": [
                                     {
                                       "node": 0,
-                                      "key": "reconverge",
-                                      "kind": "RECONVERGE",
+                                      "key": "unsupervised",
+                                      "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
                                       "config": null,
                                       "draft": "test = 'toml'"
                                     },
                                     {
                                       "node": 0,
-                                      "key": "piglet",
-                                      "kind": "PIGLET",
+                                      "key": "sensor",
+                                      "kind": "SENSOR",
                                       "status": "ENABLED",
                                       "config": null,
                                       "draft": "test = 'toml'"
@@ -434,15 +435,15 @@ mod tests {
                             },
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: RECONVERGE,
+                                    key: "unsupervised",
+                                    kind: UNSUPERVISED,
                                     status: ENABLED,
                                     config: null,
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: PIGLET,
+                                    key: "sensor",
+                                    kind: SENSOR,
                                     status: ENABLED,
                                     config: null,
                                     draft: "test = 'toml'"
@@ -519,16 +520,16 @@ mod tests {
                                 "agents": [
                                     {
                                       "node": 0,
-                                      "key": "reconverge",
-                                      "kind": "RECONVERGE",
+                                      "key": "unsupervised",
+                                      "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
                                       "draft": "test = 'toml'"
                                     },
                                     {
                                       "node": 0,
-                                      "key": "piglet",
-                                      "kind": "PIGLET",
+                                      "key": "sensor",
+                                      "kind": "SENSOR",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
                                       "draft": "test = 'toml'"
@@ -563,15 +564,15 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: RECONVERGE,
+                                    key: "unsupervised",
+                                    kind: UNSUPERVISED,
                                     status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: PIGLET,
+                                    key: "sensor",
+                                    kind: SENSOR,
                                     status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
@@ -588,14 +589,14 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: RECONVERGE,
+                                    key: "unsupervised",
+                                    kind: UNSUPERVISED,
                                     status: ENABLED,
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: PIGLET,
+                                    key: "sensor",
+                                    kind: SENSOR,
                                     status: ENABLED,
                                     draft: "test = 'toml'"
                                 }
@@ -672,16 +673,16 @@ mod tests {
                                 "agents": [
                                     {
                                       "node": 0,
-                                      "key": "reconverge",
-                                      "kind": "RECONVERGE",
+                                      "key": "unsupervised",
+                                      "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
                                       "draft": "test = 'toml'"
                                     },
                                     {
                                       "node": 0,
-                                      "key": "piglet",
-                                      "kind": "PIGLET",
+                                      "key": "sensor",
+                                      "kind": "SENSOR",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
                                       "draft": "test = 'toml'"
@@ -716,15 +717,15 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: RECONVERGE,
+                                    key: "unsupervised",
+                                    kind: UNSUPERVISED,
                                     status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: PIGLET,
+                                    key: "sensor",
+                                    kind: SENSOR,
                                     status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
@@ -801,16 +802,16 @@ mod tests {
                                 "agents": [
                                     {
                                       "node": 0,
-                                      "key": "reconverge",
-                                      "kind": "RECONVERGE",
+                                      "key": "unsupervised",
+                                      "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
                                       "draft": "test = 'toml'"
                                     },
                                     {
                                       "node": 0,
-                                      "key": "piglet",
-                                      "kind": "PIGLET",
+                                      "key": "sensor",
+                                      "kind": "SENSOR",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
                                       "draft": "test = 'toml'"
@@ -845,15 +846,15 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: RECONVERGE,
+                                    key: "unsupervised",
+                                    kind: UNSUPERVISED,
                                     status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: PIGLET,
+                                    key: "sensor",
+                                    kind: SENSOR,
                                     status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
@@ -870,14 +871,14 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: RECONVERGE,
+                                    key: "unsupervised",
+                                    kind: UNSUPERVISED,
                                     status: ENABLED,
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: PIGLET,
+                                    key: "sensor",
+                                    kind: SENSOR,
                                     status: ENABLED,
                                     draft: "test = 'toml'"
                                 }
@@ -915,15 +916,15 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: RECONVERGE,
+                                    key: "unsupervised",
+                                    kind: UNSUPERVISED,
                                     status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: PIGLET,
+                                    key: "sensor",
+                                    kind: SENSOR,
                                     status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
@@ -1005,16 +1006,16 @@ mod tests {
                                 "agents": [
                                     {
                                         "node": 0,
-                                        "key": "reconverge",
-                                        "kind": "RECONVERGE",
+                                        "key": "unsupervised",
+                                        "kind": "UNSUPERVISED",
                                         "status": "ENABLED",
                                         "config": "test = 'toml'",
                                         "draft": "test = 'toml'"
                                     },
                                     {
                                         "node": 0,
-                                        "key": "piglet",
-                                        "kind": "PIGLET",
+                                        "key": "sensor",
+                                        "kind": "SENSOR",
                                         "status": "ENABLED",
                                         "config": "test = 'toml'",
                                         "draft": "test = 'toml'"
@@ -1031,7 +1032,7 @@ mod tests {
             })
         );
 
-        // update piglet draft
+        // update sensor draft
         let res = schema
             .execute(
                 r#"mutation {
@@ -1052,15 +1053,15 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: RECONVERGE,
+                                    key: "unsupervised",
+                                    kind: UNSUPERVISED,
                                     status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: PIGLET,
+                                    key: "sensor",
+                                    kind: SENSOR,
                                     status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
@@ -1080,14 +1081,14 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: RECONVERGE,
+                                    key: "unsupervised",
+                                    kind: UNSUPERVISED,
                                     status: ENABLED,
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: PIGLET,
+                                    key: "sensor",
+                                    kind: SENSOR,
                                     status: ENABLED,
                                     draft: "test = 'changed_toml'"
                                 }
@@ -1168,16 +1169,16 @@ mod tests {
                                 "agents": [
                                     {
                                       "node": 0,
-                                      "key": "reconverge",
-                                      "kind": "RECONVERGE",
+                                      "key": "unsupervised",
+                                      "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
                                       "draft": "test = 'toml'"
                                     },
                                     {
                                       "node": 0,
-                                      "key": "piglet",
-                                      "kind": "PIGLET",
+                                      "key": "sensor",
+                                      "kind": "SENSOR",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
                                       "draft": "test = 'changed_toml'"
@@ -1215,15 +1216,15 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: "RECONVERGE",
+                                    key: "unsupervised",
+                                    kind: "UNSUPERVISED",
                                     status: "ENABLED",
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: "PIGLET",
+                                    key: "sensor",
+                                    kind: "SENSOR",
                                     status: "ENABLED",
                                     config: "test = 'toml'",
                                     draft: "test = 'changed_toml'"
@@ -1305,16 +1306,16 @@ mod tests {
                                 "agents": [
                                     {
                                         "node": 0,
-                                        "key": "reconverge",
-                                        "kind": "RECONVERGE",
+                                        "key": "unsupervised",
+                                        "kind": "UNSUPERVISED",
                                         "status": "ENABLED",
                                         "config": "test = 'toml'",
                                         "draft": "test = 'toml'"
                                     },
                                     {
                                         "node": 0,
-                                        "key": "piglet",
-                                        "kind": "PIGLET",
+                                        "key": "sensor",
+                                        "kind": "SENSOR",
                                         "status": "ENABLED",
                                         "config": "test = 'changed_toml'",
                                         "draft": "test = 'changed_toml'"
@@ -1331,7 +1332,7 @@ mod tests {
             })
         );
 
-        // update node to disable one of the agents (piglet@all-in-one) in next apply
+        // update node to disable one of the agents (sensor@all-in-one) in next apply
         let res = schema
             .execute(
                 r#"mutation {
@@ -1352,15 +1353,15 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: "RECONVERGE",
+                                    key: "unsupervised",
+                                    kind: "UNSUPERVISED",
                                     status: "ENABLED",
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: "PIGLET",
+                                    key: "sensor",
+                                    kind: "SENSOR",
                                     status: "ENABLED",
                                     config: "test = 'changed_toml'",
                                     draft: "test = 'changed_toml'"
@@ -1380,14 +1381,14 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: "RECONVERGE",
+                                    key: "unsupervised",
+                                    kind: "UNSUPERVISED",
                                     status: "ENABLED",
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: "PIGLET",
+                                    key: "sensor",
+                                    kind: "SENSOR",
                                     status: "ENABLED",
                                     draft: null
                                 }
@@ -1401,6 +1402,7 @@ mod tests {
                 }"#,
             )
             .await;
+
         assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
 
         // check node list after update
@@ -1467,16 +1469,16 @@ mod tests {
                                 "agents": [
                                     {
                                       "node": 0,
-                                      "key": "reconverge",
-                                      "kind": "RECONVERGE",
+                                      "key": "unsupervised",
+                                      "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
                                       "draft": "test = 'toml'"
                                     },
                                     {
                                       "node": 0,
-                                      "key": "piglet",
-                                      "kind": "PIGLET",
+                                      "key": "sensor",
+                                      "kind": "SENSOR",
                                       "status": "ENABLED",
                                       "config": "test = 'changed_toml'",
                                       "draft": null
@@ -1493,7 +1495,7 @@ mod tests {
             })
         );
 
-        // apply node - expected to update db and notify agent, and also piglet is expected to be
+        // apply node - expected to update db and notify agent, and also sensor is expected to be
         // removed from the `agents` vector.
         let res = schema
             .execute(
@@ -1515,15 +1517,15 @@ mod tests {
                                 }
                                 agents: [
                                     {
-                                        key: "reconverge",
-                                        kind: "RECONVERGE",
+                                        key: "unsupervised",
+                                        kind: "UNSUPERVISED",
                                         status: "ENABLED",
                                         config: "test = 'toml'",
                                         draft: "test = 'toml'"
                                     },
                                     {
-                                        key: "piglet",
-                                        kind: "PIGLET",
+                                        key: "sensor",
+                                        kind: "SENSOR",
                                         status: "ENABLED",
                                         config: "test = 'changed_toml'",
                                         draft: null
@@ -1604,8 +1606,8 @@ mod tests {
                                 "agents": [
                                     {
                                       "node": 0,
-                                      "key": "reconverge",
-                                      "kind": "RECONVERGE",
+                                      "key": "unsupervised",
+                                      "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
                                       "config": "test = 'toml'",
                                       "draft": "test = 'toml'"
@@ -1644,8 +1646,8 @@ mod tests {
                         description: "This is the admin node running review.",
                         hostname: "all-in-one",
                         agents: [{
-                            key: "reconverge"
-                            kind: RECONVERGE
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
                             status: ENABLED
                             config: null
                             draft: ""
@@ -1674,8 +1676,8 @@ mod tests {
                                 },
                                 agents: [
                                     {
-                                        key: "reconverge",
-                                        kind: "RECONVERGE",
+                                        key: "unsupervised",
+                                        kind: "UNSUPERVISED",
                                         status: "ENABLED",
                                         config: null,
                                         draft: ""
@@ -1694,7 +1696,7 @@ mod tests {
     async fn test_apply_node_error_due_to_invalid_drafts() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["reconverge@all-in-one", "piglet@all-in-one"],
+            available_agents: vec!["unsupervised@all-in-one", "sensor@all-in-one"],
         });
 
         let schema = TestSchema::new_with(agent_manager, None).await;
@@ -1709,15 +1711,15 @@ mod tests {
                         description: "This is the admin node running review.",
                         hostname: "all-in-one",
                         agents: [{
-                            key: "reconverge"
-                            kind: RECONVERGE
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
                             status: ENABLED
                             config: null
                             draft: "test = 'toml'"
                         },
                         {
-                            key: "piglet"
-                            kind: PIGLET
+                            key: "sensor"
+                            kind: SENSOR
                             status: ENABLED
                             config: null
                             draft: "test = 'toml'"
@@ -1761,15 +1763,15 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: "RECONVERGE",
+                                    key: "unsupervised",
+                                    kind: "UNSUPERVISED",
                                     status: "ENABLED",
                                     config: null,
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: "PIGLET",
+                                    key: "sensor",
+                                    kind: "SENSOR",
                                     status: "ENABLED",
                                     config: null,
                                     draft: "test = 'toml'"
@@ -1790,7 +1792,7 @@ mod tests {
     async fn test_apply_node_error_due_to_different_node_input() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["reconverge@all-in-one", "piglet@all-in-one"],
+            available_agents: vec!["unsupervised@all-in-one", "sensor@all-in-one"],
         });
 
         let schema = TestSchema::new_with(agent_manager, None).await;
@@ -1805,15 +1807,15 @@ mod tests {
                         description: "This is the admin node running review.",
                         hostname: "all-in-one",
                         agents: [{
-                            key: "reconverge"
-                            kind: RECONVERGE
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
                             status: ENABLED
                             config: null
                             draft: "test = 'toml'"
                         },
                         {
-                            key: "piglet"
-                            kind: PIGLET
+                            key: "sensor"
+                            kind: SENSOR
                             status: ENABLED
                             config: null
                             draft: "test = 'toml'"
@@ -1842,15 +1844,15 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: "RECONVERGE",
+                                    key: "unsupervised",
+                                    kind: "UNSUPERVISED",
                                     status: "ENABLED",
                                     config: null,
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: "PIGLET",
+                                    key: "sensor",
+                                    kind: "SENSOR",
                                     status: "ENABLED",
                                     config: null,
                                     draft: "test = 'different_toml'"
@@ -1871,7 +1873,7 @@ mod tests {
     async fn test_apply_node_empty_hostname() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["reconverge@all-in-one", "piglet@all-in-one"],
+            available_agents: vec!["unsupervised@all-in-one", "sensor@all-in-one"],
         });
 
         let schema = TestSchema::new_with(agent_manager, None).await;
@@ -1886,15 +1888,15 @@ mod tests {
                         description: "This is the admin node running review.",
                         hostname: "",
                         agents: [{
-                            key: "reconverge"
-                            kind: RECONVERGE
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
                             status: ENABLED
                             config: null
                             draft: "test = 'toml'"
                         },
                         {
-                            key: "piglet"
-                            kind: PIGLET
+                            key: "sensor"
+                            kind: SENSOR
                             status: ENABLED
                             config: null
                             draft: "test = 'toml'"
@@ -1923,15 +1925,15 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: "RECONVERGE",
+                                    key: "unsupervised",
+                                    kind: "UNSUPERVISED",
                                     status: "ENABLED",
                                     config: null,
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: "PIGLET",
+                                    key: "sensor",
+                                    kind: "SENSOR",
                                     status: "ENABLED",
                                     config: null,
                                     draft: "test = 'toml'"
@@ -1966,15 +1968,15 @@ mod tests {
                         description: "This is the admin node running review.",
                         hostname: "all-in-one",
                         agents: [{
-                            key: "reconverge"
-                            kind: RECONVERGE
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
                             status: ENABLED
                             config: null
                             draft: "test = 'toml'"
                         },
                         {
-                            key: "piglet"
-                            kind: PIGLET
+                            key: "sensor"
+                            kind: SENSOR
                             status: ENABLED
                             config: null
                             draft: "test = 'toml'"
@@ -2003,15 +2005,15 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: "RECONVERGE",
+                                    key: "unsupervised",
+                                    kind: "UNSUPERVISED",
                                     status: "ENABLED",
                                     config: null,
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: "PIGLET",
+                                    key: "sensor",
+                                    kind: "SENSOR",
                                     status: "ENABLED",
                                     config: null,
                                     draft: "test = 'toml'"
@@ -2048,7 +2050,7 @@ mod tests {
             &self,
             _networks: &HostNetworkGroup,
         ) -> Result<Vec<String>, anyhow::Error> {
-            Ok(vec!["hog@hostA".to_string()])
+            Ok(vec!["semi-supervised@hostA".to_string()])
         }
 
         async fn broadcast_allow_networks(
@@ -2220,11 +2222,15 @@ mod tests {
     #[tokio::test]
     async fn test_node_shutdown() {
         let mut online_apps_by_host_id = HashMap::new();
-        insert_apps("analysis", &["hog"], &mut online_apps_by_host_id);
+        insert_apps(
+            "analysis",
+            &["semi-supervised"],
+            &mut online_apps_by_host_id,
+        );
 
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id,
-            available_agents: vec!["hog@analysis"],
+            available_agents: vec!["semi-supervised@analysis"],
         });
 
         let schema = TestSchema::new_with(agent_manager, None).await;

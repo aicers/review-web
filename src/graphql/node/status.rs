@@ -202,12 +202,12 @@ mod tests {
         let manager_hostname = roxy::hostname(); // Current machine's hostname is the Manager server's hostname.
         insert_apps(
             manager_hostname.as_str(),
-            &["features"],
+            &["sensor"],
             &mut online_apps_by_host_id,
         );
         insert_apps(
             "analysis",
-            &["models", "learner"],
+            &["semi-supervised", "unsupervised"],
             &mut online_apps_by_host_id,
         );
 
@@ -232,8 +232,8 @@ mod tests {
                     hostname: "{}",
                     agents: [
                         {{
-                            key: "features"
-                            kind: PIGLET
+                            key: "sensor"
+                            kind: SENSOR
                             status: ENABLED
                             draft: "my_val=1"
                         }}
@@ -263,8 +263,8 @@ mod tests {
                                 }},
                                 agents: [
                                     {{
-                                        key: "features"
-                                        kind: PIGLET
+                                        key: "sensor"
+                                        kind: SENSOR
                                         status: ENABLED
                                         config: null
                                         draft: "my_val=1"
@@ -286,17 +286,17 @@ mod tests {
                     insertNode(
                         name: "node2",
                         customerId: 0,
-                        description: "This is the node for the Learner and the Models module.",
+                        description: "This is the node for the Unsupervised and the Semi-supervised module.",
                         hostname: "analysis",
                         agents: [{
-                            key: "learner"
-                            kind: RECONVERGE
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
                             status: ENABLED
                             draft: "my_val=2"
                         },
                         {
-                            key: "models"
-                            kind: HOG
+                            key: "semi-supervised"
+                            kind: SEMI_SUPERVISED
                             status: ENABLED
                             draft: "my_val=2"
                         }]
@@ -318,19 +318,19 @@ mod tests {
                             profile: null,
                             profileDraft: {
                                 customerId: 0,
-                                description: "This is the node for the Learner and the Models module.",
+                                description: "This is the node for the Unsupervised and the Semi-supervised module.",
                                 hostname: "analysis"
                             },
                             agents: [{
-                                key: "learner"
-                                kind: RECONVERGE
+                                key: "unsupervised"
+                                kind: UNSUPERVISED
                                 status: ENABLED
                                 config: null
                                 draft: "my_val=2"
                             },
                             {
-                                key: "models"
-                                kind: HOG
+                                key: "semi-supervised"
+                                kind: SEMI_SUPERVISED
                                 status: ENABLED
                                 config: null
                                 draft: "my_val=2"
@@ -407,7 +407,7 @@ mod tests {
                                 "manager": true,
                                 "agents": [
                                     {
-                                        "kind": "PIGLET",
+                                        "kind": "SENSOR",
                                         "storedStatus": "ENABLED",
                                         "config": "my_val=1",
                                         "draft": "my_val=1",
@@ -421,12 +421,12 @@ mod tests {
                                 "nameDraft": "node2",
                                 "profile": {
                                     "customerId": "0",
-                                    "description": "This is the node for the Learner and the Models module.",
+                                    "description": "This is the node for the Unsupervised and the Semi-supervised module.",
                                     "hostname": "analysis"
                                 },
                                 "profileDraft": {
                                     "customerId": "0",
-                                    "description": "This is the node for the Learner and the Models module.",
+                                    "description": "This is the node for the Unsupervised and the Semi-supervised module.",
                                     "hostname": "analysis"
                                 },
                                 "gigantoDraft": null,
@@ -439,13 +439,13 @@ mod tests {
                                 "manager": false,
                                 "agents": [
                                     {
-                                        "kind": "RECONVERGE",
+                                        "kind": "UNSUPERVISED",
                                         "storedStatus": "ENABLED",
                                         "config": "my_val=2",
                                         "draft": "my_val=2"
                                     },
                                     {
-                                        "kind": "HOG",
+                                        "kind": "SEMI_SUPERVISED",
                                         "storedStatus": "ENABLED",
                                         "config": "my_val=2",
                                         "draft": "my_val=2"
@@ -462,10 +462,10 @@ mod tests {
     #[tokio::test]
     async fn check_node_status_list_ordering() {
         let mut online_apps_by_host_id = HashMap::new();
-        insert_apps("collect", &["features"], &mut online_apps_by_host_id);
+        insert_apps("collect", &["sensor"], &mut online_apps_by_host_id);
         insert_apps(
             "analysis",
-            &["models", "learner"],
+            &["semi-supervised", "unsupervised"],
             &mut online_apps_by_host_id,
         );
 
@@ -482,16 +482,16 @@ mod tests {
                     insertNode(
                         name: "test1",
                         customerId: 0,
-                        description: "This node has the Learner and the Models.",
+                        description: "This node has the Unsupervised and the Semi-supervised.",
                         hostname: "admin.aice-security.com",
                         agents: [{
-                            key: "learner"
-                            kind: RECONVERGE
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
                             status: ENABLED
                         },
                         {
-                            key: "models"
-                            kind: HOG
+                            key: "semi-supervised"
+                            kind: SEMI_SUPERVISED
                             status: ENABLED
                         }]
                         giganto: null
@@ -507,16 +507,16 @@ mod tests {
                     insertNode(
                         name: "test2",
                         customerId: 0,
-                        description: "This node has the Learner and the Models.",
+                        description: "This node has the Unsupervised and the Semi-supervised.",
                         hostname: "admin.aice-security.com",
                         agents: [{
-                            key: "learner"
-                            kind: RECONVERGE
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
                             status: ENABLED
                         },
                         {
-                            key: "models"
-                            kind: HOG
+                            key: "semi-supervised"
+                            kind: SEMI_SUPERVISED
                             status: ENABLED
                         }]
                         giganto: null
@@ -532,16 +532,16 @@ mod tests {
                     insertNode(
                         name: "test3",
                         customerId: 0,
-                        description: "This node has the Learner and the Models.",
+                        description: "This node has the Unsupervised and the Semi-supervised.",
                         hostname: "admin.aice-security.com",
                         agents: [{
-                            key: "learner"
-                            kind: RECONVERGE
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
                             status: ENABLED
                         },
                         {
-                            key: "models"
-                            kind: HOG
+                            key: "semi-supervised"
+                            kind: SEMI_SUPERVISED
                             status: ENABLED
                         }]
                         giganto: null
@@ -557,16 +557,16 @@ mod tests {
                     insertNode(
                         name: "test4",
                         customerId: 0,
-                        description: "This node has the Learner and the Models.",
+                        description: "This node has the Unsupervised and the Semi-supervised.",
                         hostname: "admin.aice-security.com",
                         agents: [{
-                            key: "learner"
-                            kind: RECONVERGE
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
                             status: ENABLED
                         },
                         {
-                            key: "models"
-                            kind: HOG
+                            key: "semi-supervised"
+                            kind: SEMI_SUPERVISED
                             status: ENABLED
                         }]
                         giganto: null
@@ -582,11 +582,11 @@ mod tests {
                     insertNode(
                         name: "test5",
                         customerId: 0,
-                        description: "This node has the Features.",
+                        description: "This node has the Sensor.",
                         hostname: "admin.aice-security.com",
                         agents: [{
-                            key: "features@collect"
-                            kind: PIGLET
+                            key: "sensor@collect"
+                            kind: SENSOR
                             status: ENABLED
                         }]
                         giganto: null

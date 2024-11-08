@@ -593,22 +593,25 @@ impl AgentManager for MockAgentManager {
         &self,
         _networks: &HostNetworkGroup,
     ) -> Result<Vec<String>, anyhow::Error> {
-        Ok(vec!["hog@hostA".to_string()])
+        Ok(vec!["semi-supervised@hostA".to_string()])
     }
     async fn broadcast_allow_networks(
         &self,
         _networks: &HostNetworkGroup,
     ) -> Result<Vec<String>, anyhow::Error> {
-        Ok(vec!["hog@hostA".to_string(), "hog@hostB".to_string()])
+        Ok(vec![
+            "semi-supervised@hostA".to_string(),
+            "semi-supervised@hostB".to_string(),
+        ])
     }
     async fn broadcast_block_networks(
         &self,
         _networks: &HostNetworkGroup,
     ) -> Result<Vec<String>, anyhow::Error> {
         Ok(vec![
-            "hog@hostA".to_string(),
-            "hog@hostB".to_string(),
-            "hog@hostC".to_string(),
+            "semi-supervised@hostA".to_string(),
+            "semi-supervised@hostB".to_string(),
+            "semi-supervised@hostC".to_string(),
         ])
     }
     async fn online_apps_by_host_id(
