@@ -218,11 +218,15 @@ mod tests {
                             key: "reconverge"
                             kind: RECONVERGE
                             status: ENABLED
+                            config: null
+                            draft: "test = 'toml'"
                         },
                         {
                             key: "piglet"
                             kind: PIGLET
                             status: ENABLED
+                            config: null
+                            draft: "test = 'toml'"
                         }]
                         giganto: null
                     )
@@ -256,6 +260,8 @@ mod tests {
                         key
                         kind
                         status
+                        config
+                        draft
                     }
                     giganto {
                         status
@@ -282,11 +288,15 @@ mod tests {
                         "key": "reconverge",
                         "kind": "RECONVERGE",
                         "status": "ENABLED",
+                        "config": null,
+                        "draft": "test = 'toml'"
                     },
                     {
                         "key": "piglet",
                         "kind": "PIGLET",
                         "status": "ENABLED",
+                        "config": null,
+                        "draft": "test = 'toml'"
                     }],
                     "giganto": null
                 }
@@ -314,14 +324,14 @@ mod tests {
                                     kind: "RECONVERGE",
                                     status: "ENABLED",
                                     config: null,
-                                    draft: null
+                                    draft: "test = 'toml'"
                                 },
                                 {
                                     key: "piglet",
                                     kind: "PIGLET",
                                     status: "ENABLED",
                                     config: null,
-                                    draft: null
+                                    draft: "test = 'toml'"
                                 }
                             ],
                             giganto: null,
@@ -338,15 +348,13 @@ mod tests {
                                     key: "reconverge",
                                     kind: "RECONVERGE",
                                     status: "ENABLED",
-                                    config: null,
-                                    draft: null
+                                    draft: "test = 'changed_toml'"
                                 },
                                 {
                                     key: "piglet",
                                     kind: "PIGLET",
                                     status: "ENABLED",
-                                    config: null,
-                                    draft: null
+                                    draft: "test = 'changed_toml'"
                                 }
                             ],
                             giganto: null,
@@ -378,7 +386,13 @@ mod tests {
                         description
                         hostname
                     }
-
+                    agents {
+                        key
+                        kind
+                        status
+                        config
+                        draft
+                    }
                 }}"#,
             )
             .await;
@@ -396,6 +410,20 @@ mod tests {
                         "description": "This is the admin node running review.",
                         "hostname": "admin.aice-security.com",
                     },
+                    "agents": [{
+                        "key": "reconverge",
+                        "kind": "RECONVERGE",
+                        "status": "ENABLED",
+                        "config": null,
+                        "draft": "test = 'changed_toml'"
+                    },
+                    {
+                        "key": "piglet",
+                        "kind": "PIGLET",
+                        "status": "ENABLED",
+                        "config": null,
+                        "draft": "test = 'changed_toml'"
+                    }],
                 }
             })
         );
@@ -596,14 +624,12 @@ mod tests {
                                     key: "reconverge",
                                     kind: "RECONVERGE",
                                     status: "ENABLED",
-                                    config: null,
                                     draft: null
                                 },
                                 {
                                     key: "piglet",
                                     kind: "PIGLET",
                                     status: "ENABLED",
-                                    config: null,
                                     draft: null
                                 }
                             ],

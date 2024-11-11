@@ -11,6 +11,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Modified `applyNode` GraphQL API logic to prevent notifying agents that are
   operating with local configuration.
+- Updated `updateNodeDraft` GraphQL API to no longer require `config` in
+  `NodeDraftInput::agents`.
 
 ## [0.23.0] - 2024-10-23
 

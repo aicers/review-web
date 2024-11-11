@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
 use anyhow::Context as AnyhowContext;
 use async_graphql::{types::ID, InputObject, Result};
@@ -60,6 +60,15 @@ impl From<AgentInput> for review_database::Agent {
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, InputObject)]
+pub struct AgentDraftInput {
+    kind: AgentKind,
+    pub(super) key: String,
+    status: AgentStatus,
+    pub(super) draft: Option<String>,
+}
+
+#[allow(clippy::module_name_repetitions)]
+#[derive(Clone, InputObject)]
 pub struct GigantoInput {
     status: AgentStatus,
     draft: Option<String>,
@@ -105,7 +114,7 @@ impl TryFrom<NodeInput> for review_database::NodeUpdate {
 pub(super) struct NodeDraftInput {
     pub name_draft: String,
     pub profile_draft: Option<NodeProfileInput>,
-    pub agents: Option<Vec<AgentInput>>,
+    pub agents: Option<Vec<AgentDraftInput>>,
     pub giganto: Option<GigantoInput>,
 }
 
@@ -123,8 +132,30 @@ pub(super) fn create_draft_update(
         None
     };
 
-    let agents: Vec<review_database::Agent> = if let Some(agents) = new.agents {
-        agents.into_iter().map(Into::into).collect()
+    let old_config_map: HashMap<String, Option<String>> = old
+        .agents
+        .iter()
+        .map(|agent| (agent.key.clone(), agent.config.clone()))
+        .collect();
+
+    let agents: Vec<review_database::Agent> = if let Some(new_agents) = new.agents {
+        new_agents
+            .into_iter()
+            .map(|agent_draft| {
+                let config = old_config_map
+                    .get(&agent_draft.key)
+                    .and_then(|config| config.as_ref().and_then(|c| c.clone().try_into().ok()));
+
+                review_database::Agent {
+                    node: u32::MAX,
+                    key: agent_draft.key,
+                    kind: agent_draft.kind.into(),
+                    status: agent_draft.status.into(),
+                    config,
+                    draft: agent_draft.draft.and_then(|draft| draft.try_into().ok()),
+                }
+            })
+            .collect()
     } else {
         Vec::new()
     };

@@ -435,15 +435,15 @@ mod tests {
                             agents: [
                                 {
                                     key: "reconverge",
-                                    kind: "RECONVERGE",
-                                    status: "ENABLED",
+                                    kind: RECONVERGE,
+                                    status: ENABLED,
                                     config: null,
                                     draft: "test = 'toml'"
                                 },
                                 {
                                     key: "piglet",
-                                    kind: "PIGLET",
-                                    status: "ENABLED",
+                                    kind: PIGLET,
+                                    status: ENABLED,
                                     config: null,
                                     draft: "test = 'toml'"
                                 }
@@ -564,15 +564,15 @@ mod tests {
                             agents: [
                                 {
                                     key: "reconverge",
-                                    kind: "RECONVERGE",
-                                    status: "ENABLED",
+                                    kind: RECONVERGE,
+                                    status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
                                     key: "piglet",
-                                    kind: "PIGLET",
-                                    status: "ENABLED",
+                                    kind: PIGLET,
+                                    status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 }
@@ -589,16 +589,14 @@ mod tests {
                             agents: [
                                 {
                                     key: "reconverge",
-                                    kind: "RECONVERGE",
-                                    status: "ENABLED",
-                                    config: "test = 'toml'",
+                                    kind: RECONVERGE,
+                                    status: ENABLED,
                                     draft: "test = 'toml'"
                                 },
                                 {
                                     key: "piglet",
-                                    kind: "PIGLET",
-                                    status: "ENABLED",
-                                    config: "test = 'toml'",
+                                    kind: PIGLET,
+                                    status: ENABLED,
                                     draft: "test = 'toml'"
                                 }
                             ],
@@ -719,15 +717,15 @@ mod tests {
                             agents: [
                                 {
                                     key: "reconverge",
-                                    kind: "RECONVERGE",
-                                    status: "ENABLED",
+                                    kind: RECONVERGE,
+                                    status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
                                     key: "piglet",
-                                    kind: "PIGLET",
-                                    status: "ENABLED",
+                                    kind: PIGLET,
+                                    status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 }
@@ -848,15 +846,15 @@ mod tests {
                             agents: [
                                 {
                                     key: "reconverge",
-                                    kind: "RECONVERGE",
-                                    status: "ENABLED",
+                                    kind: RECONVERGE,
+                                    status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
                                     key: "piglet",
-                                    kind: "PIGLET",
-                                    status: "ENABLED",
+                                    kind: PIGLET,
+                                    status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 }
@@ -873,16 +871,14 @@ mod tests {
                             agents: [
                                 {
                                     key: "reconverge",
-                                    kind: "RECONVERGE",
-                                    status: "ENABLED",
-                                    config: "test = 'toml'",
+                                    kind: RECONVERGE,
+                                    status: ENABLED,
                                     draft: "test = 'toml'"
                                 },
                                 {
                                     key: "piglet",
-                                    kind: "PIGLET",
-                                    status: "ENABLED",
-                                    config: "test = 'toml'",
+                                    kind: PIGLET,
+                                    status: ENABLED,
                                     draft: "test = 'toml'"
                                 }
                             ],
@@ -920,15 +916,15 @@ mod tests {
                             agents: [
                                 {
                                     key: "reconverge",
-                                    kind: "RECONVERGE",
-                                    status: "ENABLED",
+                                    kind: RECONVERGE,
+                                    status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
                                     key: "piglet",
-                                    kind: "PIGLET",
-                                    status: "ENABLED",
+                                    kind: PIGLET,
+                                    status: ENABLED,
                                     config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 }
@@ -1035,6 +1031,306 @@ mod tests {
             })
         );
 
+        // update piglet draft
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateNodeDraft(
+                        id: "0"
+                        old: {
+                            name: "admin node with new name",
+                            nameDraft: "admin node with new name",
+                            profile: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "all-in-one",
+                            }
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "all-in-one",
+                            }
+                            agents: [
+                                {
+                                    key: "reconverge",
+                                    kind: RECONVERGE,
+                                    status: ENABLED,
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                },
+                                {
+                                    key: "piglet",
+                                    kind: PIGLET,
+                                    status: ENABLED,
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            giganto: {
+                                    status: ENABLED,
+                                    draft: "test = 'giganto_toml'"
+                            }
+                        },
+                        new: {
+                            nameDraft: "admin node with new name",
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "all-in-one",
+                            }
+                            agents: [
+                                {
+                                    key: "reconverge",
+                                    kind: RECONVERGE,
+                                    status: ENABLED,
+                                    draft: "test = 'toml'"
+                                },
+                                {
+                                    key: "piglet",
+                                    kind: PIGLET,
+                                    status: ENABLED,
+                                    draft: "test = 'changed_toml'"
+                                }
+                            ],
+                            giganto: {
+                                status: ENABLED,
+                                draft: "test = 'giganto_toml'"
+                            }
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
+
+        // check node list after update
+        let res = schema
+            .execute(
+                r#"query {
+                    nodeList(first: 10) {
+                      totalCount
+                      edges {
+                        node {
+                            id
+                            name
+                            nameDraft
+                            profile {
+                                customerId
+                                description
+                                hostname
+                            }
+                            profileDraft {
+                                customerId
+                                description
+                                hostname
+                            }
+                            agents {
+                                node
+                                key
+                                kind
+                                status
+                                config
+                                draft
+                            }
+                            giganto {
+                                status
+                                draft
+                            }
+                        }
+                      }
+                    }
+                  }"#,
+            )
+            .await;
+
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeList": {
+                    "totalCount": 1,
+                    "edges": [
+                        {
+                            "node": {
+                                "id": "0",
+                                "name": "admin node with new name",
+                                "nameDraft": "admin node with new name",
+                                "profile": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "all-in-one",
+                                },
+                                "profileDraft": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "all-in-one",
+                                },
+                                "agents": [
+                                    {
+                                      "node": 0,
+                                      "key": "reconverge",
+                                      "kind": "RECONVERGE",
+                                      "status": "ENABLED",
+                                      "config": "test = 'toml'",
+                                      "draft": "test = 'toml'"
+                                    },
+                                    {
+                                      "node": 0,
+                                      "key": "piglet",
+                                      "kind": "PIGLET",
+                                      "status": "ENABLED",
+                                      "config": "test = 'toml'",
+                                      "draft": "test = 'changed_toml'"
+                                    }
+                                  ],
+                                "giganto": {
+                                    "status": "ENABLED",
+                                    "draft": "test = 'giganto_toml'"
+                                },
+                            }
+                        }
+                    ]
+                }
+            })
+        );
+
+        // apply node
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "admin node with new name",
+                            nameDraft: "admin node with new name",
+                            profile: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "all-in-one",
+                            }
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the admin node running review.",
+                                hostname: "all-in-one",
+                            }
+                            agents: [
+                                {
+                                    key: "reconverge",
+                                    kind: "RECONVERGE",
+                                    status: "ENABLED",
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                },
+                                {
+                                    key: "piglet",
+                                    kind: "PIGLET",
+                                    status: "ENABLED",
+                                    config: "test = 'toml'",
+                                    draft: "test = 'changed_toml'"
+                                }
+                            ],
+                            giganto: {
+                                status: ENABLED,
+                                draft: "test = 'giganto_toml'"
+                            }
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+
+        // check node list after apply
+        let res = schema
+            .execute(
+                r#"query {
+                    nodeList(first: 10) {
+                        totalCount
+                        edges {
+                            node {
+                                id
+                                name
+                                nameDraft
+                                profile {
+                                    customerId
+                                    description
+                                    hostname
+                                }
+                                profileDraft {
+                                    customerId
+                                    description
+                                    hostname
+                                }
+                                agents {
+                                    node
+                                    key
+                                    kind
+                                    status
+                                    config
+                                    draft
+                                }
+                                giganto {
+                                    status
+                                    draft
+                                }
+                            }
+                        }
+                    }
+                }"#,
+            )
+            .await;
+
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeList": {
+                    "totalCount": 1,
+                    "edges": [
+                        {
+                            "node": {
+                                "id": "0",
+                                "name": "admin node with new name",
+                                "nameDraft": "admin node with new name",
+                                "profile": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "all-in-one",
+                                },
+                                "profileDraft": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "all-in-one",
+                                },
+                                "agents": [
+                                    {
+                                        "node": 0,
+                                        "key": "reconverge",
+                                        "kind": "RECONVERGE",
+                                        "status": "ENABLED",
+                                        "config": "test = 'toml'",
+                                        "draft": "test = 'toml'"
+                                    },
+                                    {
+                                        "node": 0,
+                                        "key": "piglet",
+                                        "kind": "PIGLET",
+                                        "status": "ENABLED",
+                                        "config": "test = 'changed_toml'",
+                                        "draft": "test = 'changed_toml'"
+                                    }
+                                ],
+                                "giganto": {
+                                    "status": "ENABLED",
+                                    "draft": "test = 'giganto_toml'"
+                                }
+                            }
+                        }
+                    ]
+                }
+            })
+        );
+
         // update node to disable one of the agents (piglet@all-in-one) in next apply
         let res = schema
             .execute(
@@ -1066,8 +1362,8 @@ mod tests {
                                     key: "piglet",
                                     kind: "PIGLET",
                                     status: "ENABLED",
-                                    config: "test = 'toml'",
-                                    draft: "test = 'toml'"
+                                    config: "test = 'changed_toml'",
+                                    draft: "test = 'changed_toml'"
                                 }
                             ],
                             giganto: {
@@ -1087,14 +1383,12 @@ mod tests {
                                     key: "reconverge",
                                     kind: "RECONVERGE",
                                     status: "ENABLED",
-                                    config: "test = 'toml'",
                                     draft: "test = 'toml'"
                                 },
                                 {
                                     key: "piglet",
                                     kind: "PIGLET",
                                     status: "ENABLED",
-                                    config: "test = 'toml'",
                                     draft: null
                                 }
                             ],
@@ -1184,7 +1478,7 @@ mod tests {
                                       "key": "piglet",
                                       "kind": "PIGLET",
                                       "status": "ENABLED",
-                                      "config": "test = 'toml'",
+                                      "config": "test = 'changed_toml'",
                                       "draft": null
                                     }
                                   ],
@@ -1231,7 +1525,7 @@ mod tests {
                                         key: "piglet",
                                         kind: "PIGLET",
                                         status: "ENABLED",
-                                        config: "test = 'toml'",
+                                        config: "test = 'changed_toml'",
                                         draft: null
                                     }
                                 ],
