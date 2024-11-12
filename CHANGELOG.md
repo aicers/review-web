@@ -14,6 +14,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Updated `updateNodeDraft` GraphQL API to no longer require `config` in
   `NodeDraftInput::agents`.
 
+### Fixed
+
+- Added missing `node` field in `samplingPolicy` and `samplingPolicyList`
+  GraphQL API responses in the `SamplingPolicy` object.
+
 ## [0.23.0] - 2024-10-23
 
 ### Changed

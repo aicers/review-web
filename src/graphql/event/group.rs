@@ -445,7 +445,7 @@ mod tests {
     /// destination `IPv4` addresses.
     fn event_message_at(timestamp: DateTime<Utc>, src: u32, dst: u32) -> EventMessage {
         let fields = DnsEventFields {
-            source: "collector1".to_string(),
+            source: "sensor1".to_string(),
             session_end_time: timestamp,
             src_addr: Ipv4Addr::from(src).into(),
             src_port: 10000,

@@ -163,6 +163,10 @@ impl SamplingPolicy {
         self.inner.dst_ip.as_ref().map(ToString::to_string)
     }
 
+    async fn node(&self) -> Option<String> {
+        self.inner.node.clone()
+    }
+
     async fn column(&self) -> Option<StringNumber<u32>> {
         self.inner.column.map(StringNumber)
     }
@@ -436,6 +440,9 @@ impl SamplingPolicyMutation {
 
 #[cfg(test)]
 mod tests {
+    use assert_json_diff::assert_json_eq;
+    use serde_json::json;
+
     use crate::graphql::TestSchema;
 
     #[tokio::test]
@@ -458,6 +465,7 @@ mod tests {
                         interval: FIFTEEN_MINUTES,
                         period: ONE_DAY,
                         offset: 0,
+                        node: "sensor",
                         immutable: false
                     )
                 }
@@ -478,6 +486,7 @@ mod tests {
                             interval: FIFTEEN_MINUTES,
                             period: ONE_DAY,
                             offset: 0,
+                            node: "sensor",
                             immutable: false
                         },
                         new:{
@@ -486,6 +495,7 @@ mod tests {
                             interval: FIFTEEN_MINUTES,
                             period: ONE_DAY,
                             offset: 0,
+                            node: "manager",
                             immutable: true
                         }
                       )
@@ -502,15 +512,34 @@ mod tests {
                     samplingPolicyList(first: 10) {
                         nodes {
                             name
+                            kind
+                            interval
+                            period
+                            offset
+                            node
+                            immutable
                         }
                     }
                 }
             "#,
             )
             .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{samplingPolicyList: {nodes: [{name: "Policy 2"}]}}"#
+
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "samplingPolicyList": {
+                    "nodes": [{
+                        "name": "Policy 2",
+                        "kind": "CONN",
+                        "interval": "FIFTEEN_MINUTES",
+                        "period": "ONE_DAY",
+                        "offset": 0,
+                        "node": "manager",
+                        "immutable": true
+                    }]
+                }
+            })
         );
 
         let res = schema
