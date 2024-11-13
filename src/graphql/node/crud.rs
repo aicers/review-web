@@ -198,6 +198,7 @@ mod tests {
 
     // test scenario : insert node -> update node with different name -> remove node
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn node_crud() {
         let schema = TestSchema::new().await;
 
@@ -215,15 +216,15 @@ mod tests {
                         description: "This is the admin node running review.",
                         hostname: "admin.aice-security.com",
                         agents: [{
-                            key: "reconverge"
-                            kind: RECONVERGE
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
                             status: ENABLED
                             config: null
                             draft: "test = 'toml'"
                         },
                         {
-                            key: "piglet"
-                            kind: PIGLET
+                            key: "sensor"
+                            kind: SENSOR
                             status: ENABLED
                             config: null
                             draft: "test = 'toml'"
@@ -285,15 +286,15 @@ mod tests {
                         "hostname": "admin.aice-security.com",
                     },
                     "agents": [{
-                        "key": "reconverge",
-                        "kind": "RECONVERGE",
+                        "key": "unsupervised",
+                        "kind": "UNSUPERVISED",
                         "status": "ENABLED",
                         "config": null,
                         "draft": "test = 'toml'"
                     },
                     {
-                        "key": "piglet",
-                        "kind": "PIGLET",
+                        "key": "sensor",
+                        "kind": "SENSOR",
                         "status": "ENABLED",
                         "config": null,
                         "draft": "test = 'toml'"
@@ -320,15 +321,15 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: "RECONVERGE",
+                                    key: "unsupervised",
+                                    kind: "UNSUPERVISED",
                                     status: "ENABLED",
                                     config: null,
                                     draft: "test = 'toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: "PIGLET",
+                                    key: "sensor",
+                                    kind: "SENSOR",
                                     status: "ENABLED",
                                     config: null,
                                     draft: "test = 'toml'"
@@ -345,14 +346,14 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: "RECONVERGE",
+                                    key: "unsupervised",
+                                    kind: "UNSUPERVISED",
                                     status: "ENABLED",
                                     draft: "test = 'changed_toml'"
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: "PIGLET",
+                                    key: "sensor",
+                                    kind: "SENSOR",
                                     status: "ENABLED",
                                     draft: "test = 'changed_toml'"
                                 }
@@ -411,15 +412,15 @@ mod tests {
                         "hostname": "admin.aice-security.com",
                     },
                     "agents": [{
-                        "key": "reconverge",
-                        "kind": "RECONVERGE",
+                        "key": "unsupervised",
+                        "kind": "UNSUPERVISED",
                         "status": "ENABLED",
                         "config": null,
                         "draft": "test = 'changed_toml'"
                     },
                     {
-                        "key": "piglet",
-                        "kind": "PIGLET",
+                        "key": "sensor",
+                        "kind": "SENSOR",
                         "status": "ENABLED",
                         "config": null,
                         "draft": "test = 'changed_toml'"
@@ -445,15 +446,15 @@ mod tests {
                         }
                         agents: [
                             {
-                                key: "reconverge",
-                                kind: "RECONVERGE",
+                                key: "unsupervised",
+                                kind: "UNSUPERVISED",
                                 status: "ENABLED",
                                 config: null,
                                 draft: null
                             },
                             {
-                                key: "piglet",
-                                kind: "PIGLET",
+                                key: "sensor",
+                                kind: "SENSOR",
                                 status: "ENABLED",
                                 config: null,
                                 draft: null
@@ -489,6 +490,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn update_node_name() {
         let schema = TestSchema::new().await;
 
@@ -506,13 +508,13 @@ mod tests {
                         description: "This is the admin node running review.",
                         hostname: "admin.aice-security.com",
                         agents: [{
-                            key: "reconverge"
-                            kind: RECONVERGE
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
                             status: ENABLED
                         },
                         {
-                            key: "piglet"
-                            kind: PIGLET
+                            key: "sensor"
+                            kind: SENSOR
                             status: ENABLED
                         }]
                         giganto: null
@@ -570,13 +572,13 @@ mod tests {
                         "hostname": "admin.aice-security.com",
                     },
                     "agents": [{
-                        "key": "reconverge",
-                        "kind": "RECONVERGE",
+                        "key": "unsupervised",
+                        "kind": "UNSUPERVISED",
                         "status": "ENABLED",
                     },
                     {
-                        "key": "piglet",
-                        "kind": "PIGLET",
+                        "key": "sensor",
+                        "kind": "SENSOR",
                         "status": "ENABLED",
                     }],
                     "giganto": null
@@ -601,15 +603,15 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: "RECONVERGE",
+                                    key: "unsupervised",
+                                    kind: "UNSUPERVISED",
                                     status: "ENABLED",
                                     config: null,
                                     draft: null
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: "PIGLET",
+                                    key: "sensor",
+                                    kind: "SENSOR",
                                     status: "ENABLED",
                                     config: null,
                                     draft: null
@@ -621,14 +623,14 @@ mod tests {
                             nameDraft: "AdminNode",
                             agents: [
                                 {
-                                    key: "reconverge",
-                                    kind: "RECONVERGE",
+                                    key: "unsupervised",
+                                    kind: "UNSUPERVISED",
                                     status: "ENABLED",
                                     draft: null
                                 },
                                 {
-                                    key: "piglet",
-                                    kind: "PIGLET",
+                                    key: "sensor",
+                                    kind: "SENSOR",
                                     status: "ENABLED",
                                     draft: null
                                 }

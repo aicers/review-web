@@ -1297,8 +1297,8 @@ mod tests {
                         description: "This is the sensor node",
                         hostname: "sensor1",
                         agents: [{
-                            key: "piglet"
-                            kind: PIGLET
+                            key: "sensor"
+                            kind: SENSOR
                             status: ENABLED
                         }]
                         giganto: null
@@ -1323,8 +1323,8 @@ mod tests {
                             }
                             agents: [
                                 {
-                                    key: "piglet",
-                                    kind: "PIGLET",
+                                    key: "sensor",
+                                    kind: "SENSOR",
                                     status: "ENABLED"
                                 }
                             ],

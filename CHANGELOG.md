@@ -7,12 +7,18 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added the `TimeSeriesGenerator` variant to the `AgentKind` enum.
+
 ### Changed
 
 - Modified `applyNode` GraphQL API logic to prevent notifying agents that are
   operating with local configuration.
 - Updated `updateNodeDraft` GraphQL API to no longer require `config` in
   `NodeDraftInput::agents`.
+- Updated review-database to 0.32.0.
+- Renamed `AgentKind` enum variants to align with review-database.
 
 ### Fixed
 

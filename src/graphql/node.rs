@@ -107,9 +107,10 @@ impl TryFrom<&NicInput> for Nic {
 #[derive(Clone, Deserialize, PartialEq, Serialize, Copy, Eq, Enum)]
 #[graphql(remote = "database::AgentKind")]
 pub enum AgentKind {
-    Reconverge,
-    Piglet,
-    Hog,
+    Unsupervised,
+    Sensor,
+    SemiSupervised,
+    TimeSeriesGenerator,
 }
 
 #[derive(Clone, PartialEq, Deserialize, Serialize, Enum, Copy, Eq)]
