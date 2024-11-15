@@ -10,6 +10,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Added the `TimeSeriesGenerator` variant to the `AgentKind` enum.
+- Added `signInWithNewPassword` GraphQL API for signing in with a new password.
+  - The `signIn` GraphQL API now returns an error if the account was never
+    signed in before. This change is part of enhancing account security by
+    requiring all users to update their passwords upon their first signing in.
 
 ### Changed
 
