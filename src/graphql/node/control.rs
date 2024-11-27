@@ -60,18 +60,13 @@ impl NodeControlMutation {
         let apply_scope = node_apply_scope(&node);
 
         if apply_scope.db {
-            if let Some(ref target_agents) = apply_scope.agents {
-                update_db(
-                    ctx,
-                    i,
-                    &node,
-                    &target_agents.updates,
-                    &target_agents.disables,
-                )
-                .await?;
-            } else {
-                update_db(ctx, i, &node, &[], &[]).await?;
-            };
+            update_db(
+                ctx,
+                i,
+                &node,
+                apply_scope.agents.as_ref().map_or(&[], |a| &a.disables),
+            )
+            .await?;
 
             info!(
                 "[{}] Node ID {i} - Node's drafts are applied.\nName: {}, Name draft: {}\nProfile: {}, Profile draft: {}",
@@ -205,7 +200,6 @@ async fn update_db(
     ctx: &Context<'_>,
     i: u32,
     node: &NodeInput,
-    update_agent_ids: &[&str],
     disable_agent_ids: &[&str],
 ) -> Result<()> {
     let store = crate::graphql::get_store(ctx).await?;
@@ -225,12 +219,10 @@ async fn update_db(
         .filter_map(|agent| {
             if disable_agent_ids.contains(&agent.key.as_str()) {
                 None
-            } else if update_agent_ids.contains(&agent.key.as_str()) {
+            } else {
                 let mut updated_agent = agent.clone();
                 updated_agent.config.clone_from(&updated_agent.draft);
                 Some(updated_agent)
-            } else {
-                Some(agent.clone())
             }
         })
         .collect();
@@ -1690,6 +1682,84 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+
+        // check node list after apply
+        let res = schema
+            .execute(
+                r#"query {
+                        nodeList(first: 10) {
+                          totalCount
+                          edges {
+                            node {
+                                id
+                                name
+                                nameDraft
+                                profile {
+                                    customerId
+                                    description
+                                    hostname
+                                }
+                                profileDraft {
+                                    customerId
+                                    description
+                                    hostname
+                                }
+                                agents {
+                                    node
+                                    key
+                                    kind
+                                    status
+                                    config
+                                    draft
+                                }
+                                giganto {
+                                    status
+                                    draft
+                                }
+                            }
+                          }
+                        }
+                      }"#,
+            )
+            .await;
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeList": {
+                    "totalCount": 1,
+                    "edges": [
+                        {
+                            "node": {
+                                "id": "0",
+                                "name": "admin node",
+                                "nameDraft": "admin node",
+                                "profile": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "all-in-one",
+                                },
+                                "profileDraft": {
+                                    "customerId": "0",
+                                    "description": "This is the admin node running review.",
+                                    "hostname": "all-in-one",
+                                },
+                                "agents": [
+                                    {
+                                      "node": 0,
+                                      "key": "unsupervised",
+                                      "kind": "UNSUPERVISED",
+                                      "status": "ENABLED",
+                                      "config": "",
+                                      "draft": ""
+                                    }
+                                  ],
+                                "giganto": null,
+                            }
+                        }
+                    ]
+                }
+            })
+        );
     }
 
     #[tokio::test]

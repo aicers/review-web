@@ -5,6 +5,13 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Resolved an issue in the `applyNode` GraphQL API, where configuration values
+  set to an empty string were not saved to the `config` in the database.
+
 ## [0.24.0] - 2024-11-19
 
 ### Added
@@ -732,6 +739,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.24.0...main
 [0.24.0]: https://github.com/aicers/review-web/compare/0.23.0...0.24.0
 [0.23.0]: https://github.com/aicers/review-web/compare/0.22.0...0.23.0
 [0.22.0]: https://github.com/aicers/review-web/compare/0.21.0...0.22.0
