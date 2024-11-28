@@ -7,6 +7,12 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Updated the encoding and decoding method for GraphQL cursors by removing
+  `graphql::encode_cursor` and `graphql::decode_cursor` methods and replacing
+  them with the encoding and decoding methods of `OpaqueCursor`.
+
 ### Fixed
 
 - Resolved an issue in the `applyNode` GraphQL API, where configuration values

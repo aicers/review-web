@@ -1,5 +1,6 @@
 use std::net::IpAddr;
 
+use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
     connection::{Connection, EmptyFields},
     types::ID,
@@ -243,7 +244,9 @@ impl SamplingPolicyQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<String, SamplingPolicy, SamplingPolicyTotalCount, EmptyFields>> {
+    ) -> Result<
+        Connection<OpaqueCursor<Vec<u8>>, SamplingPolicy, SamplingPolicyTotalCount, EmptyFields>,
+    > {
         query_with_constraints(
             after,
             before,
@@ -271,11 +274,12 @@ impl SamplingPolicyQuery {
 
 async fn load(
     ctx: &Context<'_>,
-    after: Option<String>,
-    before: Option<String>,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<String, SamplingPolicy, SamplingPolicyTotalCount, EmptyFields>> {
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, SamplingPolicy, SamplingPolicyTotalCount, EmptyFields>>
+{
     let store = crate::graphql::get_store(ctx).await?;
     let map = store.sampling_policy_map();
     super::load_edges(&map, after, before, first, last, SamplingPolicyTotalCount)

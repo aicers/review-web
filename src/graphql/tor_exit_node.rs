@@ -1,3 +1,4 @@
+use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
     connection::{Connection, EmptyFields},
     Context, Object, Result, SimpleObject,
@@ -25,7 +26,8 @@ impl TorExitNodeQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<String, TorExitNode, TorExitNodeTotalCount, EmptyFields>> {
+    ) -> Result<Connection<OpaqueCursor<Vec<u8>>, TorExitNode, TorExitNodeTotalCount, EmptyFields>>
+    {
         query_with_constraints(
             after,
             before,
@@ -95,11 +97,11 @@ impl TorExitNodeTotalCount {
 
 async fn load(
     ctx: &Context<'_>,
-    after: Option<String>,
-    before: Option<String>,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<String, TorExitNode, TorExitNodeTotalCount, EmptyFields>> {
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, TorExitNode, TorExitNodeTotalCount, EmptyFields>> {
     let store = crate::graphql::get_store(ctx).await?;
     let map = store.tor_exit_node_map();
 

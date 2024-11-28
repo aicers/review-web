@@ -48,7 +48,7 @@ impl Config {
 
     pub(crate) fn configure_reverse_proxies(
         store: &Arc<RwLock<Store>>,
-        client: &Option<reqwest::Client>,
+        client: Option<&reqwest::Client>,
         reverse_proxies: &[Self],
     ) -> Vec<(ArchiveState, Router<ArchiveState>)> {
         reverse_proxies
@@ -57,10 +57,10 @@ impl Config {
                 (
                     crate::archive::ArchiveState {
                         store: store.clone(),
-                        client: client.clone(),
+                        client: client.cloned(),
                         config: rp.clone(),
                     },
-                    crate::archive::reverse_proxy(store.clone(), client.clone(), rp.clone()),
+                    crate::archive::reverse_proxy(store.clone(), client.cloned(), rp.clone()),
                 )
             })
             .collect()

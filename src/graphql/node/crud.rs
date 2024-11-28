@@ -1,5 +1,6 @@
 #![allow(clippy::fn_params_excessive_bools)]
 
+use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
     connection::{Connection, EmptyFields},
     types::ID,
@@ -30,7 +31,7 @@ impl NodeQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<String, Node, NodeTotalCount, EmptyFields>> {
+    ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Node, NodeTotalCount, EmptyFields>> {
         query_with_constraints(
             after,
             before,
@@ -159,11 +160,11 @@ impl NodeMutation {
 
 async fn load(
     ctx: &Context<'_>,
-    after: Option<String>,
-    before: Option<String>,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<String, Node, NodeTotalCount, EmptyFields>> {
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, Node, NodeTotalCount, EmptyFields>> {
     let store = crate::graphql::get_store(ctx).await?;
     let map = store.node_map();
     super::super::load_edges(&map, after, before, first, last, NodeTotalCount)

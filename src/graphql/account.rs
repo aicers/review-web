@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::anyhow;
+use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
     connection::{Connection, EmptyFields},
     Context, Enum, InputObject, Object, Result, SimpleObject, StringNumber,
@@ -58,7 +59,7 @@ impl AccountQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<String, Account, AccountTotalCount, EmptyFields>> {
+    ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Account, AccountTotalCount, EmptyFields>> {
         query_with_constraints(
             after,
             before,
@@ -325,10 +326,16 @@ impl AccountMutation {
         if let Some(mut account) = account_map.get(&username)? {
             validate_password(&account, &username, &password)?;
             validate_last_signin_time(&account, &username)?;
-            validate_allow_access_from(&account, &client_ip, &username)?;
+            validate_allow_access_from(&account, client_ip.as_ref(), &username)?;
             validate_max_parallel_sessions(&account, &store, &username)?;
 
-            sign_in_actions(&mut account, &store, &account_map, &client_ip, &username)
+            sign_in_actions(
+                &mut account,
+                &store,
+                &account_map,
+                client_ip.as_ref(),
+                &username,
+            )
         } else {
             info!("{username} is not a valid username");
             Err("incorrect username or password".into())
@@ -355,13 +362,19 @@ impl AccountMutation {
 
         if let Some(mut account) = account_map.get(&username)? {
             validate_password(&account, &username, &password)?;
-            validate_allow_access_from(&account, &client_ip, &username)?;
+            validate_allow_access_from(&account, client_ip.as_ref(), &username)?;
             validate_max_parallel_sessions(&account, &store, &username)?;
             validate_update_new_password(&password, &new_password, &username)?;
 
             account.update_password(&new_password)?;
 
-            sign_in_actions(&mut account, &store, &account_map, &client_ip, &username)
+            sign_in_actions(
+                &mut account,
+                &store,
+                &account_map,
+                client_ip.as_ref(),
+                &username,
+            )
         } else {
             info!("{username} is not a valid username");
             Err("incorrect username or password".into())
@@ -474,7 +487,7 @@ fn validate_last_signin_time(account: &types::Account, username: &str) -> Result
 
 fn validate_allow_access_from(
     account: &types::Account,
-    client_ip: &Option<SocketAddr>,
+    client_ip: Option<&SocketAddr>,
     username: &str,
 ) -> Result<()> {
     if let Some(allow_access_from) = account.allow_access_from.as_ref() {
@@ -533,7 +546,7 @@ fn sign_in_actions(
     account: &mut types::Account,
     store: &Store,
     account_map: &Table<types::Account>,
-    client_ip: &Option<SocketAddr>,
+    client_ip: Option<&SocketAddr>,
     username: &str,
 ) -> Result<AuthPayload> {
     let (token, expiration_time) =
@@ -720,11 +733,11 @@ impl AccountTotalCount {
 
 async fn load(
     ctx: &Context<'_>,
-    after: Option<String>,
-    before: Option<String>,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<String, Account, AccountTotalCount, EmptyFields>> {
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, Account, AccountTotalCount, EmptyFields>> {
     let store = crate::graphql::get_store(ctx).await?;
     let table = store.account_map();
     super::load_edges(&table, after, before, first, last, AccountTotalCount)

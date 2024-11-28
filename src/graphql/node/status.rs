@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
     Context, Object, Result,
@@ -25,7 +26,8 @@ impl NodeStatusQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<String, NodeStatus, NodeStatusTotalCount, EmptyFields>> {
+    ) -> Result<Connection<OpaqueCursor<Vec<u8>>, NodeStatus, NodeStatusTotalCount, EmptyFields>>
+    {
         query_with_constraints(
             after,
             before,
@@ -39,11 +41,11 @@ impl NodeStatusQuery {
 
 async fn load(
     ctx: &Context<'_>,
-    after: Option<String>,
-    before: Option<String>,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<String, NodeStatus, NodeStatusTotalCount, EmptyFields>> {
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, NodeStatus, NodeStatusTotalCount, EmptyFields>> {
     let (node_list, has_previous, has_next) = {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.node_map();
@@ -67,9 +69,10 @@ async fn load(
         let (resource_usage, ping) =
             fetch_resource_usage_and_ping(agent_manager, hostname, is_manager).await;
 
+        let key = node.unique_key();
         connection.edges.push(Edge::new(
-            crate::graphql::encode_cursor(node.unique_key()),
-            NodeStatus::new(node, &resource_usage, ping, is_manager),
+            OpaqueCursor(key.to_vec()),
+            NodeStatus::new(node, resource_usage.as_ref(), ping, is_manager),
         ));
     }
     Ok(connection)
@@ -609,32 +612,32 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{nodeStatusList: {edges: [{node: {name: "test1"}}, {node: {name: "test2"}}, {node: {name: "test3"}}, {node: {name: "test4"}}, {node: {name: "test5"}}], pageInfo: {endCursor: "dGVzdDU="}}}"#
+            r#"{nodeStatusList: {edges: [{node: {name: "test1"}}, {node: {name: "test2"}}, {node: {name: "test3"}}, {node: {name: "test4"}}, {node: {name: "test5"}}], pageInfo: {endCursor: "WzExNiwxMDEsMTE1LDExNiw1M10"}}}"#
         );
 
         let res = schema
-            .execute(r#"{nodeStatusList(last:3,before:"dGVzdDM="){edges{node{name}},pageInfo{startCursor}}}"#)
+            .execute(r#"{nodeStatusList(last:3,before:"WzExNiwxMDEsMTE1LDExNiw1MV0"){edges{node{name}},pageInfo{startCursor}}}"#)
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{nodeStatusList: {edges: [{node: {name: "test1"}}, {node: {name: "test2"}}], pageInfo: {startCursor: "dGVzdDE="}}}"#
+            r#"{nodeStatusList: {edges: [{node: {name: "test1"}}, {node: {name: "test2"}}], pageInfo: {startCursor: "WzExNiwxMDEsMTE1LDExNiw0OV0"}}}"#
         );
 
         let res = schema
-            .execute(r#"{nodeStatusList(first:3,after:"dGVzdDM="){edges{node{name}},pageInfo{endCursor}}}"#)
+            .execute(r#"{nodeStatusList(first:3,after:"WzExNiwxMDEsMTE1LDExNiw1MV0"){edges{node{name}},pageInfo{endCursor}}}"#)
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{nodeStatusList: {edges: [{node: {name: "test4"}}, {node: {name: "test5"}}], pageInfo: {endCursor: "dGVzdDU="}}}"#
+            r#"{nodeStatusList: {edges: [{node: {name: "test4"}}, {node: {name: "test5"}}], pageInfo: {endCursor: "WzExNiwxMDEsMTE1LDExNiw1M10"}}}"#
         );
 
         let res = schema
-            .execute(r#"{nodeStatusList(last:2, after:"dGVzdDU="){edges{node{name}}}}"#)
+            .execute(r#"{nodeStatusList(last:2, after:"WzExNiwxMDEsMTE1LDExNiw1M10"){edges{node{name}}}}"#)
             .await;
         assert!(res.is_err());
 
         let res = schema
-            .execute(r#"{nodeStatusList(first:2, before:"dGVzdDU="){edges{node{name}}}}"#)
+            .execute(r#"{nodeStatusList(first:2, before:"WzExNiwxMDEsMTE1LDExNiw1M10"){edges{node{name}}}}"#)
             .await;
         assert!(res.is_err());
     }
