@@ -6,7 +6,7 @@ use std::{
 use anyhow::anyhow;
 use async_graphql::{
     connection::{Connection, EmptyFields},
-    Context, Enum, InputObject, Object, Result, SimpleObject, StringNumber,
+    Context, Enum, Error, ErrorExtensions, InputObject, Object, Result, SimpleObject, StringNumber,
 };
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use review_database::{
@@ -368,6 +368,10 @@ impl AccountMutation {
         }
     }
 
+    async fn test_endpoint_error_enum(&self, _ctx: &Context<'_>) -> Result<AuthPayload> {
+        Err(MyAccountError::ServerError.extend())
+    }
+
     /// Revokes the given access token
     #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
         .or(RoleGuard::new(super::Role::SecurityAdministrator))
@@ -584,6 +588,25 @@ fn get_client_ip(ctx: &Context<'_>) -> Option<SocketAddr> {
     ctx.data_opt::<SocketAddr>().copied()
 }
 
+#[derive(async_graphql::Enum, Copy, Clone, Eq, PartialEq, Serialize, Debug, thiserror::Error)]
+#[graphql]
+pub enum MyAccountError {
+    #[error("Could not find resource")]
+    NotFound,
+
+    #[error("Some Server error")]
+    ServerError,
+
+    #[error("Wrong request")]
+    BadRequest,
+}
+
+impl ErrorExtensions for MyAccountError {
+    fn extend(&self) -> async_graphql::Error {
+        Error::new(format!("{}", self))
+            .extend_with(|err, e: &mut async_graphql::ErrorExtensionValues| e.set("code", *self))
+    }
+}
 struct Account {
     inner: types::Account,
 }
@@ -825,6 +848,18 @@ mod tests {
         let mut account = map.get(name).unwrap().unwrap();
         account.update_last_signin_time();
         let _ = map.put(&account).is_ok();
+    }
+
+    #[tokio::test]
+    async fn test_print_sdl() {
+        let schema = TestSchema::new().await;
+
+        use std::fs::File;
+        use std::io::Write;
+        let mut file = File::create("sdl.graphql").unwrap();
+        file.write_all(schema.schema.sdl().as_bytes()).unwrap();
+
+        assert!(true);
     }
 
     #[tokio::test]

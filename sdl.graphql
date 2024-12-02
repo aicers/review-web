@@ -1,0 +1,4278 @@
+type Account {
+	username: String!
+	role: Role!
+	name: String!
+	department: String!
+	language: String
+	creationTime: DateTime!
+	lastSigninTime: DateTime
+	allowAccessFrom: [String!]
+	"""
+	The max sessions that can be run in parallel in string within the
+	representable range of `u32`.
+	"""
+	maxParallelSessions: StringNumber
+}
+
+type AccountConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [AccountEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Account!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type AccountEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Account!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type Agent {
+	node: Int!
+	key: String!
+	kind: AgentKind!
+	status: AgentStatus!
+	config: String
+	draft: String
+}
+
+input AgentDraftInput {
+	kind: AgentKind!
+	key: String!
+	status: AgentStatus!
+	draft: String
+}
+
+input AgentInput {
+	kind: AgentKind!
+	key: String!
+	status: AgentStatus!
+	config: String
+	draft: String
+}
+
+enum AgentKind {
+	UNSUPERVISED
+	SENSOR
+	SEMI_SUPERVISED
+	TIME_SERIES_GENERATOR
+}
+
+type AgentSnapshot {
+	kind: AgentKind!
+	storedStatus: AgentStatus!
+	"""
+	Serialized TOML string containing the configuration of the agent.
+	"""
+	config: String
+	"""
+	Serialized TOML string containing the draft configuration of the agent.
+	"""
+	draft: String
+}
+
+enum AgentStatus {
+	DISABLED
+	ENABLED
+	RELOAD_FAILED
+	UNKNOWN
+}
+
+type AllowNetwork {
+	id: ID!
+	name: String!
+	description: String!
+	networks: HostNetworkGroup!
+}
+
+type AllowNetworkConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [AllowNetworkEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [AllowNetwork!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type AllowNetworkEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: AllowNetwork!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input AllowNetworkInput {
+	name: String
+	networks: HostNetworkGroupInput
+	description: String
+}
+
+enum AttrCmpKind {
+	LESS
+	EQUAL
+	GREATER
+	LESS_OR_EQUAL
+	GREATER_OR_EQUAL
+	CONTAIN
+	OPEN_RANGE
+	CLOSE_RANGE
+	LEFT_OPEN_RANGE
+	RIGHT_OPEN_RANGE
+	NOT_EQUAL
+	NOT_CONTAIN
+	NOT_OPEN_RANGE
+	NOT_CLOSE_RANGE
+	NOT_LEFT_OPEN_RANGE
+	NOT_RIGHT_OPEN_RANGE
+}
+
+type AuthPayload {
+	token: String!
+	expirationTime: NaiveDateTime!
+}
+
+type BlockListBootp {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	lastTime: StringNumber!
+	op: Int!
+	htype: Int!
+	hops: Int!
+	xid: StringNumber!
+	ciaddr: String!
+	yiaddr: String!
+	siaddr: String!
+	giaddr: String!
+	chaddr: String!
+	sname: String!
+	file: String!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockListConn {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	connState: String!
+	duration: StringNumber!
+	service: String!
+	origBytes: StringNumber!
+	respBytes: StringNumber!
+	origPkts: StringNumber!
+	respPkts: StringNumber!
+	origL2Bytes: StringNumber!
+	respL2Bytes: StringNumber!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockListDceRpc {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	lastTime: StringNumber!
+	rtt: StringNumber!
+	namedPipe: String!
+	endpoint: String!
+	operation: String!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockListDhcp {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	lastTime: StringNumber!
+	msgType: Int!
+	ciaddr: String!
+	yiaddr: String!
+	siaddr: String!
+	giaddr: String!
+	subnetMask: String!
+	router: String!
+	domainNameServer: String!
+	reqIpAddr: String!
+	leaseTime: StringNumber!
+	serverId: String!
+	paramReqList: String!
+	message: String!
+	renewalTime: StringNumber!
+	rebindingTime: StringNumber!
+	classId: String!
+	clientIdType: Int!
+	clientId: String!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockListDns {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	lastTime: StringNumber!
+	query: String!
+	answer: [String!]!
+	transId: Int!
+	rtt: StringNumber!
+	qclass: Int!
+	qtype: Int!
+	rcode: Int!
+	aaFlag: Boolean!
+	tcFlag: Boolean!
+	rdFlag: Boolean!
+	raFlag: Boolean!
+	ttl: [Int!]!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockListFtp {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	lastTime: StringNumber!
+	user: String!
+	password: String!
+	command: String!
+	replyCode: String!
+	replyMsg: String!
+	dataPassive: Boolean!
+	dataOrigAddr: String!
+	dataRespAddr: String!
+	dataRespPort: Int!
+	file: String!
+	fileSize: StringNumber!
+	fileId: String!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockListHttp {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	"""
+	The last time of the event in string within the range representable
+	by a `i64`.
+	"""
+	lastTime: StringNumber!
+	method: String!
+	host: String!
+	uri: String!
+	referer: String!
+	version: String!
+	userAgent: String!
+	"""
+	The range of the request in string within the range representable
+	by a `usize`.
+	"""
+	requestLen: StringNumber!
+	"""
+	The range of the response in string within the range representable
+	by a `usize`.
+	"""
+	responseLen: StringNumber!
+	statusCode: Int!
+	statusMsg: String!
+	username: String!
+	password: String!
+	cookie: String!
+	contentEncoding: String!
+	contentType: String!
+	cacheControl: String!
+	origFilenames: [String!]!
+	origMimeTypes: [String!]!
+	respFilenames: [String!]!
+	respMimeTypes: [String!]!
+	postBody: [Int!]!
+	state: String!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockListKerberos {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	"""
+	The last time the event was seen in string wthin the range
+	representable by a `i64`.
+	"""
+	lastTime: StringNumber!
+	"""
+	The client time in string wthin the range representable
+	by a `i64`.
+	"""
+	clientTime: StringNumber!
+	"""
+	The server time in string wthin the range representable
+	by a `i64`.
+	"""
+	serverTime: StringNumber!
+	"""
+	The error code in string wthin the range representable
+	by a `u32`.
+	"""
+	errorCode: StringNumber!
+	clientRealm: String!
+	cnameType: Int!
+	clientName: [String!]!
+	realm: String!
+	snameType: Int!
+	serviceName: [String!]!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockListLdap {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	"""
+	The last time the event was seen in string wthin the range representable
+	by a `i64`.
+	"""
+	lastTime: StringNumber!
+	"""
+	The message id of the event in string wthin the range representable
+	by a `u32`.
+	"""
+	messageId: ID!
+	version: Int!
+	opcode: [String!]!
+	result: [String!]!
+	diagnosticMessage: [String!]!
+	object: [String!]!
+	argument: [String!]!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockListMqtt {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	lastTime: Int!
+	protocol: String!
+	version: Int!
+	clientId: String!
+	connackReason: Int!
+	subscribe: [String!]!
+	subackReason: [Int!]!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockListNfs {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	lastTime: Int!
+	readFiles: [String!]!
+	writeFiles: [String!]!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockListNtlm {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	lastTime: Int!
+	protocol: String!
+	username: String!
+	hostname: String!
+	domainname: String!
+	success: String!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockListRdp {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	lastTime: Int!
+	cookie: String!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockListSmb {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	lastTime: Int!
+	command: Int!
+	path: String!
+	service: String!
+	fileName: String!
+	fileSize: StringNumber!
+	resourceType: Int!
+	fid: Int!
+	createTime: Int!
+	accessTime: Int!
+	writeTime: Int!
+	changeTime: Int!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockListSmtp {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	lastTime: Int!
+	mailfrom: String!
+	date: String!
+	from: String!
+	to: String!
+	subject: String!
+	agent: String!
+	state: String!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockListSsh {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	lastTime: Int!
+	client: String!
+	server: String!
+	cipherAlg: String!
+	macAlg: String!
+	compressionAlg: String!
+	kexAlg: String!
+	hostKeyAlg: String!
+	hasshAlgorithms: String!
+	hassh: String!
+	hasshServerAlgorithms: String!
+	hasshServer: String!
+	clientShka: String!
+	serverShka: String!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockListTls {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	lastTime: StringNumber!
+	serverName: String!
+	alpnProtocol: String!
+	ja3: String!
+	version: String!
+	clientCipherSuites: [Int!]!
+	clientExtensions: [Int!]!
+	cipher: Int!
+	extensions: [Int!]!
+	ja3S: String!
+	serial: String!
+	subjectCountry: String!
+	subjectOrgName: String!
+	subjectCommonName: String!
+	validityNotBefore: StringNumber!
+	validityNotAfter: StringNumber!
+	subjectAltName: String!
+	issuerCountry: String!
+	issuerOrgName: String!
+	issuerOrgUnitName: String!
+	issuerCommonName: String!
+	lastAlert: Int!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type BlockNetwork {
+	id: ID!
+	name: String!
+	description: String!
+	networks: HostNetworkGroup!
+}
+
+type BlockNetworkConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [BlockNetworkEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [BlockNetwork!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type BlockNetworkEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: BlockNetwork!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input BlockNetworkInput {
+	name: String
+	networks: HostNetworkGroupInput
+	description: String
+}
+
+
+type Category {
+	id: ID!
+	name: String!
+}
+
+type CategoryConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [CategoryEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Category!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type CategoryEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Category!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type CertificatePayload {
+	parsedCertificate: [ParsedCertificate!]!
+}
+
+type Cluster {
+	name: String!
+	detector: Int!
+	labels: [String!]
+	signature: String!
+	size: Int!
+	score: Float
+	lastModificationTime: NaiveDateTime
+	id: ID!
+	category: Category!
+	events: [DateTime!]!
+	model: ModelDigest!
+	qualifier: Qualifier!
+	status: Status!
+}
+
+type ClusterConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [ClusterEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Cluster!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type ClusterEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Cluster!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type ClusterScore {
+	clusterId: ID!
+	clusterName: String!
+	score: Float!
+}
+
+type ClusterScoreSet {
+	topNSum: [ClusterScore!]!
+	topNRate: [ClusterScore!]!
+}
+
+type ClusterTrend {
+	clusterId: String!
+	series: [TimeCount!]!
+	"""
+	The cluster trend in a vector of string representable by a vector of
+	`usize`.
+	"""
+	trend: [StringNumber!]!
+	lines: [LineSegment!]!
+	"""
+	The number of ups of cluster trend in string represantable by a `
+	usize`.
+	"""
+	numberOfUps: StringNumber!
+	"""
+	The number of downs of cluster trend in string represantable by a
+	`usize`.
+	"""
+	numberOfDowns: StringNumber!
+	maximumSlope: Float!
+	minimumSlope: Float!
+	"""
+	The longest up span of cluster trend in string represantable by a
+	`usize`.
+	"""
+	longestUpSpan: StringNumber!
+	"""
+	The longest down span of cluster trend in string represantable by a
+	`usize`.
+	"""
+	longestDownSpan: StringNumber!
+}
+
+type ColumnTimeSeries {
+	"""
+	The column index of the time series in string within the representable
+	range of `usize`.
+	"""
+	columnIndex: StringNumber!
+	series: [TimeCount!]!
+	seriesTrend: [TimeCount!]!
+}
+
+type Confidence {
+	threatCategory: ThreatCategory!
+	threatKind: String!
+	confidence: Float!
+	weight: Float
+}
+
+input ConfidenceInput {
+	threatCategory: ThreatCategory!
+	threatKind: String!
+	confidence: Float!
+	weight: Float
+}
+
+type CryptocurrencyMiningPool {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	query: String!
+	answer: [String!]!
+	transId: Int!
+	rtt: StringNumber!
+	qclass: Int!
+	qtype: Int!
+	rcode: Int!
+	aaFlag: Boolean!
+	tcFlag: Boolean!
+	rdFlag: Boolean!
+	raFlag: Boolean!
+	ttl: [Int!]!
+	coins: [String!]!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type CsvColumnExtraConfig {
+	id: ID!
+	modelId: Int!
+	columnAlias: [String!]
+	columnDisplay: [Boolean!]
+	columnTopN: [Boolean!]
+	column1: [Boolean!]
+	columnN: [Boolean!]
+}
+
+type Customer {
+	"""
+	The ID of the customer.
+	"""
+	id: ID!
+	"""
+	The name of the customer.
+	"""
+	name: String!
+	"""
+	The description of the customer.
+	"""
+	description: String!
+	"""
+	The networks this customer owns.
+	"""
+	networks: [CustomerNetwork!]!
+	"""
+	The time when this customer was created.
+	"""
+	creationTime: DateTime!
+}
+
+type CustomerConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [CustomerEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Customer!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type CustomerEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Customer!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type CustomerNetwork {
+	"""
+	The name of the network.
+	"""
+	name: String!
+	"""
+	The description of the network.
+	"""
+	description: String!
+	"""
+	The type of the network.
+	"""
+	networkType: NetworkType!
+	"""
+	The network group of the network.
+	"""
+	networkGroup: HostNetworkGroup!
+}
+
+input CustomerNetworkInput {
+	name: String!
+	description: String!
+	networkType: NetworkType!
+	networkGroup: HostNetworkGroupInput!
+}
+
+input CustomerUpdateInput {
+	name: String
+	description: String
+	networks: [CustomerNetworkInput!]
+}
+
+type DataSource {
+	"""
+	The ID of the data source.
+	"""
+	id: ID!
+	"""
+	The name of the data source.
+	"""
+	name: String!
+	"""
+	The server_name of the data source.
+	"""
+	serverName: String!
+	"""
+	The socket address of the data source.
+	"""
+	address: String!
+	"""
+	The source for the data source in giganto.
+	"""
+	dataType: DataType!
+	"""
+	The policy of the data source.
+	"""
+	policy: ID
+	"""
+	The source for the data source in giganto.
+	"""
+	source: String!
+	"""
+	The description of the data source.
+	"""
+	description: String!
+	"""
+	The kind of the data source.
+	"""
+	kind: String
+}
+
+type DataSourceConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [DataSourceEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [DataSource!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type DataSourceEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: DataSource!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input DataSourceInsertInput {
+	name: String!
+	serverName: String
+	address: String
+	dataType: DataType!
+	source: String
+	kind: String
+	description: String!
+}
+
+input DataSourceUpdateInput {
+	name: String
+	serverName: String
+	address: String
+	dataType: DataType
+	source: String
+	kind: String
+	description: String
+}
+
+enum DataType {
+	"""
+	comma-separated values
+	"""
+	CSV
+	"""
+	line-based text data
+	"""
+	LOG
+	"""
+	time series data
+	"""
+	TIME_SERIES
+}
+
+"""
+Implement the DateTime<Utc> scalar
+
+The input/output is a string in RFC3339 format.
+"""
+scalar DateTime
+
+type DnsCovertChannel {
+	time: DateTime!
+	source: String!
+	sessionEndTime: DateTime!
+	srcAddr: String!
+	srcPort: Int!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	dstAddr: String!
+	dstPort: Int!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	proto: Int!
+	query: String!
+	answer: [String!]!
+	transId: Int!
+	rtt: StringNumber!
+	qclass: Int!
+	qtype: Int!
+	rcode: Int!
+	aaFlag: Boolean!
+	tcFlag: Boolean!
+	rdFlag: Boolean!
+	raFlag: Boolean!
+	ttl: [Int!]!
+	confidence: Float!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type DomainGenerationAlgorithm {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	host: String!
+	method: String!
+	uri: String!
+	referer: String!
+	version: String!
+	userAgent: String!
+	"""
+	The length of the request in string within the range representable
+	by a `usize`.
+	"""
+	requestLen: StringNumber!
+	"""
+	The length of the response in string within the range representable
+	by a `usize`.
+	"""
+	responseLen: StringNumber!
+	statusCode: Int!
+	statusMsg: String!
+	username: String!
+	password: String!
+	cookie: String!
+	contentEncoding: String!
+	contentType: String!
+	cacheControl: String!
+	origFilenames: [String!]!
+	origMimeTypes: [String!]!
+	respFilenames: [String!]!
+	respMimeTypes: [String!]!
+	postBody: [Int!]!
+	state: String!
+	confidence: Float!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type ElementCount {
+	value: String!
+	"""
+	The count of element in string representable by a `i64`.
+	"""
+	count: StringNumber!
+}
+
+type Endpoint {
+	direction: TrafficDirection
+	"""
+	Returns the network ID of the endpoint.
+	"""
+	networkId: ID
+	custom: HostNetworkGroup
+}
+
+"""
+An endpoint of a network flow. One of `predefined`, `side`, and `custom` is
+required. Set `negate` to `true` to negate the endpoint. By default, the
+endpoint is not negated.
+"""
+input EndpointInput {
+	direction: TrafficDirection
+	predefined: ID
+	custom: HostNetworkGroupInput
+}
+
+"""
+An event to report.
+"""
+union Event = DnsCovertChannel | HttpThreat | RdpBruteForce | RepeatedHttpSessions | TorConnection | DomainGenerationAlgorithm | FtpBruteForce | FtpPlainText | PortScan | MultiHostPortScan | ExternalDdos | NonBrowser | LdapBruteForce | LdapPlainText | CryptocurrencyMiningPool | BlockListConn | BlockListDns | BlockListDceRpc | BlockListFtp | BlockListHttp | BlockListKerberos | BlockListLdap | BlockListMqtt | BlockListNfs | BlockListNtlm | BlockListRdp | BlockListSmb | BlockListSmtp | BlockListSsh | BlockListTls | WindowsThreat | NetworkThreat | ExtraThreat | LockyRansomware | BlockListBootp | BlockListDhcp | SuspiciousTlsTraffic
+
+type EventConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [EventEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Event!]!
+	"""
+	The total number of events.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type EventEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Event!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input EventListFilterInput {
+	start: DateTime
+	end: DateTime
+	customers: [ID!]
+	endpoints: [EndpointInput!]
+	directions: [FlowKind!]
+	source: String
+	destination: String
+	keywords: [String!]
+	networkTags: [ID!]
+	sensors: [ID!]
+	os: [ID!]
+	devices: [ID!]
+	hostNames: [String!]
+	userIds: [String!]
+	userNames: [String!]
+	userDepartments: [String!]
+	countries: [String!]
+	categories: [Int!]
+	levels: [Int!]
+	kinds: [String!]
+	learningMethods: [LearningMethod!]
+	confidence: Float
+	triagePolicies: [ID!]
+}
+
+type ExternalDdos {
+	time: DateTime!
+	srcAddrs: [String!]!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountries: [String!]!
+	srcCustomers: [Customer]!
+	srcNetwork: Network
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	proto: Int!
+	startTime: DateTime!
+	lastTime: DateTime!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type ExtraThreat {
+	time: DateTime!
+	source: String!
+	service: String!
+	content: String!
+	dbName: String!
+	"""
+	The rule id of the event in string wthin the range representable
+	by a `u32`.
+	"""
+	ruleId: ID!
+	matchedTo: String!
+	"""
+	The cluster id of the event in string wthin the range representable
+	by a `usize`.
+	"""
+	clusterId: ID!
+	attackKind: String!
+	confidence: Float!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type Filter {
+	name: String!
+	directions: [FlowKind!]
+	keywords: [String!]
+	networkTags: [ID!]
+	customers: [ID!]
+	endpoints: [Endpoint!]
+	sensors: [ID!]
+	os: [ID!]
+	devices: [ID!]
+	hostNames: [String!]
+	userIds: [String!]
+	userNames: [String!]
+	userDepartments: [String!]
+	countries: [String!]
+	categories: [Int!]
+	levels: [Int!]
+	kinds: [String!]
+	learningMethods: [LearningMethod!]
+	confidence: Float
+}
+
+input FilterInput {
+	name: String!
+	directions: [FlowKind!]
+	keywords: [String!]
+	networkTags: [ID!]
+	customers: [ID!]
+	endpoints: [EndpointInput!]
+	sensors: [ID!]
+	os: [ID!]
+	devices: [ID!]
+	hostNames: [String!]
+	userIds: [String!]
+	userNames: [String!]
+	userDepartments: [String!]
+	countries: [String!]
+	categories: [Int!]
+	levels: [Int!]
+	kinds: [String!]
+	learningMethods: [LearningMethod!]
+	confidence: Float
+}
+
+
+"""
+Traffic flow direction.
+"""
+enum FlowKind {
+	INBOUND
+	OUTBOUND
+	INTERNAL
+}
+
+type FtpBruteForce {
+	time: DateTime!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	userList: [String!]!
+	startTime: DateTime!
+	lastTime: DateTime!
+	isInternal: Boolean!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type FtpPlainText {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	user: String!
+	password: String!
+	command: String!
+	replyCode: String!
+	replyMsg: String!
+	dataPassive: Boolean!
+	dataOrigAddr: String!
+	dataRespAddr: String!
+	dataRespPort: Int!
+	file: String!
+	fileSize: StringNumber!
+	fileId: String!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type Giganto {
+	status: AgentStatus!
+	draft: String
+}
+
+input GigantoInput {
+	status: AgentStatus!
+	draft: String
+}
+
+type HostNetworkGroup {
+	hosts: [String!]!
+	networks: [String!]!
+	ranges: [IpRange!]!
+}
+
+input HostNetworkGroupInput {
+	hosts: [String!]!
+	networks: [String!]!
+	ranges: [IpRangeInput!]!
+}
+
+type HttpThreat {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	method: String!
+	host: String!
+	content: String!
+	uri: String!
+	referer: String!
+	version: String!
+	userAgent: String!
+	"""
+	The length of the request in string within the range representable
+	by a `usize`.
+	"""
+	requestLen: StringNumber!
+	"""
+	The length of the response in string within the range representable
+	by a `usize`.
+	"""
+	responseLen: StringNumber!
+	statusCode: Int!
+	statusMsg: String!
+	username: String!
+	password: String!
+	cookie: String!
+	contentEncoding: String!
+	contentType: String!
+	cacheControl: String!
+	origFilenames: [String!]!
+	origMimeTypes: [String!]!
+	respFilenames: [String!]!
+	respMimeTypes: [String!]!
+	postBody: [Int!]!
+	state: String!
+	dbName: String!
+	"""
+	The rule id of the event in string wthin the range representable
+	by a `u32`.
+	"""
+	ruleId: ID!
+	matchedTo: String!
+	"""
+	The cluster id of the event in string wthin the range representable
+	by a `usize`.
+	"""
+	clusterId: ID!
+	attackKind: String!
+	confidence: Float!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+
+
+enum Interval {
+	FIVE_MINUTES
+	TEN_MINUTES
+	FIFTEEN_MINUTES
+	THIRTY_MINUTES
+	ONE_HOUR
+}
+
+type IpLocation {
+	latitude: Float
+	longitude: Float
+	country: String
+	region: String
+	city: String
+	isp: String
+	domain: String
+	zipCode: String
+	timeZone: String
+	netSpeed: String
+	iddCode: String
+	areaCode: String
+	weatherStationCode: String
+	weatherStationName: String
+	mcc: String
+	mnc: String
+	mobileBrand: String
+	elevation: String
+	usageType: String
+}
+
+type IpLocationItem {
+	address: String!
+	location: IpLocation!
+}
+
+type IpRange {
+	start: String!
+	end: String!
+}
+
+input IpRangeInput {
+	start: String!
+	end: String!
+}
+
+"""
+A scalar that can represent any JSON value.
+"""
+scalar JSON
+
+enum Kind {
+	CONN
+	DNS
+	HTTP
+	RDP
+}
+
+type LdapBruteForce {
+	time: DateTime!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	userPwList: [String!]!
+	startTime: DateTime!
+	lastTime: DateTime!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type LdapPlainText {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	"""
+	The message id of the event in string wthin the range representable
+	by a `u32`.
+	"""
+	messageId: ID!
+	version: Int!
+	opcode: [String!]!
+	result: [String!]!
+	diagnosticMessage: [String!]!
+	object: [String!]!
+	argument: [String!]!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+"""
+Learning method.
+"""
+enum LearningMethod {
+	UNSUPERVISED
+	SEMI_SUPERVISED
+}
+
+type LineSegment {
+	firstIndex: Int!
+	lastIndex: Int!
+	regOriginal: Regression!
+	regTrend: Regression!
+}
+
+type LockyRansomware {
+	time: DateTime!
+	source: String!
+	sessionEndTime: DateTime!
+	srcAddr: String!
+	srcPort: Int!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	dstAddr: String!
+	dstPort: Int!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	proto: Int!
+	query: String!
+	answer: [String!]!
+	transId: Int!
+	rtt: StringNumber!
+	qclass: Int!
+	qtype: Int!
+	rcode: Int!
+	aaFlag: Boolean!
+	tcFlag: Boolean!
+	rdFlag: Boolean!
+	raFlag: Boolean!
+	ttl: [Int!]!
+	confidence: Float!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type ModelDigest {
+	id: ID!
+	name: String!
+	dataSource: DataSource!
+}
+
+type ModelDigestConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [ModelDigestEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [ModelDigest!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type ModelDigestEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: ModelDigest!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type ModelIndicator {
+	"""
+	The name of the model indicator.
+	"""
+	name: String!
+	"""
+	The description of the model indicator.
+	"""
+	description: String!
+	"""
+	The model ID of the model indicator.
+	"""
+	modelId: Int!
+	"""
+	The size of the model indicator in string within the representable
+	range of a `usize`
+	"""
+	size: StringNumber!
+	"""
+	The last modified time of the model indicator.
+	"""
+	lastModified: DateTime!
+}
+
+type MultiHostPortScan {
+	time: DateTime!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	dstAddrs: [String!]!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountries: [String!]!
+	dstCustomers: [Customer]!
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	startTime: DateTime!
+	lastTime: DateTime!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+"""
+A set of mutations defined in the schema.
+
+This is exposed only for [`Schema`], and not used directly.
+"""
+type Mutation {
+	"""
+	Creates a new account
+	"""
+	insertAccount(username: String!, password: String!, role: Role!, name: String!, department: String!, language: String, allowAccessFrom: [String!], maxParallelSessions: Int): String!
+	"""
+	Resets system admin `password` for `username`.
+	
+	# Errors
+	
+	Returns an error if `username` is invalid,
+	or if the `account.role != Role::SystemAdministrator`.
+	"""
+	resetAdminPassword(username: String!, password: String!): String!
+	"""
+	Removes accounts, returning the usernames that no longer exist.
+	
+	On error, some usernames may have been removed.
+	"""
+	removeAccounts(usernames: [String!]!): [String!]!
+	"""
+	Updates an existing account.
+	"""
+	updateAccount(username: String!, password: String, role: UpdateRole, name: UpdateName, department: UpdateDepartment, language: UpdateLanguage, allowAccessFrom: UpdateAllowAccessFrom, maxParallelSessions: UpdateMaxParallelSessions): String!
+	"""
+	Authenticates with the given username and password.
+	
+	If the `lastSigninTime` value of the `account` is `None`, the operation will fail, and
+	it should be guided to call `signInWithNewPassword` GraphQL API.
+	
+	# Errors
+	
+	Returns `Err` if the password is invalid, this is the first sign-in attempt, the access
+	doesn't originate from a permitted IP address, or the number of sessions exceeds the
+	maximum limit.
+	"""
+	signIn(username: String!, password: String!): AuthPayload!
+	"""
+	Authenticates with the given username and password, then updates to the new password.
+	
+	# Errors
+	
+	Returns `Err` if the password or the new password are invalid, the access
+	doesn't originate from a permitted IP address, or the number of sessions exceeds the
+	maximum limit.
+	"""
+	signInWithNewPassword(username: String!, password: String!, newPassword: String!): AuthPayload!
+	testEndpointErrorEnum: AuthPayload!
+	"""
+	Revokes the given access token
+	"""
+	signOut(token: String!): String!
+	"""
+	Obtains a new access token with renewed expiration time. The given
+	access token will be revoked.
+	"""
+	refreshToken(token: String!): AuthPayload!
+	"""
+	Updates the expiration time for signing in, specifying the duration in
+	seconds. The `time` parameter specifies the new expiration time in
+	seconds and must be a positive integer.
+	"""
+	updateExpirationTime(time: Int!): Int!
+	"""
+	Updates only the user's language setting.
+	"""
+	updateLanguage(username: String!, language: UpdateLanguage!): String
+	"""
+	Inserts a new blocked network, returning the ID of the new black point.
+	"""
+	insertBlockNetwork(name: String!, networks: HostNetworkGroupInput!, description: String!): ID!
+	"""
+	Removes blocked networks, returning the IDs that no longer exist.
+	
+	On error, some blocked networks may have been removed.
+	"""
+	removeBlockNetworks(ids: [ID!]!): [String!]!
+	"""
+	Updates the given blocked network.
+	"""
+	updateBlockNetwork(id: ID!, old: BlockNetworkInput!, new: BlockNetworkInput!): ID!
+	"""
+	Broadcast the block networks to all Hogs.
+	"""
+	applyBlockNetworks: [String!]!
+	"""
+	Adds a new category.
+	"""
+	addCategory(name: String!): ID!
+	"""
+	Updates the given category's name.
+	"""
+	updateCategory(id: ID!, name: String!): ID!
+	"""
+	Updates the server certificate.
+	"""
+	updateCertificate(cert: String!, key: String!): CertificatePayload!
+	"""
+	Updates the given cluster.
+	"""
+	updateCluster(id: ID!, category: ID, qualifier: ID, status: ID): ID!
+	"""
+	Inserts a new customer, returning the ID of the new customer.
+	"""
+	insertCustomer(name: String!, description: String!, networks: [CustomerNetworkInput!]!): ID!
+	"""
+	Removes customers, returning the customer names that no longer exist.
+	
+	On error, some customers may have been removed.
+	"""
+	removeCustomers(ids: [ID!]!): [String!]!
+	"""
+	Updates the given customer.
+	"""
+	updateCustomer(id: ID!, old: CustomerUpdateInput!, new: CustomerUpdateInput!): ID!
+	"""
+	Inserts a new data source, returning the ID of the new data source.
+	"""
+	insertDataSource(input: DataSourceInsertInput!): ID!
+	"""
+	Removes a data source, returning the name of the removed data source if
+	it existed.
+	"""
+	removeDataSource(id: ID!): String!
+	"""
+	Updates the given data source.
+	"""
+	updateDataSource(id: ID!, old: DataSourceUpdateInput!, new: DataSourceUpdateInput!): ID!
+	backup(numOfBackupsToKeep: Int!): Boolean!
+	restoreFromLatestBackup: Boolean!
+	"""
+	Inserts a new filter to the current account.
+	"""
+	insertFilter(name: String!, directions: [FlowKind!], keywords: [String!], networkTags: [ID!], customers: [ID!], endpoints: [EndpointInput!], sensors: [ID!], os: [ID!], devices: [ID!], hostNames: [String!], userIds: [String!], userNames: [String!], userDepartments: [String!], countries: [String!], categories: [Int!], levels: [Int!], kinds: [String!], learningMethods: [LearningMethod!], confidence: Float): String!
+	"""
+	Removes filters, returning the filter names that no longer exist.
+	
+	On error, some filters may have been removed.
+	"""
+	removeFilters(names: [String!]!): [String!]!
+	"""
+	Updates the given filter, returning the filter name that was updated.
+	"""
+	replaceFilter(old: FilterInput!, new: FilterInput!): String!
+	"""
+	Inserts a new Indicator, overwriting any existing Indicator if same name and version exist already.
+	Returns the inserted db's name and version.
+	"""
+	insertIndicator(name: String!, dbfile: String!): String!
+	"""
+	Removes Indicator, returning the db's name and version that no longer exist.
+	
+	On error, some Indicators may have been removed.
+	"""
+	removeIndicator(names: [String!]!): [String!]!
+	"""
+	Updates the given indicator, returning the indicator name that was updated.
+	
+	Will return error if it failed to access database
+	Will return error if it failed to delete or add indicator into database
+	"""
+	updateIndicator(name: String!, new: String!): String!
+	addCsvColumnExtra(model: Int!, columnAlias: [String!], columnDisplay: [Boolean!], columnTopN: [Boolean!], column1: [Boolean!], columnN: [Boolean!]): ID!
+	updateCsvColumnExtra(id: ID!, columnAlias: [String!], columnDisplay: [Boolean!], columnTopN: [Boolean!], column1: [Boolean!], columnN: [Boolean!]): ID!
+	"""
+	Inserts a new network, returning the ID of the network.
+	"""
+	insertNetwork(name: String!, description: String!, networks: HostNetworkGroupInput!, customerIds: [Int!]!, tagIds: [Int!]!): ID!
+	"""
+	Removes networks, returning the networks names that no longer exist.
+	
+	On error, some networks may have been removed.
+	"""
+	removeNetworks(ids: [ID!]!): [String!]!
+	"""
+	Updates the given network.
+	"""
+	updateNetwork(id: ID!, old: NetworkUpdateInput!, new: NetworkUpdateInput!): ID!
+	"""
+	Reboots the node with the given hostname as an argument.
+	"""
+	nodeReboot(hostname: String!): String!
+	nodeShutdown(hostname: String!): String!
+	"""
+	Applies the draft configuration to the node with the given ID.
+	
+	This function updates the node's `name` with `name_draft`, `profile` with `profile_draft`,
+	and `config` values of agents with their `draft` values.
+	
+	Returns success as long as the database update is successful, regardless of the outcome of
+	notifying agents or broadcasting customer ID changes.
+	"""
+	applyNode(id: ID!, node: NodeInput!): ID!
+	"""
+	Inserts a new node, returning the ID of the new node.
+	"""
+	insertNode(name: String!, customerId: ID!, description: String!, hostname: String!, agents: [AgentInput!]!, giganto: GigantoInput): ID!
+	"""
+	Removes nodes, returning the node keys that no longer exist.
+	
+	On error, some nodes may have been removed.
+	"""
+	removeNodes(ids: [ID!]!): [String!]!
+	"""
+	Updates the given node, returning the node ID that was updated.
+	"""
+	updateNodeDraft(id: ID!, old: NodeInput!, new: NodeDraftInput!): ID!
+	preserveOutliers(input: [PreserveOutliersInput!]!): [PreserveOutliersOutput!]!
+	"""
+	Adds a new qualifier.
+	"""
+	addQualifier(description: String!): ID!
+	"""
+	Updates the given qualifier's description.
+	"""
+	updateQualifier(id: ID!, description: String!): ID!
+	"""
+	Inserts a new sampling policy, returning the ID of the new node.
+	"""
+	insertSamplingPolicy(name: String!, kind: Kind!, interval: Interval!, period: Period!, offset: Int!, srcIp: String, dstIp: String, node: String, column: Int, immutable: Boolean!): ID!
+	"""
+	Removes sampling policies, returning the IDs that no longer exist.
+	
+	On error, some sampling policies may have been removed.
+	"""
+	removeSamplingPolicies(ids: [ID!]!): [String!]!
+	"""
+	Updates an existing sampling policy.
+	"""
+	updateSamplingPolicy(id: ID!, old: SamplingPolicyInput!, new: SamplingPolicyInput!): ID!
+	"""
+	Adds a new status.
+	"""
+	addStatus(description: String!): ID!
+	"""
+	Updates the given status's description.
+	"""
+	updateStatus(id: ID!, description: String!): ID!
+	"""
+	Inserts a new event tag, returning the ID of the new tag.
+	"""
+	insertEventTag(name: String!): ID!
+	"""
+	Removes an event tag for the given ID, returning the name of the removed
+	tag.
+	"""
+	removeEventTag(id: ID!): String
+	"""
+	Updates the name of an event tag for the given ID.
+	
+	It returns `true` if the name was updated, `false` if the tag was
+	different or not found.
+	"""
+	updateEventTag(id: ID!, old: String!, new: String!): Boolean!
+	"""
+	Inserts a new network tag, returning the ID of the new tag.
+	"""
+	insertNetworkTag(name: String!): ID!
+	"""
+	Removes a network tag for the given ID, returning the name of the removed
+	tag.
+	"""
+	removeNetworkTag(id: ID!): String
+	"""
+	Updates the name of a network tag for the given ID.
+	
+	It returns `true` if the name was updated, `false` if the tag was
+	different or not found.
+	"""
+	updateNetworkTag(id: ID!, old: String!, new: String!): Boolean!
+	"""
+	Inserts a new workflow tag, returning the ID of the new tag.
+	"""
+	insertWorkflowTag(name: String!): ID!
+	"""
+	Removes a workflow tag for the given ID, returning the name of the removed
+	tag.
+	"""
+	removeWorkflowTag(id: ID!): String
+	"""
+	Updates the name of a workflow tag for the given ID.
+	
+	It returns `true` if the name was updated, `false` if the tag was
+	different or not found.
+	"""
+	updateWorkflowTag(id: ID!, old: String!, new: String!): Boolean!
+	"""
+	Inserts a new template, overwriting any existing template with the same
+	name.
+	"""
+	insertTemplate(structured: StructuredClusteringTemplateInput, unstructured: UnstructuredClusteringTemplateInput): String!
+	"""
+	Removes a template, returning the name of the removed template if it no
+	longer exists.
+	"""
+	removeTemplate(name: String!): String!
+	"""
+	Updates the given template.
+	"""
+	updateTemplate(oldStructured: StructuredClusteringTemplateInput, oldUnstructured: UnstructuredClusteringTemplateInput, newStructured: StructuredClusteringTemplateInput, newUnstructured: UnstructuredClusteringTemplateInput): Boolean!
+	"""
+	Deletes all existing entries and add new IP address(es)
+	"""
+	updateTorExitNodeList(ipAddresses: [String!]!): [String!]!
+	"""
+	Inserts a new Tidb, overwriting any existing database with same name
+	`dbfile` should be encoded string of `Tidb` instance that is serialized
+	with `bincode::DefaultOptions::new().serialize`.
+	Returns name and version.
+	"""
+	insertTidb(dbfile: String!): TidbOutput!
+	"""
+	Removes Tidb, returning the name and version of database that removed
+	
+	On error, some Tidbs may have been removed.
+	"""
+	removeTidb(names: [String!]!): [String!]!
+	"""
+	Updates the given Tidb, returning the Tidb ID that was updated.
+	`new` should be encoded string of `Tidb` instance that is serialized
+	with `bincode::DefaultOptions::new().serialize`.
+	
+	Will return error if old and new tidb name is different
+	"""
+	updateTidb(name: String!, new: String!): TidbOutput!
+	"""
+	Inserts a new triage policy, returning the ID of the new triage.
+	"""
+	insertTriagePolicy(name: String!, tiDb: [TiInput!]!, packetAttr: [PacketAttrInput!]!, confidence: [ConfidenceInput!]!, response: [ResponseInput!]!): ID!
+	"""
+	Removes triage policies, returning the IDs that no longer exist.
+	
+	On error, some triage policies may have been removed.
+	"""
+	removeTriagePolicies(ids: [ID!]!): [String!]!
+	"""
+	Updates an existing triage policy.
+	"""
+	updateTriagePolicy(id: ID!, old: TriagePolicyInput!, new: TriagePolicyInput!): ID!
+	"""
+	Inserts a new triage response, returning the ID of the new node.
+	"""
+	insertTriageResponse(source: String!, time: DateTime!, tagIds: [Int!]!, remarks: String!): ID!
+	"""
+	Removes triage responses, returning the IDs that no longer exist.
+	
+	On error, some triage responses may have been removed.
+	"""
+	removeTriageResponses(ids: [ID!]!): [String!]!
+	"""
+	Updates an existing triage response.
+	"""
+	updateTriageResponse(id: ID!, old: TriageResponseInput!, new: TriageResponseInput!): ID!
+	"""
+	Inserts a new trusted domain, returning the last remarks if it was set.
+	"""
+	insertTrustedDomain(name: String!, remarks: String!): String!
+	"""
+	Removes a trusted domain, returning the old value if it existed.
+	"""
+	removeTrustedDomain(name: String!): String!
+	"""
+	inserts traffic filtering rules
+	"""
+	insertTrafficFilterRules(agent: String!, network: String!, tcpPorts: [Int!], udpPorts: [Int!], description: String): Int!
+	"""
+	updates traffic filtering rules
+	"""
+	updateTrafficFilterRules(agent: String!, network: String!, tcpPorts: [Int!], udpPorts: [Int!], description: String): Int!
+	"""
+	clears traffic filtering rules
+	"""
+	clearTrafficFilterRules(agent: String!): Int!
+	"""
+	removes traffic filtering rules from the agent
+	"""
+	removeTrafficFilterRules(agent: String!, networks: [String!]!): Int!
+	"""
+	applies traffic filtering rules to the agents if it is connected
+	"""
+	applyTrafficFilterRules(agents: [String!]!): [String!]!
+	"""
+	Inserts a new allowed network, returning the ID of the new allowed network.
+	"""
+	insertAllowNetwork(name: String!, networks: HostNetworkGroupInput!, description: String!): ID!
+	"""
+	Removes allowed networks, returning the IDs that no longer exist.
+	
+	On error, some allowed networks may have been removed.
+	"""
+	removeAllowNetworks(ids: [ID!]!): [String!]!
+	"""
+	Updates the given allowed network.
+	"""
+	updateAllowNetwork(id: ID!, old: AllowNetworkInput!, new: AllowNetworkInput!): ID!
+	"""
+	Broadcast the allowed networks to all Hogs.
+	"""
+	applyAllowNetworks: [String!]!
+	"""
+	Inserts a new trusted user agents, Returns true if the insertion was successful.
+	"""
+	insertTrustedUserAgents(userAgents: [String!]!): Boolean!
+	"""
+	Removes a trusted user agents, Returns true if the deletion was successful.
+	"""
+	removeTrustedUserAgents(userAgents: [String!]!): Boolean!
+	"""
+	Updates the given trusted user agent.
+	"""
+	updateTrustedUserAgent(old: String!, new: String!): Boolean!
+	"""
+	Broadcast the trusted user agent list to all Hogs.
+	"""
+	applyTrustedUserAgent: Boolean!
+}
+
+enum MyAccountError {
+	NOT_FOUND
+	SERVER_ERROR
+	BAD_REQUEST
+}
+
+"""
+ISO 8601 combined date and time without timezone.
+
+# Examples
+
+* `2015-07-01T08:59:60.123`,
+"""
+scalar NaiveDateTime
+
+type Network {
+	id: ID!
+	name: String!
+	description: String!
+	networks: HostNetworkGroup!
+	customerList: [Customer!]!
+	tagIds: [ID!]!
+	creationTime: DateTime!
+}
+
+type NetworkConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [NetworkEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Network!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type NetworkEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Network!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type NetworkThreat {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	srcPort: Int!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	dstAddr: String!
+	dstPort: Int!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	proto: Int!
+	service: String!
+	"""
+	The last time the event was seen in string within the representable
+	range of `i64`.
+	"""
+	lastTime: StringNumber!
+	content: String!
+	dbName: String!
+	"""
+	The rule ID of the event in string within the representable
+	range of `u32`.
+	"""
+	ruleId: ID!
+	matchedTo: String!
+	"""
+	The cluster ID of the event in string within the representable
+	range of `usize`.
+	"""
+	clusterId: ID!
+	attackKind: String!
+	confidence: Float!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+enum NetworkType {
+	INTRANET
+	EXTRANET
+	GATEWAY
+}
+
+input NetworkUpdateInput {
+	name: String
+	description: String
+	networks: HostNetworkGroupInput
+	customerIds: [Int!]
+	tagIds: [Int!]
+}
+
+type Node {
+	id: ID!
+	name: String!
+	nameDraft: String
+	profile: NodeProfile
+	profileDraft: NodeProfile
+	agents: [Agent!]!
+	giganto: Giganto
+}
+
+type NodeConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [NodeEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Node!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+input NodeDraftInput {
+	nameDraft: String!
+	profileDraft: NodeProfileInput
+	agents: [AgentDraftInput!]
+	giganto: GigantoInput
+}
+
+"""
+An edge in a connection.
+"""
+type NodeEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Node!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input NodeInput {
+	name: String!
+	nameDraft: String
+	profile: NodeProfileInput
+	profileDraft: NodeProfileInput
+	agents: [AgentInput!]!
+	giganto: GigantoInput
+}
+
+type NodeProfile {
+	customerId: ID!
+	description: String!
+	hostname: String!
+}
+
+input NodeProfileInput {
+	customerId: ID!
+	description: String!
+	hostname: String!
+}
+
+type NodeStatus {
+	"""
+	The name of the node.
+	
+	This is the user-defined name for the node, which may or may not be the same as the node's
+	hostname. The name should not be confused with the node's hostname, even though they could
+	be identical by coincidence.
+	"""
+	name: String!
+	nameDraft: String
+	profile: NodeProfile
+	profileDraft: NodeProfile
+	"""
+	The draft of the Giganto module, associated with the node.
+	"""
+	gigantoDraft: String
+	"""
+	The average CPU usage in percent.
+	"""
+	cpuUsage: Float
+	"""
+	Indicates whether the Manager server is running on this node or not.
+	"""
+	manager: Boolean!
+	"""
+	The list of agents running on the node. `AgentSnapshot` contains the agent's kind, stored
+	status in the database, and config and draft configurations.
+	"""
+	agents: [AgentSnapshot!]!
+	id: ID!
+	"""
+	The RAM size in bytes within the range representable by a `u64`.
+	"""
+	totalMemory: StringNumber
+	"""
+	The amount of used RAM in bytes within the range representable by a `u64`.
+	"""
+	usedMemory: StringNumber
+	"""
+	The total disk space in bytes within the range representable by a `u64`.
+	"""
+	totalDiskSpace: StringNumber
+	"""
+	The total disk space in bytes that is currently used within the range representable by a
+	`u64`.
+	"""
+	usedDiskSpace: StringNumber
+	"""
+	The round-trip time to the node in seconds.
+	"""
+	ping: Float
+}
+
+type NodeStatusConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [NodeStatusEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [NodeStatus!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type NodeStatusEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: NodeStatus!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type NonBrowser {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	host: String!
+	method: String!
+	uri: String!
+	referer: String!
+	version: String!
+	userAgent: String!
+	"""
+	The length of the request in string within the range representable
+	by a `usize`.
+	"""
+	requestLen: StringNumber!
+	"""
+	The length of the response in string within the range representable
+	by a `usize`.
+	"""
+	responseLen: StringNumber!
+	statusCode: Int!
+	statusMsg: String!
+	username: String!
+	password: String!
+	cookie: String!
+	contentEncoding: String!
+	contentType: String!
+	cacheControl: String!
+	origFilenames: [String!]!
+	origMimeTypes: [String!]!
+	respFilenames: [String!]!
+	respMimeTypes: [String!]!
+	postBody: [Int!]!
+	state: String!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type Outlier {
+	size: Int!
+	modelId: Int!
+	id: ID!
+	events: [DateTime!]!
+	model: ModelDigest!
+}
+
+type OutlierConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [OutlierEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Outlier!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+input OutlierDistanceRange {
+	start: Float
+	end: Float
+}
+
+"""
+An edge in a connection.
+"""
+type OutlierEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Outlier!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input OutlierTimeRange {
+	start: DateTime
+	end: DateTime
+}
+
+type PacketAttr {
+	attrName: String!
+	valueKind: ValueKind!
+	cmpKind: AttrCmpKind!
+	firstValue: [Int!]!
+	secondValue: [Int!]
+	weight: Float
+}
+
+input PacketAttrInput {
+	attrName: String!
+	valueKind: ValueKind!
+	cmpKind: AttrCmpKind!
+	firstValue: [Int!]!
+	secondValue: [Int!]
+	weight: Float
+}
+
+"""
+Information about pagination in a connection
+"""
+type PageInfo {
+	"""
+	When paginating backwards, are there more items?
+	"""
+	hasPreviousPage: Boolean!
+	"""
+	When paginating forwards, are there more items?
+	"""
+	hasNextPage: Boolean!
+	"""
+	When paginating backwards, the cursor to continue.
+	"""
+	startCursor: String
+	"""
+	When paginating forwards, the cursor to continue.
+	"""
+	endCursor: String
+}
+
+type ParsedCertificate {
+	commonName: String
+	subjectAlternativeName: [String!]
+}
+
+enum Period {
+	SIX_HOURS
+	TWELVE_HOURS
+	ONE_DAY
+}
+
+type PortScan {
+	time: DateTime!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPorts: [Int!]!
+	proto: Int!
+	startTime: DateTime!
+	lastTime: DateTime!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+input PreserveOutliersInput {
+	id: Int!
+	modelId: Int!
+	timestamp: Int!
+	rank: Int!
+	source: String!
+}
+
+type PreserveOutliersOutput {
+	id: ID!
+	modelId: Int!
+	timestamp: StringNumber!
+	source: String!
+}
+
+type Process {
+	user: String!
+	cpuUsage: String!
+	memUsage: String!
+	startTime: DateTime!
+	command: String!
+}
+
+type Qualifier {
+	id: ID!
+	description: String!
+}
+
+type QualifierConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [QualifierEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Qualifier!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type QualifierEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Qualifier!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+A set of queries defined in the schema.
+"""
+type Query {
+	"""
+	Looks up an account by the given username.
+	"""
+	account(username: String!): Account!
+	"""
+	A list of accounts.
+	"""
+	accountList(after: String, before: String, first: Int, last: Int): AccountConnection!
+	"""
+	Returns the list of accounts who have signed in.
+	"""
+	signedInAccountList: [SignedInAccount!]!
+	"""
+	Returns how long signing in lasts in seconds
+	"""
+	expirationTime: Int!
+	"""
+	Retrieves the user's language selection by username.
+	"""
+	language(username: String!): String
+	"""
+	A list of blocked networks.
+	"""
+	blockNetworkList(after: String, before: String, first: Int, last: Int): BlockNetworkConnection!
+	"""
+	A list of available alert categories.
+	"""
+	categories(after: String, before: String, first: Int, last: Int): CategoryConnection!
+	"""
+	A list of clusters in descending order of cluster size.
+	"""
+	clusters(model: ID!, categories: [ID!], detectors: [ID!], qualifiers: [ID!], statuses: [ID!], after: String, before: String, first: Int, last: Int): ClusterConnection!
+	topIpAddressesOfCluster(model: Int!, clusterId: String!, size: Int): [TopElementCountsByColumn!]!
+	topTimeSeriesOfCluster(model: Int!, clusterId: String!, cutoffRate: Float, trendiOrder: Int, start: Int, end: Int): TimeSeriesResult!
+	"""
+	A list of customers.
+	"""
+	customerList(after: String, before: String, first: Int, last: Int): CustomerConnection!
+	"""
+	A customer for the given ID.
+	"""
+	customer(id: ID!): Customer!
+	"""
+	A list of data sources.
+	"""
+	dataSourceList(after: String, before: String, first: Int, last: Int): DataSourceConnection!
+	"""
+	A list of events with timestamp on or after `start` and before `end`.
+	"""
+	eventList(filter: EventListFilterInput!, after: String, before: String, first: Int, last: Int): EventConnection!
+	"""
+	The number of events for each category, with timestamp on or after
+	`start` and before `end`.
+	"""
+	eventCountsByCategory(filter: EventListFilterInput!, first: Int!): U8EventCounter!
+	"""
+	The number of events for each country, with timestamp on or after
+	`start` and before `end`.
+	"""
+	eventCountsByCountry(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	"""
+	The number of events for each IP address, with timestamp on or after
+	`start` and before `end`.
+	"""
+	eventCountsByIpAddress(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	"""
+	The number of events for each source and destination IP address pair,
+	with timestamp on or after `start` and before `end`. Each entry in
+	`values` is a string representation of the source and destination IP
+	address pair. For example, source IP address 10.0.0.1 and destination IP
+	address 10.0.0.2 become "10.0.0.1-10.0.0.2".
+	"""
+	eventCountsByIpAddressPair(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	"""
+	The number of events for each source and destination IP address pair and
+	event kind, with timestamp on or after `start` and before `end`. Each
+	entry in `values` is a string representation of the source and
+	destination IP address pair and kind. For example, a DNS covert channel
+	event with source IP address 10.0.0.1, destination IP address 10.0.0.2
+	become "10.0.0.1-10.0.0.2-DNS Covert Channel".
+	"""
+	eventCountsByIpAddressPairAndKind(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	"""
+	The number of events for each source IP address, with timestamp on or
+	after `start` and before `end`.
+	"""
+	eventCountsBySourceIpAddress(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	"""
+	The number of events for each destination IP address, with timestamp on
+	or after `start` and before `end`.
+	"""
+	eventCountsByDestinationIpAddress(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	"""
+	The number of events for each kind, with timestamp on or after `start`
+	and before `end`.
+	"""
+	eventCountsByKind(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	"""
+	The number of events for each level, with timestamp on or after `start`
+	and before `end`.
+	"""
+	eventCountsByLevel(filter: EventListFilterInput!, first: Int!): U8EventCounter!
+	"""
+	The number of events for each network, with timestamp on or after
+	`start` and before `end`.
+	"""
+	eventCountsByNetwork(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	"""
+	A time series of event frequencies. The period length is given in
+	seconds.
+	"""
+	eventFrequencySeries(filter: EventListFilterInput!, period: Int!): [Int!]!
+	"""
+	A list of filters
+	"""
+	filterList: [Filter!]!
+	"""
+	A filter for the given name.
+	"""
+	filter(name: String!): Filter
+	"""
+	Look up an Indicator by the given name.
+	"""
+	indicator(name: String!): ModelIndicator
+	"""
+	A list of Indicators.
+	"""
+	indicatorList: [ModelIndicator!]!
+	"""
+	The location of an IP address.
+	"""
+	ipLocation(address: String!): IpLocation
+	"""
+	The list of locations for up to 200 IP addresses.
+	"""
+	ipLocationList(addresses: [String!]!): [IpLocationItem!]!
+	"""
+	A list of models.
+	"""
+	models(after: String, before: String, first: Int, last: Int): ModelDigestConnection!
+	csvColumnExtra(model: Int!): CsvColumnExtraConfig
+	structuredColumnTypes(model: Int!): [StructuredColumnType!]!
+	timeRangeOfModel(model: Int!): TimeRange!
+	topTimeSeries(model: Int!, size: Int, time: NaiveDateTime, minSlope: Float, trendiOrder: Int, cutoffRate: Float, trendCategory: String, start: Int, end: Int): [TopTrendsByColumn!]!
+	topClustersByScore(model: Int!, size: Int, time: NaiveDateTime): ClusterScoreSet!
+	topColumns(model: Int!, size: Int, time: NaiveDateTime, portionOfClusters: Float, portionOfTopN: Float): [TopElementCountsByColumn!]!
+	topIpAddresses(model: Int!, size: Int, time: NaiveDateTime, portionOfClusters: Float, portionOfTopElements: Float): [TopElementCountsByColumn!]!
+	topMultimaps(model: Int!, size: Int, minMapSize: Int, time: NaiveDateTime): [TopMultimaps!]!
+	"""
+	A list of networks.
+	"""
+	networkList(after: String, before: String, first: Int, last: Int): NetworkConnection!
+	"""
+	A network for the given ID.
+	"""
+	network(id: ID!): Network!
+	"""
+	A list of nodes.
+	"""
+	nodeList(after: String, before: String, first: Int, last: Int): NodeConnection!
+	"""
+	A node for the given ID.
+	"""
+	node(id: ID!): Node!
+	"""
+	A list of status of nodes.
+	"""
+	nodeStatusList(after: String, before: String, first: Int, last: Int): NodeStatusConnection!
+	"""
+	A list of qualifiers.
+	"""
+	qualifiers(after: String, before: String, first: Int, last: Int): QualifierConnection!
+	"""
+	A list of outliers.
+	"""
+	outliers(model: ID!, after: String, before: String, first: Int, last: Int): OutlierConnection!
+	"""
+	A list of saved outliers, grouped by clustering time. Within each group,
+	the outliers are sorted by their distance to the cluster centers.
+	"""
+	savedOutliers(modelId: ID!, time: NaiveDateTime, after: String, before: String, first: Int, last: Int): RankedOutlierConnection!
+	"""
+	A list of outliers, grouped by clustering time. Within each group,
+	the outliers are sorted by their distance to the cluster centers.
+	"""
+	rankedOutliers(modelId: ID!, time: NaiveDateTime, after: String, before: String, first: Int, last: Int, filter: SearchFilterInput): RankedOutlierConnection!
+	"""
+	A list of sampling policies.
+	"""
+	samplingPolicyList(after: String, before: String, first: Int, last: Int): SamplingPolicyConnection!
+	"""
+	Looks up a sampling policy by the given id.
+	"""
+	samplingPolicy(id: ID!): SamplingPolicy!
+	columnStatistics(cluster: ID!, time: [NaiveDateTime!]!): JSON!
+	roundsByCluster(cluster: ID!, after: String, before: String, first: Int, last: Int): RoundByClusterConnection!
+	roundsByModel(model: ID!, after: String, before: String, first: Int, last: Int): RoundByModelConnection!
+	"""
+	A list of statuses.
+	"""
+	statuses(after: String, before: String, first: Int, last: Int): StatusConnection!
+	"""
+	A list of event tags.
+	"""
+	eventTagList: [Tag!]!
+	"""
+	A list of network tags.
+	"""
+	networkTagList: [Tag!]!
+	"""
+	A list of workflow tags.
+	"""
+	workflowTagList: [Tag!]!
+	"""
+	A list of model templates.
+	"""
+	templateList(after: String, before: String, first: Int, last: Int): TemplateConnection!
+	"""
+	A list of tor exit nodes.
+	"""
+	torExitNodeList(after: String, before: String, first: Int, last: Int): TorExitNodeConnection!
+	"""
+	Look up an Tidb by the given database name.
+	"""
+	tidb(name: String!): Tidb!
+	"""
+	A list of ti databases
+	"""
+	tidbList: [Tidb!]!
+	"""
+	A query for detail information of a rule
+	"""
+	tidbRule(name: String!, ruleId: String!): TidbRule
+	"""
+	A list of triage policies.
+	"""
+	triagePolicyList(after: String, before: String, first: Int, last: Int): TriagePolicyConnection!
+	"""
+	Looks up a triage policy by the given id.
+	"""
+	triagePolicy(id: ID!): TriagePolicy!
+	"""
+	A list of triage responses.
+	"""
+	triageResponseList(after: String, before: String, first: Int, last: Int): TriageResponseConnection!
+	"""
+	Looks up a triage response by the given id.
+	"""
+	triageResponse(source: String!, time: DateTime!): TriageResponse
+	"""
+	A list of trusted domains.
+	"""
+	trustedDomainList(after: String, before: String, first: Int, last: Int): TrustedDomainConnection!
+	"""
+	traffic filtering rules of agents.
+	"""
+	trafficFilterList(agents: [String!]): [TrafficFilter!]
+	"""
+	A list of allowed networks.
+	"""
+	allowNetworkList(after: String, before: String, first: Int, last: Int): AllowNetworkConnection!
+	"""
+	A list of trusted user agent list.
+	"""
+	trustedUserAgentList(after: String, before: String, first: Int, last: Int): TrustedUserAgentConnection!
+	"""
+	A list of process of the node.
+	"""
+	processList(hostname: String!): [Process!]!
+}
+
+type RankedOutlier {
+	modelId: Int!
+	timestamp: Int!
+	rank: Int!
+	source: String!
+	distance: Float!
+	saved: Boolean!
+	id: ID!
+}
+
+type RankedOutlierConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [RankedOutlierEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [RankedOutlier!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type RankedOutlierEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: RankedOutlier!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type RdpBruteForce {
+	time: DateTime!
+	srcAddr: String!
+	proto: Int!
+	dstAddrs: [String!]!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountries: [String!]!
+	dstCustomers: [Customer]!
+	startTime: DateTime!
+	lastTime: DateTime!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type Regression {
+	slope: Float!
+	intercept: Float!
+	rSquare: Float!
+}
+
+type RepeatedHttpSessions {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	srcPort: Int!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	dstAddr: String!
+	dstPort: Int!
+	proto: Int!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type Response {
+	minimumScore: Float!
+	kind: ResponseKind!
+}
+
+input ResponseInput {
+	minimumScore: Float!
+	kind: ResponseKind!
+}
+
+enum ResponseKind {
+	MANUAL
+	BLACKLIST
+	WHITELIST
+}
+
+enum Role {
+	SYSTEM_ADMINISTRATOR
+	SECURITY_ADMINISTRATOR
+	SECURITY_MANAGER
+	SECURITY_MONITOR
+}
+
+type Round {
+	time: NaiveDateTime!
+	"""
+	The first event id in the round within a string represantable by a
+	`i64`.
+	"""
+	firstEventId: StringNumber!
+	"""
+	The last event id in the round within a string represantable by a
+	`i64`.
+	"""
+	lastEventId: StringNumber!
+}
+
+type RoundByClusterConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [RoundByClusterEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Round!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type RoundByClusterEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Round!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type RoundByModelConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [RoundEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Round!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type RoundEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Round!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type SamplingPolicy {
+	id: ID!
+	name: String!
+	kind: Kind!
+	interval: Interval!
+	period: Period!
+	offset: Int!
+	srcIp: String
+	dstIp: String
+	node: String
+	column: StringNumber
+	immutable: Boolean!
+	creationTime: DateTime!
+}
+
+type SamplingPolicyConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [SamplingPolicyEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [SamplingPolicy!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type SamplingPolicyEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: SamplingPolicy!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input SamplingPolicyInput {
+	name: String!
+	kind: Kind!
+	interval: Interval!
+	period: Period!
+	offset: Int!
+	srcIp: String
+	dstIp: String
+	node: String
+	column: Int
+	immutable: Boolean!
+}
+
+input SearchFilterInput {
+	time: OutlierTimeRange
+	distance: OutlierDistanceRange
+	tag: String
+	remark: String
+}
+
+type SignedInAccount {
+	username: String!
+	expireTimes: [DateTime!]!
+}
+
+type Status {
+	id: ID!
+	description: String!
+}
+
+type StatusConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [StatusEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Status!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type StatusEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Status!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+
+type StringEventCounter {
+	values: [String!]!
+	counts: [Int!]!
+}
+
+scalar StringNumber
+
+enum StructuredClusteringAlgorithm {
+	DBSCAN
+	OPTICS
+}
+
+type StructuredClusteringTemplate {
+	name: String!
+	description: String!
+	algorithm: StructuredClusteringAlgorithm
+	eps: Float
+	format: String
+	"""
+	The time interval of the template in string represantable by a vector of `i64`.
+	"""
+	timeIntervals: [StringNumber!]
+	numbersOfTopN: [Int!]
+}
+
+input StructuredClusteringTemplateInput {
+	name: String!
+	description: String
+	algorithm: StructuredClusteringAlgorithm
+	eps: Float
+	format: String
+	timeIntervals: [Int!]
+	numbersOfTopN: [Int!]
+}
+
+type StructuredColumnType {
+	columnIndex: Int!
+	dataType: String!
+}
+
+"""
+A set of subscription defined in the schema.
+"""
+type Subscription {
+	"""
+	A stream of events with timestamp on.
+	"""
+	eventStream(start: DateTime!, fetchInterval: Int): Event!
+	rankedOutlierStream(start: DateTime!, fetchInterval: Int): RankedOutlier!
+}
+
+type SuspiciousTlsTraffic {
+	time: DateTime!
+	source: String!
+	srcAddr: String!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	srcPort: Int!
+	dstAddr: String!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	dstPort: Int!
+	proto: Int!
+	lastTime: StringNumber!
+	serverName: String!
+	alpnProtocol: String!
+	ja3: String!
+	version: String!
+	clientCipherSuites: [Int!]!
+	clientExtensions: [Int!]!
+	cipher: Int!
+	extensions: [Int!]!
+	ja3S: String!
+	serial: String!
+	subjectCountry: String!
+	subjectOrgName: String!
+	subjectCommonName: String!
+	validityNotBefore: StringNumber!
+	validityNotAfter: StringNumber!
+	subjectAltName: String!
+	issuerCountry: String!
+	issuerOrgName: String!
+	issuerOrgUnitName: String!
+	issuerCommonName: String!
+	lastAlert: Int!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type Tag {
+	name: String!
+	id: ID!
+}
+
+union Template = StructuredClusteringTemplate | UnstructuredClusteringTemplate
+
+type TemplateConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [TemplateEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Template!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type TemplateEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Template!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+enum ThreatCategory {
+	UNKNOWN
+	RECONNAISSANCE
+	INITIAL_ACCESS
+	EXECUTION
+	CREDENTIAL_ACCESS
+	DISCOVERY
+	LATERAL_MOVEMENT
+	COMMAND_AND_CONTROL
+	EXFILTRATION
+	IMPACT
+	HTTP_THREAT
+}
+
+type Ti {
+	tiName: String!
+	kind: TiCmpKind!
+	weight: Float
+}
+
+enum TiCmpKind {
+	IP_ADDRESS
+	DOMAIN
+	HOSTNAME
+	URI
+}
+
+input TiInput {
+	tiName: String!
+	kind: TiCmpKind!
+	weight: Float
+}
+
+type Tidb {
+	"""
+	The database ID of the Tidb.
+	"""
+	id: ID!
+	"""
+	The name of the Tidb.
+	"""
+	name: String!
+	"""
+	The description of the Tidb.
+	"""
+	description: String
+	"""
+	The kind of the Tidb.
+	"""
+	kind: TidbKind!
+	"""
+	The MITRE category of the Tidb.
+	"""
+	category: ThreatCategory!
+	"""
+	The version of the Tidb.
+	"""
+	version: String!
+	"""
+	The patterns in Tidb.
+	"""
+	patterns: String!
+}
+
+enum TidbKind {
+	IP
+	URL
+	TOKEN
+	REGEX
+}
+
+type TidbOutput {
+	name: String!
+	version: String!
+}
+
+type TidbRule {
+	ruleId: ID!
+	category: ThreatCategory!
+	name: String!
+	description: String
+	references: [String!]
+	samples: [String!]
+	signatures: [String!]
+}
+
+type TimeCount {
+	time: NaiveDateTime!
+	count: Int!
+}
+
+type TimeRange {
+	lower: NaiveDateTime
+	upper: NaiveDateTime
+}
+
+type TimeSeriesResult {
+	earliest: NaiveDateTime
+	latest: NaiveDateTime
+	series: [ColumnTimeSeries!]!
+}
+
+type TopColumnsOfCluster {
+	clusterId: String!
+	columns: [TopElementCountsByColumn!]!
+}
+
+type TopElementCountsByColumn {
+	"""
+	The column index of top element counts by column in string
+	representable within the range of a `usize`.
+	"""
+	columnIndex: StringNumber!
+	counts: [ElementCount!]!
+}
+
+type TopMultimaps {
+	"""
+	The n index of multi map in string representable within the range of a
+	`usize`.
+	"""
+	nIndex: StringNumber!
+	selected: [TopColumnsOfCluster!]!
+}
+
+type TopTrendsByColumn {
+	countIndex: Int!
+	trends: [ClusterTrend!]!
+}
+
+type TorConnection {
+	time: DateTime!
+	source: String!
+	sessionEndTime: DateTime!
+	srcAddr: String!
+	srcPort: Int!
+	"""
+	The two-letter country code of the source IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	srcCountry: String!
+	srcCustomer: Customer
+	srcNetwork: Network
+	dstAddr: String!
+	dstPort: Int!
+	proto: Int!
+	"""
+	The two-letter country code of the destination IP address. `"XX"` if the
+	location of the address is not known, and `"ZZ"` if the location
+	database is unavailable.
+	"""
+	dstCountry: String!
+	dstCustomer: Customer
+	dstNetwork: Network
+	host: String!
+	method: String!
+	uri: String!
+	referer: String!
+	version: String!
+	userAgent: String!
+	"""
+	The length of the request in string within the range representable
+	by a `usize`.
+	"""
+	requestLen: StringNumber!
+	"""
+	The length of the response in string within the range representable
+	by a `usize`.
+	"""
+	responseLen: StringNumber!
+	statusCode: Int!
+	statusMsg: String!
+	username: String!
+	password: String!
+	cookie: String!
+	contentEncoding: String!
+	contentType: String!
+	cacheControl: String!
+	origFilenames: [String!]!
+	origMimeTypes: [String!]!
+	respFilenames: [String!]!
+	respMimeTypes: [String!]!
+	postBody: [Int!]!
+	state: String!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+type TorExitNode {
+	ipAddress: String!
+	updatedAt: DateTime!
+}
+
+type TorExitNodeConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [TorExitNodeEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [TorExitNode!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type TorExitNodeEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: TorExitNode!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+enum TrafficDirection {
+	FROM
+	TO
+}
+
+type TrafficFilter {
+	"""
+	Agent name
+	"""
+	agent: String!
+	"""
+	The traffic filter rules.
+	"""
+	rules: [String!]!
+	"""
+	The last modification time.
+	"""
+	lastModificationTime: DateTime!
+	"""
+	The latest time when rules are applied to the agent successfully.
+	"""
+	updateTime: DateTime
+	"""
+	The last modification time.
+	"""
+	description: String
+}
+
+type TriagePolicy {
+	id: ID!
+	name: String!
+	tiDb: [Ti!]!
+	packetAttr: [PacketAttr!]!
+	confidence: [Confidence!]!
+	response: [Response!]!
+	creationTime: DateTime!
+}
+
+type TriagePolicyConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [TriagePolicyEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [TriagePolicy!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type TriagePolicyEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: TriagePolicy!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input TriagePolicyInput {
+	name: String!
+	tiDb: [TiInput!]!
+	packetAttr: [PacketAttrInput!]!
+	confidence: [ConfidenceInput!]!
+	response: [ResponseInput!]!
+}
+
+type TriageResponse {
+	id: ID!
+	remarks: String!
+	tagIds: [Int!]!
+}
+
+type TriageResponseConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [TriageResponseEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [TriageResponse!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type TriageResponseEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: TriageResponse!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input TriageResponseInput {
+	key: [Int!]!
+	tagIds: [Int!]
+	remarks: String
+}
+
+type TriageScore {
+	policyId: ID!
+	score: Float!
+}
+
+type TrustedDomain {
+	name: String!
+	remarks: String!
+}
+
+type TrustedDomainConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [TrustedDomainEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [TrustedDomain!]!
+}
+
+"""
+An edge in a connection.
+"""
+type TrustedDomainEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: TrustedDomain!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type TrustedUserAgent {
+	userAgent: String!
+	updatedAt: DateTime!
+}
+
+type TrustedUserAgentConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [TrustedUserAgentEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [TrustedUserAgent!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: Int!
+}
+
+"""
+An edge in a connection.
+"""
+type TrustedUserAgentEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: TrustedUserAgent!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type U8EventCounter {
+	values: [Int!]!
+	counts: [Int!]!
+}
+
+enum UnstructuredClusteringAlgorithm {
+	DISTRIBUTION
+	PREFIX
+}
+
+type UnstructuredClusteringTemplate {
+	name: String!
+	description: String!
+	algorithm: UnstructuredClusteringAlgorithm
+	minTokenLength: Int
+}
+
+input UnstructuredClusteringTemplateInput {
+	name: String!
+	description: String
+	algorithm: UnstructuredClusteringAlgorithm
+	minTokenLength: Int
+}
+
+"""
+The old and new values of `allowAccessFrom` to update.
+"""
+input UpdateAllowAccessFrom {
+	old: [String!]
+	new: [String!]
+}
+
+"""
+The old and new values of `department` to update.
+"""
+input UpdateDepartment {
+	old: String!
+	new: String!
+}
+
+input UpdateLanguage {
+	old: String
+	new: String
+}
+
+"""
+The old and new values of `maxParallelSessions` to update.
+"""
+input UpdateMaxParallelSessions {
+	old: Int
+	new: Int
+}
+
+"""
+The old and new values of `name` to update.
+"""
+input UpdateName {
+	old: String!
+	new: String!
+}
+
+"""
+The old and new values of `role` to update.
+"""
+input UpdateRole {
+	old: Role!
+	new: Role!
+}
+
+enum ValueKind {
+	STRING
+	INTEGER
+	FLOAT
+}
+
+type WindowsThreat {
+	time: DateTime!
+	source: String!
+	service: String!
+	agentName: String!
+	agentId: String!
+	processGuid: String!
+	processId: Int!
+	image: String!
+	user: String!
+	content: String!
+	dbName: String!
+	ruleId: Int!
+	matchedTo: String!
+	clusterId: Int!
+	attackKind: String!
+	confidence: Float!
+	category: ThreatCategory!
+	triageScores: [TriageScore!]
+}
+
+directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+directive @skip(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+directive @specifiedBy(url: String!) on SCALAR
+schema {
+	query: Query
+	mutation: Mutation
+	subscription: Subscription
+}

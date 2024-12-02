@@ -40,6 +40,7 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
+use account::MyAccountError;
 use async_graphql::connection::{ConnectionNameType, CursorType, EdgeNameType};
 use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
@@ -95,6 +96,7 @@ where
         Mutation::default(),
         Subscription::default(),
     )
+    .register_output_type::<MyAccountError>()
     .data(db)
     .data(store)
     .data(agent_manager)
@@ -680,6 +682,7 @@ impl TestSchema {
             Mutation::default(),
             Subscription::default(),
         )
+        .register_output_type::<MyAccountError>()
         .data(agent_manager)
         .data(store.clone())
         .data("testuser".to_string())
