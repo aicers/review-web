@@ -4,11 +4,10 @@ mod input;
 mod process;
 mod status;
 
-use std::{borrow::Cow, net::IpAddr, time::Duration};
+use std::{borrow::Cow, time::Duration};
 
 use async_graphql::{
-    types::ID, ComplexObject, Context, Enum, InputObject, Object, Result, SimpleObject,
-    StringNumber,
+    types::ID, ComplexObject, Context, Enum, Object, Result, SimpleObject, StringNumber,
 };
 use bincode::Options;
 use chrono::{DateTime, TimeZone, Utc};
@@ -16,7 +15,6 @@ use chrono::{DateTime, TimeZone, Utc};
 pub use crud::get_customer_id_of_node;
 use database::Indexable;
 use input::NodeInput;
-use ipnet::Ipv4Net;
 use review_database as database;
 use roxy::Process as RoxyProcess;
 use serde::{Deserialize, Serialize};
@@ -35,72 +33,6 @@ pub(super) struct NodeControlMutation;
 
 #[derive(Default)]
 pub(super) struct ProcessListQuery;
-
-#[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
-#[graphql(complex)]
-struct Nic {
-    name: String,
-    #[graphql(skip)]
-    interface: Ipv4Net,
-    #[graphql(skip)]
-    gateway: IpAddr,
-}
-
-#[ComplexObject]
-impl Nic {
-    async fn interface(&self) -> String {
-        self.interface.to_string()
-    }
-
-    async fn gateway(&self) -> String {
-        self.gateway.to_string()
-    }
-}
-
-#[derive(Clone, InputObject)]
-struct NicInput {
-    name: String,
-    interface: String,
-    gateway: String,
-}
-
-impl PartialEq<Nic> for NicInput {
-    fn eq(&self, rhs: &Nic) -> bool {
-        self.name == rhs.name
-            && self
-                .interface
-                .as_str()
-                .parse::<Ipv4Net>()
-                .map_or(false, |ip| ip == rhs.interface)
-            && self
-                .gateway
-                .as_str()
-                .parse::<IpAddr>()
-                .map_or(false, |ip| ip == rhs.gateway)
-    }
-}
-
-impl TryFrom<NicInput> for Nic {
-    type Error = anyhow::Error;
-
-    fn try_from(input: NicInput) -> Result<Self, Self::Error> {
-        (&input).try_into()
-    }
-}
-
-impl TryFrom<&NicInput> for Nic {
-    type Error = anyhow::Error;
-
-    fn try_from(input: &NicInput) -> Result<Self, Self::Error> {
-        let interface = input.interface.as_str().parse::<Ipv4Net>()?;
-        let gateway = input.gateway.as_str().parse::<IpAddr>()?;
-        Ok(Self {
-            name: input.name.clone(),
-            interface,
-            gateway,
-        })
-    }
-}
 
 #[derive(Clone, Deserialize, PartialEq, Serialize, Copy, Eq, Enum)]
 #[graphql(remote = "database::AgentKind")]

@@ -1,6 +1,6 @@
 use std::{
     env,
-    net::{AddrParseError, IpAddr, SocketAddr},
+    net::{IpAddr, SocketAddr},
 };
 
 use anyhow::anyhow;
@@ -18,7 +18,7 @@ use review_database::{
 use serde::Serialize;
 use tracing::info;
 
-use super::RoleGuard;
+use super::{IpAddress, RoleGuard};
 use crate::auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in};
 use crate::graphql::query_with_constraints;
 
@@ -157,7 +157,7 @@ impl AccountMutation {
         name: String,
         department: String,
         language: Option<String>,
-        allow_access_from: Option<Vec<String>>,
+        allow_access_from: Option<Vec<IpAddress>>,
         max_parallel_sessions: Option<u32>,
     ) -> Result<String> {
         let store = crate::graphql::get_store(ctx).await?;
@@ -166,7 +166,7 @@ impl AccountMutation {
             return Err("account already exists".into());
         }
         let allow_access_from = if let Some(ip_addrs) = allow_access_from {
-            let ip_addrs = strings_to_ip_addrs(&ip_addrs)?;
+            let ip_addrs = to_ip_addr(&ip_addrs);
             Some(ip_addrs)
         } else {
             None
@@ -272,16 +272,8 @@ impl AccountMutation {
         let dept = department.map(|d| (d.old, d.new));
         let language = language.map(|d| (d.old, d.new));
         let allow_access_from = if let Some(ip_addrs) = allow_access_from {
-            let old = if let Some(old) = ip_addrs.old {
-                Some(strings_to_ip_addrs(&old)?)
-            } else {
-                None
-            };
-            let new = if let Some(new) = ip_addrs.new {
-                Some(strings_to_ip_addrs(&new)?)
-            } else {
-                None
-            };
+            let old = ip_addrs.old.map(|old| to_ip_addr(&old));
+            let new = ip_addrs.new.map(|new| to_ip_addr(&new));
             Some((old, new))
         } else {
             None
@@ -639,13 +631,14 @@ impl From<types::Account> for Account {
     }
 }
 
-fn strings_to_ip_addrs(ip_addrs: &[String]) -> Result<Vec<IpAddr>, AddrParseError> {
+fn to_ip_addr(ip_addrs: &[IpAddress]) -> Vec<IpAddr> {
     let mut ip_addrs = ip_addrs
         .iter()
-        .map(|ip_addr| ip_addr.parse::<IpAddr>())
-        .collect::<Result<Vec<_>, _>>()?;
-    ip_addrs.sort();
-    Ok(ip_addrs)
+        .map(|ip_addr| ip_addr.0)
+        .collect::<Vec<IpAddr>>();
+    ip_addrs.sort_unstable();
+    ip_addrs.dedup();
+    ip_addrs
 }
 
 #[derive(SimpleObject)]
@@ -693,8 +686,8 @@ struct UpdateLanguage {
 /// The old and new values of `allowAccessFrom` to update.
 #[derive(InputObject)]
 struct UpdateAllowAccessFrom {
-    old: Option<Vec<String>>,
-    new: Option<Vec<String>>,
+    old: Option<Vec<IpAddress>>,
+    new: Option<Vec<IpAddress>>,
 }
 
 /// The old and new values of `maxParallelSessions` to update.
@@ -1360,7 +1353,8 @@ mod tests {
                         role: "SECURITY_ADMINISTRATOR",
                         name: "John Doe",
                         department: "Security",
-                        language: "en-US"
+                        language: "en-US",
+                        allowAccessFrom: ["127.0.0.1"]
                     )
                 }"#,
             )
@@ -1410,6 +1404,10 @@ mod tests {
                         language: {
                             old: "en-US",
                             new: "ko-KR"
+                        },
+                        allowAccessFrom: {
+                            old: "127.0.0.1",
+                            new: "127.0.0.2"
                         }
                     )
                 }"#,
@@ -1428,6 +1426,7 @@ mod tests {
                         name
                         department
                         language
+                        allowAccessFrom
                     }
                 }"#,
             )
@@ -1435,7 +1434,45 @@ mod tests {
 
         assert_eq!(
             res.data.to_string(),
-            r#"{account: {username: "username", role: SYSTEM_ADMINISTRATOR, name: "Loren Ipsum", department: "Admin", language: "ko-KR"}}"#
+            r#"{account: {username: "username", role: SYSTEM_ADMINISTRATOR, name: "Loren Ipsum", department: "Admin", language: "ko-KR", allowAccessFrom: ["127.0.0.2"]}}"#
+        );
+
+        let res = schema
+            .execute(
+                r#"
+                mutation {
+                    updateAccount(
+                        username: "username",
+                        password: "password",
+                        role: {
+                            old: "SECURITY_ADMINISTRATOR",
+                            new: "SYSTEM_ADMINISTRATOR"
+                        },
+                        name: {
+                            old: "John Doe",
+                            new: "Loren Ipsum"
+                        },
+                        department: {
+                            old: "Security",
+                            new: "Admin"
+                        },
+                        language: {
+                            old: "en-US",
+                            new: "ko-KR"
+                        },
+                        allowAccessFrom: {
+                            old: "127.0.0.2",
+                            new: "127.0.0.x"
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.errors.first().unwrap().message.to_string(),
+            "Failed to parse \"IpAddress\": Invalid IP address: 127.0.0.x (occurred while \
+            parsing \"[IpAddress!]\") (occurred while parsing \"UpdateAllowAccessFrom\")"
+                .to_string()
         );
     }
 
@@ -1585,6 +1622,34 @@ mod tests {
             .await;
 
         assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn invalid_ip_allow_access_from() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let test_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+
+        let schema = TestSchema::new_with(agent_manager, Some(test_addr)).await;
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "u1",
+                        password: "pw1",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "User One",
+                        department: "Test",
+                        allowAccessFrom: ["127.0.0.x"]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.errors.first().unwrap().message.to_string(),
+            "Failed to parse \"IpAddress\": Invalid IP address: 127.0.0.x (occurred while \
+            parsing \"[IpAddress!]\")"
+                .to_string()
+        );
     }
 
     #[tokio::test]

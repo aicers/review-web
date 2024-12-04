@@ -36,14 +36,17 @@ mod trusted_user_agent;
 
 use std::fmt;
 use std::future::Future;
+use std::net::IpAddr;
 #[cfg(test)]
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
-use async_graphql::connection::{ConnectionNameType, CursorType, EdgeNameType, OpaqueCursor};
+use async_graphql::connection::{
+    Connection, ConnectionNameType, CursorType, Edge, EdgeNameType, EmptyFields, OpaqueCursor,
+};
 use async_graphql::{
-    connection::{Connection, Edge, EmptyFields},
-    Context, Guard, MergedObject, MergedSubscription, ObjectType, OutputType, Result,
+    Context, Guard, InputValueError, InputValueResult, MergedObject, MergedSubscription,
+    ObjectType, OutputType, Result, Scalar, ScalarType, Value,
 };
 use chrono::TimeDelta;
 use num_traits::ToPrimitive;
@@ -501,6 +504,26 @@ impl Guard for RoleGuard {
         } else {
             Err("Forbidden".into())
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IpAddress(pub IpAddr);
+
+#[Scalar]
+impl ScalarType for IpAddress {
+    fn parse(value: Value) -> InputValueResult<Self> {
+        match value {
+            Value::String(s) => s
+                .parse::<IpAddr>()
+                .map(IpAddress)
+                .map_err(|_| InputValueError::custom(format!("Invalid IP address: {s}"))),
+            _ => Err(InputValueError::expected_type(value)),
+        }
+    }
+
+    fn to_value(&self) -> Value {
+        Value::String(self.0.to_string())
     }
 }
 

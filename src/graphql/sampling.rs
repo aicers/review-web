@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use review_database::{Direction, Iterable};
 use serde::{Deserialize, Serialize};
 
-use super::{BoxedAgentManager, Role, RoleGuard};
+use super::{BoxedAgentManager, IpAddress, Role, RoleGuard};
 use crate::graphql::query_with_constraints;
 
 #[derive(Default)]
@@ -206,8 +206,8 @@ pub(super) struct SamplingPolicyInput {
     pub interval: Interval,
     pub period: Period,
     pub offset: i32,
-    pub src_ip: Option<String>,
-    pub dst_ip: Option<String>,
+    pub src_ip: Option<IpAddress>,
+    pub dst_ip: Option<IpAddress>,
     pub node: Option<String>, // hostname
     pub column: Option<u32>,
     pub immutable: bool,
@@ -223,8 +223,8 @@ impl TryFrom<SamplingPolicyInput> for review_database::SamplingPolicyUpdate {
             interval: input.interval.into(),
             period: input.period.into(),
             offset: input.offset,
-            src_ip: input.src_ip.map(|ip| ip.parse::<IpAddr>()).transpose()?,
-            dst_ip: input.dst_ip.map(|ip| ip.parse::<IpAddr>()).transpose()?,
+            src_ip: input.src_ip.map(|ip| ip.0),
+            dst_ip: input.dst_ip.map(|ip| ip.0),
             node: input.node,
             column: input.column,
             immutable: input.immutable,
@@ -344,8 +344,8 @@ impl SamplingPolicyMutation {
         interval: Interval,
         period: Period,
         offset: i32,
-        src_ip: Option<String>,
-        dst_ip: Option<String>,
+        src_ip: Option<IpAddress>,
+        dst_ip: Option<IpAddress>,
         node: Option<String>,
         column: Option<u32>,
         immutable: bool,
@@ -357,8 +357,8 @@ impl SamplingPolicyMutation {
             interval: interval.into(),
             period: period.into(),
             offset,
-            src_ip: src_ip.map(|ip| ip.parse::<IpAddr>()).transpose()?,
-            dst_ip: dst_ip.map(|ip| ip.parse::<IpAddr>()).transpose()?,
+            src_ip: src_ip.map(|ip| ip.0),
+            dst_ip: dst_ip.map(|ip| ip.0),
             node,
             column,
             immutable,
@@ -470,13 +470,39 @@ mod tests {
                         period: ONE_DAY,
                         offset: 0,
                         node: "sensor",
-                        immutable: false
+                        immutable: false,
+                        srcIp: "127.0.0.1",
+                        dstIp: "127.0.0.2"
                     )
                 }
             "#,
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertSamplingPolicy: "0"}"#);
+
+        let res = schema
+            .execute(
+                r#"
+                mutation {
+                    insertSamplingPolicy(
+                        name: "Policy 2",
+                        kind: CONN,
+                        interval: FIFTEEN_MINUTES,
+                        period: ONE_DAY,
+                        offset: 0,
+                        node: "sensor",
+                        immutable: false,
+                        srcIp: "127.0.0.1",
+                        dstIp: "127.0.0.x"
+                    )
+                }
+            "#,
+            )
+            .await;
+        assert_eq!(
+            res.errors.first().unwrap().message.to_string(),
+            "Failed to parse \"IpAddress\": Invalid IP address: 127.0.0.x".to_string()
+        );
 
         let res = schema
             .execute(
@@ -491,7 +517,9 @@ mod tests {
                             period: ONE_DAY,
                             offset: 0,
                             node: "sensor",
-                            immutable: false
+                            immutable: false,
+                            srcIp: "127.0.0.1",
+                            dstIp: "127.0.0.2"
                         },
                         new:{
                             name: "Policy 2",
@@ -500,7 +528,9 @@ mod tests {
                             period: ONE_DAY,
                             offset: 0,
                             node: "manager",
-                            immutable: true
+                            immutable: true,
+                            srcIp: "127.0.0.1",
+                            dstIp: "127.0.0.2"
                         }
                       )
                 }
@@ -522,6 +552,8 @@ mod tests {
                             offset
                             node
                             immutable
+                            srcIp
+                            dstIp
                         }
                     }
                 }
@@ -540,10 +572,52 @@ mod tests {
                         "period": "ONE_DAY",
                         "offset": 0,
                         "node": "manager",
-                        "immutable": true
+                        "immutable": true,
+                        "srcIp": "127.0.0.1",
+                        "dstIp": "127.0.0.2",
                     }]
                 }
             })
+        );
+
+        let res = schema
+            .execute(
+                r#"
+                mutation {
+                    updateSamplingPolicy(
+                        id: "0",
+                        old: {
+                            name: "Policy 2",
+                            kind: CONN,
+                            interval: FIFTEEN_MINUTES,
+                            period: ONE_DAY,
+                            offset: 0,
+                            node: "manager",
+                            immutable: true,
+                            srcIp: "127.0.0.1",
+                            dstIp: "127.0.0.2"
+                        },
+                        new:{
+                            name: "Policy 3",
+                            kind: CONN,
+                            interval: FIFTEEN_MINUTES,
+                            period: ONE_DAY,
+                            offset: 0,
+                            node: "manager",
+                            immutable: true,
+                            srcIp: "127.0.0.x",
+                            dstIp: "127.0.0.2"
+                        }
+                      )
+                }
+            "#,
+            )
+            .await;
+        assert_eq!(
+            res.errors.first().unwrap().message.to_string(),
+            "Failed to parse \"IpAddress\": Invalid IP address: 127.0.0.x \
+            (occurred while parsing \"SamplingPolicyInput\")"
+                .to_string()
         );
 
         let res = schema
