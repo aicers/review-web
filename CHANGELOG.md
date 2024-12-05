@@ -7,6 +7,13 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added `IpAddress` GraphQL scalar for IP addresses.
+  - Applied it to the GraphQL APIs `ipLocation`, `ipLocationList`,
+    `insertAccount`, `updateAccount`, `insertSamplingPolicy`, and
+    `updateSamplingPolicy`.
+
 ### Changed
 
 - Updated the encoding and decoding method for GraphQL cursors by removing
