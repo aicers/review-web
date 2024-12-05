@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
     connection::{Connection, EmptyFields},
     Context, InputObject, Object, Result, ID,
@@ -32,7 +33,8 @@ impl BlockNetworkQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<String, BlockNetwork, BlockNetworkTotalCount, EmptyFields>> {
+    ) -> Result<Connection<OpaqueCursor<Vec<u8>>, BlockNetwork, BlockNetworkTotalCount, EmptyFields>>
+    {
         query_with_constraints(
             after,
             before,
@@ -198,11 +200,11 @@ impl BlockNetworkTotalCount {
 
 async fn load(
     ctx: &Context<'_>,
-    after: Option<String>,
-    before: Option<String>,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<String, BlockNetwork, BlockNetworkTotalCount, EmptyFields>> {
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, BlockNetwork, BlockNetworkTotalCount, EmptyFields>> {
     let db = super::get_store(ctx).await?;
     let map = db.block_network_map();
     super::load_edges(&map, after, before, first, last, BlockNetworkTotalCount)

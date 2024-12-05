@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::anyhow;
+use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
     types::ID,
@@ -19,7 +20,7 @@ use serde::Serialize;
 use tokio::{sync::RwLock, time};
 use tracing::error;
 
-use super::{encode_cursor, model::ModelDigest, query, Role, RoleGuard};
+use super::{model::ModelDigest, query, Role, RoleGuard};
 
 const MAX_EVENT_NUM_OF_OUTLIER: usize = 50;
 const DEFAULT_RANKED_OUTLIER_FETCH_TIME: u64 = 60;
@@ -178,7 +179,7 @@ impl OutlierQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<String, Outlier, OutlierTotalCount, EmptyFields>> {
+    ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Outlier, OutlierTotalCount, EmptyFields>> {
         let model = model.as_str().parse()?;
         query(
             after,
@@ -208,7 +209,9 @@ impl OutlierQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
+    ) -> Result<
+        Connection<OpaqueCursor<Vec<u8>>, RankedOutlier, RankedOutlierTotalCount, EmptyFields>,
+    > {
         let filter = |node: RankedOutlier| if node.saved { Some(node) } else { None };
         query(
             after,
@@ -239,7 +242,9 @@ impl OutlierQuery {
         first: Option<i32>,
         last: Option<i32>,
         filter: Option<SearchFilterInput>,
-    ) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
+    ) -> Result<
+        Connection<OpaqueCursor<Vec<u8>>, RankedOutlier, RankedOutlierTotalCount, EmptyFields>,
+    > {
         query(
             after,
             before,
@@ -261,12 +266,13 @@ async fn load_outliers(
     ctx: &Context<'_>,
     model_id: ID,
     time: Option<NaiveDateTime>,
-    after: Option<String>,
-    before: Option<String>,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
     filter: fn(RankedOutlier) -> Option<RankedOutlier>,
-) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, RankedOutlier, RankedOutlierTotalCount, EmptyFields>>
+{
     let model_id: i32 = model_id.as_str().parse()?;
     let timestamp = time.map(|t| t.and_utc().timestamp_nanos_opt().unwrap_or_default());
 
@@ -294,7 +300,7 @@ async fn load_outliers(
         },
     );
     connection.edges.extend(nodes.into_iter().filter_map(|n| {
-        let cursor = encode_cursor(&n.unique_key());
+        let cursor = OpaqueCursor(n.unique_key());
         let n: RankedOutlier = n.into();
         filter(n).map(|n| Edge::new(cursor, n))
     }));
@@ -478,14 +484,17 @@ impl OutlierTotalCount {
 async fn load(
     ctx: &Context<'_>,
     model_id: i32,
-    after: Option<String>,
-    before: Option<String>,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<String, Outlier, OutlierTotalCount, EmptyFields>> {
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, Outlier, OutlierTotalCount, EmptyFields>> {
     let store = crate::graphql::get_store(ctx).await?;
     let table = store.outlier_map();
-    let (after, before) = super::decode_cursor_pair(after, before)?;
+
+    let after = after.map(|cursor| cursor.0);
+    let before = before.map(|cursor| cursor.0);
+
     let decoded_after = after
         .as_deref()
         .map(|input| bincode::DefaultOptions::new().deserialize(input))
@@ -545,9 +554,9 @@ async fn load(
     };
     let edges = batches.into_values().filter_map(|(from, to, mut ev)| {
         let cursor = bincode::DefaultOptions::new().serialize(&(from, to)).ok()?;
-        let encoded = super::encode_cursor(&cursor);
+        let cursor = OpaqueCursor(cursor);
         ev.events.sort_unstable();
-        Some(Edge::new(encoded, ev))
+        Some(Edge::new(cursor, ev))
     });
     let mut connection =
         Connection::with_additional_fields(has_previous, has_next, OutlierTotalCount { model_id });
@@ -567,8 +576,8 @@ pub(crate) fn datetime_from_ts_nano(time: i64) -> Option<DateTime<Utc>> {
 
 fn check_filter_to_ranked_outlier(
     node: &OutlierInfo,
-    filter: &Option<SearchFilterInput>,
-    tag_id_list: &Option<Vec<u32>>,
+    filter: Option<&SearchFilterInput>,
+    tag_id_list: Option<&Vec<u32>>,
     remarks_map: &IndexedTable<'_, TriageResponse>,
 ) -> Result<bool> {
     if let Some(filter) = filter {
@@ -626,15 +635,17 @@ async fn load_ranked_outliers_with_filter(
     ctx: &Context<'_>,
     model_id: ID,
     time: Option<NaiveDateTime>,
-    after: Option<String>,
-    before: Option<String>,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
     filter: Option<SearchFilterInput>,
-) -> Result<Connection<String, RankedOutlier, RankedOutlierTotalCount, EmptyFields>> {
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, RankedOutlier, RankedOutlierTotalCount, EmptyFields>>
+{
     let model_id: i32 = model_id.as_str().parse()?;
     let timestamp = time.map(|t| t.and_utc().timestamp_nanos_opt().unwrap_or_default());
-    let (after, before) = super::decode_cursor_pair(after, before)?;
+    let after = after.map(|cursor| cursor.0);
+    let before = before.map(|cursor| cursor.0);
     let (direction, count, from) = if let Some(first) = first {
         (Direction::Forward, first, after.as_deref())
     } else if let Some(last) = last {
@@ -692,22 +703,31 @@ async fn load_ranked_outliers_with_filter(
             if from != key {
                 return Err(anyhow!("invalid cursor").into());
             }
-        } else if check_filter_to_ranked_outlier(&node, &filter, &tag_id_list, &remarks_map)? {
-            nodes.push((encode_cursor(&key), node));
+        } else if check_filter_to_ranked_outlier(
+            &node,
+            filter.as_ref(),
+            tag_id_list.as_ref(),
+            &remarks_map,
+        )? {
+            nodes.push((OpaqueCursor(key), node));
         }
     }
 
     for res in ranked_outlier_iter {
         let node = res?;
         let key = node.unique_key();
-        let encoded_key = encode_cursor(&key);
 
-        if check_filter_to_ranked_outlier(&node, &filter, &tag_id_list, &remarks_map)? {
+        if check_filter_to_ranked_outlier(
+            &node,
+            filter.as_ref(),
+            tag_id_list.as_ref(),
+            &remarks_map,
+        )? {
             if nodes.len() >= count {
                 has_more = true;
                 break;
             }
-            nodes.push((encoded_key, node));
+            nodes.push((OpaqueCursor(key), node));
         }
     }
 

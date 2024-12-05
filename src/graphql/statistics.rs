@@ -1,3 +1,4 @@
+use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
     connection::{Connection, ConnectionNameType, Edge, EdgeNameType, EmptyFields},
     types::ID,
@@ -83,7 +84,9 @@ impl StatisticsQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<String, Round, TotalCountByModel, EmptyFields, RoundByModel>> {
+    ) -> Result<
+        Connection<OpaqueCursor<Vec<u8>>, Round, TotalCountByModel, EmptyFields, RoundByModel>,
+    > {
         let model = model.as_str().parse()?;
 
         query_with_constraints(
@@ -227,11 +230,12 @@ async fn load_rounds_by_cluster(
 async fn load_rounds_by_model(
     ctx: &Context<'_>,
     model: i32,
-    after: Option<String>,
-    before: Option<String>,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<String, Round, TotalCountByModel, EmptyFields, RoundByModel>> {
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, Round, TotalCountByModel, EmptyFields, RoundByModel>>
+{
     let store = super::get_store(ctx).await?;
     let table = store.batch_info_map();
     super::load_edges(

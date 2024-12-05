@@ -86,7 +86,7 @@ where
 
             let proxies_config = crate::archive::Config::configure_reverse_proxies(
                 &store,
-                &client,
+                client.as_ref(),
                 &config.reverse_proxies,
             );
 

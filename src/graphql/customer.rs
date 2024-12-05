@@ -1,6 +1,7 @@
 use std::convert::{TryFrom, TryInto};
 
 use anyhow::Context as AnyhowContext;
+use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
     connection::{Connection, EmptyFields},
     types::ID,
@@ -28,7 +29,7 @@ impl CustomerQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<String, Customer, CustomerTotalCount, EmptyFields>> {
+    ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Customer, CustomerTotalCount, EmptyFields>> {
         query_with_constraints(
             after,
             before,
@@ -459,11 +460,11 @@ impl CustomerTotalCount {
 
 async fn load(
     ctx: &Context<'_>,
-    after: Option<String>,
-    before: Option<String>,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<String, Customer, CustomerTotalCount, EmptyFields>> {
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, Customer, CustomerTotalCount, EmptyFields>> {
     let store = crate::graphql::get_store(ctx).await?;
     let map = store.customer_map();
     super::load_edges(&map, after, before, first, last, CustomerTotalCount)
@@ -614,11 +615,11 @@ mod tests {
         );
 
         let res = schema
-            .execute(r#"{customerList(last: 10, before: "dDg="){edges{node{name}}totalCount,pageInfo{startCursor}}}"#)
+            .execute(r#"{customerList(last: 10, before: "WzExNiw1Nl0"){edges{node{name}}totalCount,pageInfo{startCursor}}}"#)
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [{node: {name: "t1"}}, {node: {name: "t10"}}, {node: {name: "t2"}}, {node: {name: "t3"}}, {node: {name: "t4"}}, {node: {name: "t5"}}, {node: {name: "t6"}}, {node: {name: "t7"}}], totalCount: 10, pageInfo: {startCursor: "dDE="}}}"#
+            r#"{customerList: {edges: [{node: {name: "t1"}}, {node: {name: "t10"}}, {node: {name: "t2"}}, {node: {name: "t3"}}, {node: {name: "t4"}}, {node: {name: "t5"}}, {node: {name: "t6"}}, {node: {name: "t7"}}], totalCount: 10, pageInfo: {startCursor: "WzExNiw0OV0"}}}"#
         );
 
         let res = schema
@@ -630,17 +631,17 @@ mod tests {
 
         let res = schema
             .execute(
-                r#"{customerList(first:10 after:"dDc=" ){edges{node{name}}totalCount,pageInfo{endCursor}}}"#,
+                r#"{customerList(first:10 after:"WzExNiw1NV0" ){edges{node{name}}totalCount,pageInfo{endCursor}}}"#,
             )
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [{node: {name: "t8"}}, {node: {name: "t9"}}], totalCount: 10, pageInfo: {endCursor: "dDk="}}}"#
+            r#"{customerList: {edges: [{node: {name: "t8"}}, {node: {name: "t9"}}], totalCount: 10, pageInfo: {endCursor: "WzExNiw1N10"}}}"#
         );
 
         let res = schema
         .execute(
-            r#"{customerList(first:10 before:"dDc=" ){edges{node{name}}totalCount,pageInfo{endCursor}}}"#,
+            r#"{customerList(first:10 before:"WzExNiw1NV0" ){edges{node{name}}totalCount,pageInfo{endCursor}}}"#,
         )
         .await;
         assert!(res.is_err());

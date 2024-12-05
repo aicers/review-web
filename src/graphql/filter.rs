@@ -476,12 +476,12 @@ impl PartialEq<FilterInput> for &database::Filter {
                 _ => false,
             }
             && self.keywords == rhs.keywords
-            && cmp_option_vec_string_with_id(&self.network_tags, &rhs.network_tags)
-            && cmp_option_vec_string_with_id(&self.customers, &rhs.customers)
+            && cmp_option_vec_string_with_id(self.network_tags.as_ref(), rhs.network_tags.as_ref())
+            && cmp_option_vec_string_with_id(self.customers.as_ref(), rhs.customers.as_ref())
             && network_eq
-            && cmp_option_vec_string_with_id(&self.sensors, &rhs.sensors)
-            && cmp_option_vec_string_with_id(&self.os, &rhs.os)
-            && cmp_option_vec_string_with_id(&self.devices, &rhs.devices)
+            && cmp_option_vec_string_with_id(self.sensors.as_ref(), rhs.sensors.as_ref())
+            && cmp_option_vec_string_with_id(self.os.as_ref(), rhs.os.as_ref())
+            && cmp_option_vec_string_with_id(self.devices.as_ref(), rhs.devices.as_ref())
             && self.host_names == rhs.host_names
             && self.user_ids == rhs.user_ids
             && self.user_names == rhs.user_names
@@ -546,7 +546,7 @@ pub(super) enum TrafficDirection {
     To,
 }
 
-fn cmp_option_vec_string_with_id(lhs: &Option<Vec<String>>, rhs: &Option<Vec<ID>>) -> bool {
+fn cmp_option_vec_string_with_id(lhs: Option<&Vec<String>>, rhs: Option<&Vec<ID>>) -> bool {
     match (lhs, rhs) {
         (Some(lhs), Some(rhs)) => lhs
             .iter()

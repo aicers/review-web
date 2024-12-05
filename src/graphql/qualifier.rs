@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
     connection::{Connection, EmptyFields},
     types::ID,
@@ -29,7 +30,8 @@ impl QualifierQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<String, Qualifier, QualifierTotalCount, EmptyFields>> {
+    ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Qualifier, QualifierTotalCount, EmptyFields>>
+    {
         query_with_constraints(
             after,
             before,
@@ -105,11 +107,11 @@ impl QualifierTotalCount {
 
 async fn load(
     ctx: &Context<'_>,
-    after: Option<String>,
-    before: Option<String>,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<String, Qualifier, QualifierTotalCount, EmptyFields>> {
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, Qualifier, QualifierTotalCount, EmptyFields>> {
     let store = super::get_store(ctx).await?;
     let table = store.qualifier_map();
     super::load_edges(&table, after, before, first, last, QualifierTotalCount)

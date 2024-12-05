@@ -370,7 +370,7 @@ impl NodeStatus {
 impl NodeStatus {
     fn new(
         node: database::Node,
-        resource_usage: &Option<roxy::ResourceUsage>,
+        resource_usage: Option<&roxy::ResourceUsage>,
         ping: Option<Duration>,
         manager: bool,
     ) -> Self {

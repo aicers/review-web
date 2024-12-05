@@ -40,13 +40,12 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
-use async_graphql::connection::{ConnectionNameType, CursorType, EdgeNameType};
+use async_graphql::connection::{ConnectionNameType, CursorType, EdgeNameType, OpaqueCursor};
 use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
     Context, Guard, MergedObject, MergedSubscription, ObjectType, OutputType, Result,
 };
 use chrono::TimeDelta;
-use data_encoding::BASE64;
 use num_traits::ToPrimitive;
 #[cfg(test)]
 use review_database::HostNetworkGroup;
@@ -236,13 +235,23 @@ async fn query_with_constraints<Node, ConnectionFields, Name, F, R, E>(
     first: Option<i32>,
     last: Option<i32>,
     f: F,
-) -> Result<Connection<String, Node, ConnectionFields, EmptyFields, Name>>
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, Node, ConnectionFields, EmptyFields, Name>>
 where
     Node: OutputType,
     ConnectionFields: ObjectType,
     Name: ConnectionNameType,
-    F: FnOnce(Option<String>, Option<String>, Option<usize>, Option<usize>) -> R,
-    R: Future<Output = Result<Connection<String, Node, ConnectionFields, EmptyFields, Name>, E>>,
+    F: FnOnce(
+        Option<OpaqueCursor<Vec<u8>>>,
+        Option<OpaqueCursor<Vec<u8>>>,
+        Option<usize>,
+        Option<usize>,
+    ) -> R,
+    R: Future<
+        Output = Result<
+            Connection<OpaqueCursor<Vec<u8>>, Node, ConnectionFields, EmptyFields, Name>,
+            E,
+        >,
+    >,
     E: Into<async_graphql::Error>,
 {
     extra_validate_pagination_params(
@@ -322,49 +331,27 @@ async fn get_store<'a>(ctx: &Context<'a>) -> Result<tokio::sync::RwLockReadGuard
     Ok(ctx.data::<Arc<RwLock<Store>>>()?.read().await)
 }
 
-/// Decodes a cursor used in pagination.
-fn decode_cursor(cursor: &str) -> Option<Vec<u8>> {
-    BASE64.decode(cursor.as_bytes()).ok()
-}
-
-/// Encodes a cursor used in pagination.
-fn encode_cursor(cursor: &[u8]) -> String {
-    BASE64.encode(cursor)
-}
-
-#[allow(clippy::type_complexity)]
-fn decode_cursor_pair(
-    after: Option<String>,
-    before: Option<String>,
-) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
-    let after = if let Some(after) = after {
-        Some(decode_cursor(&after).ok_or("invalid cursor `after`")?)
-    } else {
-        None
-    };
-    let before = if let Some(before) = before {
-        Some(decode_cursor(&before).ok_or("invalid cursor `before`")?)
-    } else {
-        None
-    };
-    Ok((after, before))
-}
-
 #[allow(clippy::type_complexity)]
 fn process_load_edges<'a, T, I, R>(
     table: &'a T,
-    after: Option<String>,
-    before: Option<String>,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
     prefix: Option<&[u8]>,
-) -> Result<(Vec<Result<R, anyhow::Error>>, bool, bool)>
+) -> (
+    std::vec::Vec<std::result::Result<R, anyhow::Error>>,
+    bool,
+    bool,
+)
 where
     T: database::Iterable<'a, I>,
     I: std::iter::Iterator<Item = anyhow::Result<R>>,
     R: database::UniqueKey,
 {
-    let (after, before) = decode_cursor_pair(after, before)?;
+    let after = after.map(|cursor| cursor.0);
+    let before = before.map(|cursor| cursor.0);
+
     let (nodes, has_previous, has_next) = if let Some(first) = first {
         let (nodes, has_more) =
             collect_edges(table, Direction::Forward, after, before, prefix, first);
@@ -377,13 +364,13 @@ where
         (nodes, has_more, false)
     };
 
-    Ok((nodes, has_previous, has_next))
+    (nodes, has_previous, has_next)
 }
 
 fn load_edges_interim<'a, T, I, R>(
     table: &'a T,
-    after: Option<String>,
-    before: Option<String>,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
     prefix: Option<&[u8]>,
@@ -394,7 +381,7 @@ where
     R: database::UniqueKey,
 {
     let (nodes, has_previous, has_next) =
-        process_load_edges(table, after, before, first, last, prefix)?;
+        process_load_edges(table, after, before, first, last, prefix);
 
     let nodes = nodes
         .into_iter()
@@ -403,14 +390,15 @@ where
     Ok((nodes, has_previous, has_next))
 }
 
+#[allow(clippy::type_complexity)]
 fn load_edges<'a, T, I, R, N, A, NodesField>(
     table: &'a T,
-    after: Option<String>,
-    before: Option<String>,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
     additional_fields: A,
-) -> Result<Connection<String, N, A, EmptyFields, NodesField>>
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, N, A, EmptyFields, NodesField>>
 where
     T: database::Iterable<'a, I>,
     I: std::iter::Iterator<Item = anyhow::Result<R>>,
@@ -420,7 +408,7 @@ where
     NodesField: ConnectionNameType,
 {
     let (nodes, has_previous, has_next) =
-        process_load_edges(table, after, before, first, last, None)?;
+        process_load_edges(table, after, before, first, last, None);
 
     for node in &nodes {
         let Err(e) = node else { continue };
@@ -432,8 +420,8 @@ where
         Connection::with_additional_fields(has_previous, has_next, additional_fields);
     connection.edges.extend(nodes.into_iter().map(|node| {
         let Ok(node) = node else { unreachable!() };
-        let encoded = encode_cursor(node.unique_key().as_ref());
-        Edge::new(encoded, node.into())
+        let key = node.unique_key().as_ref().to_vec();
+        Edge::new(OpaqueCursor(key), node.into())
     }));
     Ok(connection)
 }
