@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_graphql::{
-    connection::{Connection, Edge, EmptyFields},
+    connection::{Connection, Edge, EmptyFields, OpaqueCursor},
     types::ID,
     Context, Object, Result, SimpleObject, StringNumber,
 };
@@ -12,11 +12,8 @@ use review_database::{self as database, Database};
 use tokio::sync::RwLock;
 
 use super::{
-    cluster::TimeCount,
-    data_source::DataSource,
-    fill_vacant_time_slots, get_trend,
-    slicing::{self, IndexedKey},
-    Role, RoleGuard, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER,
+    cluster::TimeCount, data_source::DataSource, fill_vacant_time_slots, get_trend, slicing, Role,
+    RoleGuard, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER,
 };
 use crate::graphql::query;
 
@@ -40,7 +37,8 @@ impl ModelQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<IndexedKey<String>, ModelDigest, ModelTotalCount, EmptyFields>> {
+    ) -> Result<Connection<OpaqueCursor<(i32, String)>, ModelDigest, ModelTotalCount, EmptyFields>>
+    {
         query(
             after,
             before,
@@ -902,21 +900,16 @@ impl ModelTotalCount {
 
 async fn load(
     ctx: &Context<'_>,
-    after: Option<IndexedKey<String>>,
-    before: Option<IndexedKey<String>>,
+    after: Option<OpaqueCursor<(i32, String)>>,
+    before: Option<OpaqueCursor<(i32, String)>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<IndexedKey<String>, ModelDigest, ModelTotalCount, EmptyFields>> {
+) -> Result<Connection<OpaqueCursor<(i32, String)>, ModelDigest, ModelTotalCount, EmptyFields>> {
     let is_first = first.is_some();
     let limit = slicing::len(first, last)?;
     let db = ctx.data::<Database>()?;
     let rows = db
-        .load_models(
-            &after.map(Into::into),
-            &before.map(Into::into),
-            is_first,
-            limit,
-        )
+        .load_models(&after.map(|c| c.0), &before.map(|c| c.0), is_first, limit)
         .await?;
 
     let (rows, has_previous, has_next) = slicing::page_info(is_first, limit, rows);
@@ -924,7 +917,7 @@ async fn load(
         Connection::with_additional_fields(has_previous, has_next, ModelTotalCount);
     connection.edges.extend(
         rows.into_iter()
-            .map(|model| Edge::new(IndexedKey::new(model.id, model.name.clone()), model.into())),
+            .map(|model| Edge::new(OpaqueCursor((model.id, model.name.clone())), model.into())),
     );
     Ok(connection)
 }
