@@ -9,10 +9,7 @@ use num_traits::ToPrimitive;
 use review_database::{BatchInfo, Database};
 use serde_json::Value as JsonValue;
 
-use super::{
-    slicing::{self, IndexedKey},
-    Role, RoleGuard,
-};
+use super::{slicing, Role, RoleGuard};
 use crate::graphql::{query, query_with_constraints};
 
 #[derive(Default)]
@@ -50,7 +47,7 @@ impl StatisticsQuery {
         last: Option<i32>,
     ) -> Result<
         Connection<
-            IndexedKey<i64>,
+            OpaqueCursor<(i32, i64)>,
             Round,
             TotalCountByCluster,
             EmptyFields,
@@ -172,13 +169,13 @@ impl EdgeNameType for RoundByClusterEdge {
 async fn load_rounds_by_cluster(
     ctx: &Context<'_>,
     cluster: i32,
-    after: Option<IndexedKey<i64>>,
-    before: Option<IndexedKey<i64>>,
+    after: Option<OpaqueCursor<(i32, i64)>>,
+    before: Option<OpaqueCursor<(i32, i64)>>,
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<
     Connection<
-        IndexedKey<i64>,
+        OpaqueCursor<(i32, i64)>,
         Round,
         TotalCountByCluster,
         EmptyFields,
@@ -192,8 +189,8 @@ async fn load_rounds_by_cluster(
     let (model, batches) = db
         .load_rounds_by_cluster(
             cluster,
-            &after.map(|k| i64_to_naive_date_time(k.value)),
-            &before.map(|k| i64_to_naive_date_time(k.value)),
+            &after.map(|k| i64_to_naive_date_time(k.0 .1)),
+            &before.map(|k| i64_to_naive_date_time(k.0 .1)),
             is_first,
             limit + 1,
         )
@@ -222,7 +219,7 @@ async fn load_rounds_by_cluster(
     connection.edges.extend(
         batch_infos
             .into_iter()
-            .map(|row| Edge::new(IndexedKey::new(cluster, row.inner.id), row.into())),
+            .map(|row| Edge::new(OpaqueCursor((cluster, row.inner.id)), row.into())),
     );
     Ok(connection)
 }

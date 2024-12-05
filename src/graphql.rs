@@ -270,8 +270,6 @@ where
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
-    #[error("Invalid cursor")]
-    InvalidCursor,
     #[error("The value of first and last must be within 0-100")]
     InvalidLimitValue,
     #[error("You must provide a `first` or `last` value to properly paginate a connection.")]

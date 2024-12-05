@@ -9,9 +9,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Updated the encoding and decoding method for GraphQL cursors by removing
-  `graphql::encode_cursor` and `graphql::decode_cursor` methods and replacing
-  them with the encoding and decoding methods of `OpaqueCursor`.
+- The paginated GraphQL queries use different representations for cursors. The
+  cursor values obtained from earlier versions of the API are not compatible
+  with the new cursor values.
 
 ### Fixed
 
