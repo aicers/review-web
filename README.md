@@ -1,7 +1,7 @@
 # review-web
 
 This project aims to provide an easy-to-use interface for the REview system,
-allowing users to manage and analyze events from various sources. The web
+allowing users to manage and analyze events from various sensors. The web
 interface is built using modern web technologies, and it exposes a GraphQL API
 for flexible data querying and manipulation.
 

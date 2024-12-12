@@ -16,8 +16,8 @@ impl HttpThreat {
         self.inner.time
     }
 
-    async fn source(&self) -> &str {
-        &self.inner.source
+    async fn sensor(&self) -> &str {
+        &self.inner.sensor
     }
 
     async fn src_addr(&self) -> String {
@@ -238,8 +238,8 @@ impl RepeatedHttpSessions {
         self.inner.time
     }
 
-    async fn source(&self) -> &str {
-        &self.inner.source
+    async fn sensor(&self) -> &str {
+        &self.inner.sensor
     }
 
     async fn src_addr(&self) -> String {
@@ -328,8 +328,8 @@ impl TorConnection {
         self.inner.time
     }
 
-    async fn source(&self) -> &str {
-        &self.inner.source
+    async fn sensor(&self) -> &str {
+        &self.inner.sensor
     }
 
     async fn session_end_time(&self) -> DateTime<Utc> {
@@ -514,8 +514,8 @@ impl DomainGenerationAlgorithm {
         self.inner.time
     }
 
-    async fn source(&self) -> &str {
-        &self.inner.source
+    async fn sensor(&self) -> &str {
+        &self.inner.sensor
     }
 
     async fn src_addr(&self) -> String {
@@ -700,8 +700,8 @@ impl NonBrowser {
         self.inner.time
     }
 
-    async fn source(&self) -> &str {
-        &self.inner.source
+    async fn sensor(&self) -> &str {
+        &self.inner.sensor
     }
 
     async fn src_addr(&self) -> String {
@@ -882,8 +882,8 @@ impl BlockListHttp {
         self.inner.time
     }
 
-    async fn source(&self) -> &str {
-        &self.inner.source
+    async fn sensor(&self) -> &str {
+        &self.inner.sensor
     }
 
     async fn src_addr(&self) -> String {

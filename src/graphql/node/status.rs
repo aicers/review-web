@@ -465,7 +465,7 @@ mod tests {
     #[tokio::test]
     async fn check_node_status_list_ordering() {
         let mut online_apps_by_host_id = HashMap::new();
-        insert_apps("collect", &["sensor"], &mut online_apps_by_host_id);
+        insert_apps("collector", &["sensor1"], &mut online_apps_by_host_id);
         insert_apps(
             "analysis",
             &["semi-supervised", "unsupervised"],
@@ -588,7 +588,7 @@ mod tests {
                         description: "This node has the Sensor.",
                         hostname: "admin.aice-security.com",
                         agents: [{
-                            key: "sensor@collect"
+                            key: "sensor1@collector"
                             kind: SENSOR
                             status: ENABLED
                         }]

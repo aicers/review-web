@@ -93,12 +93,12 @@ impl super::TriageResponseQuery {
     async fn triage_response(
         &self,
         ctx: &Context<'_>,
-        source: String,
+        sensor: String,
         time: DateTime<Utc>,
     ) -> Result<Option<TriageResponse>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_response_map();
-        Ok(map.get(&source, &time)?.map(Into::into))
+        Ok(map.get(&sensor, &time)?.map(Into::into))
     }
 }
 
@@ -124,12 +124,12 @@ impl super::TriageResponseMutation {
     async fn insert_triage_response(
         &self,
         ctx: &Context<'_>,
-        source: String,
+        sensor: String,
         time: DateTime<Utc>,
         tag_ids: Vec<u32>,
         remarks: String,
     ) -> Result<ID> {
-        let pol = review_database::TriageResponse::new(source, time, tag_ids, remarks);
+        let pol = review_database::TriageResponse::new(sensor, time, tag_ids, remarks);
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_response_map();
         let id = map.put(pol)?;
