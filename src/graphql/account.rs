@@ -326,16 +326,10 @@ impl AccountMutation {
         if let Some(mut account) = account_map.get(&username)? {
             validate_password(&account, &username, &password)?;
             validate_last_signin_time(&account, &username)?;
-            validate_allow_access_from(&account, client_ip.as_ref(), &username)?;
+            validate_allow_access_from(&account, client_ip, &username)?;
             validate_max_parallel_sessions(&account, &store, &username)?;
 
-            sign_in_actions(
-                &mut account,
-                &store,
-                &account_map,
-                client_ip.as_ref(),
-                &username,
-            )
+            sign_in_actions(&mut account, &store, &account_map, client_ip, &username)
         } else {
             info!("{username} is not a valid username");
             Err("incorrect username or password".into())
@@ -362,19 +356,13 @@ impl AccountMutation {
 
         if let Some(mut account) = account_map.get(&username)? {
             validate_password(&account, &username, &password)?;
-            validate_allow_access_from(&account, client_ip.as_ref(), &username)?;
+            validate_allow_access_from(&account, client_ip, &username)?;
             validate_max_parallel_sessions(&account, &store, &username)?;
             validate_update_new_password(&password, &new_password, &username)?;
 
             account.update_password(&new_password)?;
 
-            sign_in_actions(
-                &mut account,
-                &store,
-                &account_map,
-                client_ip.as_ref(),
-                &username,
-            )
+            sign_in_actions(&mut account, &store, &account_map, client_ip, &username)
         } else {
             info!("{username} is not a valid username");
             Err("incorrect username or password".into())
@@ -487,7 +475,7 @@ fn validate_last_signin_time(account: &types::Account, username: &str) -> Result
 
 fn validate_allow_access_from(
     account: &types::Account,
-    client_ip: Option<&SocketAddr>,
+    client_ip: Option<SocketAddr>,
     username: &str,
 ) -> Result<()> {
     if let Some(allow_access_from) = account.allow_access_from.as_ref() {
@@ -546,7 +534,7 @@ fn sign_in_actions(
     account: &mut types::Account,
     store: &Store,
     account_map: &Table<types::Account>,
-    client_ip: Option<&SocketAddr>,
+    client_ip: Option<SocketAddr>,
     username: &str,
 ) -> Result<AuthPayload> {
     let (token, expiration_time) =
