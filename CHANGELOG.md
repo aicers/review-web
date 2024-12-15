@@ -7,6 +7,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added the `updateTrustedDomain` GraphQL API, allowing users to modify a
+  trusted domain.
+
 ### Changed
 
 - The paginated GraphQL queries use different representations for cursors. The
