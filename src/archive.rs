@@ -82,7 +82,7 @@ impl ArchiveState {
 
 async fn auth(
     State(state): State<ArchiveState>,
-    bearer: std::result::Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
+    bearer: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
     req: Request<Body>,
     next: Next,
 ) -> Result<Response, Error> {
