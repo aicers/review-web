@@ -337,14 +337,10 @@ fn process_load_edges<'a, T, I, R>(
     first: Option<usize>,
     last: Option<usize>,
     prefix: Option<&[u8]>,
-) -> (
-    std::vec::Vec<std::result::Result<R, anyhow::Error>>,
-    bool,
-    bool,
-)
+) -> (Vec<anyhow::Result<R>>, bool, bool)
 where
     T: database::Iterable<'a, I>,
-    I: std::iter::Iterator<Item = anyhow::Result<R>>,
+    I: Iterator<Item = anyhow::Result<R>>,
     R: database::UniqueKey,
 {
     let after = after.map(|cursor| cursor.0);
@@ -375,7 +371,7 @@ fn load_edges_interim<'a, T, I, R>(
 ) -> Result<(Vec<R>, bool, bool)>
 where
     T: database::Iterable<'a, I>,
-    I: std::iter::Iterator<Item = anyhow::Result<R>>,
+    I: Iterator<Item = anyhow::Result<R>>,
     R: database::UniqueKey,
 {
     let (nodes, has_previous, has_next) =
@@ -399,7 +395,7 @@ fn load_edges<'a, T, I, R, N, A, NodesField>(
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, N, A, EmptyFields, NodesField>>
 where
     T: database::Iterable<'a, I>,
-    I: std::iter::Iterator<Item = anyhow::Result<R>>,
+    I: Iterator<Item = anyhow::Result<R>>,
     R: database::UniqueKey,
     N: From<R> + OutputType,
     A: ObjectType,
@@ -434,7 +430,7 @@ fn collect_edges<'a, T, I, R>(
 ) -> (Vec<anyhow::Result<R>>, bool)
 where
     T: database::Iterable<'a, I>,
-    I: std::iter::Iterator<Item = anyhow::Result<R>>,
+    I: Iterator<Item = anyhow::Result<R>>,
     R: database::UniqueKey,
 {
     let edges: Box<dyn Iterator<Item = _>> = if let Some(cursor) = from {
