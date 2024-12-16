@@ -1190,11 +1190,11 @@ mod tests {
 
     use crate::graphql::TestSchema;
 
-    /// Creates an event message at `timestamp` with the given source and
+    /// Creates an event message at `timestamp` with the given sensor and
     /// destination `IPv4` addresses.
     fn event_message_at(timestamp: DateTime<Utc>, src: u32, dst: u32) -> EventMessage {
         let fields = DnsEventFields {
-            source: "sensor1".to_string(),
+            sensor: "sensor1".to_string(),
             session_end_time: timestamp,
             src_addr: Ipv4Addr::from(src).into(),
             src_port: 10000,
@@ -1367,7 +1367,7 @@ mod tests {
                         sensors: [0], \
                     }}, \
                 ) {{ \
-                    edges {{ node {{... on DnsCovertChannel {{ time, source }} }} }} \
+                    edges {{ node {{... on DnsCovertChannel {{ time, sensor }} }} }} \
                     totalCount \
                 }} \
             }}",
@@ -1376,7 +1376,7 @@ mod tests {
         let res = schema.execute(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00", source: "sensor1"}}], totalCount: 1}}"#
+            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00", sensor: "sensor1"}}], totalCount: 1}}"#
         );
     }
 
@@ -1708,7 +1708,7 @@ mod tests {
             .and_local_timezone(Utc)
             .unwrap();
         let fields = BlockListDhcpFields {
-            source: "sensor1".to_string(),
+            sensor: "sensor1".to_string(),
             src_addr: Ipv4Addr::new(127, 0, 0, 1).into(),
             src_port: 68,
             dst_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
@@ -1797,7 +1797,7 @@ mod tests {
             .and_local_timezone(Utc)
             .unwrap();
         let fields = BlockListBootpFields {
-            source: "sensor1".to_string(),
+            sensor: "sensor1".to_string(),
             src_addr: Ipv4Addr::new(127, 0, 0, 1).into(),
             src_port: 68,
             dst_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
@@ -1879,7 +1879,7 @@ mod tests {
             .and_local_timezone(Utc)
             .unwrap();
         let fields = DnsEventFields {
-            source: "sensor1".to_string(),
+            sensor: "sensor1".to_string(),
             session_end_time: timestamp,
             src_addr: Ipv4Addr::from(1).into(),
             src_port: 10000,
@@ -1936,7 +1936,7 @@ mod tests {
             .and_local_timezone(Utc)
             .unwrap();
         let fields = BlockListTlsFields {
-            source: "sensor1".to_string(),
+            sensor: "sensor1".to_string(),
             src_addr: Ipv4Addr::from(1).into(),
             src_port: 10000,
             dst_addr: Ipv4Addr::from(2).into(),

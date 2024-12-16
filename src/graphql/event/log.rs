@@ -16,8 +16,8 @@ impl ExtraThreat {
         self.inner.time
     }
 
-    async fn source(&self) -> &str {
-        &self.inner.source
+    async fn sensor(&self) -> &str {
+        &self.inner.sensor
     }
 
     async fn service(&self) -> &str {

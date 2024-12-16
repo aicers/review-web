@@ -16,8 +16,8 @@ impl DnsCovertChannel {
         self.inner.time
     }
 
-    async fn source(&self) -> &str {
-        &self.inner.source
+    async fn sensor(&self) -> &str {
+        &self.inner.sensor
     }
 
     async fn session_end_time(&self) -> DateTime<Utc> {
@@ -163,8 +163,8 @@ impl LockyRansomware {
         self.inner.time
     }
 
-    async fn source(&self) -> &str {
-        &self.inner.source
+    async fn sensor(&self) -> &str {
+        &self.inner.sensor
     }
 
     async fn session_end_time(&self) -> DateTime<Utc> {
@@ -309,8 +309,8 @@ impl CryptocurrencyMiningPool {
         self.inner.time
     }
 
-    async fn source(&self) -> &str {
-        &self.inner.source
+    async fn sensor(&self) -> &str {
+        &self.inner.sensor
     }
 
     async fn src_addr(&self) -> String {
@@ -451,8 +451,8 @@ impl BlockListDns {
         self.inner.time
     }
 
-    async fn source(&self) -> &str {
-        &self.inner.source
+    async fn sensor(&self) -> &str {
+        &self.inner.sensor
     }
 
     async fn src_addr(&self) -> String {

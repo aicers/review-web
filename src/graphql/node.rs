@@ -21,8 +21,6 @@ use review_database as database;
 use roxy::Process as RoxyProcess;
 use serde::{Deserialize, Serialize};
 
-pub type PortNumber = u16;
-
 #[derive(Default)]
 pub(super) struct NodeQuery;
 
@@ -239,40 +237,6 @@ impl NodeTotalCount {
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
         let store = crate::graphql::get_store(ctx).await?;
         Ok(store.node_map().count()?)
-    }
-}
-
-#[derive(Debug, SimpleObject, Serialize, Deserialize, Clone)]
-#[graphql(complex)]
-struct HogConfig {
-    #[graphql(skip)]
-    giganto_ip: Option<IpAddr>,
-    giganto_port: Option<PortNumber>,
-    active_protocols: Option<Vec<String>>,
-    active_sources: Option<Vec<String>>,
-}
-
-#[ComplexObject]
-impl HogConfig {
-    async fn giganto_ip(&self) -> Option<String> {
-        self.giganto_ip.as_ref().map(ToString::to_string)
-    }
-}
-
-#[derive(Debug, SimpleObject, Serialize, Deserialize, Clone)]
-#[graphql(complex)]
-struct PigletConfig {
-    #[graphql(skip)]
-    giganto_ip: Option<IpAddr>,
-    giganto_port: Option<PortNumber>,
-    log_options: Option<Vec<String>>,
-    http_file_types: Option<Vec<String>>,
-}
-
-#[ComplexObject]
-impl PigletConfig {
-    async fn giganto_ip(&self) -> Option<String> {
-        self.giganto_ip.as_ref().map(ToString::to_string)
     }
 }
 

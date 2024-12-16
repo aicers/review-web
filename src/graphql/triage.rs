@@ -537,7 +537,7 @@ mod tests {
                 r#"
                 mutation {
                     insertTriageResponse(
-                        source: "collect"
+                        sensor: "sensor1"
                         time: "2023-02-14 14:54:46.083902898 +00:00"
                         tagIds: [1, 2, 3]
                         remarks: "Hello World"
@@ -556,13 +556,13 @@ mod tests {
                         id: "0"
                         old: {
                             key: [
-                                99,
-                                111,
-                                108,
-                                108,
+                                115,
                                 101,
-                                99,
-                                116,
+                                110,
+                                115,
+                                111,
+                                114,
+                                49,
                                 23,
                                 67,
                                 184,
@@ -577,13 +577,13 @@ mod tests {
                         }
                         new: {
                             key: [
-                                99,
-                                111,
-                                108,
-                                108,
+                                115,
                                 101,
-                                99,
-                                116,
+                                110,
+                                115,
+                                111,
+                                114,
+                                49,
                                 23,
                                 67,
                                 184,

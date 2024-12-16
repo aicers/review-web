@@ -16,8 +16,8 @@ impl NetworkThreat {
         self.inner.time
     }
 
-    async fn source(&self) -> &str {
-        &self.inner.source
+    async fn sensor(&self) -> &str {
+        &self.inner.sensor
     }
 
     async fn src_addr(&self) -> String {

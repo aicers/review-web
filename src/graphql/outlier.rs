@@ -315,7 +315,7 @@ pub(super) struct RankedOutlier {
     model_id: i32,
     timestamp: i64,
     rank: i64,
-    source: String,
+    sensor: String,
     distance: f64,
     saved: bool,
 }
@@ -327,7 +327,7 @@ impl From<review_database::OutlierInfo> for RankedOutlier {
             model_id: input.model_id,
             timestamp: input.timestamp,
             rank: input.rank,
-            source: input.source,
+            sensor: input.sensor,
             distance: input.distance,
             saved: input.is_saved,
         }
@@ -347,7 +347,7 @@ struct PreserveOutliersInput {
     model_id: i32,
     timestamp: i64,
     rank: i64,
-    source: String,
+    sensor: String,
 }
 
 impl From<PreserveOutliersInput> for review_database::OutlierInfoKey {
@@ -357,7 +357,7 @@ impl From<PreserveOutliersInput> for review_database::OutlierInfoKey {
             timestamp: input.timestamp,
             rank: input.rank,
             id: input.id,
-            source: input.source,
+            sensor: input.sensor,
         }
     }
 }
@@ -367,7 +367,7 @@ pub struct PreserveOutliersOutput {
     id: i64,
     model_id: i32,
     timestamp: i64,
-    source: String,
+    sensor: String,
 }
 
 impl From<PreserveOutliersInput> for PreserveOutliersOutput {
@@ -376,7 +376,7 @@ impl From<PreserveOutliersInput> for PreserveOutliersOutput {
             model_id: input.model_id,
             timestamp: input.timestamp,
             id: input.id,
-            source: input.source,
+            sensor: input.sensor,
         }
     }
 }
@@ -395,8 +395,8 @@ impl PreserveOutliersOutput {
         StringNumber(self.timestamp)
     }
 
-    async fn source(&self) -> String {
-        self.source.to_string()
+    async fn sensor(&self) -> String {
+        self.sensor.to_string()
     }
 }
 
@@ -582,7 +582,7 @@ fn check_filter_to_ranked_outlier(
 ) -> Result<bool> {
     if let Some(filter) = filter {
         if filter.remark.is_some() || tag_id_list.is_some() {
-            if let Some(value) = remarks_map.get(&node.source, &Utc.timestamp_nanos(node.id))? {
+            if let Some(value) = remarks_map.get(&node.sensor, &Utc.timestamp_nanos(node.id))? {
                 if let Some(remark) = &filter.remark {
                     if !value.remarks.contains(remark) {
                         return Ok(false);
@@ -769,7 +769,7 @@ mod tests {
                     timestamp,
                     rank,
                     id,
-                    source: "test".to_string(),
+                    sensor: "test".to_string(),
                     distance,
                     is_saved,
                 }
@@ -1035,7 +1035,7 @@ mod tests {
         );
 
         let to_save = start;
-        let to_preserve = format!("[{{id: {to_save}, modelId: {model}, timestamp: {}, rank: {to_save}, source: \"test\"}}]", t.timestamp_nanos_opt().unwrap());
+        let to_preserve = format!("[{{id: {to_save}, modelId: {model}, timestamp: {}, rank: {to_save}, sensor: \"test\"}}]", t.timestamp_nanos_opt().unwrap());
         let res = schema
             .execute(&format!(
                 "mutation {{
@@ -1043,7 +1043,7 @@ mod tests {
                         id
                         modelId
                         timestamp
-                        source
+                        sensor
                     }}
                 }}"
             ))
@@ -1053,7 +1053,7 @@ mod tests {
 
         let saved = start + 1;
         let to_preserve = format!(
-            "[{{id: {saved}, modelId: {model}, timestamp: {}, rank: {saved}, source: \"test\"}}]",
+            "[{{id: {saved}, modelId: {model}, timestamp: {}, rank: {saved}, sensor: \"test\"}}]",
             t.timestamp_nanos_opt().unwrap()
         );
         let res = schema
@@ -1063,12 +1063,12 @@ mod tests {
                         id
                         modelId
                         timestamp
-                        source
+                        sensor
                     }}
                 }}"
             ))
             .await;
-        let expect = format!("{{preserveOutliers: [{{id: \"{saved}\", modelId: {model}, timestamp: \"{}\", source: \"test\"}}]}}", t.timestamp_nanos_opt().unwrap());
+        let expect = format!("{{preserveOutliers: [{{id: \"{saved}\", modelId: {model}, timestamp: \"{}\", sensor: \"test\"}}]}}", t.timestamp_nanos_opt().unwrap());
         assert_eq!(res.data.to_string(), expect);
     }
 }

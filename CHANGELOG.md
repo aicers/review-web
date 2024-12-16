@@ -17,6 +17,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - The paginated GraphQL queries use different representations for cursors. The
   cursor values obtained from earlier versions of the API are not compatible
   with the new cursor values.
+- Replaced the term source with sensor, where it refers to a device or software
+  that captures or detects raw events. This update broadly affects GraphQL APIs
+  that previously used source field as a parameter, and GraphQL APIs that return
+  event, outlier, or triage related structs.
+- Updated review-database to 0.33.0.
 
 ### Fixed
 
