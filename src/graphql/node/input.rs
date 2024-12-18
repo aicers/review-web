@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt};
 
 use anyhow::Context as AnyhowContext;
-use async_graphql::{types::ID, InputObject, Result};
+use async_graphql::{types::ID, Error, InputObject, Result};
 
 use super::{AgentKind, AgentStatus};
 
@@ -138,27 +138,50 @@ pub(super) fn create_draft_update(
         .map(|agent| (agent.key.clone(), agent.config.clone()))
         .collect();
 
-    let agents: Vec<review_database::Agent> = if let Some(new_agents) = new.agents {
-        new_agents
-            .into_iter()
-            .map(|agent_draft| {
-                let config = old_config_map
-                    .get(&agent_draft.key)
-                    .and_then(|config| config.as_ref().and_then(|c| c.clone().try_into().ok()));
+    let agents: Vec<review_database::Agent> =
+        new.agents
+            .map(|new_agents| {
+                new_agents
+                    .into_iter()
+                    .map(|new_agent| {
+                        let config =
+                            match old_config_map.get(&new_agent.key) {
+                                Some(config) => match config.as_ref() {
+                                    Some(c) => Some(c.clone().try_into().map_err(|_| {
+                                        Error::new("Failed to convert agent config")
+                                    })?),
+                                    None => None,
+                                },
+                                None => {
+                                    return Err(Error::new(format!(
+                                        "Missing configuration for agent key: {}",
+                                        new_agent.key
+                                    )))
+                                }
+                            };
 
-                review_database::Agent {
-                    node: u32::MAX,
-                    key: agent_draft.key,
-                    kind: agent_draft.kind.into(),
-                    status: agent_draft.status.into(),
-                    config,
-                    draft: agent_draft.draft.and_then(|draft| draft.try_into().ok()),
-                }
+                        let draft = match new_agent.draft {
+                            Some(draft) => Some(
+                                draft
+                                    .try_into()
+                                    .map_err(|_| Error::new("Failed to convert agent draft"))?,
+                            ),
+                            None => None,
+                        };
+
+                        Ok(review_database::Agent {
+                            node: u32::MAX,
+                            key: new_agent.key,
+                            kind: new_agent.kind.into(),
+                            status: new_agent.status.into(),
+                            config,
+                            draft,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
             })
-            .collect()
-    } else {
-        Vec::new()
-    };
+            .transpose()?
+            .unwrap_or_default();
 
     let giganto: Option<review_database::Giganto> = new.giganto.map(Into::into);
 

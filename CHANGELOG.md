@@ -54,6 +54,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Resolved an issue in the `applyNode` GraphQL API, where configuration values
   set to an empty string were not saved to the `config` in the database.
+- Fixed an issue where configuration conversion failures were silently ignored,
+  leading to incorrect None handling.
 
 ## [0.24.0] - 2024-11-19
 
