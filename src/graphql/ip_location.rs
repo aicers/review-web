@@ -26,7 +26,7 @@ impl IpLocationQuery {
             return Err("IP location database unavailable".into());
         };
         let record = {
-            if let Ok(mut locator) = mutex.lock() {
+            if let Ok(locator) = mutex.lock() {
                 locator
                     .ip_lookup(addr)
                     .ok()
@@ -55,7 +55,7 @@ impl IpLocationQuery {
         };
 
         addresses.truncate(MAX_NUM_IP_LOCATION_LIST);
-        let mut locator = mutex
+        let locator = mutex
             .lock()
             .map_err(|_| "Failed to lock IP location database")?;
         let records = addresses

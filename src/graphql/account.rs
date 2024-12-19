@@ -137,6 +137,20 @@ impl AccountQuery {
             .ok_or_else::<async_graphql::Error, _>(|| "Account not found".into())
             .map(|account| account.language)
     }
+
+    /// Retrieves the user's screen color theme selection by username.
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
+        .or(RoleGuard::new(super::Role::SecurityAdministrator))
+        .or(RoleGuard::new(super::Role::SecurityManager))
+        .or(RoleGuard::new(super::Role::SecurityMonitor))")]
+    async fn theme(&self, ctx: &Context<'_>, username: String) -> Result<Option<String>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.account_map();
+
+        map.get(&username)?
+            .ok_or_else::<async_graphql::Error, _>(|| "Account not found".into())
+            .map(|account| account.theme)
+    }
 }
 
 #[derive(Default)]
@@ -157,6 +171,7 @@ impl AccountMutation {
         name: String,
         department: String,
         language: Option<String>,
+        theme: Option<String>,
         allow_access_from: Option<Vec<IpAddress>>,
         max_parallel_sessions: Option<u32>,
     ) -> Result<String> {
@@ -178,6 +193,7 @@ impl AccountMutation {
             name,
             department,
             language,
+            theme,
             allow_access_from,
             max_parallel_sessions,
         )?;
@@ -206,6 +222,7 @@ impl AccountMutation {
                     username.as_bytes(),
                     &Some(password),
                     None,
+                    &None,
                     &None,
                     &None,
                     &None,
@@ -253,6 +270,7 @@ impl AccountMutation {
         name: Option<UpdateName>,
         department: Option<UpdateDepartment>,
         language: Option<UpdateLanguage>,
+        theme: Option<UpdateTheme>,
         allow_access_from: Option<UpdateAllowAccessFrom>,
         max_parallel_sessions: Option<UpdateMaxParallelSessions>,
     ) -> Result<String> {
@@ -271,6 +289,7 @@ impl AccountMutation {
         let name = name.map(|n| (n.old, n.new));
         let dept = department.map(|d| (d.old, d.new));
         let language = language.map(|d| (d.old, d.new));
+        let theme = theme.map(|d| (d.old, d.new));
         let allow_access_from = if let Some(ip_addrs) = allow_access_from {
             let old = ip_addrs.old.map(|old| to_ip_addr(&old));
             let new = ip_addrs.new.map(|new| to_ip_addr(&new));
@@ -289,6 +308,7 @@ impl AccountMutation {
             &name,
             &dept,
             &language,
+            &theme,
             &allow_access_from,
             &max_parallel_sessions,
         )?;
@@ -443,9 +463,40 @@ impl AccountMutation {
             &Some((language.old, language.new)),
             &None,
             &None,
+            &None,
         )?;
 
         Ok(new_language)
+    }
+
+    /// Updates only the user's screen color theme selection.
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
+   .or(RoleGuard::new(super::Role::SecurityAdministrator))
+   .or(RoleGuard::new(super::Role::SecurityManager))
+   .or(RoleGuard::new(super::Role::SecurityMonitor))")]
+    async fn update_theme(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+        theme: UpdateTheme,
+    ) -> Result<Option<String>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.account_map();
+        let new_theme = theme.new.clone();
+
+        map.update(
+            username.as_bytes(),
+            &None,
+            None,
+            &None,
+            &None,
+            &None,
+            &Some((theme.old, theme.new)),
+            &None,
+            &None,
+        )?;
+
+        Ok(new_theme)
     }
 }
 
@@ -603,6 +654,10 @@ impl Account {
         self.inner.language.clone()
     }
 
+    async fn theme(&self) -> Option<String> {
+        self.inner.theme.clone()
+    }
+
     async fn creation_time(&self) -> DateTime<Utc> {
         self.inner.creation_time()
     }
@@ -679,6 +734,12 @@ struct UpdateDepartment {
 
 #[derive(InputObject)]
 struct UpdateLanguage {
+    old: Option<String>,
+    new: Option<String>,
+}
+
+#[derive(InputObject)]
+struct UpdateTheme {
     old: Option<String>,
     new: Option<String>,
 }
@@ -767,6 +828,7 @@ fn initial_credential() -> anyhow::Result<types::Account> {
         database::Role::SystemAdministrator,
         "System Administrator".to_owned(),
         String::new(),
+        None,
         None,
         None,
         None,
@@ -1356,6 +1418,7 @@ mod tests {
                         department: "Security",
                         language: "en-US",
                         allowAccessFrom: ["127.0.0.1"]
+                        theme: "dark"
                     )
                 }"#,
             )
@@ -1373,6 +1436,7 @@ mod tests {
                         name
                         department
                         language
+                        theme
                     }
                 }"#,
             )
@@ -1380,7 +1444,7 @@ mod tests {
 
         assert_eq!(
             res.data.to_string(),
-            r#"{account: {username: "username", role: SECURITY_ADMINISTRATOR, name: "John Doe", department: "Security", language: "en-US"}}"#
+            r#"{account: {username: "username", role: SECURITY_ADMINISTRATOR, name: "John Doe", department: "Security", language: "en-US", theme: "dark"}}"#
         );
 
         let res = schema
@@ -1409,6 +1473,10 @@ mod tests {
                         allowAccessFrom: {
                             old: "127.0.0.1",
                             new: "127.0.0.2"
+                        },
+                        theme: {
+                            old: "dark",
+                            new: "light"
                         }
                     )
                 }"#,
@@ -1428,6 +1496,7 @@ mod tests {
                         department
                         language
                         allowAccessFrom
+                        theme
                     }
                 }"#,
             )
@@ -1435,7 +1504,7 @@ mod tests {
 
         assert_eq!(
             res.data.to_string(),
-            r#"{account: {username: "username", role: SYSTEM_ADMINISTRATOR, name: "Loren Ipsum", department: "Admin", language: "ko-KR", allowAccessFrom: ["127.0.0.2"]}}"#
+            r#"{account: {username: "username", role: SYSTEM_ADMINISTRATOR, name: "Loren Ipsum", department: "Admin", language: "ko-KR", allowAccessFrom: ["127.0.0.2"], theme: "light"}}"#
         );
 
         let res = schema
@@ -1464,6 +1533,10 @@ mod tests {
                         allowAccessFrom: {
                             old: "127.0.0.2",
                             new: "127.0.0.x"
+                        },
+                        theme: {
+                            old: "dark",
+                            new: "light"
                         }
                     )
                 }"#,
@@ -1927,6 +2000,123 @@ mod tests {
         assert_eq!(
             res.errors.first().unwrap().message.to_string(),
             "incorrect username or password".to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn theme() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "username",
+                        password: "password",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "John Doe",
+                        department: "Security",
+                        language: "en-US",
+                        theme: "dark"
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "username"}"#);
+
+        let res = schema
+            .execute(
+                r#"query {
+                    theme(
+                        username: "username"
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{theme: "dark"}"#);
+    }
+
+    #[tokio::test]
+    async fn update_theme() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "username",
+                        password: "password",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "John Doe",
+                        department: "Security",
+                        language: "en-US",
+                        theme: "dark"
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "username"}"#);
+
+        let res = schema
+            .execute(
+                r#"
+                query {
+                     account(username: "username") {
+                        username
+                        role
+                        name
+                        department
+                        language
+                        theme
+                    }
+                }"#,
+            )
+            .await;
+
+        assert_eq!(
+            res.data.to_string(),
+            r#"{account: {username: "username", role: SECURITY_ADMINISTRATOR, name: "John Doe", department: "Security", language: "en-US", theme: "dark"}}"#
+        );
+
+        let res = schema
+            .execute(
+                r#"
+                mutation {
+                    updateTheme(
+                        username: "username",
+                        theme: {
+                            old: "dark",
+                            new: "light"
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{updateTheme: "light"}"#);
+
+        let res = schema
+            .execute(
+                r#"
+                query {
+                     account(username: "username") {
+                        username
+                        role
+                        name
+                        department
+                        language
+                        theme
+                    }
+                }"#,
+            )
+            .await;
+
+        assert_eq!(
+            res.data.to_string(),
+            r#"{account: {username: "username", role: SECURITY_ADMINISTRATOR, name: "John Doe", department: "Security", language: "en-US", theme: "light"}}"#
         );
     }
 }
