@@ -11,6 +11,16 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Added the `updateTrustedDomain` GraphQL API, allowing users to modify a
   trusted domain.
+- Added `IpAddress` GraphQL custom scalar for IP addresses.
+  - Applied it to the GraphQL APIs `ipLocation`, `ipLocationList`,
+    `insertAccount`, `updateAccount`, `insertSamplingPolicy`, and
+    `updateSamplingPolicy`.
+  - The API returns the following error message when a value cannot be parsed as
+    an `IpAddr` (e.g., when "abc" is given):
+    ```text
+    Failed to parse "IpAddress": Invalid IP address: abc (occurred while
+    parsing "[IpAddress!]")
+    ```
 
 ### Changed
 

@@ -1,11 +1,8 @@
-use std::{
-    net::IpAddr,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use async_graphql::{Context, Object, Result, SimpleObject};
 
-use super::{Role, RoleGuard};
+use super::{IpAddress, Role, RoleGuard};
 const MAX_NUM_IP_LOCATION_LIST: usize = 200;
 
 #[derive(Default)]
@@ -14,14 +11,17 @@ pub(super) struct IpLocationQuery;
 #[Object]
 impl IpLocationQuery {
     /// The location of an IP address.
+    #[allow(unused_mut)]
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
-    async fn ip_location(&self, ctx: &Context<'_>, address: String) -> Result<Option<IpLocation>> {
-        let Ok(addr) = address.parse::<IpAddr>() else {
-            return Err("invalid IP address".into());
-        };
+    async fn ip_location(
+        &self,
+        ctx: &Context<'_>,
+        address: IpAddress,
+    ) -> Result<Option<IpLocation>> {
+        let addr = address.0;
         let Ok(mutex) = ctx.data::<Arc<Mutex<ip2location::DB>>>() else {
             return Err("IP location database unavailable".into());
         };
@@ -40,6 +40,7 @@ impl IpLocationQuery {
     }
 
     /// The list of locations for up to 200 IP addresses.
+    #[allow(unused_mut)]
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -47,7 +48,7 @@ impl IpLocationQuery {
     async fn ip_location_list(
         &self,
         ctx: &Context<'_>,
-        mut addresses: Vec<String>,
+        mut addresses: Vec<IpAddress>,
     ) -> Result<Vec<IpLocationItem>> {
         let Ok(mutex) = ctx.data::<Arc<Mutex<ip2location::DB>>>() else {
             return Err("IP location database unavailable".into());
@@ -59,19 +60,17 @@ impl IpLocationQuery {
             .map_err(|_| "Failed to lock IP location database")?;
         let records = addresses
             .iter()
-            .filter_map(|address| {
-                address.parse::<IpAddr>().ok().and_then(|addr| {
-                    locator
-                        .ip_lookup(addr)
-                        .ok()
-                        .map(std::convert::TryInto::try_into)
-                        .and_then(|r| {
-                            r.ok().map(|location| IpLocationItem {
-                                address: address.clone(),
-                                location,
-                            })
+            .filter_map(|addr| {
+                locator
+                    .ip_lookup(addr.0)
+                    .ok()
+                    .map(std::convert::TryInto::try_into)
+                    .and_then(|r| {
+                        r.ok().map(|location| IpLocationItem {
+                            address: addr.0.to_string(),
+                            location,
                         })
-                })
+                    })
             })
             .collect();
 
