@@ -83,15 +83,15 @@ mod tests {
     #[tokio::test]
     async fn network_tag() {
         let schema = TestSchema::new().await;
-        let res = schema.execute(r#"{networkTagList{name}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{networkTagList: []}"#);
+        let res = schema.execute(r"{networkTagList{name}}").await;
+        assert_eq!(res.data.to_string(), r"{networkTagList: []}");
 
         let res = schema
             .execute(r#"mutation {insertNetworkTag(name: "foo")}"#)
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "0"}"#);
 
-        let res = schema.execute(r#"{networkTagList{name}}"#).await;
+        let res = schema.execute(r"{networkTagList{name}}").await;
         assert_eq!(res.data.to_string(), r#"{networkTagList: [{name: "foo"}]}"#);
 
         let res = schema
@@ -118,6 +118,6 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{removeNetworkTag: "foo"}"#);
 
         let res = schema.execute(r#"{network(id: "0") {tagIds}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{network: {tagIds: []}}"#);
+        assert_eq!(res.data.to_string(), r"{network: {tagIds: []}}");
     }
 }

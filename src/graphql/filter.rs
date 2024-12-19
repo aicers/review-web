@@ -564,8 +564,8 @@ mod tests {
     #[tokio::test]
     async fn filter() {
         let schema = TestSchema::new().await;
-        let res = schema.execute(r#"{filterList{name}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{filterList: []}"#);
+        let res = schema.execute(r"{filterList{name}}").await;
+        assert_eq!(res.data.to_string(), r"{filterList: []}");
 
         let res = schema
             .execute(
@@ -576,7 +576,7 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertFilter: "foo"}"#);
 
-        let res = schema.execute(r#"{filterList{name}}"#).await;
+        let res = schema.execute(r"{filterList{name}}").await;
         assert_eq!(res.data.to_string(), r#"{filterList: [{name: "foo"}]}"#);
 
         let res = schema.execute(
@@ -587,7 +587,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{replaceFilter: "foo"}"#);
 
         let res = schema.execute(r#"{filter(name: "foo"){directions}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{filter: {directions: [INBOUND]}}"#);
+        assert_eq!(res.data.to_string(), r"{filter: {directions: [INBOUND]}}");
 
         let res = schema
             .execute(r#"mutation {removeFilters(names: ["foo"])}"#)

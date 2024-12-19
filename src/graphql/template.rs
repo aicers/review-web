@@ -365,8 +365,8 @@ mod tests {
     #[tokio::test]
     async fn test_unstructured_template() {
         let schema = TestSchema::new().await;
-        let res = schema.execute(r#"{templateList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{templateList: {totalCount: 0}}"#);
+        let res = schema.execute(r"{templateList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 0}}");
 
         let res = schema
             .execute(
@@ -382,12 +382,12 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertTemplate: "t1"}"#);
 
-        let res = schema.execute(r#"{templateList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{templateList: {totalCount: 1}}"#);
+        let res = schema.execute(r"{templateList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 1}}");
 
         let res = schema
             .execute(
-                r#"{
+                r"{
                 templateList {
                     edges {
                         node {
@@ -398,7 +398,7 @@ mod tests {
                     }
                 totalCount
             }
-        }"#,
+        }",
             )
             .await;
         assert_eq!(
@@ -424,11 +424,11 @@ mod tests {
             }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{updateTemplate: true}"#);
+        assert_eq!(res.data.to_string(), r"{updateTemplate: true}");
 
         let res = schema
             .execute(
-                r#"{
+                r"{
                 templateList {
                     edges {
                         node {
@@ -439,12 +439,12 @@ mod tests {
                     }
                 totalCount
             }
-        }"#,
+        }",
             )
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{templateList: {edges: [{node: {algorithm: DISTRIBUTION}}], totalCount: 1}}"#
+            r"{templateList: {edges: [{node: {algorithm: DISTRIBUTION}}], totalCount: 1}}"
         );
 
         let res = schema
@@ -452,15 +452,15 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{removeTemplate: "t1"}"#);
 
-        let res = schema.execute(r#"{templateList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{templateList: {totalCount: 0}}"#);
+        let res = schema.execute(r"{templateList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 0}}");
     }
 
     #[tokio::test]
     async fn test_structured_template() {
         let schema = TestSchema::new().await;
-        let res = schema.execute(r#"{templateList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{templateList: {totalCount: 0}}"#);
+        let res = schema.execute(r"{templateList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 0}}");
 
         let res = schema
             .execute(
@@ -479,12 +479,12 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertTemplate: "t1"}"#);
 
-        let res = schema.execute(r#"{templateList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{templateList: {totalCount: 1}}"#);
+        let res = schema.execute(r"{templateList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 1}}");
 
         let res = schema
             .execute(
-                r#"{
+                r"{
                 templateList {
                     edges {
                         node {
@@ -496,7 +496,7 @@ mod tests {
                     }
                 totalCount
             }
-        }"#,
+        }",
             )
             .await;
         assert_eq!(
@@ -528,11 +528,11 @@ mod tests {
             }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{updateTemplate: true}"#);
+        assert_eq!(res.data.to_string(), r"{updateTemplate: true}");
 
         let res = schema
             .execute(
-                r#"{
+                r"{
                 templateList {
                     edges {
                         node {
@@ -544,7 +544,7 @@ mod tests {
                     }
                 totalCount
             }
-        }"#,
+        }",
             )
             .await;
         assert_eq!(
@@ -557,7 +557,7 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{removeTemplate: "t1"}"#);
 
-        let res = schema.execute(r#"{templateList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{templateList: {totalCount: 0}}"#);
+        let res = schema.execute(r"{templateList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 0}}");
     }
 }

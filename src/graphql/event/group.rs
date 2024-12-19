@@ -521,14 +521,13 @@ mod tests {
         let query = format!(
             "{{ \
                 eventCountsByNetwork(
-                    filter: {{ start:\"{}\", end:\"{}\" }},
+                    filter: {{ start:\"{ts1}\", end:\"{ts3}\" }},
                     first: 10
                 ) {{
                     values
                     counts
                 }}
-            }}",
-            ts1, ts3
+            }}"
         );
         let res = schema.execute(&query).await;
         assert_eq!(

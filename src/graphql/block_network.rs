@@ -239,11 +239,8 @@ mod tests {
     async fn test_block_network() {
         let schema = TestSchema::new().await;
 
-        let res = schema.execute(r#"{blockNetworkList{totalCount}}"#).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{blockNetworkList: {totalCount: 0}}"#
-        );
+        let res = schema.execute(r"{blockNetworkList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{blockNetworkList: {totalCount: 0}}");
 
         let res = schema
             .execute(
@@ -295,14 +292,14 @@ mod tests {
 
         let res = schema
             .execute(
-                r#"
+                r"
                 query {
                     blockNetworkList(first: 10) {
                         nodes {
                             name
                         }
                     }
-                }"#,
+                }",
             )
             .await;
         assert_eq!(

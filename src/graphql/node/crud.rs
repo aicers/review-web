@@ -204,8 +204,8 @@ mod tests {
         let schema = TestSchema::new().await;
 
         // check empty
-        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 0}}"#);
+        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
 
         // insert node
         let res = schema
@@ -238,8 +238,8 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
         // check node count after insert
-        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 1}}"#);
+        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
 
         // check inserted node
         let res = schema
@@ -368,8 +368,8 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
 
         // check node count after update
-        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 1}}"#);
+        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
 
         // check updated node
         let res = schema
@@ -486,8 +486,8 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{removeNodes: ["admin node"]}"#);
 
         // check node count after remove
-        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 0}}"#);
+        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
     }
 
     #[tokio::test]
@@ -496,8 +496,8 @@ mod tests {
         let schema = TestSchema::new().await;
 
         // check empty
-        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 0}}"#);
+        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
 
         // insert node
         let res = schema
@@ -526,8 +526,8 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
         // check node count after insert
-        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 1}}"#);
+        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
 
         // check inserted node
         let res = schema
@@ -645,8 +645,8 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
 
         // check node count after update
-        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 1}}"#);
+        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
 
         // check updated node
         let res = schema

@@ -295,8 +295,8 @@ mod tests {
         let schema = TestSchema::new_with(agent_manager, None).await;
 
         // check empty
-        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 0}}"#);
+        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
 
         // insert node
         let res = schema
@@ -331,7 +331,7 @@ mod tests {
         // check node list after insert
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     nodeList(first: 10) {
                       totalCount
                       edges {
@@ -364,7 +364,7 @@ mod tests {
                         }
                       }
                     }
-                  }"#,
+                  }",
             )
             .await;
         assert_json_eq!(
@@ -452,7 +452,7 @@ mod tests {
         // check node list after apply
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     nodeList(first: 10) {
                       totalCount
                       edges {
@@ -485,7 +485,7 @@ mod tests {
                         }
                       }
                     }
-                  }"#,
+                  }",
             )
             .await;
         assert_json_eq!(
@@ -604,7 +604,7 @@ mod tests {
         // check node list after update
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     nodeList(first: 10) {
                       totalCount
                       edges {
@@ -637,7 +637,7 @@ mod tests {
                         }
                       }
                     }
-                  }"#,
+                  }",
             )
             .await;
 
@@ -734,7 +734,7 @@ mod tests {
         // check node list after apply
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     nodeList(first: 10) {
                       totalCount
                       edges {
@@ -767,7 +767,7 @@ mod tests {
                         }
                       }
                     }
-                  }"#,
+                  }",
             )
             .await;
         assert_json_eq!(
@@ -937,7 +937,7 @@ mod tests {
         // check node list after apply
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     nodeList(first: 10) {
                         totalCount
                         edges {
@@ -970,7 +970,7 @@ mod tests {
                             }
                         }
                     }
-                }"#,
+                }",
             )
             .await;
 
@@ -1100,7 +1100,7 @@ mod tests {
         // check node list after update
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     nodeList(first: 10) {
                       totalCount
                       edges {
@@ -1133,7 +1133,7 @@ mod tests {
                         }
                       }
                     }
-                  }"#,
+                  }",
             )
             .await;
 
@@ -1237,7 +1237,7 @@ mod tests {
         // check node list after apply
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     nodeList(first: 10) {
                         totalCount
                         edges {
@@ -1270,7 +1270,7 @@ mod tests {
                             }
                         }
                     }
-                }"#,
+                }",
             )
             .await;
 
@@ -1400,7 +1400,7 @@ mod tests {
         // check node list after update
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     nodeList(first: 10) {
                       totalCount
                       edges {
@@ -1433,7 +1433,7 @@ mod tests {
                         }
                       }
                     }
-                  }"#,
+                  }",
             )
             .await;
 
@@ -1537,7 +1537,7 @@ mod tests {
         // check node list after apply
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                         nodeList(first: 10) {
                           totalCount
                           edges {
@@ -1570,7 +1570,7 @@ mod tests {
                             }
                           }
                         }
-                      }"#,
+                      }",
             )
             .await;
 
@@ -1618,6 +1618,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn test_apply_node_empty_draft() {
         // This test ensures that the `applyNode` GraphQL API doesn't notify agents when the agent's
         // draft is empty. `FailingMockAgentManager` is designed to fail if notifications are
@@ -1686,7 +1687,7 @@ mod tests {
         // check node list after apply
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                         nodeList(first: 10) {
                           totalCount
                           edges {
@@ -1719,7 +1720,7 @@ mod tests {
                             }
                           }
                         }
-                      }"#,
+                      }",
             )
             .await;
         assert_json_eq!(
@@ -2196,7 +2197,7 @@ mod tests {
     fn insert_apps(host: &str, apps: &[&str], map: &mut HashMap<String, Vec<(String, String)>>) {
         let entries = apps
             .iter()
-            .map(|&app| (format!("{}@{}", app, host), app.to_string()))
+            .map(|&app| (format!("{app}@{host}"), app.to_string()))
             .collect();
         map.insert(host.to_string(), entries);
     }
