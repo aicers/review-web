@@ -238,11 +238,8 @@ mod tests {
     async fn test_allow_network() {
         let schema = TestSchema::new().await;
 
-        let res = schema.execute(r#"{allowNetworkList{totalCount}}"#).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{allowNetworkList: {totalCount: 0}}"#
-        );
+        let res = schema.execute(r"{allowNetworkList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{allowNetworkList: {totalCount: 0}}");
 
         let res = schema
             .execute(
@@ -294,14 +291,14 @@ mod tests {
 
         let res = schema
             .execute(
-                r#"
+                r"
                 query {
                     allowNetworkList(first: 10) {
                         nodes {
                             name
                         }
                     }
-                }"#,
+                }",
             )
             .await;
         assert_eq!(

@@ -739,7 +739,7 @@ mod tests {
             .await
             .is_err());
         assert!(agent_manager
-            .update_traffic_filter_rules("", &[(Default::default(), None, None)])
+            .update_traffic_filter_rules("", &[(ipnet::IpNet::default(), None, None)])
             .await
             .is_err());
     }

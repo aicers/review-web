@@ -450,13 +450,14 @@ mod tests {
     use crate::graphql::TestSchema;
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn test_sampling_policy() {
         let schema = TestSchema::new().await;
 
-        let res = schema.execute(r#"{samplingPolicyList{totalCount}}"#).await;
+        let res = schema.execute(r"{samplingPolicyList{totalCount}}").await;
         assert_eq!(
             res.data.to_string(),
-            r#"{samplingPolicyList: {totalCount: 0}}"#
+            r"{samplingPolicyList: {totalCount: 0}}"
         );
 
         let res = schema
@@ -541,8 +542,7 @@ mod tests {
 
         let res = schema
             .execute(
-                r#"
-                query {
+                r"query {
                     samplingPolicyList(first: 10) {
                         nodes {
                             name
@@ -556,8 +556,7 @@ mod tests {
                             dstIp
                         }
                     }
-                }
-            "#,
+                }",
             )
             .await;
 

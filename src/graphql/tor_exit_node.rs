@@ -116,9 +116,9 @@ mod tests {
     async fn test_query_and_mutation() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute(r#"query{torExitNodeList(first:10){edges{node{ipAddress}}}}"#)
+            .execute(r"query{torExitNodeList(first:10){edges{node{ipAddress}}}}")
             .await;
-        assert_eq!(res.data.to_string(), r#"{torExitNodeList: {edges: []}}"#);
+        assert_eq!(res.data.to_string(), r"{torExitNodeList: {edges: []}}");
 
         let res = schema
             .execute(r#"mutation{updateTorExitNodeList(ipAddresses:["192.168.1.1"])}"#)
@@ -129,7 +129,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(r#"query{torExitNodeList(first:10){edges{node{ipAddress}}}}"#)
+            .execute(r"query{torExitNodeList(first:10){edges{node{ipAddress}}}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -145,7 +145,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(r#"query{torExitNodeList(first:10){edges{node{ipAddress}}}}"#)
+            .execute(r"query{torExitNodeList(first:10){edges{node{ipAddress}}}}")
             .await;
         assert_eq!(
             res.data.to_string(),

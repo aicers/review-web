@@ -339,14 +339,12 @@ mod tests {
     use crate::graphql::TestSchema;
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn test_triage_policy() {
         let schema = TestSchema::new().await;
 
-        let res = schema.execute(r#"{triagePolicyList{totalCount}}"#).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{triagePolicyList: {totalCount: 0}}"#
-        );
+        let res = schema.execute(r"{triagePolicyList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{triagePolicyList: {totalCount: 0}}");
 
         let res = schema
             .execute(
@@ -494,14 +492,14 @@ mod tests {
 
         let res = schema
             .execute(
-                r#"
+                r"
                 query {
                     triagePolicyList(first: 10) {
                         nodes {
                             name
                         }
                     }
-                }"#,
+                }",
             )
             .await;
         assert_eq!(
@@ -526,10 +524,10 @@ mod tests {
     async fn test_triage_response() {
         let schema = TestSchema::new().await;
 
-        let res = schema.execute(r#"{triageResponseList{totalCount}}"#).await;
+        let res = schema.execute(r"{triageResponseList{totalCount}}").await;
         assert_eq!(
             res.data.to_string(),
-            r#"{triageResponseList: {totalCount: 0}}"#
+            r"{triageResponseList: {totalCount: 0}}"
         );
 
         let res = schema
@@ -604,11 +602,11 @@ mod tests {
 
         let res = schema
             .execute(
-                r#"
+                r"
                 mutation {
                     removeTriageResponses(ids: [0])
                 }
-                "#,
+                ",
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{removeTriageResponses: ["0"]}"#);

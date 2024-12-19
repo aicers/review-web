@@ -230,7 +230,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertTrafficFilterRules: 1}"#);
+        assert_eq!(res.data.to_string(), r"{insertTrafficFilterRules: 1}");
 
         let res = schema
             .execute(
@@ -243,7 +243,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertTrafficFilterRules: 2}"#);
+        assert_eq!(res.data.to_string(), r"{insertTrafficFilterRules: 2}");
 
         let res = schema
             .execute(
@@ -256,7 +256,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertTrafficFilterRules: 1}"#);
+        assert_eq!(res.data.to_string(), r"{insertTrafficFilterRules: 1}");
 
         let res = schema
             .execute(
@@ -270,16 +270,16 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{updateTrafficFilterRules: 1}"#);
+        assert_eq!(res.data.to_string(), r"{updateTrafficFilterRules: 1}");
 
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     trafficFilterList(agents: null) {
                         agent
                         rules
                     }
-                }"#,
+                }",
             )
             .await;
         assert_eq!(
@@ -303,7 +303,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertTrafficFilterRules: 1}"#);
+        assert_eq!(res.data.to_string(), r"{insertTrafficFilterRules: 1}");
 
         let res: async_graphql::Response = schema
             .execute(
@@ -330,7 +330,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{removeTrafficFilterRules: 1}"#);
+        assert_eq!(res.data.to_string(), r"{removeTrafficFilterRules: 1}");
 
         let res: async_graphql::Response = schema
             .execute(
@@ -341,6 +341,6 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{clearTrafficFilterRules: 0}"#);
+        assert_eq!(res.data.to_string(), r"{clearTrafficFilterRules: 0}");
     }
 }

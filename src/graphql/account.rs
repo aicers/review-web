@@ -828,15 +828,15 @@ mod tests {
         assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
 
         let schema = TestSchema::new().await;
-        let res = schema.execute(r#"{accountList{totalCount}}"#).await;
+        let res = schema.execute(r"{accountList{totalCount}}").await;
         let Value::Object(retval) = res.data else {
-            panic!("unexpected response: {:?}", res);
+            panic!("unexpected response: {res:?}");
         };
         let Some(Value::Object(account_list)) = retval.get("accountList") else {
-            panic!("unexpected response: {:?}", retval);
+            panic!("unexpected response: {retval:?}");
         };
         let Some(Value::Number(total_count)) = account_list.get("totalCount") else {
-            panic!("unexpected response: {:?}", account_list);
+            panic!("unexpected response: {account_list:?}");
         };
         assert_eq!(total_count.as_u64(), Some(1)); // By default, there is only one account, "admin".
 
@@ -901,7 +901,7 @@ mod tests {
         // Retrieve the first page.
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     accountList(first: 2) {
                         edges {
                             node {
@@ -915,57 +915,57 @@ mod tests {
                             endCursor
                         }
                     }
-                }"#,
+                }",
             )
             .await;
 
         // Check if `first` works.
         let Value::Object(retval) = res.data else {
-            panic!("unexpected response: {:?}", res);
+            panic!("unexpected response: {res:?}");
         };
         let Some(Value::Object(account_list)) = retval.get("accountList") else {
-            panic!("unexpected response: {:?}", retval);
+            panic!("unexpected response: {retval:?}");
         };
         let Some(Value::List(edges)) = account_list.get("edges") else {
-            panic!("unexpected response: {:?}", account_list);
+            panic!("unexpected response: {account_list:?}");
         };
         assert_eq!(edges.len(), 2);
         let Some(Value::Object(page_info)) = account_list.get("pageInfo") else {
-            panic!("unexpected response: {:?}", account_list);
+            panic!("unexpected response: {account_list:?}");
         };
         let Some(Value::Boolean(has_next_page)) = page_info.get("hasNextPage") else {
-            panic!("unexpected response: {:?}", page_info);
+            panic!("unexpected response: {page_info:?}");
         };
-        assert_eq!(*has_next_page, true);
+        assert!(*has_next_page);
         let Some(Value::String(end_cursor)) = page_info.get("endCursor") else {
-            panic!("unexpected response: {:?}", page_info);
+            panic!("unexpected response: {page_info:?}");
         };
 
         // The first edge should be "admin".
-        let Some(Value::Object(edge)) = edges.get(0) else {
-            panic!("unexpected response: {:?}", edges);
+        let Some(Value::Object(edge)) = edges.first() else {
+            panic!("unexpected response: {edges:?}");
         };
         let Some(Value::Object(node)) = edge.get("node") else {
-            panic!("unexpected response: {:?}", edge);
+            panic!("unexpected response: {edge:?}");
         };
         let Some(Value::String(username)) = node.get("username") else {
-            panic!("unexpected response: {:?}", node);
+            panic!("unexpected response: {node:?}");
         };
         assert_eq!(username, "admin");
 
         // The last edge should be "u1".
         let Some(Value::Object(edge)) = edges.get(1) else {
-            panic!("unexpected response: {:?}", edges);
+            panic!("unexpected response: {edges:?}");
         };
         let Some(Value::Object(node)) = edge.get("node") else {
-            panic!("unexpected response: {:?}", edge);
+            panic!("unexpected response: {edge:?}");
         };
         let Some(Value::String(username)) = node.get("username") else {
-            panic!("unexpected response: {:?}", node);
+            panic!("unexpected response: {node:?}");
         };
         assert_eq!(username, "u1");
         let Some(Value::String(cursor)) = edge.get("cursor") else {
-            panic!("unexpected response: {:?}", edge);
+            panic!("unexpected response: {edge:?}");
         };
         assert_eq!(cursor, end_cursor);
 
@@ -990,50 +990,50 @@ mod tests {
             ))
             .await;
         let Value::Object(retval) = res.data else {
-            panic!("unexpected response: {:?}", res);
+            panic!("unexpected response: {res:?}");
         };
         let Some(Value::Object(account_list)) = retval.get("accountList") else {
-            panic!("unexpected response: {:?}", retval);
+            panic!("unexpected response: {retval:?}");
         };
         let Some(Value::List(edges)) = account_list.get("edges") else {
-            panic!("unexpected response: {:?}", account_list);
+            panic!("unexpected response: {account_list:?}");
         };
         assert_eq!(edges.len(), 3); // The number of remaining accounts.
         let Some(Value::Object(page_info)) = account_list.get("pageInfo") else {
-            panic!("unexpected response: {:?}", account_list);
+            panic!("unexpected response: {account_list:?}");
         };
         let Some(Value::Boolean(has_next_page)) = page_info.get("hasNextPage") else {
-            panic!("unexpected response: {:?}", page_info);
+            panic!("unexpected response: {page_info:?}");
         };
-        assert_eq!(*has_next_page, false);
+        assert!(!(*has_next_page));
 
         // The first edge should be "u2".
-        let Some(Value::Object(edge)) = edges.get(0) else {
-            panic!("unexpected response: {:?}", edges);
+        let Some(Value::Object(edge)) = edges.first() else {
+            panic!("unexpected response: {edges:?}");
         };
         let Some(Value::Object(node)) = edge.get("node") else {
-            panic!("unexpected response: {:?}", edge);
+            panic!("unexpected response: {edge:?}");
         };
         let Some(Value::String(username)) = node.get("username") else {
-            panic!("unexpected response: {:?}", node);
+            panic!("unexpected response: {node:?}");
         };
         assert_eq!(username, "u2");
 
         // The last edge should be "u4".
         let Some(Value::Object(edge)) = edges.get(2) else {
-            panic!("unexpected response: {:?}", edges);
+            panic!("unexpected response: {edges:?}");
         };
         let Some(Value::Object(node)) = edge.get("node") else {
-            panic!("unexpected response: {:?}", edge);
+            panic!("unexpected response: {edge:?}");
         };
         let Some(Value::String(username)) = node.get("username") else {
-            panic!("unexpected response: {:?}", node);
+            panic!("unexpected response: {node:?}");
         };
         assert_eq!(username, "u4");
 
         // Record the cursor of the last edge.
         let Some(Value::String(cursor)) = edge.get("cursor") else {
-            panic!("unexpected response: {:?}", edge);
+            panic!("unexpected response: {edge:?}");
         };
 
         // Retrieve backward.
@@ -1058,32 +1058,32 @@ mod tests {
 
         // Check if `last` works.
         let Value::Object(retval) = res.data else {
-            panic!("unexpected response: {:?}", res);
+            panic!("unexpected response: {res:?}");
         };
         let Some(Value::Object(account_list)) = retval.get("accountList") else {
-            panic!("unexpected response: {:?}", retval);
+            panic!("unexpected response: {retval:?}");
         };
         let Some(Value::List(edges)) = account_list.get("edges") else {
-            panic!("unexpected response: {:?}", account_list);
+            panic!("unexpected response: {account_list:?}");
         };
         assert_eq!(edges.len(), 3);
         let Some(Value::Object(page_info)) = account_list.get("pageInfo") else {
-            panic!("unexpected response: {:?}", account_list);
+            panic!("unexpected response: {account_list:?}");
         };
         let Some(Value::Boolean(has_previous_page)) = page_info.get("hasPreviousPage") else {
-            panic!("unexpected response: {:?}", page_info);
+            panic!("unexpected response: {page_info:?}");
         };
-        assert_eq!(*has_previous_page, true);
+        assert!(*has_previous_page);
 
         // The first edge should be "u1".
-        let Some(Value::Object(edge)) = edges.get(0) else {
-            panic!("unexpected response: {:?}", edges);
+        let Some(Value::Object(edge)) = edges.first() else {
+            panic!("unexpected response: {edges:?}");
         };
         let Some(Value::Object(node)) = edge.get("node") else {
-            panic!("unexpected response: {:?}", edge);
+            panic!("unexpected response: {edge:?}");
         };
         let Some(Value::String(username)) = node.get("username") else {
-            panic!("unexpected response: {:?}", node);
+            panic!("unexpected response: {node:?}");
         };
         assert_eq!(username, "u1");
 
@@ -1097,8 +1097,8 @@ mod tests {
         assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
 
         let schema = TestSchema::new().await;
-        let res = schema.execute(r#"{accountList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{accountList: {totalCount: 1}}"#);
+        let res = schema.execute(r"{accountList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
 
         let res = schema
             .execute(
@@ -1116,7 +1116,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertAccount: "u1"}"#);
 
         let res = schema
-            .execute(r#"{accountList{edges{node{username}}totalCount}}"#)
+            .execute(r"{accountList{edges{node{username}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -1134,8 +1134,8 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{removeAccounts: ["u1"]}"#);
 
-        let res = schema.execute(r#"{accountList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{accountList: {totalCount: 1}}"#);
+        let res = schema.execute(r"{accountList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
 
         restore_review_admin(original_review_admin);
     }
@@ -1160,22 +1160,22 @@ mod tests {
 
         // should return "{signIn { token: ... }}"
         let Value::Object(retval) = res.data else {
-            panic!("unexpected response: {:?}", res);
+            panic!("unexpected response: {res:?}");
         };
         assert_eq!(retval.len(), 1);
         let Value::Object(map) = retval.get("signIn").unwrap() else {
-            panic!("unexpected response: {:?}", retval);
+            panic!("unexpected response: {retval:?}");
         };
         assert_eq!(map.len(), 1);
         assert!(map.contains_key("token"));
 
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     signedInAccountList {
                         username
                     }
-                }"#,
+                }",
             )
             .await;
         assert_eq!(
@@ -1238,30 +1238,30 @@ mod tests {
 
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     expirationTime
-                }"#,
+                }",
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{expirationTime: 12}"#);
+        assert_eq!(res.data.to_string(), r"{expirationTime: 12}");
 
         let res = schema
             .execute(
-                r#"mutation {
+                r"mutation {
                     updateExpirationTime(time: 120)
-                }"#,
+                }",
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{updateExpirationTime: 120}"#);
+        assert_eq!(res.data.to_string(), r"{updateExpirationTime: 120}");
 
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     expirationTime
-                }"#,
+                }",
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{expirationTime: 120}"#);
+        assert_eq!(res.data.to_string(), r"{expirationTime: 120}");
     }
 
     #[tokio::test]
@@ -1307,7 +1307,7 @@ mod tests {
                 RoleGuard::Local,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"null"#);
+        assert_eq!(res.data.to_string(), r"null");
 
         let res = schema
             .execute_with_guard(
@@ -1317,7 +1317,7 @@ mod tests {
                 RoleGuard::Local,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"null"#);
+        assert_eq!(res.data.to_string(), r"null");
 
         let res = schema
             .execute_with_guard(
@@ -1337,10 +1337,11 @@ mod tests {
                 RoleGuard::Role(Role::SystemAdministrator),
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"null"#);
+        assert_eq!(res.data.to_string(), r"null");
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn update_account() {
         let schema = TestSchema::new().await;
 
@@ -1511,11 +1512,11 @@ mod tests {
 
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     signedInAccountList {
                         username
                     }
-                }"#,
+                }",
             )
             .await;
         assert_eq!(
@@ -1547,7 +1548,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"null"#);
+        assert_eq!(res.data.to_string(), r"null");
     }
 
     #[tokio::test]

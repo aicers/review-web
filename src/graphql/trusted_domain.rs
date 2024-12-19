@@ -155,9 +155,9 @@ mod tests {
     async fn trusted_domain_list() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute(r#"{trustedDomainList{edges{node{name}}}}"#)
+            .execute(r"{trustedDomainList{edges{node{name}}}}")
             .await;
-        assert_eq!(res.data.to_string(), r#"{trustedDomainList: {edges: []}}"#);
+        assert_eq!(res.data.to_string(), r"{trustedDomainList: {edges: []}}");
 
         let res = schema
             .execute(r#"mutation{insertTrustedDomain(name:"example1.com",remarks:"test")}"#)
@@ -175,7 +175,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(r#"{trustedDomainList{edges{node{name}}}}"#)
+            .execute(r"{trustedDomainList{edges{node{name}}}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -191,7 +191,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(r#"{trustedDomainList{edges{node{name}}}}"#)
+            .execute(r"{trustedDomainList{edges{node{name}}}}")
             .await;
         assert_eq!(
             res.data.to_string(),

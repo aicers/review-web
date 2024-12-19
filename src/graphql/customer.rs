@@ -506,14 +506,15 @@ mod tests {
     use crate::graphql::TestSchema;
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn check_customer_ordering() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute(r#"{customerList{edges{node{name}}totalCount}}"#)
+            .execute(r"{customerList{edges{node{name}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [], totalCount: 0}}"#
+            r"{customerList: {edges: [], totalCount: 0}}"
         );
 
         let res = schema
@@ -607,7 +608,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "9"}"#);
 
         let res = schema
-            .execute(r#"{customerList(last: 10){edges{node{name}}totalCount}}"#)
+            .execute(r"{customerList(last: 10){edges{node{name}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -647,7 +648,7 @@ mod tests {
         assert!(res.is_err());
 
         let res = schema
-            .execute(r#"{customerList(first:10){edges{node{name}}totalCount}}"#)
+            .execute(r"{customerList(first:10){edges{node{name}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -665,11 +666,11 @@ mod tests {
         );
 
         let res = schema
-            .execute(r#"{customerList{edges{node{name}}totalCount}}"#)
+            .execute(r"{customerList{edges{node{name}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [], totalCount: 0}}"#
+            r"{customerList: {edges: [], totalCount: 0}}"
         );
     }
 
@@ -677,11 +678,11 @@ mod tests {
     async fn remove_customers() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute(r#"{customerList{edges{node{name}}totalCount}}"#)
+            .execute(r"{customerList{edges{node{name}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [], totalCount: 0}}"#
+            r"{customerList: {edges: [], totalCount: 0}}"
         );
 
         let res = schema
@@ -694,7 +695,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
 
         let res = schema
-            .execute(r#"{customerList{edges{node{name}}totalCount}}"#)
+            .execute(r"{customerList{edges{node{name}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -718,11 +719,11 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{removeCustomers: ["c1"]}"#);
 
         let res = schema
-            .execute(r#"{networkList{edges{node{customerList{name}}}totalCount}}"#)
+            .execute(r"{networkList{edges{node{customerList{name}}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{networkList: {edges: [{node: {customerList: []}}], totalCount: 1}}"#
+            r"{networkList: {edges: [{node: {customerList: []}}], totalCount: 1}}"
         );
     }
 }

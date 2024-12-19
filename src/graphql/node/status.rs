@@ -193,12 +193,13 @@ mod tests {
     fn insert_apps(host: &str, apps: &[&str], map: &mut HashMap<String, Vec<(String, String)>>) {
         let entries = apps
             .iter()
-            .map(|&app| (format!("{}@{}", app, host), app.to_string()))
+            .map(|&app| (format!("{app}@{host}"), app.to_string()))
             .collect();
         map.insert(host.to_string(), entries);
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn test_node_status_list() {
         let mut online_apps_by_host_id = HashMap::new();
 
@@ -221,8 +222,8 @@ mod tests {
         let schema = TestSchema::new_with(agent_manager, None).await;
 
         // check empty
-        let res = schema.execute(r#"{nodeList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: 0}}"#);
+        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
 
         // insert 2 nodes
         let mutation = format!(
@@ -232,7 +233,7 @@ mod tests {
                     name: "node1",
                     customerId: 0,
                     description: "This node has the Manager.",
-                    hostname: "{}",
+                    hostname: "{manager_hostname}",
                     agents: [
                         {{
                             key: "sensor"
@@ -243,8 +244,7 @@ mod tests {
                     ]
                     giganto: null
                 )
-            }}"#,
-            manager_hostname
+            }}"#
         );
         let res = schema.execute(&mutation).await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
@@ -262,7 +262,7 @@ mod tests {
                                 profileDraft: {{
                                     customerId: 0,
                                     description: "This node has the Manager.",
-                                    hostname: "{}"
+                                    hostname: "{manager_hostname}"
                                 }},
                                 agents: [
                                     {{
@@ -275,8 +275,7 @@ mod tests {
                                 giganto: null
                             }}
                         )
-                    }}"#,
-                    manager_hostname
+                    }}"#
                 )
                 .as_str(),
             )
@@ -349,7 +348,7 @@ mod tests {
         // check node status list
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     nodeStatusList(first: 10) {
                         edges {
                             node {
@@ -382,7 +381,7 @@ mod tests {
                             }
                         }
                     }
-                  }"#,
+                  }",
             )
             .await;
 
@@ -463,6 +462,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn check_node_status_list_ordering() {
         let mut online_apps_by_host_id = HashMap::new();
         insert_apps("collector", &["sensor1"], &mut online_apps_by_host_id);
@@ -600,7 +600,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNode: "4"}"#);
 
         let res = schema
-            .execute(r#"{nodeStatusList(first:5){edges{node{name}}}}"#)
+            .execute(r"{nodeStatusList(first:5){edges{node{name}}}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -608,7 +608,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(r#"{nodeStatusList(last:5){edges{node{name}},pageInfo{endCursor}}}"#)
+            .execute(r"{nodeStatusList(last:5){edges{node{name}},pageInfo{endCursor}}}")
             .await;
         assert_eq!(
             res.data.to_string(),

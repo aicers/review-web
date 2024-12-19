@@ -749,6 +749,7 @@ async fn load_ranked_outliers_with_filter(
 mod tests {
     use async_graphql::Value;
     use chrono::{DateTime, Utc};
+    use num_traits::ToPrimitive;
     use review_database::OutlierInfo;
 
     use crate::graphql::TestSchema;
@@ -759,10 +760,9 @@ mod tests {
 
     fn samples(model_id: i32, timestamp: i64, start: i64, total: i64) -> Vec<OutlierInfo> {
         (start..start + total)
-            .into_iter()
             .map(|id| {
                 let rank = id;
-                let distance = id as f64;
+                let distance = id.to_f64().unwrap();
                 let is_saved = id % 2 == 0;
                 OutlierInfo {
                     model_id,
@@ -786,16 +786,16 @@ mod tests {
         let t1 = chrono::Utc::now();
         let outliers = samples(model, t1.timestamp_nanos_opt().unwrap(), 0, 2);
         for outlier in &outliers {
-            assert!(map.insert(&outlier).is_ok());
+            assert!(map.insert(outlier).is_ok());
         }
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                 outliers(model: 3) {
                     nodes {id, events, size},
                     totalCount
                 }
-            }"#,
+            }",
             )
             .await;
         let e0 = DateTime::from_timestamp(0, 0).unwrap().to_rfc3339();
@@ -811,16 +811,16 @@ mod tests {
 
         let outliers = samples(model, t2.timestamp_nanos_opt().unwrap(), start, total);
         for outlier in &outliers {
-            assert!(map.insert(&outlier).is_ok());
+            assert!(map.insert(outlier).is_ok());
         }
 
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     outliers(model: 3) {
                         totalCount
                     }
-                }"#,
+                }",
             )
             .await;
         assert_eq!(
@@ -830,6 +830,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn ranked_outliers() {
         let schema = TestSchema::new().await;
         let store = schema.store().await;
@@ -838,16 +839,16 @@ mod tests {
         let t1 = chrono::Utc::now();
         let outliers = samples(model, t1.timestamp_nanos_opt().unwrap(), 0, 2);
         for outlier in &outliers {
-            assert!(map.insert(&outlier).is_ok());
+            assert!(map.insert(outlier).is_ok());
         }
 
         let res = schema
             .execute(
-                r#"query {
+                r"query {
                     rankedOutliers(modelId: 3) {
                         totalCount
                     }
-                }"#,
+                }",
             )
             .await;
         assert_eq!(
@@ -863,7 +864,7 @@ mod tests {
 
         let outliers = samples(model, t2.timestamp_nanos_opt().unwrap(), start, total);
         for outlier in &outliers {
-            assert!(map.insert(&outlier).is_ok());
+            assert!(map.insert(outlier).is_ok());
         }
 
         let res = schema
@@ -888,20 +889,20 @@ mod tests {
             ))
             .await;
         let Value::Object(retval) = res.data else {
-            panic!("unexpected response: {:?}", res);
+            panic!("unexpected response: {res:?}");
         };
         let Some(Value::Object(ranked_outliers)) = retval.get("rankedOutliers") else {
-            panic!("unexpected response: {:?}", retval);
+            panic!("unexpected response: {retval:?}");
         };
         let Some(Value::Object(page_info)) = ranked_outliers.get("pageInfo") else {
-            panic!("unexpected response: {:?}", ranked_outliers);
+            panic!("unexpected response: {ranked_outliers:?}");
         };
         let Some(Value::Boolean(has_next_page)) = page_info.get("hasNextPage") else {
-            panic!("unexpected response: {:?}", page_info);
+            panic!("unexpected response: {page_info:?}");
         };
-        assert_eq!(*has_next_page, true);
+        assert!(*has_next_page);
         let Some(Value::String(cursor)) = page_info.get("endCursor") else {
-            panic!("unexpected response: {:?}", page_info);
+            panic!("unexpected response: {page_info:?}");
         };
 
         let res = schema
@@ -912,7 +913,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            format!("{{rankedOutliers: {{nodes: [{{id: \"{}\"}}]}}}}", last,)
+            format!("{{rankedOutliers: {{nodes: [{{id: \"{last}\"}}]}}}}")
         );
 
         let res = schema
@@ -941,20 +942,20 @@ mod tests {
             ))
             .await;
         let Value::Object(retval) = res.data else {
-            panic!("unexpected response: {:?}", res);
+            panic!("unexpected response: {res:?}");
         };
         let Some(Value::Object(ranked_outliers)) = retval.get("rankedOutliers") else {
-            panic!("unexpected response: {:?}", retval);
+            panic!("unexpected response: {retval:?}");
         };
         let Some(Value::Object(page_info)) = ranked_outliers.get("pageInfo") else {
-            panic!("unexpected response: {:?}", ranked_outliers);
+            panic!("unexpected response: {ranked_outliers:?}");
         };
         let Some(Value::Boolean(has_previous_page)) = page_info.get("hasPreviousPage") else {
-            panic!("unexpected response: {:?}", page_info);
+            panic!("unexpected response: {page_info:?}");
         };
-        assert_eq!(*has_previous_page, true);
+        assert!(*has_previous_page);
         let Some(Value::String(cursor)) = page_info.get("startCursor") else {
-            panic!("unexpected response: {:?}", page_info);
+            panic!("unexpected response: {page_info:?}");
         };
 
         let res = schema
@@ -965,7 +966,7 @@ mod tests {
         .await;
         assert_eq!(
             res.data.to_string(),
-            format!("{{rankedOutliers: {{nodes: [{{id: \"{}\"}}]}}}}", start,)
+            format!("{{rankedOutliers: {{nodes: [{{id: \"{start}\"}}]}}}}")
         );
     }
 
@@ -979,7 +980,7 @@ mod tests {
         let t_str = time_str(&t);
         let outliers = samples(0, t.timestamp_nanos_opt().unwrap(), 0, 2);
         for outlier in &outliers {
-            assert!(map.insert(&outlier).is_ok());
+            assert!(map.insert(outlier).is_ok());
         }
 
         let model = 3;
@@ -989,7 +990,7 @@ mod tests {
 
         let outliers = samples(model, t.timestamp_nanos_opt().unwrap(), start, total);
         for outlier in &outliers {
-            assert!(map.insert(&outlier).is_ok());
+            assert!(map.insert(outlier).is_ok());
         }
 
         let res = schema
@@ -1020,7 +1021,7 @@ mod tests {
 
         let outliers = samples(model, t.timestamp_nanos_opt().unwrap(), start, total);
         for outlier in &outliers {
-            assert!(map.insert(&outlier).is_ok());
+            assert!(map.insert(outlier).is_ok());
         }
 
         let res = schema
@@ -1048,7 +1049,7 @@ mod tests {
                 }}"
             ))
             .await;
-        let expect = format!("{{preserveOutliers: []}}");
+        let expect = "{preserveOutliers: []}".to_string();
         assert_eq!(res.data.to_string(), expect);
 
         let saved = start + 1;

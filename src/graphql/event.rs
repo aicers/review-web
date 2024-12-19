@@ -1261,12 +1261,11 @@ mod tests {
         db.put(&event_message_at(ts3, 5, 6)).unwrap();
         let query = format!(
             "{{ \
-                eventList(filter: {{ start:\"{}\", end:\"{}\" }}) {{ \
+                eventList(filter: {{ start:\"{ts2}\", end:\"{ts3}\" }}) {{ \
                     edges {{ node {{... on DnsCovertChannel {{ time }} }} }} \
                     totalCount \
                 }} \
-            }}",
-            ts2, ts3
+            }}"
         );
         let res = schema.execute(&query).await;
         assert_eq!(
@@ -1362,7 +1361,7 @@ mod tests {
             "{{ \
                 eventList( \
                     filter: {{ \
-                        start:\"{}\", end:\"{}\", \
+                        start:\"{ts2}\", end:\"{ts3}\", \
                         categories: 7, \
                         sensors: [0], \
                     }}, \
@@ -1370,8 +1369,7 @@ mod tests {
                     edges {{ node {{... on DnsCovertChannel {{ time, sensor }} }} }} \
                     totalCount \
                 }} \
-            }}",
-            ts2, ts3
+            }}"
         );
         let res = schema.execute(&query).await;
         assert_eq!(
@@ -1509,11 +1507,10 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
         let query = format!(
             "{{ \
-                eventList(filter: {{ start:\"{}\", end:\"{}\", customers: [0] }}) {{ \
+                eventList(filter: {{ start:\"{ts1}\", end:\"{ts3}\", customers: [0] }}) {{ \
                     edges {{ node {{... on DnsCovertChannel {{ srcAddr }} }} }} \
                 }} \
-            }}",
-            ts1, ts3
+            }}"
         );
         let res = schema.execute(&query).await;
         assert_eq!(
@@ -1573,14 +1570,13 @@ mod tests {
         let query = format!(
             "{{ \
                 eventList(filter: {{
-                    start:\"{}\",
-                    end:\"{}\",
+                    start:\"{ts1}\",
+                    end:\"{ts3}\",
                     directions: [\"OUTBOUND\"],
                 }}) {{ \
                     edges {{ node {{... on DnsCovertChannel {{ srcAddr }} }} }} \
                 }} \
-            }}",
-            ts1, ts3
+            }}"
         );
         let res = schema.execute(&query).await;
         assert_eq!(
@@ -1636,14 +1632,13 @@ mod tests {
         let query = format!(
             "{{ \
                 eventList(filter: {{
-                    start:\"{}\",
-                    end:\"{}\",
+                    start:\"{ts1}\",
+                    end:\"{ts3}\",
                     endpoints: [{{predefined: \"0\"}}]
                 }}) {{ \
                     edges {{ node {{... on DnsCovertChannel {{ srcAddr }} }} }} \
                 }} \
-            }}",
-            ts1, ts3
+            }}"
         );
         let res = schema.execute(&query).await;
         assert_eq!(
@@ -1688,7 +1683,7 @@ mod tests {
             }
         }
         "#;
-        let mut stream = schema.execute_stream(&query).await;
+        let mut stream = schema.execute_stream(query).await;
         let res = stream.next().await;
         assert_eq!(
             res.unwrap().data.to_string(),
@@ -1769,14 +1764,13 @@ mod tests {
         let query = format!(
             "{{ \
                 eventList(filter: {{
-                    start:\"{}\"
+                    start:\"{timestamp}\"
                     customers: [0],
                     directions: [\"OUTBOUND\"],
                 }}) {{ \
                     edges {{ node {{... on BlockListDhcp {{ srcAddr,giaddr,reqIpAddr,classId,clientId }} }} }} \
                 }} \
-            }}",
-            timestamp
+            }}"
         );
         let res = schema.execute(&query).await;
         assert_eq!(
@@ -1851,14 +1845,13 @@ mod tests {
         let query = format!(
             "{{ \
                 eventList(filter: {{
-                    start:\"{}\"
+                    start:\"{timestamp}\"
                     customers: [0],
                     directions: [\"INBOUND\"],
                 }}) {{ \
                     edges {{ node {{... on BlockListBootp {{ srcAddr,ciaddr,chaddr }} }} }} \
                 }} \
-            }}",
-            timestamp
+            }}"
         );
         let res = schema.execute(&query).await;
         assert_eq!(
@@ -1910,12 +1903,11 @@ mod tests {
         let query = format!(
             "{{ \
                 eventList(filter: {{
-                    start:\"{}\"
+                    start:\"{timestamp}\"
                 }}) {{ \
                     edges {{ node {{... on LockyRansomware {{ srcAddr,rtt,query }} }} }} \
                 }} \
-            }}",
-            timestamp
+            }}"
         );
         let res = schema.execute(&query).await;
         assert_eq!(
@@ -1976,12 +1968,11 @@ mod tests {
         let query = format!(
             "{{ \
                 eventList(filter: {{
-                    start:\"{}\"
+                    start:\"{timestamp}\"
                 }}) {{ \
                     edges {{ node {{... on SuspiciousTlsTraffic {{ srcAddr,cipher,subjectCountry }} }} }} \
                 }} \
-            }}",
-            timestamp
+            }}"
         );
         let res = schema.execute(&query).await;
         assert_eq!(

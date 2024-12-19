@@ -176,6 +176,11 @@ struct ConfigParser {
 }
 
 impl Config {
+    /// Loads the configuration from the specified file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the configuration file cannot be read or parsed.
     pub fn load_config(path: Option<&str>) -> Result<Self> {
         let builder = config::Config::builder()
             .set_default("database_url", DEFAULT_DATABASE_URL)

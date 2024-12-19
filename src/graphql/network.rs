@@ -255,11 +255,11 @@ mod tests {
     async fn remove_networks() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute(r#"{networkList{edges{node{name}}totalCount}}"#)
+            .execute(r"{networkList{edges{node{name}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{networkList: {edges: [], totalCount: 0}}"#
+            r"{networkList: {edges: [], totalCount: 0}}"
         );
 
         let res = schema
@@ -274,7 +274,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
 
         let res = schema
-            .execute(r#"{networkList{edges{node{name}}totalCount}}"#)
+            .execute(r"{networkList{edges{node{name}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -287,19 +287,19 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{removeNetworks: ["n1"]}"#);
 
         let res = schema
-            .execute(r#"{networkList{edges{node{name}}totalCount}}"#)
+            .execute(r"{networkList{edges{node{name}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{networkList: {edges: [], totalCount: 0}}"#
+            r"{networkList: {edges: [], totalCount: 0}}"
         );
     }
 
     #[tokio::test]
     async fn update_network() {
         let schema = TestSchema::new().await;
-        let res = schema.execute(r#"{networkList{totalCount}}"#).await;
-        assert_eq!(res.data.to_string(), r#"{networkList: {totalCount: 0}}"#);
+        let res = schema.execute(r"{networkList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{networkList: {totalCount: 0}}");
 
         let res = schema
             .execute(
@@ -358,7 +358,7 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
         let res = schema
-            .execute(r#"{networkList{edges{node{name tagIds}}totalCount}}"#)
+            .execute(r"{networkList{edges{node{name tagIds}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
