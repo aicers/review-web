@@ -25,7 +25,7 @@ num-traits = "0.2"
 reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls-native-roots",
 ] }
-review-database = { git = "https://github.com/petabi/review-database.git", tag = "0.33.0" }
+review-database = { git = "https://github.com/petabi/review-database.git", tag = "0.33.1" }
 roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.3.0" }
 rustls = { version = "0.23", default-features = false, features = [
   "ring",
@@ -45,7 +45,7 @@ vinum = { git = "https://github.com/vinesystems/vinum.git", tag = "1.0.3" }
 
 [dev-dependencies]
 assert-json-diff = "2"
-config = { version = "0.14", features = ["toml"], default-features = false }
+config = { version = "0.15", features = ["toml"], default-features = false }
 futures = "0.3"
 serial_test = "3"
 tempfile = "3"

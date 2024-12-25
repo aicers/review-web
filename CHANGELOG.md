@@ -31,7 +31,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   that captures or detects raw events. This update broadly affects GraphQL APIs
   that previously used source field as a parameter, and GraphQL APIs that return
   event, outlier, or triage related structs.
-- Updated review-database to 0.33.0.
+- Updated review-database to 0.33.1.
 
 ### Fixed
 
