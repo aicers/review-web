@@ -18,14 +18,14 @@ chrono = { version = ">=0.4.35", default-features = false, features = [
 futures = "0.3"
 futures-util = "0.3"
 http = "1"
-ip2location = "0.5"
+ip2location = "0.5.4"
 ipnet = { version = "2", features = ["serde"] }
 jsonwebtoken = "9"
 num-traits = "0.2"
 reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls-native-roots",
 ] }
-review-database = { git = "https://github.com/petabi/review-database.git", rev = "b2c14a4" }
+review-database = { git = "https://github.com/petabi/review-database.git", rev = "35b9d80" }
 roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.3.0" }
 rustls = { version = "0.23", default-features = false, features = [
   "ring",

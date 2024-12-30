@@ -4,7 +4,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     process::exit,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::Duration,
 };
 
@@ -313,10 +313,10 @@ async fn run(config: Config) -> Result<Arc<Notify>> {
         config.key.clone(),
     ));
     let ip_locator = if let Some(path) = config.ip2location() {
-        Some(Arc::new(Mutex::new(
+        Some(
             ip2location::DB::from_file(path)
                 .map_err(|e| anyhow!("cannot read IP location database: {:#?}", e))?,
-        )))
+        )
     } else {
         None
     };

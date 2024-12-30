@@ -8,7 +8,7 @@ use std::{
     io,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use async_graphql::{
@@ -60,7 +60,7 @@ pub fn serve<A>(
     config: ServerConfig,
     db: Database,
     store: Arc<RwLock<Store>>,
-    ip_locator: Option<Arc<Mutex<ip2location::DB>>>,
+    ip_locator: Option<ip2location::DB>,
     agent_manager: A,
 ) -> Arc<Notify>
 where
