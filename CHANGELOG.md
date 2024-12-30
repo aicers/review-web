@@ -21,6 +21,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     Failed to parse "IpAddress": Invalid IP address: abc (occurred while
     parsing "[IpAddress!]")
     ```
+- Added the `theme` field to the `Account` struct to store the user's
+  selected screen color mode. Accordingly, the functions for inserting and
+  updating accounts have been modified, and new APIs have been added to retrieve
+  and update the user's selected screen color mode.
 
 ### Changed
 
@@ -32,6 +36,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   that previously used source field as a parameter, and GraphQL APIs that return
   event, outlier, or triage related structs.
 - Updated review-database to 0.33.1.
+- The `ip2location::DB` argument for `serve` no longer needs to be wrapped in
+  `Arc` and `Mutex`. This change simplifies the code and improves performance by
+  removing unnecessary locking.
 
 ### Fixed
 

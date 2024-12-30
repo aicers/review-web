@@ -39,7 +39,7 @@ use std::future::Future;
 use std::net::IpAddr;
 #[cfg(test)]
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_graphql::connection::{
     Connection, ConnectionNameType, CursorType, Edge, EdgeNameType, EmptyFields, OpaqueCursor,
@@ -84,7 +84,7 @@ pub(super) fn schema<B>(
     db: Database,
     store: Arc<RwLock<Store>>,
     agent_manager: B,
-    ip_locator: Option<Arc<Mutex<ip2location::DB>>>,
+    ip_locator: Option<ip2location::DB>,
     cert_manager: Arc<dyn CertManager>,
     cert_reload_handle: Arc<Notify>,
 ) -> Schema

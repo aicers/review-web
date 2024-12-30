@@ -20,12 +20,7 @@ mod ssh;
 mod sysmon;
 mod tls;
 
-use std::{
-    cmp,
-    net::IpAddr,
-    num::NonZeroU8,
-    sync::{Arc, Mutex},
-};
+use std::{cmp, net::IpAddr, num::NonZeroU8, sync::Arc};
 
 use anyhow::{anyhow, bail, Context as AnyhowContext};
 use async_graphql::{
@@ -695,14 +690,8 @@ impl<'a> From<&'a database::TriageScore> for TriageScore<'a> {
 }
 
 fn country_code(ctx: &Context<'_>, addr: IpAddr) -> String {
-    if let Ok(mutex) = ctx.data::<Arc<Mutex<ip2location::DB>>>() {
-        let Ok(mut locator) = mutex.lock() else {
-            return "ZZ".to_string();
-        };
-        find_ip_country(&mut locator, addr)
-    } else {
-        "ZZ".to_string()
-    }
+    ctx.data::<ip2location::DB>()
+        .map_or_else(|_| "ZZ".to_string(), |l| find_ip_country(l, addr))
 }
 
 fn find_ip_customer(
@@ -744,11 +733,10 @@ impl EventTotalCount {
         let store = crate::graphql::get_store(ctx).await?;
         let events = store.events();
         let locator = if self.filter.has_country() {
-            if let Ok(mutex) = ctx.data::<Arc<Mutex<ip2location::DB>>>() {
-                Some(Arc::clone(mutex))
-            } else {
-                return Err("unable to locate IP address".into());
-            }
+            Some(
+                ctx.data::<ip2location::DB>()
+                    .map_err(|_| "unable to locate IP address")?,
+            )
         } else {
             None
         };
@@ -783,7 +771,7 @@ impl EventTotalCount {
             if key > last {
                 break;
             }
-            if !event.matches(locator.clone(), &self.filter)?.0 {
+            if !event.matches(locator, &self.filter)?.0 {
                 continue;
             }
             count += 1;
@@ -1135,11 +1123,10 @@ fn iter_to_events(
     let mut events = Vec::new();
     let mut exceeded = false;
     let locator = if filter.has_country() {
-        if let Ok(mutex) = ctx.data::<Arc<Mutex<ip2location::DB>>>() {
-            Some(Arc::clone(mutex))
-        } else {
-            bail!("unable to locate IP address");
-        }
+        Some(
+            ctx.data::<ip2location::DB>()
+                .map_err(|_| anyhow!("unable to locate IP address"))?,
+        )
     } else {
         None
     };
@@ -1156,7 +1143,7 @@ fn iter_to_events(
             break;
         }
         let triage_score = {
-            let matches = event.matches(locator.clone(), filter)?;
+            let matches = event.matches(locator, filter)?;
             if !matches.0 {
                 continue;
             }
