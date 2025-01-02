@@ -1,10 +1,9 @@
 #![allow(clippy::fn_params_excessive_bools)]
 
-use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    connection::{Connection, EmptyFields},
+    connection::{Connection, EmptyFields, OpaqueCursor},
     types::ID,
-    Context, Object, Result,
+    Context, Error, Object, Result,
 };
 use chrono::Utc;
 use review_database::{Direction, Store};
@@ -12,7 +11,7 @@ use tracing::error;
 
 use super::{
     super::{Role, RoleGuard},
-    input::{AgentInput, GigantoInput, NodeDraftInput},
+    input::{AgentDraftInput, GigantoInput, NodeDraftInput},
     Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount,
 };
 use crate::graphql::{
@@ -71,7 +70,7 @@ impl NodeMutation {
         customer_id: ID,
         description: String,
         hostname: String,
-        agents: Vec<AgentInput>,
+        agents: Vec<AgentDraftInput>,
         giganto: Option<GigantoInput>,
     ) -> Result<ID> {
         let (id, customer_id) = {
@@ -81,6 +80,29 @@ impl NodeMutation {
                 .as_str()
                 .parse::<u32>()
                 .map_err(|_| "invalid customer ID")?;
+
+            let agents: Vec<review_database::Agent> = agents
+                .into_iter()
+                .map(|new_agent| {
+                    let draft = match new_agent.draft {
+                        Some(draft) => Some(
+                            draft
+                                .try_into()
+                                .map_err(|_| Error::new("Failed to convert agent draft"))?,
+                        ),
+                        None => None,
+                    };
+
+                    Ok::<_, Error>(review_database::Agent {
+                        node: u32::MAX,
+                        key: new_agent.key,
+                        kind: new_agent.kind.into(),
+                        status: new_agent.status.into(),
+                        config: None,
+                        draft,
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
 
             let value = review_database::Node {
                 id: u32::MAX,
@@ -220,14 +242,12 @@ mod tests {
                             key: "unsupervised"
                             kind: UNSUPERVISED
                             status: ENABLED
-                            config: null
                             draft: "test = 'toml'"
                         },
                         {
                             key: "sensor"
                             kind: SENSOR
                             status: ENABLED
-                            config: null
                             draft: "test = 'toml'"
                         }]
                         giganto: null

@@ -311,14 +311,12 @@ mod tests {
                             key: "unsupervised"
                             kind: UNSUPERVISED
                             status: ENABLED
-                            config: null
                             draft: "test = 'toml'"
                         },
                         {
                             key: "sensor"
                             kind: SENSOR
                             status: ENABLED
-                            config: null
                             draft: "test = 'toml'"
                         }]
                         giganto: null
@@ -1642,7 +1640,6 @@ mod tests {
                             key: "unsupervised"
                             kind: UNSUPERVISED
                             status: ENABLED
-                            config: null
                             draft: ""
                         }]
                         giganto: null
@@ -1785,14 +1782,12 @@ mod tests {
                             key: "unsupervised"
                             kind: UNSUPERVISED
                             status: ENABLED
-                            config: null
                             draft: "test = 'toml'"
                         },
                         {
                             key: "sensor"
                             kind: SENSOR
                             status: ENABLED
-                            config: null
                             draft: "test = 'toml'"
                         }]
                         giganto: null
@@ -1881,14 +1876,12 @@ mod tests {
                             key: "unsupervised"
                             kind: UNSUPERVISED
                             status: ENABLED
-                            config: null
                             draft: "test = 'toml'"
                         },
                         {
                             key: "sensor"
                             kind: SENSOR
                             status: ENABLED
-                            config: null
                             draft: "test = 'toml'"
                         }]
                         giganto: null
@@ -1962,14 +1955,12 @@ mod tests {
                             key: "unsupervised"
                             kind: UNSUPERVISED
                             status: ENABLED
-                            config: null
                             draft: "test = 'toml'"
                         },
                         {
                             key: "sensor"
                             kind: SENSOR
                             status: ENABLED
-                            config: null
                             draft: "test = 'toml'"
                         }]
                         giganto: null
@@ -2042,14 +2033,12 @@ mod tests {
                             key: "unsupervised"
                             kind: UNSUPERVISED
                             status: ENABLED
-                            config: null
                             draft: "test = 'toml'"
                         },
                         {
                             key: "sensor"
                             kind: SENSOR
                             status: ENABLED
-                            config: null
                             draft: "test = 'toml'"
                         }]
                         giganto: null
