@@ -44,6 +44,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   `WindowsThreat`.
 - The GraphQL API for `WindowsThreat` event structure is changed to return `ID`
   type instead of `usize` type value for the `cluster_id` field.
+- Updated `insertNode` GraphQL API to no longer require `config` for the
+  `agents` parameter.
 
 ### Removed
 
