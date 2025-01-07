@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    num::NonZeroU8,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, num::NonZeroU8};
 
 use async_graphql::{Context, Object, OutputType, Result, SimpleObject};
 use database::{IndexedTable, Iterable};
@@ -245,11 +241,10 @@ impl EventGroupQuery {
         let filter = from_filter_input(&store, &filter)?;
         let db = store.events();
         let locator = if filter.has_country() {
-            if let Ok(mutex) = ctx.data::<Arc<Mutex<ip2location::DB>>>() {
-                Some(Arc::clone(mutex))
-            } else {
-                return Err("IP location database unavailable".into());
-            }
+            Some(
+                ctx.data::<ip2location::DB>()
+                    .map_err(|_| "IP location database unavailable")?,
+            )
         } else {
             None
         };
@@ -274,7 +269,7 @@ impl EventGroupQuery {
                 freq = 0;
                 cur_end += period;
             }
-            if event.matches(locator.clone(), &filter)?.0 {
+            if event.matches(locator, &filter)?.0 {
                 freq += 1;
             }
         }
@@ -298,7 +293,7 @@ struct EventCounts<T: OutputType> {
 type EventCountFn<T> = fn(
     &Event,
     &mut HashMap<T, usize>,
-    Option<Arc<Mutex<ip2location::DB>>>,
+    Option<&ip2location::DB>,
     &EventFilter,
 ) -> anyhow::Result<()>;
 
@@ -326,11 +321,7 @@ async fn count_events<T>(
     });
     let filter = from_filter_input(&store, filter)?;
     let db = store.events();
-    let locator = if let Ok(mutex) = ctx.data::<Arc<Mutex<ip2location::DB>>>() {
-        Some(Arc::clone(mutex))
-    } else {
-        None
-    };
+    let locator = ctx.data::<ip2location::DB>().ok();
 
     let mut counter = HashMap::new();
     for item in db.iter_from(start, Direction::Forward) {
@@ -344,7 +335,7 @@ async fn count_events<T>(
         if key > end {
             break;
         }
-        count(&event, &mut counter, locator.clone(), &filter)?;
+        count(&event, &mut counter, locator, &filter)?;
     }
 
     let mut counter = counter.into_iter().collect::<Vec<_>>();
@@ -386,11 +377,7 @@ async fn count_events_by_network(
     });
     let filter = from_filter_input(&store, filter)?;
     let db = store.events();
-    let locator = if let Ok(mutex) = ctx.data::<Arc<Mutex<ip2location::DB>>>() {
-        Some(Arc::clone(mutex))
-    } else {
-        None
-    };
+    let locator = ctx.data::<ip2location::DB>().ok();
 
     let mut counter = HashMap::new();
     for item in db.iter_from(start, Direction::Forward) {
@@ -404,7 +391,7 @@ async fn count_events_by_network(
         if key > end {
             break;
         }
-        event.count_network(&mut counter, &networks, locator.clone(), &filter)?;
+        event.count_network(&mut counter, &networks, locator, &filter)?;
     }
 
     let mut counter = counter.into_iter().collect::<Vec<_>>();

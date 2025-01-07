@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 use async_graphql::{Context, Object, Result, SimpleObject};
 
 use super::{IpAddress, Role, RoleGuard};
@@ -22,19 +20,13 @@ impl IpLocationQuery {
         address: IpAddress,
     ) -> Result<Option<IpLocation>> {
         let addr = address.0;
-        let Ok(mutex) = ctx.data::<Arc<Mutex<ip2location::DB>>>() else {
+        let Ok(locator) = ctx.data::<ip2location::DB>() else {
             return Err("IP location database unavailable".into());
         };
-        let record = {
-            if let Ok(locator) = mutex.lock() {
-                locator
-                    .ip_lookup(addr)
-                    .ok()
-                    .map(std::convert::TryInto::try_into)
-            } else {
-                None
-            }
-        };
+        let record = locator
+            .ip_lookup(addr)
+            .ok()
+            .map(std::convert::TryInto::try_into);
 
         Ok(record.transpose()?)
     }
@@ -50,14 +42,11 @@ impl IpLocationQuery {
         ctx: &Context<'_>,
         mut addresses: Vec<IpAddress>,
     ) -> Result<Vec<IpLocationItem>> {
-        let Ok(mutex) = ctx.data::<Arc<Mutex<ip2location::DB>>>() else {
+        let Ok(locator) = ctx.data::<ip2location::DB>() else {
             return Err("IP location database unavailable".into());
         };
 
         addresses.truncate(MAX_NUM_IP_LOCATION_LIST);
-        let locator = mutex
-            .lock()
-            .map_err(|_| "Failed to lock IP location database")?;
         let records = addresses
             .iter()
             .filter_map(|addr| {
