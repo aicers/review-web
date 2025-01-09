@@ -1,4 +1,4 @@
-use async_graphql::Object;
+use async_graphql::{Object, ID};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
@@ -64,8 +64,11 @@ impl WindowsThreat {
         &self.inner.matched_to
     }
 
-    async fn cluster_id(&self) -> usize {
-        self.inner.cluster_id
+    async fn cluster_id(&self) -> ID {
+        ID(self
+            .inner
+            .cluster_id
+            .map_or(String::new(), |id| id.to_string()))
     }
 
     async fn attack_kind(&self) -> &str {

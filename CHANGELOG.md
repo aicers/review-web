@@ -39,6 +39,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - The `ip2location::DB` argument for `serve` no longer needs to be wrapped in
   `Arc` and `Mutex`. This change simplifies the code and improves performance by
   removing unnecessary locking.
+- Modified the type of `cluster_id` field of the detection event structures from
+  `usize` to `Option<usize>`: `HttpThreat`, `ExtraThreat`, `NetworkThreat`,
+  `WindowsThreat`.
+- The GraphQL API for `WindowsThreat` event structure is changed to return `ID`
+  type instead of `usize` type value for the `cluster_id` field.
 
 ### Fixed
 

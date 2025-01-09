@@ -448,7 +448,7 @@ struct ElementCount<'a> {
 }
 
 #[Object]
-impl<'a> ElementCount<'a> {
+impl ElementCount<'_> {
     async fn value(&self) -> &str {
         &self.inner.value
     }
