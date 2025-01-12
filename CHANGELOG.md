@@ -45,6 +45,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - The GraphQL API for `WindowsThreat` event structure is changed to return `ID`
   type instead of `usize` type value for the `cluster_id` field.
 
+### Removed
+
+- Removed `graphql::account::reset_admin_password` function as it was obsoleted
+  by the GraphQL API `resetAdminPassword`.
+
 ### Fixed
 
 - Resolved an issue in the `applyNode` GraphQL API, where configuration values

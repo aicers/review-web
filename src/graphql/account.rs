@@ -803,17 +803,6 @@ pub fn set_initial_admin_password(store: &Store) -> anyhow::Result<()> {
     map.insert(&account)
 }
 
-/// Resets the administrator password to the initial value.
-///
-/// # Errors
-///
-/// This function returns an error if it fails to generate random bytes for password.
-pub fn reset_admin_password(store: &Store) -> anyhow::Result<()> {
-    let map = store.account_map();
-    let account = initial_credential()?;
-    map.put(&account)
-}
-
 /// Returns the initial administrator username and salted password.
 ///
 /// # Errors
