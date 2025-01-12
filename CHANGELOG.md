@@ -40,6 +40,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   `Arc` and `Mutex`. This change simplifies the code and improves performance by
   removing unnecessary locking.
 
+### Removed
+
+- Removed `graphql::account::reset_admin_password` function as it was obsoleted
+  by the GraphQL API `resetAdminPassword`.
+
 ### Fixed
 
 - Resolved an issue in the `applyNode` GraphQL API, where configuration values
