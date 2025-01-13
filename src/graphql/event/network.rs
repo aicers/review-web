@@ -109,7 +109,10 @@ impl NetworkThreat {
     /// The cluster ID of the event in string within the representable
     /// range of `usize`.
     async fn cluster_id(&self) -> ID {
-        ID(self.inner.cluster_id.to_string())
+        ID(self
+            .inner
+            .cluster_id
+            .map_or(String::new(), |id| id.to_string()))
     }
 
     async fn attack_kind(&self) -> &str {
