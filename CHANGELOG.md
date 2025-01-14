@@ -46,6 +46,13 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   type instead of `usize` type value for the `cluster_id` field.
 - Updated `insertNode` GraphQL API to no longer require `config` for the
   `agents` parameter.
+- Updated account-related GraphQL APIs to reflect the type change of
+  `Account::max_parallel_sessions` from `Option<u32>` to `Option<u8>`.
+  - The `account` and related queries such as `accountList` now return
+    `maxParallelSessions` as an `Int` within the range of `u8`.
+  - The `insertAccount` and `updateAccount` GraphQL APIs remain unchanged in
+    their interfaces but now only accept parameters related to max parallel
+    sessions within the range of `u8`.
 
 ### Removed
 

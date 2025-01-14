@@ -7,7 +7,7 @@ use anyhow::anyhow;
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
     connection::{Connection, EmptyFields},
-    Context, Enum, InputObject, Object, Result, SimpleObject, StringNumber,
+    Context, Enum, InputObject, Object, Result, SimpleObject,
 };
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use review_database::{
@@ -173,7 +173,7 @@ impl AccountMutation {
         language: Option<String>,
         theme: Option<String>,
         allow_access_from: Option<Vec<IpAddress>>,
-        max_parallel_sessions: Option<u32>,
+        max_parallel_sessions: Option<u8>,
     ) -> Result<String> {
         let store = crate::graphql::get_store(ctx).await?;
         let table = store.account_map();
@@ -673,10 +673,10 @@ impl Account {
             .map(|ips| ips.iter().map(ToString::to_string).collect::<Vec<String>>())
     }
 
-    /// The max sessions that can be run in parallel in string within the
-    /// representable range of `u32`.
-    async fn max_parallel_sessions(&self) -> Option<StringNumber<u32>> {
-        self.inner.max_parallel_sessions.map(StringNumber)
+    /// The max sessions that can be run in parallel within the
+    /// representable range of `u8`.
+    async fn max_parallel_sessions(&self) -> Option<u8> {
+        self.inner.max_parallel_sessions
     }
 }
 
@@ -751,11 +751,12 @@ struct UpdateAllowAccessFrom {
     new: Option<Vec<IpAddress>>,
 }
 
-/// The old and new values of `maxParallelSessions` to update.
+/// The old and new values of `maxParallelSessions` to update,
+/// and the values must be in the range of `u8`.
 #[derive(InputObject)]
 struct UpdateMaxParallelSessions {
-    old: Option<u32>,
-    new: Option<u32>,
+    old: Option<u8>,
+    new: Option<u8>,
 }
 
 struct AccountTotalCount;
