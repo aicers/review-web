@@ -116,11 +116,14 @@ where
             let completed = shutdown_completed.clone();
             tokio::spawn(graceful_shutdown(handle.clone(), wait_shutdown));
             tokio::spawn(async move {
-                axum_server::bind_rustls(config.addr, tls_config)
+                if let Err(e) = axum_server::bind_rustls(config.addr, tls_config)
                     .handle(handle)
                     .serve(router.into_make_service_with_connect_info::<SocketAddr>())
                     .await
-                    .unwrap();
+                {
+                    panic!("Web server encountered an error: {e:?}");
+                };
+
                 completed.notify_one();
             });
 
@@ -144,7 +147,7 @@ where
         }
     });
 
-    tracing::info!("Starting Web Server");
+    info!("Starting Web Server");
     tokio::spawn(async {
         match server.await {
             Ok(Err(e)) => error!("Web server died: {:?}", e),

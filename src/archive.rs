@@ -113,7 +113,10 @@ async fn process_request(
     tail: Option<Path<String>>,
     req: Request<Body>,
 ) -> Result<Response, Error> {
-    let (_store, client, config) = (state.store, state.client.unwrap(), state.config);
+    let client = state
+        .client
+        .ok_or_else(|| Error::ServiceUnavailable("Client was not initialized".to_string()))?;
+    let config = state.config;
 
     let url = match tail {
         Some(Path(tail)) => format!("{}/{tail}", config.uri()),
