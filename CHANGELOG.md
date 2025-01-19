@@ -53,6 +53,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   - The `insertAccount` and `updateAccount` GraphQL APIs remain unchanged in
     their interfaces but now only accept parameters related to max parallel
     sessions within the range of `u8`.
+- Changed `AgentManager::broadcast_trusted_user_agent_list` method signature
+  from `&[u8]` to `&[String]`. Implementors of `AgentManager` will need to
+  update their implementations. This change simplifies the API by removing
+  serialization concerns from callers.
 
 ### Removed
 

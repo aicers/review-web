@@ -2102,7 +2102,7 @@ mod tests {
         }
         async fn broadcast_trusted_user_agent_list(
             &self,
-            _list: &[u8],
+            _list: &[String],
         ) -> Result<(), anyhow::Error> {
             anyhow::bail!("not expected to be called")
         }
@@ -2202,7 +2202,7 @@ mod tests {
         }
         async fn broadcast_trusted_user_agent_list(
             &self,
-            _list: &[u8],
+            _list: &[String],
         ) -> Result<(), anyhow::Error> {
             anyhow::bail!("not expected to be called")
         }

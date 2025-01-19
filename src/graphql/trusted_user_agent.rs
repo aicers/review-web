@@ -3,7 +3,6 @@ use async_graphql::{
     connection::{Connection, EmptyFields},
     Context, Object, Result, SimpleObject,
 };
-use bincode::Options;
 use chrono::{DateTime, Utc};
 use database::{Direction, Iterable};
 use review_database::{self as database, Store};
@@ -114,10 +113,9 @@ impl UserAgentMutation {
     async fn apply_trusted_user_agent(&self, ctx: &Context<'_>) -> Result<bool> {
         let store = crate::graphql::get_store(ctx).await?;
         let list = get_trusted_user_agent_list(&store)?;
-        let serialized_user_agent = bincode::DefaultOptions::new().serialize(&list)?;
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
         agent_manager
-            .broadcast_trusted_user_agent_list(&serialized_user_agent)
+            .broadcast_trusted_user_agent_list(&list)
             .await?;
         Ok(true)
     }
