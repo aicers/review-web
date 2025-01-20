@@ -70,7 +70,10 @@ impl AgentManager for Manager {
         bail!("Not supported")
     }
 
-    async fn broadcast_trusted_user_agent_list(&self, _list: &[u8]) -> Result<(), anyhow::Error> {
+    async fn broadcast_trusted_user_agent_list(
+        &self,
+        _list: &[String],
+    ) -> Result<(), anyhow::Error> {
         bail!("Not supported")
     }
 

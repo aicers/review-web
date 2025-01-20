@@ -29,7 +29,10 @@ pub trait AgentManager: Send + Sync {
         networks: &HostNetworkGroup,
     ) -> Result<Vec<String>, anyhow::Error>;
 
-    async fn broadcast_trusted_user_agent_list(&self, _list: &[u8]) -> Result<(), anyhow::Error> {
+    async fn broadcast_trusted_user_agent_list(
+        &self,
+        _list: &[String],
+    ) -> Result<(), anyhow::Error> {
         Err(anyhow!("Not supported"))
     }
 
