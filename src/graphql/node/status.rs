@@ -111,7 +111,10 @@ mod tests {
     use roxy::ResourceUsage;
     use serde_json::json;
 
-    use crate::graphql::{AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema};
+    use crate::graphql::{
+        customer::NetworksTargetAgentKeysPair, AgentManager, BoxedAgentManager, SamplingPolicy,
+        TestSchema,
+    };
 
     struct MockAgentManager {
         pub online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,
@@ -119,9 +122,9 @@ mod tests {
 
     #[async_trait]
     impl AgentManager for MockAgentManager {
-        async fn broadcast_internal_networks(
+        async fn send_agent_specific_internal_networks(
             &self,
-            _networks: &HostNetworkGroup,
+            _networks: &[NetworksTargetAgentKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             anyhow::bail!("not expected to be called")
         }

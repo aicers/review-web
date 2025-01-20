@@ -1,5 +1,7 @@
 #![allow(clippy::fn_params_excessive_bools)]
 
+use std::collections::HashMap;
+
 use async_graphql::{
     connection::{Connection, EmptyFields, OpaqueCursor},
     types::ID,
@@ -7,16 +9,14 @@ use async_graphql::{
 };
 use chrono::Utc;
 use review_database::{Direction, Store};
-use tracing::error;
 
 use super::{
     super::{Role, RoleGuard},
+    gen_agent_key,
     input::{AgentDraftInput, GigantoInput, NodeDraftInput},
     Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount,
 };
-use crate::graphql::{
-    customer::broadcast_customer_networks, get_customer_networks, query_with_constraints,
-};
+use crate::graphql::query_with_constraints;
 
 #[Object]
 impl NodeQuery {
@@ -73,63 +73,51 @@ impl NodeMutation {
         agents: Vec<AgentDraftInput>,
         giganto: Option<GigantoInput>,
     ) -> Result<ID> {
-        let (id, customer_id) = {
-            let store = crate::graphql::get_store(ctx).await?;
-            let map = store.node_map();
-            let customer_id = customer_id
-                .as_str()
-                .parse::<u32>()
-                .map_err(|_| "invalid customer ID")?;
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.node_map();
+        let customer_id = customer_id
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid customer ID")?;
 
-            let agents: Vec<review_database::Agent> = agents
-                .into_iter()
-                .map(|new_agent| {
-                    let draft = match new_agent.draft {
-                        Some(draft) => Some(
-                            draft
-                                .try_into()
-                                .map_err(|_| Error::new("Failed to convert agent draft"))?,
-                        ),
-                        None => None,
-                    };
+        let agents: Vec<review_database::Agent> = agents
+            .into_iter()
+            .map(|new_agent| {
+                let draft = match new_agent.draft {
+                    Some(draft) => Some(
+                        draft
+                            .try_into()
+                            .map_err(|_| Error::new("Failed to convert agent draft"))?,
+                    ),
+                    None => None,
+                };
 
-                    Ok::<_, Error>(review_database::Agent {
-                        node: u32::MAX,
-                        key: new_agent.key,
-                        kind: new_agent.kind.into(),
-                        status: new_agent.status.into(),
-                        config: None,
-                        draft,
-                    })
+                Ok::<_, Error>(review_database::Agent {
+                    node: u32::MAX,
+                    key: new_agent.key,
+                    kind: new_agent.kind.into(),
+                    status: new_agent.status.into(),
+                    config: None,
+                    draft,
                 })
-                .collect::<Result<Vec<_>, _>>()?;
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
-            let value = review_database::Node {
-                id: u32::MAX,
-                name: name.clone(),
-                name_draft: Some(name),
-                profile: None,
-                profile_draft: Some(review_database::NodeProfile {
-                    customer_id,
-                    description,
-                    hostname: hostname.clone(),
-                }),
-                agents: agents.into_iter().map(Into::into).collect(),
-                giganto: giganto.map(Into::into),
-                creation_time: Utc::now(),
-            };
-            let id = map.put(value)?;
-            (id, customer_id)
+        let value = review_database::Node {
+            id: u32::MAX,
+            name: name.clone(),
+            name_draft: Some(name),
+            profile: None,
+            profile_draft: Some(review_database::NodeProfile {
+                customer_id,
+                description,
+                hostname: hostname.clone(),
+            }),
+            agents: agents.into_iter().map(Into::into).collect(),
+            giganto: giganto.map(Into::into),
+            creation_time: Utc::now(),
         };
-        if super::matches_manager_hostname(&hostname) {
-            let store = crate::graphql::get_store(ctx).await?;
-
-            if let Ok(networks) = get_customer_networks(&store, customer_id) {
-                if let Err(e) = broadcast_customer_networks(ctx, &networks).await {
-                    error!("failed to broadcast internal networks. {e:?}");
-                }
-            }
-        }
+        let id = map.put(value)?;
         Ok(ID(id.to_string()))
     }
 
@@ -192,24 +180,32 @@ async fn load(
     super::super::load_edges(&map, after, before, first, last, NodeTotalCount)
 }
 
-/// Returns the customer id of review node.
+/// Returns a customer id and the agent key(agent@hostname) list for the node corresponding to
+/// that customer id.
 ///
 /// # Errors
 ///
 /// Returns an error if the node profile could not be retrieved.
-#[allow(clippy::module_name_repetitions)]
-pub fn get_customer_id_of_node(db: &Store) -> Result<Option<u32>> {
+pub fn agent_keys_by_customer_id(db: &Store) -> Result<HashMap<u32, Vec<String>>> {
     let map = db.node_map();
+    let mut customer_id_hash = HashMap::new();
+
     for entry in map.iter(Direction::Forward, None) {
         let node = entry.map_err(|_| "invalid value in database")?;
 
         if let Some(node_profile) = &node.profile {
-            if super::matches_manager_hostname(&node_profile.hostname) {
-                return Ok(Some(node_profile.customer_id));
-            }
+            let agent_keys = node
+                .agents
+                .iter()
+                .filter_map(|agent| gen_agent_key(agent.kind.into(), &node_profile.hostname).ok())
+                .collect::<Vec<String>>();
+            customer_id_hash
+                .entry(node_profile.customer_id)
+                .or_insert_with(Vec::new)
+                .extend_from_slice(&agent_keys);
         }
     }
-    Ok(None)
+    Ok(customer_id_hash)
 }
 
 #[cfg(test)]

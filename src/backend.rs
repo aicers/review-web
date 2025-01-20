@@ -6,6 +6,7 @@ use ipnet::IpNet;
 use review_database::HostNetworkGroup;
 pub use roxy::{Process, ResourceUsage};
 
+use crate::graphql::customer::NetworksTargetAgentKeysPair;
 pub use crate::graphql::{ParsedCertificate, SamplingPolicy};
 
 #[async_trait]
@@ -14,9 +15,9 @@ pub trait AgentManager: Send + Sync {
         Err(anyhow!("Not supported"))
     }
 
-    async fn broadcast_internal_networks(
+    async fn send_agent_specific_internal_networks(
         &self,
-        networks: &HostNetworkGroup,
+        networks: &[NetworksTargetAgentKeysPair],
     ) -> Result<Vec<String>, anyhow::Error>;
 
     async fn broadcast_allow_networks(

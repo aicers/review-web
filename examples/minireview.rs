@@ -20,7 +20,10 @@ use review_database::{migrate_data_dir, Database, HostNetworkGroup, Store};
 use review_web::{
     self as web,
     backend::{AgentManager, CertManager},
-    graphql::{account::set_initial_admin_password, Process, ResourceUsage, SamplingPolicy},
+    graphql::{
+        account::set_initial_admin_password, customer::NetworksTargetAgentKeysPair, Process,
+        ResourceUsage, SamplingPolicy,
+    },
 };
 use serde::Deserialize;
 use tokio::{
@@ -77,9 +80,9 @@ impl AgentManager for Manager {
         bail!("Not supported")
     }
 
-    async fn broadcast_internal_networks(
+    async fn send_agent_specific_internal_networks(
         &self,
-        _networks: &HostNetworkGroup,
+        _networks: &[NetworksTargetAgentKeysPair],
     ) -> Result<Vec<String>, Error> {
         bail!("Not supported")
     }
