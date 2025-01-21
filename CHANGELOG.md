@@ -35,7 +35,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   that captures or detects raw events. This update broadly affects GraphQL APIs
   that previously used source field as a parameter, and GraphQL APIs that return
   event, outlier, or triage related structs.
-- Updated review-database to 0.33.1.
+- Updated review-database to 0.34.0.
 - The `ip2location::DB` argument for `serve` no longer needs to be wrapped in
   `Arc` and `Mutex`. This change simplifies the code and improves performance by
   removing unnecessary locking.
