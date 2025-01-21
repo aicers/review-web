@@ -158,24 +158,24 @@ impl HttpThreat {
         &self.inner.cache_control
     }
 
-    async fn orig_filenames(&self) -> Vec<String> {
-        self.inner.orig_filenames.clone()
+    async fn orig_filenames(&self) -> &[String] {
+        &self.inner.orig_filenames
     }
 
-    async fn orig_mime_types(&self) -> Vec<String> {
-        self.inner.orig_mime_types.clone()
+    async fn orig_mime_types(&self) -> &[String] {
+        &self.inner.orig_mime_types
     }
 
-    async fn resp_filenames(&self) -> Vec<String> {
-        self.inner.resp_filenames.clone()
+    async fn resp_filenames(&self) -> &[String] {
+        &self.inner.resp_filenames
     }
 
-    async fn resp_mime_types(&self) -> Vec<String> {
-        self.inner.resp_mime_types.clone()
+    async fn resp_mime_types(&self) -> &[String] {
+        &self.inner.resp_mime_types
     }
 
-    async fn post_body(&self) -> Vec<u8> {
-        self.inner.post_body.clone()
+    async fn post_body(&self) -> &[u8] {
+        &self.inner.post_body
     }
 
     async fn state(&self) -> &str {
@@ -465,24 +465,24 @@ impl TorConnection {
         &self.inner.cache_control
     }
 
-    async fn orig_filenames(&self) -> Vec<String> {
-        self.inner.orig_filenames.clone()
+    async fn orig_filenames(&self) -> &[String] {
+        &self.inner.orig_filenames
     }
 
-    async fn orig_mime_types(&self) -> Vec<String> {
-        self.inner.orig_mime_types.clone()
+    async fn orig_mime_types(&self) -> &[String] {
+        &self.inner.orig_mime_types
     }
 
-    async fn resp_filenames(&self) -> Vec<String> {
-        self.inner.resp_filenames.clone()
+    async fn resp_filenames(&self) -> &[String] {
+        &self.inner.resp_filenames
     }
 
-    async fn resp_mime_types(&self) -> Vec<String> {
-        self.inner.resp_mime_types.clone()
+    async fn resp_mime_types(&self) -> &[String] {
+        &self.inner.resp_mime_types
     }
 
-    async fn post_body(&self) -> Vec<u8> {
-        self.inner.post_body.clone()
+    async fn post_body(&self) -> &[u8] {
+        &self.inner.post_body
     }
 
     async fn state(&self) -> &str {
@@ -647,24 +647,24 @@ impl DomainGenerationAlgorithm {
         &self.inner.cache_control
     }
 
-    async fn orig_filenames(&self) -> Vec<String> {
-        self.inner.orig_filenames.clone()
+    async fn orig_filenames(&self) -> &[String] {
+        &self.inner.orig_filenames
     }
 
-    async fn orig_mime_types(&self) -> Vec<String> {
-        self.inner.orig_mime_types.clone()
+    async fn orig_mime_types(&self) -> &[String] {
+        &self.inner.orig_mime_types
     }
 
-    async fn resp_filenames(&self) -> Vec<String> {
-        self.inner.resp_filenames.clone()
+    async fn resp_filenames(&self) -> &[String] {
+        &self.inner.resp_filenames
     }
 
-    async fn resp_mime_types(&self) -> Vec<String> {
-        self.inner.resp_mime_types.clone()
+    async fn resp_mime_types(&self) -> &[String] {
+        &self.inner.resp_mime_types
     }
 
-    async fn post_body(&self) -> Vec<u8> {
-        self.inner.post_body.clone()
+    async fn post_body(&self) -> &[u8] {
+        &self.inner.post_body
     }
 
     async fn state(&self) -> &str {
@@ -833,24 +833,24 @@ impl NonBrowser {
         &self.inner.cache_control
     }
 
-    async fn orig_filenames(&self) -> Vec<String> {
-        self.inner.orig_filenames.clone()
+    async fn orig_filenames(&self) -> &[String] {
+        &self.inner.orig_filenames
     }
 
-    async fn orig_mime_types(&self) -> Vec<String> {
-        self.inner.orig_mime_types.clone()
+    async fn orig_mime_types(&self) -> &[String] {
+        &self.inner.orig_mime_types
     }
 
-    async fn resp_filenames(&self) -> Vec<String> {
-        self.inner.resp_filenames.clone()
+    async fn resp_filenames(&self) -> &[String] {
+        &self.inner.resp_filenames
     }
 
-    async fn resp_mime_types(&self) -> Vec<String> {
-        self.inner.resp_mime_types.clone()
+    async fn resp_mime_types(&self) -> &[String] {
+        &self.inner.resp_mime_types
     }
 
-    async fn post_body(&self) -> Vec<u8> {
-        self.inner.post_body.clone()
+    async fn post_body(&self) -> &[u8] {
+        &self.inner.post_body
     }
 
     async fn state(&self) -> &str {
@@ -1021,24 +1021,24 @@ impl BlockListHttp {
         &self.inner.cache_control
     }
 
-    async fn orig_filenames(&self) -> Vec<String> {
-        self.inner.orig_filenames.clone()
+    async fn orig_filenames(&self) -> &[String] {
+        &self.inner.orig_filenames
     }
 
-    async fn orig_mime_types(&self) -> Vec<String> {
-        self.inner.orig_mime_types.clone()
+    async fn orig_mime_types(&self) -> &[String] {
+        &self.inner.orig_mime_types
     }
 
-    async fn resp_filenames(&self) -> Vec<String> {
-        self.inner.resp_filenames.clone()
+    async fn resp_filenames(&self) -> &[String] {
+        &self.inner.resp_filenames
     }
 
-    async fn resp_mime_types(&self) -> Vec<String> {
-        self.inner.resp_mime_types.clone()
+    async fn resp_mime_types(&self) -> &[String] {
+        &self.inner.resp_mime_types
     }
 
-    async fn post_body(&self) -> Vec<u8> {
-        self.inner.post_body.clone()
+    async fn post_body(&self) -> &[u8] {
+        &self.inner.post_body
     }
 
     async fn state(&self) -> &str {

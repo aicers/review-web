@@ -62,8 +62,8 @@ impl PortScan {
         find_ip_network(&map, self.inner.dst_addr)
     }
 
-    async fn dst_ports(&self) -> Vec<u16> {
-        self.inner.dst_ports.clone()
+    async fn dst_ports(&self) -> &[u16] {
+        &self.inner.dst_ports
     }
 
     async fn proto(&self) -> u8 {

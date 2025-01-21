@@ -70,8 +70,8 @@ impl FtpBruteForce {
         self.inner.proto
     }
 
-    async fn user_list(&self) -> Vec<String> {
-        self.inner.user_list.clone()
+    async fn user_list(&self) -> &[String] {
+        &self.inner.user_list
     }
 
     async fn start_time(&self) -> DateTime<Utc> {

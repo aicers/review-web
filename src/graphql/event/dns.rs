@@ -86,8 +86,8 @@ impl DnsCovertChannel {
         &self.inner.query
     }
 
-    async fn answer(&self) -> Vec<String> {
-        self.inner.answer.clone()
+    async fn answer(&self) -> &[String] {
+        &self.inner.answer
     }
 
     async fn trans_id(&self) -> u16 {
@@ -126,8 +126,8 @@ impl DnsCovertChannel {
         self.inner.ra_flag
     }
 
-    async fn ttl(&self) -> Vec<i32> {
-        self.inner.ttl.clone()
+    async fn ttl(&self) -> &[i32] {
+        &self.inner.ttl
     }
 
     async fn confidence(&self) -> f32 {
@@ -233,8 +233,8 @@ impl LockyRansomware {
         &self.inner.query
     }
 
-    async fn answer(&self) -> Vec<String> {
-        self.inner.answer.clone()
+    async fn answer(&self) -> &[String] {
+        &self.inner.answer
     }
 
     async fn trans_id(&self) -> u16 {
@@ -273,8 +273,8 @@ impl LockyRansomware {
         self.inner.ra_flag
     }
 
-    async fn ttl(&self) -> Vec<i32> {
-        self.inner.ttl.clone()
+    async fn ttl(&self) -> &[i32] {
+        &self.inner.ttl
     }
 
     async fn confidence(&self) -> f32 {
@@ -375,8 +375,8 @@ impl CryptocurrencyMiningPool {
         &self.inner.query
     }
 
-    async fn answer(&self) -> Vec<String> {
-        self.inner.answer.clone()
+    async fn answer(&self) -> &[String] {
+        &self.inner.answer
     }
 
     async fn trans_id(&self) -> u16 {
@@ -415,12 +415,12 @@ impl CryptocurrencyMiningPool {
         self.inner.ra_flag
     }
 
-    async fn ttl(&self) -> Vec<i32> {
-        self.inner.ttl.clone()
+    async fn ttl(&self) -> &[i32] {
+        &self.inner.ttl
     }
 
-    async fn coins(&self) -> Vec<String> {
-        self.inner.coins.clone()
+    async fn coins(&self) -> &[String] {
+        &self.inner.coins
     }
 
     async fn category(&self) -> ThreatCategory {
@@ -521,8 +521,8 @@ impl BlockListDns {
         &self.inner.query
     }
 
-    async fn answer(&self) -> Vec<String> {
-        self.inner.answer.clone()
+    async fn answer(&self) -> &[String] {
+        &self.inner.answer
     }
 
     async fn trans_id(&self) -> u16 {
@@ -561,8 +561,8 @@ impl BlockListDns {
         self.inner.ra_flag
     }
 
-    async fn ttl(&self) -> Vec<i32> {
-        self.inner.ttl.clone()
+    async fn ttl(&self) -> &[i32] {
+        &self.inner.ttl
     }
 
     async fn category(&self) -> ThreatCategory {

@@ -109,8 +109,8 @@ impl BlockListKerberos {
         self.inner.cname_type
     }
 
-    async fn client_name(&self) -> Vec<String> {
-        self.inner.client_name.clone()
+    async fn client_name(&self) -> &[String] {
+        &self.inner.client_name
     }
 
     async fn realm(&self) -> &str {
@@ -121,8 +121,8 @@ impl BlockListKerberos {
         self.inner.sname_type
     }
 
-    async fn service_name(&self) -> Vec<String> {
-        self.inner.service_name.clone()
+    async fn service_name(&self) -> &[String] {
+        &self.inner.service_name
     }
 
     async fn category(&self) -> ThreatCategory {
