@@ -97,12 +97,12 @@ impl BlockListMqtt {
         self.inner.connack_reason
     }
 
-    async fn subscribe(&self) -> Vec<String> {
-        self.inner.subscribe.clone()
+    async fn subscribe(&self) -> &[String] {
+        &self.inner.subscribe
     }
 
-    async fn suback_reason(&self) -> Vec<u8> {
-        self.inner.suback_reason.clone()
+    async fn suback_reason(&self) -> &[u8] {
+        &self.inner.suback_reason
     }
 
     async fn category(&self) -> ThreatCategory {

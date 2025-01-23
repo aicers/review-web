@@ -187,24 +187,24 @@ impl LdapPlainText {
         self.inner.version
     }
 
-    async fn opcode(&self) -> Vec<String> {
-        self.inner.opcode.clone()
+    async fn opcode(&self) -> &[String] {
+        &self.inner.opcode
     }
 
-    async fn result(&self) -> Vec<String> {
-        self.inner.result.clone()
+    async fn result(&self) -> &[String] {
+        &self.inner.result
     }
 
-    async fn diagnostic_message(&self) -> Vec<String> {
-        self.inner.diagnostic_message.clone()
+    async fn diagnostic_message(&self) -> &[String] {
+        &self.inner.diagnostic_message
     }
 
-    async fn object(&self) -> Vec<String> {
-        self.inner.object.clone()
+    async fn object(&self) -> &[String] {
+        &self.inner.object
     }
 
-    async fn argument(&self) -> Vec<String> {
-        self.inner.argument.clone()
+    async fn argument(&self) -> &[String] {
+        &self.inner.argument
     }
 
     async fn category(&self) -> ThreatCategory {
@@ -313,24 +313,24 @@ impl BlockListLdap {
         self.inner.version
     }
 
-    async fn opcode(&self) -> Vec<String> {
-        self.inner.opcode.clone()
+    async fn opcode(&self) -> &[String] {
+        &self.inner.opcode
     }
 
-    async fn result(&self) -> Vec<String> {
-        self.inner.result.clone()
+    async fn result(&self) -> &[String] {
+        &self.inner.result
     }
 
-    async fn diagnostic_message(&self) -> Vec<String> {
-        self.inner.diagnostic_message.clone()
+    async fn diagnostic_message(&self) -> &[String] {
+        &self.inner.diagnostic_message
     }
 
-    async fn object(&self) -> Vec<String> {
-        self.inner.object.clone()
+    async fn object(&self) -> &[String] {
+        &self.inner.object
     }
 
-    async fn argument(&self) -> Vec<String> {
-        self.inner.argument.clone()
+    async fn argument(&self) -> &[String] {
+        &self.inner.argument
     }
 
     async fn category(&self) -> ThreatCategory {

@@ -81,12 +81,12 @@ impl BlockListNfs {
         self.inner.last_time
     }
 
-    async fn read_files(&self) -> Vec<String> {
-        self.inner.read_files.clone()
+    async fn read_files(&self) -> &[String] {
+        &self.inner.read_files
     }
 
-    async fn write_files(&self) -> Vec<String> {
-        self.inner.write_files.clone()
+    async fn write_files(&self) -> &[String] {
+        &self.inner.write_files
     }
 
     async fn category(&self) -> ThreatCategory {
