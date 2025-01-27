@@ -9,7 +9,7 @@ mod block_network;
 mod category;
 mod cert;
 mod cluster;
-pub(crate) mod customer;
+pub mod customer;
 mod data_source;
 mod db_management;
 mod event;
@@ -62,7 +62,7 @@ pub use self::allow_network::get_allow_networks;
 pub use self::block_network::get_block_networks;
 pub use self::cert::ParsedCertificate;
 pub use self::customer::get_customer_networks;
-pub use self::node::get_customer_id_of_node;
+pub use self::node::agent_keys_by_customer_id;
 pub use self::sampling::{
     Interval as SamplingInterval, Kind as SamplingKind, Period as SamplingPeriod,
     Policy as SamplingPolicy,
@@ -594,9 +594,9 @@ impl AgentManager for MockAgentManager {
         Ok(())
     }
 
-    async fn broadcast_internal_networks(
+    async fn send_agent_specific_internal_networks(
         &self,
-        _networks: &HostNetworkGroup,
+        _networks: &[customer::NetworksTargetAgentKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         Ok(vec!["semi-supervised@hostA".to_string()])
     }

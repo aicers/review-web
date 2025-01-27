@@ -4,10 +4,12 @@ use tracing::{error, info};
 
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard},
-    NodeControlMutation,
+    gen_agent_key, NodeControlMutation, SEMI_SUPERVISED_AGENT,
 };
 use crate::graphql::{
-    customer::broadcast_customer_networks, get_customer_networks, node::input::NodeInput,
+    customer::{send_agent_specific_customer_networks, NetworksTargetAgentKeysPair},
+    get_customer_networks,
+    node::input::NodeInput,
 };
 
 #[Object]
@@ -77,7 +79,7 @@ impl NodeControlMutation {
                 node.profile_draft.as_ref().map(ToString::to_string).unwrap_or_default(),
             );
 
-            broadcast_customer_change_if_needed(ctx, i, &node).await;
+            send_customer_change_if_needed(ctx, i, &node).await;
         }
 
         if let Some(ref target_agents) = apply_scope.agents {
@@ -232,13 +234,23 @@ async fn update_db(
     Ok(map.update(i, &old, &new)?)
 }
 
-async fn broadcast_customer_change_if_needed(ctx: &Context<'_>, i: u32, node: &NodeInput) {
-    if let Some(customer_id) = customer_id_to_broadcast(node) {
+async fn send_customer_change_if_needed(ctx: &Context<'_>, i: u32, node: &NodeInput) {
+    if let Some(customer_id) = customer_id_to_send(node) {
+        let hostname = node
+            .profile_draft
+            .as_ref()
+            .expect("When customer_id exists, `nodeInput.profile_draft` means Some, which means that the values of the other fields in the `NodeProfileInput` also exist. Therefore, their values are always valid.")
+            .hostname.as_str();
+        let agent_keys = node
+            .agents
+            .iter()
+            .filter_map(|agent| gen_agent_key(agent.kind, hostname).ok())
+            .collect::<Vec<String>>();
         let Ok(customer_id) = customer_id.parse::<u32>() else {
             error!("Failed to parse customer ID from node {i} for broadcasting customer change");
             return;
         };
-        if let Err(e) = broadcast_customer_change(ctx, customer_id).await {
+        if let Err(e) = send_customer_change(ctx, customer_id, agent_keys).await {
             error!(
                 "Failed to broadcast customer change for customer ID {customer_id} on node {i}. The failure did not affect the node application operation. Error: {e:?}",
             );
@@ -246,26 +258,27 @@ async fn broadcast_customer_change_if_needed(ctx: &Context<'_>, i: u32, node: &N
     }
 }
 
-fn customer_id_to_broadcast(node: &NodeInput) -> Option<&str> {
-    let is_manager = node
-        .profile_draft
-        .as_ref()
-        .is_some_and(|s| super::matches_manager_hostname(&s.hostname));
-
+fn customer_id_to_send(node: &NodeInput) -> Option<&str> {
     let old_customer_id = node.profile.as_ref().map(|s| s.customer_id.as_str());
     let new_customer_id = node.profile_draft.as_ref().map(|s| s.customer_id.as_str());
 
-    if is_manager && (old_customer_id != new_customer_id) {
-        new_customer_id
-    } else {
+    if old_customer_id == new_customer_id {
         None
+    } else {
+        new_customer_id
     }
 }
 
-async fn broadcast_customer_change(ctx: &Context<'_>, customer_id: u32) -> Result<()> {
+async fn send_customer_change(
+    ctx: &Context<'_>,
+    customer_id: u32,
+    agent_keys: Vec<String>,
+) -> Result<()> {
     let store = crate::graphql::get_store(ctx).await?;
     let networks = get_customer_networks(&store, customer_id)?;
-    if let Err(e) = broadcast_customer_networks(ctx, &networks).await {
+    let network_list =
+        NetworksTargetAgentKeysPair::new(networks, agent_keys, SEMI_SUPERVISED_AGENT);
+    if let Err(e) = send_agent_specific_customer_networks(ctx, &[network_list]).await {
         error!("failed to broadcast internal networks. {e:?}");
     }
 
@@ -282,7 +295,10 @@ mod tests {
     use review_database::HostNetworkGroup;
     use serde_json::json;
 
-    use crate::graphql::{AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema};
+    use crate::graphql::{
+        customer::NetworksTargetAgentKeysPair, AgentManager, BoxedAgentManager, SamplingPolicy,
+        TestSchema,
+    };
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
@@ -2106,9 +2122,9 @@ mod tests {
         ) -> Result<(), anyhow::Error> {
             anyhow::bail!("not expected to be called")
         }
-        async fn broadcast_internal_networks(
+        async fn send_agent_specific_internal_networks(
             &self,
-            _networks: &HostNetworkGroup,
+            _networks: &[NetworksTargetAgentKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             Ok(vec!["semi-supervised@hostA".to_string()])
         }
@@ -2206,9 +2222,9 @@ mod tests {
         ) -> Result<(), anyhow::Error> {
             anyhow::bail!("not expected to be called")
         }
-        async fn broadcast_internal_networks(
+        async fn send_agent_specific_internal_networks(
             &self,
-            _networks: &HostNetworkGroup,
+            _networks: &[NetworksTargetAgentKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             anyhow::bail!("Failed to broadcast internal networks")
         }

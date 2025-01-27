@@ -38,7 +38,7 @@ impl fmt::Display for NodeProfileInput {
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, InputObject)]
 pub struct AgentInput {
-    kind: AgentKind,
+    pub(super) kind: AgentKind,
     pub(super) key: String,
     status: AgentStatus,
     pub(super) config: Option<String>,

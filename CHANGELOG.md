@@ -57,6 +57,20 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   from `&[u8]` to `&[String]`. Implementors of `AgentManager` will need to
   update their implementations. This change simplifies the API by removing
   serialization concerns from callers.
+- Modified to broadcast the correct internal network list for each
+  Semi-supervised Engine. The changes are as follows.
+  - Renamed the `broadcast_internal_networks` method of to `AgentManager` trait
+    to `send_agent_specific_internal_networks` as the functionality of
+    `broadcast_internal_networks` changes from broadcast to fine-targeting nodes
+    and agents using agent keys and hostnames to send.
+  - Changed the argument type of the `send_agent_specific_internal_networks`
+    method from `HostNetworkGroup` to `NetworksTargetAgentKeysPair` array. This
+    change will allow the Central Management Server that implements
+    `send_agent_specific_internal_networks` to provide the internal networks
+    corresponding to the agent information of the Semi-supervised Engine.
+  - Renamed `get_customer_id_of_node` to `agent_keys_by_customer_id` as the
+    functionality of `get_customer_id_of_node` has changed. The function returns
+    agent info list by all customer id.
 
 ### Removed
 

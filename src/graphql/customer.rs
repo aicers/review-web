@@ -9,10 +9,45 @@ use async_graphql::{
 };
 use chrono::{DateTime, Utc};
 use review_database::{self as database, Store};
+use serde::{Deserialize, Serialize};
 use tracing::error;
 
-use super::{get_customer_id_of_node, BoxedAgentManager, Role, RoleGuard};
+use super::node::SEMI_SUPERVISED_AGENT;
+use super::{agent_keys_by_customer_id, BoxedAgentManager, Role, RoleGuard};
 use crate::graphql::query_with_constraints;
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct NetworksTargetAgentKeysPair {
+    networks: database::HostNetworkGroup,
+    target_agent_keys: Vec<String>,
+}
+
+impl NetworksTargetAgentKeysPair {
+    #[must_use]
+    pub fn new(
+        networks: database::HostNetworkGroup,
+        agent_keys: Vec<String>,
+        target_agent: &str,
+    ) -> Self {
+        Self {
+            networks,
+            target_agent_keys: agent_keys
+                .into_iter()
+                .filter(|s| s.starts_with(target_agent))
+                .collect(),
+        }
+    }
+
+    #[must_use]
+    pub fn target_agent_keys(&self) -> &[String] {
+        &self.target_agent_keys
+    }
+
+    #[must_use]
+    pub fn networks(&self) -> &database::HostNetworkGroup {
+        &self.networks
+    }
+}
 
 #[derive(Default)]
 pub(super) struct CustomerQuery;
@@ -101,13 +136,13 @@ impl CustomerMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
-        let (registered_customer_is_removed, removed) = {
+        let (removed_customer_networks, removed) = {
             let store = crate::graphql::get_store(ctx).await?;
             let map = store.customer_map();
             let network_map = store.network_map();
 
-            let customer_id = get_customer_id_of_node(&store).ok().flatten();
-            let mut registered_customer_is_removed = false;
+            let customer_id_hash = agent_keys_by_customer_id(&store)?;
+            let mut removed_customer_networks = Vec::new();
             let mut removed = Vec::<String>::with_capacity(ids.len());
             for id in ids {
                 let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
@@ -120,20 +155,22 @@ impl CustomerMutation {
                 };
                 removed.push(name);
 
-                if customer_id == Some(i) {
-                    registered_customer_is_removed = true;
+                if let Some(agent_keys) = customer_id_hash.get(&i) {
+                    let network_list = NetworksTargetAgentKeysPair::new(
+                        database::HostNetworkGroup::new(vec![], vec![], vec![]),
+                        agent_keys.clone(),
+                        SEMI_SUPERVISED_AGENT,
+                    );
+                    removed_customer_networks.push(network_list);
                 }
             }
 
-            (registered_customer_is_removed, removed)
+            (removed_customer_networks, removed)
         };
 
-        if registered_customer_is_removed {
-            if let Err(e) = broadcast_customer_networks(
-                ctx,
-                &database::HostNetworkGroup::new(vec![], vec![], vec![]),
-            )
-            .await
+        if !removed_customer_networks.is_empty() {
+            if let Err(e) =
+                send_agent_specific_customer_networks(ctx, &removed_customer_networks).await
             {
                 error!("failed to broadcast internal networks. {e:?}");
             }
@@ -154,35 +191,33 @@ impl CustomerMutation {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
         let old = old.try_into()?;
         let new = new.try_into()?;
-        let changed_networks = {
-            let store = crate::graphql::get_store(ctx).await?;
-            let mut map = store.customer_map();
-            map.update(i, &old, &new)?;
 
-            let mut hosts = vec![];
-            let mut networks = vec![];
-            let mut ip_ranges = vec![];
-            if let Some(new_networks) = new.networks {
-                let customer_id = get_customer_id_of_node(&store).ok().flatten();
-                if customer_id == Some(i) {
-                    for nn in new_networks {
-                        let v = nn.network_group;
-                        hosts.extend(v.hosts());
-                        networks.extend(v.networks());
-                        ip_ranges.extend(v.ip_ranges().to_vec());
-                    }
-                    Some(database::HostNetworkGroup::new(hosts, networks, ip_ranges))
-                } else {
-                    None
+        let store = crate::graphql::get_store(ctx).await?;
+        let mut map = store.customer_map();
+        map.update(i, &old, &new)?;
+
+        if let Some(new_networks) = new.networks {
+            let customer_id_hash = agent_keys_by_customer_id(&store)?;
+            if let Some(agent_keys) = customer_id_hash.get(&i) {
+                let (hosts, networks, ip_ranges) = new_networks.iter().fold(
+                    (vec![], vec![], vec![]),
+                    |(mut hosts, mut networks, mut ip_ranges), nn| {
+                        hosts.extend(nn.network_group.hosts());
+                        networks.extend(nn.network_group.networks());
+                        ip_ranges.extend(nn.network_group.ip_ranges().to_vec());
+                        (hosts, networks, ip_ranges)
+                    },
+                );
+
+                let network_list = NetworksTargetAgentKeysPair::new(
+                    database::HostNetworkGroup::new(hosts, networks, ip_ranges),
+                    agent_keys.clone(),
+                    SEMI_SUPERVISED_AGENT,
+                );
+
+                if let Err(e) = send_agent_specific_customer_networks(ctx, &[network_list]).await {
+                    error!("failed to broadcast internal networks. {e:?}");
                 }
-            } else {
-                None
-            }
-        };
-
-        if let Some(networks) = changed_networks {
-            if let Err(e) = broadcast_customer_networks(ctx, &networks).await {
-                error!("failed to broadcast internal networks. {e:?}");
             }
         }
 
@@ -490,13 +525,18 @@ pub fn get_customer_networks(db: &Store, customer_id: u32) -> Result<database::H
     Ok(database::HostNetworkGroup::new(hosts, networks, ip_ranges))
 }
 
-pub async fn broadcast_customer_networks(
+/// Returns a list of agents that received the internal networks.
+///
+/// # Errors
+///
+/// Returns an error if the broadcast fail.
+pub async fn send_agent_specific_customer_networks(
     ctx: &Context<'_>,
-    networks: &database::HostNetworkGroup,
+    networks: &[NetworksTargetAgentKeysPair],
 ) -> Result<Vec<String>> {
     let agent_manager = ctx.data::<BoxedAgentManager>()?;
     agent_manager
-        .broadcast_internal_networks(networks)
+        .send_agent_specific_internal_networks(networks)
         .await
         .map_err(Into::into)
 }

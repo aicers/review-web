@@ -12,12 +12,16 @@ use async_graphql::{
 use bincode::Options;
 use chrono::{DateTime, TimeZone, Utc};
 #[allow(clippy::module_name_repetitions)]
-pub use crud::get_customer_id_of_node;
+pub use crud::agent_keys_by_customer_id;
 use database::Indexable;
 use input::NodeInput;
 use review_database as database;
 use roxy::Process as RoxyProcess;
 use serde::{Deserialize, Serialize};
+
+const SENSOR_AGENT: &str = "piglet";
+const UNSUPERVISED_AGENT: &str = "reconverge";
+pub(super) const SEMI_SUPERVISED_AGENT: &str = "hog";
 
 #[derive(Default)]
 pub(super) struct NodeQuery;
@@ -364,4 +368,13 @@ pub fn matches_manager_hostname(hostname: &str) -> bool {
     // the Manager server.
     let manager_hostname = roxy::hostname();
     !manager_hostname.is_empty() && manager_hostname == hostname
+}
+
+fn gen_agent_key(kind: AgentKind, host_name: &str) -> Result<String> {
+    match kind {
+        AgentKind::Unsupervised => Ok(format!("{UNSUPERVISED_AGENT}@{host_name}")),
+        AgentKind::Sensor => Ok(format!("{SENSOR_AGENT}@{host_name}")),
+        AgentKind::SemiSupervised => Ok(format!("{SEMI_SUPERVISED_AGENT}@{host_name}")),
+        AgentKind::TimeSeriesGenerator => Err(anyhow::anyhow!("invalid node's agent type").into()),
+    }
 }
