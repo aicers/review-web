@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use axum::{
-    async_trait,
     body::Body,
     extract::{FromRef, FromRequestParts, Path, State},
     http::Request,
@@ -166,11 +165,10 @@ fn reverse_proxy(
 
     Router::new()
         .route("/", post(process_request))
-        .route("/*tail", post(process_request))
+        .route("/{*tail}", post(process_request))
         .route_layer(from_fn_with_state(state, auth))
 }
 
-#[async_trait]
 impl<S> FromRequestParts<S> for ArchiveState
 where
     S: Send + Sync,

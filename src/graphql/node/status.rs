@@ -106,7 +106,7 @@ mod tests {
     use std::{collections::HashMap, time::Duration};
 
     use assert_json_diff::assert_json_include;
-    use axum::async_trait;
+    use async_trait::async_trait;
     use review_database::HostNetworkGroup;
     use roxy::ResourceUsage;
     use serde_json::json;
