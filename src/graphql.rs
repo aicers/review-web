@@ -61,7 +61,7 @@ use vinum::signal;
 pub use self::allow_network::get_allow_networks;
 pub use self::block_network::get_block_networks;
 pub use self::cert::ParsedCertificate;
-pub use self::customer::get_customer_networks;
+pub use self::customer::{get_customer_networks, NetworksTargetAgentKeysPair};
 pub use self::node::agent_keys_by_customer_id;
 pub use self::sampling::{
     Interval as SamplingInterval, Kind as SamplingKind, Period as SamplingPeriod,
