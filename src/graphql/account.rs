@@ -129,11 +129,13 @@ impl AccountQuery {
         .or(RoleGuard::new(super::Role::SecurityAdministrator))
         .or(RoleGuard::new(super::Role::SecurityManager))
         .or(RoleGuard::new(super::Role::SecurityMonitor))")]
-    async fn language(&self, ctx: &Context<'_>, username: String) -> Result<Option<String>> {
+    async fn language(&self, ctx: &Context<'_>) -> Result<Option<String>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
 
-        map.get(&username)?
+        let username = ctx.data::<String>()?;
+
+        map.get(username)?
             .ok_or_else::<async_graphql::Error, _>(|| "Account not found".into())
             .map(|account| account.language)
     }
@@ -143,11 +145,13 @@ impl AccountQuery {
         .or(RoleGuard::new(super::Role::SecurityAdministrator))
         .or(RoleGuard::new(super::Role::SecurityManager))
         .or(RoleGuard::new(super::Role::SecurityMonitor))")]
-    async fn theme(&self, ctx: &Context<'_>, username: String) -> Result<Option<String>> {
+    async fn theme(&self, ctx: &Context<'_>) -> Result<Option<String>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
 
-        map.get(&username)?
+        let username = ctx.data::<String>()?;
+
+        map.get(username)?
             .ok_or_else::<async_graphql::Error, _>(|| "Account not found".into())
             .map(|account| account.theme)
     }
@@ -447,11 +451,12 @@ impl AccountMutation {
     async fn update_language(
         &self,
         ctx: &Context<'_>,
-        username: String,
         language: UpdateLanguage,
     ) -> Result<Option<String>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
+
+        let username = ctx.data::<String>()?;
         let new_language = language.new.clone();
 
         map.update(
@@ -474,14 +479,11 @@ impl AccountMutation {
    .or(RoleGuard::new(super::Role::SecurityAdministrator))
    .or(RoleGuard::new(super::Role::SecurityManager))
    .or(RoleGuard::new(super::Role::SecurityMonitor))")]
-    async fn update_theme(
-        &self,
-        ctx: &Context<'_>,
-        username: String,
-        theme: UpdateTheme,
-    ) -> Result<Option<String>> {
+    async fn update_theme(&self, ctx: &Context<'_>, theme: UpdateTheme) -> Result<Option<String>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
+
+        let username = ctx.data::<String>()?;
         let new_theme = theme.new.clone();
 
         map.update(
@@ -1619,7 +1621,7 @@ mod tests {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
         let test_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
 
-        let schema = TestSchema::new_with(agent_manager, Some(test_addr)).await;
+        let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "u1").await;
         let res = schema
             .execute(
                 r#"mutation {
@@ -1656,7 +1658,7 @@ mod tests {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
         let test_addr: SocketAddr = "127.0.0.2:8080".parse().unwrap();
 
-        let schema = TestSchema::new_with(agent_manager, Some(test_addr)).await;
+        let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "u1").await;
         let res = schema
             .execute(
                 r#"mutation {
@@ -1693,7 +1695,7 @@ mod tests {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
         let test_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
 
-        let schema = TestSchema::new_with(agent_manager, Some(test_addr)).await;
+        let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "u1").await;
         let res = schema
             .execute(
                 r#"mutation {
@@ -1718,7 +1720,8 @@ mod tests {
 
     #[tokio::test]
     async fn language() {
-        let schema = TestSchema::new().await;
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "username").await;
 
         let res = schema
             .execute(
@@ -1739,11 +1742,9 @@ mod tests {
 
         let res = schema
             .execute(
-                r#"query {
-                    language(
-                        username: "username"
-                    )
-                }"#,
+                r"query {
+                    language
+                }",
             )
             .await;
 
@@ -1752,7 +1753,8 @@ mod tests {
 
     #[tokio::test]
     async fn update_language() {
-        let schema = TestSchema::new().await;
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "username").await;
 
         let res = schema
             .execute(
@@ -1796,7 +1798,6 @@ mod tests {
                 r#"
                 mutation {
                     updateLanguage(
-                        username: "username",
                         language: {
                             old: "en-US",
                             new: "ko-KR"
@@ -1995,7 +1996,8 @@ mod tests {
 
     #[tokio::test]
     async fn theme() {
-        let schema = TestSchema::new().await;
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "username").await;
 
         let res = schema
             .execute(
@@ -2017,11 +2019,9 @@ mod tests {
 
         let res = schema
             .execute(
-                r#"query {
-                    theme(
-                        username: "username"
-                    )
-                }"#,
+                r"query {
+                    theme
+                }",
             )
             .await;
 
@@ -2030,7 +2030,8 @@ mod tests {
 
     #[tokio::test]
     async fn update_theme() {
-        let schema = TestSchema::new().await;
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "username").await;
 
         let res = schema
             .execute(
@@ -2076,7 +2077,6 @@ mod tests {
                 r#"
                 mutation {
                     updateTheme(
-                        username: "username",
                         theme: {
                             old: "dark",
                             new: "light"

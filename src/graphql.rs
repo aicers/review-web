@@ -669,10 +669,14 @@ struct TestSchema {
 impl TestSchema {
     async fn new() -> Self {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
-        Self::new_with(agent_manager, None).await
+        Self::new_with_params(agent_manager, None, "testuser").await
     }
 
-    async fn new_with(agent_manager: BoxedAgentManager, test_addr: Option<SocketAddr>) -> Self {
+    async fn new_with_params(
+        agent_manager: BoxedAgentManager,
+        test_addr: Option<SocketAddr>,
+        username: &str,
+    ) -> Self {
         use self::account::set_initial_admin_password;
 
         let db_dir = tempfile::tempdir().unwrap();
@@ -680,6 +684,7 @@ impl TestSchema {
         let store = Store::new(db_dir.path(), backup_dir.path()).unwrap();
         let _ = set_initial_admin_password(&store);
         let store = Arc::new(RwLock::new(store));
+
         let schema = Schema::build(
             Query::default(),
             Mutation::default(),
@@ -687,8 +692,9 @@ impl TestSchema {
         )
         .data(agent_manager)
         .data(store.clone())
-        .data("testuser".to_string())
+        .data(username.to_string())
         .finish();
+
         Self {
             _dir: db_dir,
             store,

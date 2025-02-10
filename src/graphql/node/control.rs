@@ -308,7 +308,7 @@ mod tests {
             available_agents: vec!["unsupervised@all-in-one", "sensor@all-in-one"],
         });
 
-        let schema = TestSchema::new_with(agent_manager, None).await;
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // check empty
         let res = schema.execute(r"{nodeList{totalCount}}").await;
@@ -1641,7 +1641,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
         });
 
-        let schema = TestSchema::new_with(agent_manager, None).await;
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // insert node
         let res = schema
@@ -1783,7 +1783,7 @@ mod tests {
             available_agents: vec!["unsupervised@all-in-one", "sensor@all-in-one"],
         });
 
-        let schema = TestSchema::new_with(agent_manager, None).await;
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // insert node
         let res = schema
@@ -1877,7 +1877,7 @@ mod tests {
             available_agents: vec!["unsupervised@all-in-one", "sensor@all-in-one"],
         });
 
-        let schema = TestSchema::new_with(agent_manager, None).await;
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // insert node
         let res = schema
@@ -1956,7 +1956,7 @@ mod tests {
             available_agents: vec!["unsupervised@all-in-one", "sensor@all-in-one"],
         });
 
-        let schema = TestSchema::new_with(agent_manager, None).await;
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // insert node
         let res = schema
@@ -2034,7 +2034,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
         });
 
-        let schema = TestSchema::new_with(agent_manager, None).await;
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // insert node
         let res = schema
@@ -2309,7 +2309,7 @@ mod tests {
             available_agents: vec!["semi-supervised@analysis"],
         });
 
-        let schema = TestSchema::new_with(agent_manager, None).await;
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // node_shutdown
         let res = schema

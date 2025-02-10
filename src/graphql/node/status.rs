@@ -222,7 +222,7 @@ mod tests {
             online_apps_by_host_id,
         });
 
-        let schema = TestSchema::new_with(agent_manager, None).await;
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // check empty
         let res = schema.execute(r"{nodeList{totalCount}}").await;
@@ -479,7 +479,7 @@ mod tests {
             online_apps_by_host_id,
         });
 
-        let schema = TestSchema::new_with(agent_manager, None).await;
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // Insert 5 nodes
         let res = schema
