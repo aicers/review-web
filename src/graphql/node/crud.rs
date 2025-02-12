@@ -84,11 +84,12 @@ impl NodeMutation {
             .into_iter()
             .map(|new_agent| {
                 let draft = match new_agent.draft {
-                    Some(draft) => Some(
-                        draft
-                            .try_into()
-                            .map_err(|_| Error::new("Failed to convert agent draft"))?,
-                    ),
+                    Some(draft) => Some(draft.try_into().map_err(|_| {
+                        Error::new(format!(
+                            "Failed to convert the draft to TOML for the agent: {}",
+                            new_agent.key
+                        ))
+                    })?),
                     None => None,
                 };
 

@@ -138,50 +138,53 @@ pub(super) fn create_draft_update(
         .map(|agent| (agent.key.clone(), agent.config.clone()))
         .collect();
 
-    let agents: Vec<review_database::Agent> =
-        new.agents
-            .map(|new_agents| {
-                new_agents
-                    .into_iter()
-                    .map(|new_agent| {
-                        let config =
-                            match old_config_map.get(&new_agent.key) {
-                                Some(config) => match config.as_ref() {
-                                    Some(c) => Some(c.clone().try_into().map_err(|_| {
-                                        Error::new("Failed to convert agent config")
-                                    })?),
-                                    None => None,
-                                },
-                                None => {
-                                    return Err(Error::new(format!(
-                                        "Missing configuration for agent key: {}",
-                                        new_agent.key
-                                    )))
-                                }
-                            };
-
-                        let draft = match new_agent.draft {
-                            Some(draft) => Some(
-                                draft
-                                    .try_into()
-                                    .map_err(|_| Error::new("Failed to convert agent draft"))?,
-                            ),
+    let agents: Vec<review_database::Agent> = new
+        .agents
+        .map(|new_agents| {
+            new_agents
+                .into_iter()
+                .map(|new_agent| {
+                    let config = match old_config_map.get(&new_agent.key) {
+                        Some(config) => match config.as_ref() {
+                            Some(c) => Some(c.clone().try_into().map_err(|_| {
+                                Error::new(format!(
+                                    "Failed to convert the config to TOML for the agent: {}",
+                                    new_agent.key
+                                ))
+                            })?),
                             None => None,
-                        };
+                        },
+                        None => {
+                            return Err(Error::new(format!(
+                                "Missing configuration for the agent: {}",
+                                new_agent.key
+                            )))
+                        }
+                    };
 
-                        Ok(review_database::Agent {
-                            node: u32::MAX,
-                            key: new_agent.key,
-                            kind: new_agent.kind.into(),
-                            status: new_agent.status.into(),
-                            config,
-                            draft,
-                        })
+                    let draft = match new_agent.draft {
+                        Some(draft) => Some(draft.try_into().map_err(|_| {
+                            Error::new(format!(
+                                "Failed to convert the draft to TOML for the agent: {}",
+                                new_agent.key
+                            ))
+                        })?),
+                        None => None,
+                    };
+
+                    Ok(review_database::Agent {
+                        node: u32::MAX,
+                        key: new_agent.key,
+                        kind: new_agent.kind.into(),
+                        status: new_agent.status.into(),
+                        config,
+                        draft,
                     })
-                    .collect::<Result<Vec<_>, _>>()
-            })
-            .transpose()?
-            .unwrap_or_default();
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
 
     let giganto: Option<review_database::Giganto> = new.giganto.map(Into::into);
 
