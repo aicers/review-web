@@ -203,7 +203,7 @@ mod tests {
     async fn update_trusted_domain() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
         let test_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
-        let schema = TestSchema::new_with(agent_manager, Some(test_addr)).await;
+        let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "testuser").await;
         let insert_query = r#"
               mutation {
                 insertTrustedDomain(

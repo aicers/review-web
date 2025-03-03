@@ -5,6 +5,16 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Fixed a security issue where the `language`, `updateLanguage`, `theme`, and
+  `updateTheme` APIs allowed changing another user's settings by providing a
+  different `username` parameter.
+  - The `username` parameter has been removed, and the APIs now extract the
+    username from the JWT for authorization.
+
 ## [0.25.0] - 2025-01-27
 
 ### Added
@@ -811,6 +821,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.25.0...main
 [0.25.0]: https://github.com/aicers/review-web/compare/0.24.0...0.25.0
 [0.24.0]: https://github.com/aicers/review-web/compare/0.23.0...0.24.0
 [0.23.0]: https://github.com/aicers/review-web/compare/0.22.0...0.23.0
