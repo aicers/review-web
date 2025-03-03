@@ -114,7 +114,7 @@ impl NodeMutation {
                 description,
                 hostname: hostname.clone(),
             }),
-            agents: agents.into_iter().map(Into::into).collect(),
+            agents,
             giganto: giganto.map(Into::into),
             creation_time: Utc::now(),
         };
