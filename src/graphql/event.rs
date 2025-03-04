@@ -97,7 +97,7 @@ impl EventStream {
         ctx: &Context<'_>,
         start: DateTime<Utc>,
         fetch_interval: Option<u64>,
-    ) -> Result<impl Stream<Item = Event>> {
+    ) -> Result<impl Stream<Item = Event> + use<>> {
         use tokio::sync::RwLock;
         let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
         let fetch_time = if let Some(fetch_time) = fetch_interval {
@@ -108,14 +108,14 @@ impl EventStream {
         let (tx, rx) = unbounded();
         tokio::spawn(async move {
             let store = store.read().await;
-            if let Err(e) = fetch_events(
+            let fetch = fetch_events(
                 &store,
                 start.timestamp_nanos_opt().unwrap_or_default(),
                 tx,
                 fetch_time,
             )
-            .await
-            {
+            .await;
+            if let Err(e) = fetch {
                 error!("{e:?}");
             }
         });

@@ -294,7 +294,8 @@ async fn main() -> Result<()> {
     let config = Config::load_config(parse().as_deref())?;
     let _guard = init_tracing(config.log_dir());
 
-    match run(config).await {
+    let run = run(config).await;
+    match run {
         Ok(web_srv_shutdown_handle) => {
             if let Err(e) = shutdown().await {
                 error!("Signal handling failed: {}", e);

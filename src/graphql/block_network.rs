@@ -130,10 +130,8 @@ impl BlockNetworkMutation {
         let db = super::get_store(ctx).await?;
         let networks = get_block_networks(&db)?;
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
-        agent_manager
-            .broadcast_block_networks(&networks)
-            .await
-            .map_err(Into::into)
+        let r = agent_manager.broadcast_block_networks(&networks).await;
+        r.map_err(Into::into)
     }
 }
 

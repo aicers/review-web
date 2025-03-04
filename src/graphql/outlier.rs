@@ -40,7 +40,7 @@ impl OutlierStream {
         ctx: &Context<'_>,
         start: DateTime<Utc>,
         fetch_interval: Option<u64>,
-    ) -> Result<impl Stream<Item = RankedOutlier>> {
+    ) -> Result<impl Stream<Item = RankedOutlier> + use<>> {
         let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
         let db = ctx.data::<Database>()?.clone();
         let fetch_time = fetch_interval.unwrap_or(DEFAULT_RANKED_OUTLIER_FETCH_TIME);
