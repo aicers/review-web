@@ -128,10 +128,8 @@ impl AllowNetworkMutation {
 
         let networks = get_allow_networks(&store)?;
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
-        agent_manager
-            .broadcast_allow_networks(&networks)
-            .await
-            .map_err(Into::into)
+        let r = agent_manager.broadcast_allow_networks(&networks).await;
+        r.map_err(Into::into)
     }
 }
 

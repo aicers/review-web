@@ -6,14 +6,13 @@ use std::{
 use anyhow::anyhow;
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    connection::{Connection, EmptyFields},
     Context, Enum, InputObject, Object, Result, SimpleObject,
+    connection::{Connection, EmptyFields},
 };
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use review_database::{
-    self as database,
+    self as database, Direction, Iterable, Store, Table,
     types::{self},
-    Direction, Iterable, Store, Table,
 };
 use serde::Serialize;
 use tracing::info;
@@ -411,7 +410,8 @@ impl AccountMutation {
         let username = decoded_token.sub;
         let (new_token, expiration_time) = create_token(username.clone(), decoded_token.role)?;
         insert_token(&store, &new_token, &username)?;
-        if let Err(e) = revoke_token(&store, &token) {
+        let rt = revoke_token(&store, &token);
+        if let Err(e) = rt {
             revoke_token(&store, &new_token)?;
             Err(e.into())
         } else {
@@ -863,8 +863,8 @@ mod tests {
     use serial_test::serial;
 
     use crate::graphql::{
-        account::{read_review_admin, REVIEW_ADMIN},
         BoxedAgentManager, MockAgentManager, RoleGuard, TestSchema,
+        account::{REVIEW_ADMIN, read_review_admin},
     };
 
     async fn update_account_last_signin_time(schema: &TestSchema, name: &str) {
@@ -1240,7 +1240,7 @@ mod tests {
         restore_review_admin(original_review_admin);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     #[serial]
     async fn test_read_review_admin() {
         let original_review_admin = backup_and_set_review_admin();
@@ -1251,7 +1251,9 @@ mod tests {
         assert_eq!(result.unwrap(), ("admin".to_string(), "admin".to_string()));
 
         // Set the temporary `REVIEW_ADMIN` with invalid format
-        env::set_var(REVIEW_ADMIN, "adminadmin");
+        unsafe {
+            env::set_var(REVIEW_ADMIN, "adminadmin");
+        }
 
         assert_eq!(env::var(REVIEW_ADMIN), Ok("adminadmin".to_string()));
 
@@ -1259,7 +1261,9 @@ mod tests {
         assert!(result.is_err());
 
         // Unset the `REVIEW_ADMIN`
-        env::remove_var(REVIEW_ADMIN);
+        unsafe {
+            env::remove_var(REVIEW_ADMIN);
+        }
 
         assert!(env::var(REVIEW_ADMIN).is_err());
 
@@ -1271,15 +1275,21 @@ mod tests {
 
     fn backup_and_set_review_admin() -> Option<String> {
         let original_review_admin = env::var(REVIEW_ADMIN).ok();
-        env::set_var(REVIEW_ADMIN, "admin:admin");
+        unsafe {
+            env::set_var(REVIEW_ADMIN, "admin:admin");
+        }
         original_review_admin
     }
 
     fn restore_review_admin(original_review_admin: Option<String>) {
         if let Some(value) = original_review_admin {
-            env::set_var(REVIEW_ADMIN, value);
+            unsafe {
+                env::set_var(REVIEW_ADMIN, value);
+            }
         } else {
-            env::remove_var(REVIEW_ADMIN);
+            unsafe {
+                env::remove_var(REVIEW_ADMIN);
+            }
         }
     }
 
