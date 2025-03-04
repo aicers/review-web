@@ -3,7 +3,7 @@
 mod policy;
 pub(super) mod response;
 
-use async_graphql::{Enum, InputObject, Object, ID};
+use async_graphql::{Enum, ID, InputObject, Object};
 use chrono::{DateTime, Utc};
 use review_database as database;
 use serde::Deserialize;

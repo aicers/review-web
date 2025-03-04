@@ -6,11 +6,11 @@ use std::{
 use anyhow::anyhow;
 use async_graphql::Result;
 use chrono::{NaiveDateTime, TimeDelta};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use review_database as database;
 use serde::{Deserialize, Serialize};
 
-use super::{store::token_exists_in_store, AuthError};
+use super::{AuthError, store::token_exists_in_store};
 use crate::Store;
 
 static JWT_EXPIRES_IN: LazyLock<RwLock<u32>> = LazyLock::new(|| RwLock::new(3600));

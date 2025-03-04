@@ -12,24 +12,24 @@ use std::{
 };
 
 use async_graphql::{
-    http::{playground_source, GraphQLPlaygroundConfig},
     Data,
+    http::{GraphQLPlaygroundConfig, playground_source},
 };
 use async_graphql_axum::{GraphQLProtocol, GraphQLRequest, GraphQLResponse, GraphQLWebSocket};
 use axum::{
+    Json, Router,
     extract::{ConnectInfo, Extension, WebSocketUpgrade},
     response::{Html, IntoResponse, Response},
     routing::{get, get_service},
-    Json, Router,
 };
 use axum_extra::{
-    headers::{authorization::Bearer, Authorization},
-    typed_header::TypedHeaderRejection,
     TypedHeader,
+    headers::{Authorization, authorization::Bearer},
+    typed_header::TypedHeaderRejection,
 };
 use graphql::RoleGuard;
 use review_database::{Database, Store};
-use rustls::{pki_types::CertificateDer, ClientConfig, RootCertStore};
+use rustls::{ClientConfig, RootCertStore, pki_types::CertificateDer};
 use serde_json::json;
 use tokio::{
     sync::{Notify, RwLock},
@@ -38,7 +38,7 @@ use tokio::{
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing::error;
 
-use crate::auth::{validate_token, AuthError};
+use crate::auth::{AuthError, validate_token};
 use crate::backend::{AgentManager, CertManager};
 
 /// Parameters for a web server.
@@ -66,7 +66,7 @@ pub fn serve<A>(
 where
     A: AgentManager + 'static,
 {
-    use axum_server::{tls_rustls::RustlsConfig, Handle};
+    use axum_server::{Handle, tls_rustls::RustlsConfig};
     use tracing::info;
 
     let schema = graphql::schema(

@@ -1,7 +1,7 @@
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    connection::{Connection, EmptyFields},
     Context, InputObject, Object, Result, SimpleObject,
+    connection::{Connection, EmptyFields},
 };
 
 use super::{AgentManager, BoxedAgentManager, Role, RoleGuard};

@@ -2,16 +2,16 @@ use std::{convert::TryInto, mem::size_of};
 
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
+    Context, InputObject, Object, Result,
     connection::{Connection, EmptyFields},
     types::ID,
-    Context, InputObject, Object, Result,
 };
 use chrono::{DateTime, Utc};
 use review_database::{self as database};
 
 use super::{
-    customer::{Customer, HostNetworkGroup, HostNetworkGroupInput},
     Role, RoleGuard,
+    customer::{Customer, HostNetworkGroup, HostNetworkGroupInput},
 };
 use crate::graphql::query_with_constraints;
 
@@ -196,8 +196,7 @@ impl Network {
 
         for &id in &self.inner.customer_ids {
             #[allow(clippy::cast_sign_loss)] // u32 stored as i32 in database
-            let Some(customer) = map.get_by_id(id)?
-            else {
+            let Some(customer) = map.get_by_id(id)? else {
                 continue;
             };
             customers.push(customer.into());

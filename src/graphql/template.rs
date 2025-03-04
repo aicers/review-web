@@ -2,8 +2,8 @@ use std::convert::{TryFrom, TryInto};
 
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    connection::{Connection, EmptyFields},
     Context, Enum, InputObject, Object, Result, StringNumber, Union,
+    connection::{Connection, EmptyFields},
 };
 use serde::{Deserialize, Serialize};
 

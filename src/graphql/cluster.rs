@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use async_graphql::{
+    ComplexObject, Context, Object, Result, SimpleObject, StringNumber,
     connection::{Connection, Edge, EmptyFields, OpaqueCursor},
     types::ID,
-    ComplexObject, Context, Object, Result, SimpleObject, StringNumber,
 };
 use chrono::NaiveDateTime;
 use chrono::{DateTime, Utc};
@@ -13,13 +13,13 @@ use review_database::{self as database, Database};
 use tokio::sync::RwLock;
 
 use super::{
+    DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, Role, RoleGuard,
     category::Category,
     get_trend,
     model::{ModelDigest, TopElementCountsByColumn},
     qualifier::Qualifier,
     slicing,
     status::Status,
-    Role, RoleGuard, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER,
 };
 use crate::graphql::query;
 

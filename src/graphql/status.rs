@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
+    Context, Object, Result,
     connection::{Connection, EmptyFields},
     types::ID,
-    Context, Object, Result,
 };
 use database::Store;
 use review_database::{self as database};

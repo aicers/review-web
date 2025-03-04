@@ -3,13 +3,13 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::anyhow;
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
+    ComplexObject, Context, InputObject, Object, Result, SimpleObject, StringNumber, Subscription,
     connection::{Connection, Edge, EmptyFields},
     types::ID,
-    ComplexObject, Context, InputObject, Object, Result, SimpleObject, StringNumber, Subscription,
 };
 use bincode::Options;
-use chrono::{offset::LocalResult, DateTime, NaiveDateTime, TimeZone, Utc};
-use futures::channel::mpsc::{unbounded, UnboundedSender};
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc, offset::LocalResult};
+use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
 use num_traits::ToPrimitive;
 use review_database::{
@@ -20,7 +20,7 @@ use serde::Serialize;
 use tokio::{sync::RwLock, time};
 use tracing::error;
 
-use super::{model::ModelDigest, query, Role, RoleGuard};
+use super::{Role, RoleGuard, model::ModelDigest, query};
 
 const MAX_EVENT_NUM_OF_OUTLIER: usize = 50;
 const DEFAULT_RANKED_OUTLIER_FETCH_TIME: u64 = 60;
@@ -802,7 +802,11 @@ mod tests {
         let e1 = DateTime::from_timestamp(0, 1).unwrap().to_rfc3339();
         assert_eq!(
             res.data.to_string(),
-            format!("{{outliers: {{nodes: [{{id: \"{}\", events: [\"{e0}\", \"{e1}\"], size: 2}}], totalCount: {}}}}}", t1.timestamp_nanos_opt().unwrap(), 1)
+            format!(
+                "{{outliers: {{nodes: [{{id: \"{}\", events: [\"{e0}\", \"{e1}\"], size: 2}}], totalCount: {}}}}}",
+                t1.timestamp_nanos_opt().unwrap(),
+                1
+            )
         );
 
         let t2 = t1 + chrono::TimeDelta::hours(1);
@@ -1036,7 +1040,10 @@ mod tests {
         );
 
         let to_save = start;
-        let to_preserve = format!("[{{id: {to_save}, modelId: {model}, timestamp: {}, rank: {to_save}, sensor: \"test\"}}]", t.timestamp_nanos_opt().unwrap());
+        let to_preserve = format!(
+            "[{{id: {to_save}, modelId: {model}, timestamp: {}, rank: {to_save}, sensor: \"test\"}}]",
+            t.timestamp_nanos_opt().unwrap()
+        );
         let res = schema
             .execute(&format!(
                 "mutation {{
@@ -1069,7 +1076,10 @@ mod tests {
                 }}"
             ))
             .await;
-        let expect = format!("{{preserveOutliers: [{{id: \"{saved}\", modelId: {model}, timestamp: \"{}\", sensor: \"test\"}}]}}", t.timestamp_nanos_opt().unwrap());
+        let expect = format!(
+            "{{preserveOutliers: [{{id: \"{saved}\", modelId: {model}, timestamp: \"{}\", sensor: \"test\"}}]}}",
+            t.timestamp_nanos_opt().unwrap()
+        );
         assert_eq!(res.data.to_string(), expect);
     }
 }

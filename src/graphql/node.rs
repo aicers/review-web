@@ -7,7 +7,7 @@ mod status;
 use std::{borrow::Cow, time::Duration};
 
 use async_graphql::{
-    types::ID, ComplexObject, Context, Enum, Object, Result, SimpleObject, StringNumber,
+    ComplexObject, Context, Enum, Object, Result, SimpleObject, StringNumber, types::ID,
 };
 use bincode::Options;
 use chrono::{DateTime, TimeZone, Utc};

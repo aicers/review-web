@@ -1,13 +1,13 @@
-use async_graphql::{Context, Object, Result, ID};
+use async_graphql::{Context, ID, Object, Result};
 use futures::future::join_all;
 use tracing::{error, info};
 
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard},
-    gen_agent_key, NodeControlMutation, SEMI_SUPERVISED_AGENT,
+    NodeControlMutation, SEMI_SUPERVISED_AGENT, gen_agent_key,
 };
 use crate::graphql::{
-    customer::{send_agent_specific_customer_networks, NetworksTargetAgentKeysPair},
+    customer::{NetworksTargetAgentKeysPair, send_agent_specific_customer_networks},
     get_customer_networks,
     node::input::NodeInput,
 };
@@ -74,9 +74,18 @@ impl NodeControlMutation {
                 "[{}] Node ID {i} - Node's drafts are applied.\nName: {}, Name draft: {}\nProfile: {}, Profile draft: {}",
                 chrono::Utc::now(),
                 node.name,
-                node.name_draft.as_ref().map(ToString::to_string).unwrap_or_default(),
-                node.profile.as_ref().map(ToString::to_string).unwrap_or_default(),
-                node.profile_draft.as_ref().map(ToString::to_string).unwrap_or_default(),
+                node.name_draft
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_default(),
+                node.profile
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_default(),
+                node.profile_draft
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_default(),
             );
 
             send_customer_change_if_needed(ctx, i, &node).await;
@@ -106,7 +115,9 @@ impl NodeControlMutation {
                 )
                 .await
                 {
-                    error!("Failed to notify agents for node {i} to be updated. This failure may impact configuration synchronization.\nDetails: {e:?}");
+                    error!(
+                        "Failed to notify agents for node {i} to be updated. This failure may impact configuration synchronization.\nDetails: {e:?}"
+                    );
                 }
 
                 info!(
@@ -296,8 +307,8 @@ mod tests {
     use serde_json::json;
 
     use crate::graphql::{
-        customer::NetworksTargetAgentKeysPair, AgentManager, BoxedAgentManager, SamplingPolicy,
-        TestSchema,
+        AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema,
+        customer::NetworksTargetAgentKeysPair,
     };
 
     #[tokio::test]

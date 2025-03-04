@@ -1,8 +1,8 @@
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
+    Context, InputObject, Object, Result,
     connection::{Connection, EmptyFields},
     types::ID,
-    Context, InputObject, Object, Result,
 };
 use chrono::{DateTime, Utc};
 

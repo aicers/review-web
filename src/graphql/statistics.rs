@@ -1,15 +1,15 @@
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
+    Context, Object, OutputType, Result, StringNumber,
     connection::{Connection, ConnectionNameType, Edge, EdgeNameType, EmptyFields},
     types::ID,
-    Context, Object, OutputType, Result, StringNumber,
 };
 use chrono::{DateTime, NaiveDateTime};
 use num_traits::ToPrimitive;
 use review_database::{BatchInfo, Database};
 use serde_json::Value as JsonValue;
 
-use super::{slicing, Role, RoleGuard};
+use super::{Role, RoleGuard, slicing};
 use crate::graphql::{query, query_with_constraints};
 
 #[derive(Default)]
@@ -189,8 +189,8 @@ async fn load_rounds_by_cluster(
     let (model, batches) = db
         .load_rounds_by_cluster(
             cluster,
-            &after.map(|k| i64_to_naive_date_time(k.0 .1)),
-            &before.map(|k| i64_to_naive_date_time(k.0 .1)),
+            &after.map(|k| i64_to_naive_date_time(k.0.1)),
+            &before.map(|k| i64_to_naive_date_time(k.0.1)),
             is_first,
             limit + 1,
         )

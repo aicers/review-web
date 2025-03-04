@@ -22,21 +22,21 @@ mod tls;
 
 use std::{cmp, net::IpAddr, num::NonZeroU8, sync::Arc};
 
-use anyhow::{anyhow, bail, Context as AnyhowContext};
+use anyhow::{Context as AnyhowContext, anyhow, bail};
 use async_graphql::{
+    Context, ID, InputObject, Object, Result, Subscription, Union,
     connection::{Connection, Edge, EmptyFields},
-    Context, InputObject, Object, Result, Subscription, Union, ID,
 };
 use chrono::{DateTime, Utc};
-use futures::channel::mpsc::{unbounded, UnboundedSender};
+use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
 use num_traits::FromPrimitive;
 use review_database::{
-    self as database,
+    self as database, Direction, EventFilter, EventIterator, EventKind, IndexedTable, Iterable,
+    Store,
     event::RecordType,
     find_ip_country,
     types::{Endpoint, EventCategory, HostNetworkGroup},
-    Direction, EventFilter, EventIterator, EventKind, IndexedTable, Iterable, Store,
 };
 use tokio::time;
 use tracing::{error, warn};
@@ -68,10 +68,10 @@ use self::{
     tls::{BlockListTls, SuspiciousTlsTraffic},
 };
 use super::{
+    Role, RoleGuard,
     customer::{Customer, HostNetworkGroupInput},
     filter::{FlowKind, LearningMethod, TrafficDirection},
     network::Network,
-    Role, RoleGuard,
 };
 use crate::graphql::query;
 

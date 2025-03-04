@@ -6,7 +6,7 @@ use num_traits::ToPrimitive;
 use review_database::{self as database, Direction, Event, EventFilter};
 use tracing::warn;
 
-use super::{from_filter_input, EventListFilterInput};
+use super::{EventListFilterInput, from_filter_input};
 use crate::graphql::{Role, RoleGuard};
 
 #[derive(Default)]
@@ -232,11 +232,7 @@ impl EventGroupQuery {
             let end = t
                 .timestamp_nanos_opt()
                 .map_or(i128::MAX, |t| i128::from(t) << 64);
-            if end > 0 {
-                end - 1
-            } else {
-                0
-            }
+            if end > 0 { end - 1 } else { 0 }
         });
         let filter = from_filter_input(&store, &filter)?;
         let db = store.events();
@@ -313,11 +309,7 @@ async fn count_events<T>(
         let end = t
             .timestamp_nanos_opt()
             .map_or(i128::MAX, |t| i128::from(t) << 64);
-        if end > 0 {
-            end - 1
-        } else {
-            0
-        }
+        if end > 0 { end - 1 } else { 0 }
     });
     let filter = from_filter_input(&store, filter)?;
     let db = store.events();
@@ -369,11 +361,7 @@ async fn count_events_by_network(
         let end = t
             .timestamp_nanos_opt()
             .map_or(i128::MAX, |t| i128::from(t) << 64);
-        if end > 0 {
-            end - 1
-        } else {
-            0
-        }
+        if end > 0 { end - 1 } else { 0 }
     });
     let filter = from_filter_input(&store, filter)?;
     let db = store.events();
@@ -424,7 +412,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use chrono::{DateTime, NaiveDate, Utc};
-    use review_database::{event::DnsEventFields, EventCategory, EventKind, EventMessage};
+    use review_database::{EventCategory, EventKind, EventMessage, event::DnsEventFields};
 
     use crate::graphql::TestSchema;
 

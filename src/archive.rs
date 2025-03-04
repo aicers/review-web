@@ -1,25 +1,25 @@
 use std::sync::Arc;
 
 use axum::{
+    Router,
     body::Body,
     extract::{FromRef, FromRequestParts, Path, State},
     http::Request,
-    middleware::{from_fn_with_state, Next},
+    middleware::{Next, from_fn_with_state},
     response::Response,
     routing::post,
-    Router,
 };
 use axum_extra::{
-    headers::{authorization::Bearer, Authorization},
-    typed_header::TypedHeaderRejection,
     TypedHeader,
+    headers::{Authorization, authorization::Bearer},
+    typed_header::TypedHeaderRejection,
 };
-use http::{request::Parts, StatusCode};
+use http::{StatusCode, request::Parts};
 use review_database::types::Role;
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
-use crate::{auth::validate_token, Error, Store};
+use crate::{Error, Store, auth::validate_token};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {

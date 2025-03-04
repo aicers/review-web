@@ -1,15 +1,15 @@
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
+    Context, ID, InputObject, Object, Result,
     connection::{Connection, EmptyFields},
-    Context, InputObject, Object, Result, ID,
 };
 use database::Direction;
 use review_database::{self as database, Store};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    customer::{HostNetworkGroup, HostNetworkGroupInput},
     BoxedAgentManager, Role, RoleGuard,
+    customer::{HostNetworkGroup, HostNetworkGroupInput},
 };
 use crate::graphql::query_with_constraints;
 

@@ -36,11 +36,7 @@ pub fn page_info<D: serde::de::DeserializeOwned>(
 /// [spec]:
 /// https://relay.dev/graphql/connections.htm#sec-undefined.PageInfo.Fields
 fn has_previous(is_first: bool, len: usize, edge_count: usize) -> bool {
-    if is_first {
-        false
-    } else {
-        edge_count > len
-    }
+    if is_first { false } else { edge_count > len }
 }
 
 /// Indicates whether more records exist following the slice defined by this
@@ -53,9 +49,5 @@ fn has_previous(is_first: bool, len: usize, edge_count: usize) -> bool {
 /// [spec]:
 /// https://relay.dev/graphql/connections.htm#sec-undefined.PageInfo.Fields
 fn has_next(is_first: bool, len: usize, edge_count: usize) -> bool {
-    if is_first {
-        edge_count > len
-    } else {
-        false
-    }
+    if is_first { edge_count > len } else { false }
 }

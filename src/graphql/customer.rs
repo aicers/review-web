@@ -3,9 +3,9 @@ use std::convert::{TryFrom, TryInto};
 use anyhow::Context as AnyhowContext;
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
+    Context, Enum, InputObject, Object, Result, SimpleObject,
     connection::{Connection, EmptyFields},
     types::ID,
-    Context, Enum, InputObject, Object, Result, SimpleObject,
 };
 use chrono::{DateTime, Utc};
 use review_database::{self as database, Store};
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tracing::error;
 
 use super::node::SEMI_SUPERVISED_AGENT;
-use super::{agent_keys_by_customer_id, BoxedAgentManager, Role, RoleGuard};
+use super::{BoxedAgentManager, Role, RoleGuard, agent_keys_by_customer_id};
 use crate::graphql::query_with_constraints;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

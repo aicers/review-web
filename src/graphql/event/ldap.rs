@@ -1,8 +1,8 @@
-use async_graphql::{Context, Object, Result, StringNumber, ID};
+use async_graphql::{Context, ID, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
-use super::{country_code, find_ip_customer, find_ip_network, TriageScore};
+use super::{TriageScore, country_code, find_ip_customer, find_ip_network};
 use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
 #[allow(clippy::module_name_repetitions)]
