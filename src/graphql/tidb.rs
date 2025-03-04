@@ -1,7 +1,7 @@
-use async_graphql::{Context, Enum, Object, Result, SimpleObject, ID};
+use async_graphql::{Context, Enum, ID, Object, Result, SimpleObject};
 use review_database::{self as database};
 
-use super::{triage::ThreatCategory, Role, RoleGuard};
+use super::{Role, RoleGuard, triage::ThreatCategory};
 
 #[derive(Default)]
 pub(super) struct TidbQuery;

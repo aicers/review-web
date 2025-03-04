@@ -1,9 +1,9 @@
-use anyhow::{anyhow, Context as AnyhowContext};
-use async_graphql::{Context, Enum, InputObject, Object, Result, SimpleObject, ID};
+use anyhow::{Context as AnyhowContext, anyhow};
+use async_graphql::{Context, Enum, ID, InputObject, Object, Result, SimpleObject};
 use review_database::{self as database};
 use serde::{Deserialize, Serialize};
 
-use super::{customer::HostNetworkGroup, event::EndpointInput, Role, RoleGuard};
+use super::{Role, RoleGuard, customer::HostNetworkGroup, event::EndpointInput};
 
 #[derive(Default)]
 pub(super) struct FilterQuery;

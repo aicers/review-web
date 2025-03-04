@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_graphql::{Context, Object, Result};
-use review_database::{backup, Store};
+use review_database::{Store, backup};
 use tokio::sync::RwLock;
 
 use super::{Role, RoleGuard};

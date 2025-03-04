@@ -2,15 +2,15 @@ use std::time::Duration;
 
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    connection::{Connection, Edge, EmptyFields},
     Context, Object, Result,
+    connection::{Connection, Edge, EmptyFields},
 };
 use review_database::UniqueKey;
 use roxy::ResourceUsage;
 
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard},
-    matches_manager_hostname, NodeStatus, NodeStatusQuery, NodeStatusTotalCount,
+    NodeStatus, NodeStatusQuery, NodeStatusTotalCount, matches_manager_hostname,
 };
 use crate::graphql::query_with_constraints;
 
@@ -112,8 +112,8 @@ mod tests {
     use serde_json::json;
 
     use crate::graphql::{
-        customer::NetworksTargetAgentKeysPair, AgentManager, BoxedAgentManager, SamplingPolicy,
-        TestSchema,
+        AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema,
+        customer::NetworksTargetAgentKeysPair,
     };
 
     struct MockAgentManager {

@@ -1,8 +1,8 @@
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
+    Context, Enum, InputObject, Object, Result,
     connection::{Connection, EmptyFields},
     types::ID,
-    Context, Enum, InputObject, Object, Result,
 };
 use review_database::{self as database};
 

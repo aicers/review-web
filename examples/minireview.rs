@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, bail, Context, Error, Result};
+use anyhow::{Context, Error, Result, anyhow, bail};
 use async_trait::async_trait;
 use config::{Environment, File};
 use futures::{
@@ -16,24 +16,24 @@ use futures::{
     pin_mut,
 };
 use ipnet::IpNet;
-use review_database::{migrate_data_dir, Database, HostNetworkGroup, Store};
+use review_database::{Database, HostNetworkGroup, Store, migrate_data_dir};
 use review_web::{
     self as web,
     backend::{AgentManager, CertManager},
     graphql::{
-        account::set_initial_admin_password, customer::NetworksTargetAgentKeysPair, Process,
-        ResourceUsage, SamplingPolicy,
+        Process, ResourceUsage, SamplingPolicy, account::set_initial_admin_password,
+        customer::NetworksTargetAgentKeysPair,
     },
 };
 use serde::Deserialize;
 use tokio::{
-    signal::unix::{signal, SignalKind},
+    signal::unix::{SignalKind, signal},
     sync::{Notify, RwLock},
 };
 use tracing::{error, info, metadata::LevelFilter};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
-    fmt, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
+    EnvFilter, Layer, fmt, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt,
 };
 
 struct MiniCertManager {

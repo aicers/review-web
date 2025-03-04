@@ -1,4 +1,4 @@
-use async_graphql::{Object, ID};
+use async_graphql::{ID, Object};
 use chrono::{DateTime, Utc};
 use review_database as database;
 

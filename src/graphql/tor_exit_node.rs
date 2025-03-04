@@ -1,7 +1,7 @@
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    connection::{Connection, EmptyFields},
     Context, Object, Result, SimpleObject,
+    connection::{Connection, EmptyFields},
 };
 use chrono::{DateTime, Utc};
 use review_database::{Direction, Iterable};

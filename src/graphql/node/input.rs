@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt};
 
 use anyhow::Context as AnyhowContext;
-use async_graphql::{types::ID, Error, InputObject, Result};
+use async_graphql::{Error, InputObject, Result, types::ID};
 
 use super::{AgentKind, AgentStatus};
 
@@ -158,7 +158,7 @@ pub(super) fn create_draft_update(
                             return Err(Error::new(format!(
                                 "Missing configuration for the agent: {}",
                                 new_agent.key
-                            )))
+                            )));
                         }
                     };
 
