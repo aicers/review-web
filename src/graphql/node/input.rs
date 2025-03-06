@@ -154,12 +154,7 @@ pub(super) fn create_draft_update(
                             })?),
                             None => None,
                         },
-                        None => {
-                            return Err(Error::new(format!(
-                                "Missing configuration for the agent: {}",
-                                new_agent.key
-                            )));
-                        }
+                        None => None,
                     };
 
                     let draft = match new_agent.draft {
@@ -181,7 +176,7 @@ pub(super) fn create_draft_update(
                         draft,
                     })
                 })
-                .collect::<Result<Vec<_>, _>>()
+                .collect::<Result<Vec<_>, Error>>()
         })
         .transpose()?
         .unwrap_or_default();

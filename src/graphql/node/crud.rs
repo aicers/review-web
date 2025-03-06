@@ -699,4 +699,180 @@ mod tests {
             })
         );
     }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn update_node_agents() {
+        let schema = TestSchema::new().await;
+
+        // Check initial node list (should be empty)
+        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
+
+        // Insert node with unsupervised and semi-supervised agents
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "admin node",
+                        customerId: 0,
+                        description: "This is the admin node running review.",
+                        hostname: "admin.aice-security.com",
+                        agents: [{
+                            key: "unsupervised",
+                            kind: UNSUPERVISED
+                            status: ENABLED
+                        },
+                        {
+                            key: "semi-supervised",
+                            kind: SEMI_SUPERVISED
+                            status: ENABLED
+                        }]
+                        giganto: null
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Check node count after insert
+        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
+
+        // Remove the unsupervised agent
+        let res = schema
+            .execute(
+                r#"mutation {
+                updateNodeDraft(
+                    id: "0",
+                    old: {
+                        name: "admin node",
+                        nameDraft: "admin node",
+                        profile: null,
+                        profileDraft: {
+                            customerId: 0,
+                            description: "This is the admin node running review.",
+                            hostname: "admin.aice-security.com",
+                        },
+                        agents: [
+                            {
+                                key: "unsupervised",
+                                kind: UNSUPERVISED,
+                                status: ENABLED,
+                                config: null,
+                                draft: null
+                            },
+                            {
+                                key: "semi-supervised",
+                                kind: SEMI_SUPERVISED,
+                                status: ENABLED,
+                                config: null,
+                                draft: null
+                            }
+                        ],
+                        giganto: null
+                    },
+                    new: {
+                        nameDraft: "admin node",
+                        agents: [
+                            {
+                                key: "semi-supervised",
+                                kind: SEMI_SUPERVISED,
+                                status: ENABLED,
+                                draft: null
+                            }
+                        ],
+                        giganto: null
+                    }
+                )
+            }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
+
+        // Add a sensor agent
+        let res = schema
+            .execute(
+                r#"mutation {
+                updateNodeDraft(
+                    id: "0",
+                    old: {
+                        name: "admin node",
+                        nameDraft: "admin node",
+                        profile: null,
+                        profileDraft: null,
+                        agents: [
+                            {
+                                key: "semi-supervised",
+                                kind: SEMI_SUPERVISED,
+                                status: ENABLED,
+                                config: null,
+                                draft: null
+                            }
+                        ],
+                        giganto: null
+                    },
+                    new: {
+                        nameDraft: "admin node",
+                        agents: [
+                            {
+                                key: "semi-supervised",
+                                kind: SEMI_SUPERVISED,
+                                status: ENABLED,
+                                draft: null
+                            },
+                            {
+                                key: "sensor",
+                                kind: SENSOR,
+                                status: ENABLED,
+                                draft: null
+                            }
+                        ],
+                        giganto: null
+                    }
+                )
+            }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
+
+        // Check final node state
+        let res = schema
+            .execute(
+                r#"{node(id: "0") {
+                id
+                name
+                nameDraft
+                agents {
+                    key
+                    kind
+                    status
+                }
+            }}"#,
+            )
+            .await;
+
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "node": {
+                    "id": "0",
+                    "name": "admin node",
+                    "nameDraft": "admin node",
+                    "agents": [
+                        {
+                            "key": "semi-supervised",
+                            "kind": "SEMI_SUPERVISED",
+                            "status": "ENABLED"
+                        },
+                        {
+                            "key": "sensor",
+                            "kind": "SENSOR",
+                            "status": "ENABLED"
+                        }
+                    ]
+                }
+            })
+        );
+    }
 }
