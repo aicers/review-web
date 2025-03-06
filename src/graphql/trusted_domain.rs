@@ -86,20 +86,27 @@ impl TrustedDomainMutation {
         Ok(name)
     }
 
-    /// Removes a trusted domain, returning the old value if it existed.
+    /// Removes multiple trusted domains, returning the old values if they existed.
     #[graphql(
         guard = "RoleGuard::new(Role::SystemAdministrator).or(RoleGuard::new(Role::SecurityAdministrator))"
     )]
-    async fn remove_trusted_domain(&self, ctx: &Context<'_>, name: String) -> Result<String> {
-        {
-            let store = crate::graphql::get_store(ctx).await?;
-            let map = store.trusted_domain_map();
-            map.remove(&name)?;
-        }
+    async fn remove_trusted_domains(
+        &self,
+        ctx: &Context<'_>,
+        names: Vec<String>,
+    ) -> Result<Vec<String>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.trusted_domain_map();
+
+        let removed: Vec<String> = names
+            .iter()
+            .filter_map(|name| map.remove(name).ok().map(|()| name.clone()))
+            .collect();
 
         let agent_manager = ctx.data::<Box<dyn AgentManager>>()?;
         agent_manager.broadcast_trusted_domains().await?;
-        Ok(name)
+
+        Ok(removed)
     }
 }
 
@@ -173,21 +180,12 @@ mod tests {
             res.data.to_string(),
             r#"{insertTrustedDomain: "example2.org"}"#
         );
-
         let res = schema
-            .execute(r"{trustedDomainList{edges{node{name}}}}")
+            .execute(r#"mutation{insertTrustedDomain(name:"example3.org",remarks:"test")}"#)
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{trustedDomainList: {edges: [{node: {name: "example1.com"}}, {node: {name: "example2.org"}}]}}"#
-        );
-
-        let res = schema
-            .execute(r#"mutation{removeTrustedDomain(name:"example1.com")}"#)
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{removeTrustedDomain: "example1.com"}"#
+            r#"{insertTrustedDomain: "example3.org"}"#
         );
 
         let res = schema
@@ -195,7 +193,23 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{trustedDomainList: {edges: [{node: {name: "example2.org"}}]}}"#
+            r#"{trustedDomainList: {edges: [{node: {name: "example1.com"}}, {node: {name: "example2.org"}}, {node: {name: "example3.org"}}]}}"#
+        );
+
+        let res = schema
+            .execute(r#"mutation{removeTrustedDomains(names:["example1.com", "example2.org"])}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{removeTrustedDomains: ["example1.com", "example2.org"]}"#
+        );
+
+        let res = schema
+            .execute(r"{trustedDomainList{edges{node{name}}}}")
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{trustedDomainList: {edges: [{node: {name: "example3.org"}}]}}"#
         );
     }
 

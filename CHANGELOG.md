@@ -7,6 +7,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Updated `removeTrustedDomain` GraphQL API to `removeTrustedDomains` to support
+  multiple removals.
+
 ### Fixed
 
 - Fixed a security issue where the `language`, `updateLanguage`, `theme`, and
