@@ -177,6 +177,7 @@ impl AccountMutation {
         theme: Option<String>,
         allow_access_from: Option<Vec<IpAddress>>,
         max_parallel_sessions: Option<u8>,
+        customer_ids: Option<Vec<u32>>,
     ) -> Result<String> {
         let store = crate::graphql::get_store(ctx).await?;
         let table = store.account_map();
@@ -199,6 +200,7 @@ impl AccountMutation {
             theme,
             allow_access_from,
             max_parallel_sessions,
+            customer_ids,
         )?;
         table.put(&account)?;
         Ok(username)
@@ -225,6 +227,7 @@ impl AccountMutation {
                     username.as_bytes(),
                     &Some(password),
                     None,
+                    &None,
                     &None,
                     &None,
                     &None,
@@ -276,6 +279,7 @@ impl AccountMutation {
         theme: Option<UpdateTheme>,
         allow_access_from: Option<UpdateAllowAccessFrom>,
         max_parallel_sessions: Option<UpdateMaxParallelSessions>,
+        customer_ids: Option<UpdateCustomerIds>,
     ) -> Result<String> {
         if password.is_none()
             && role.is_none()
@@ -284,6 +288,7 @@ impl AccountMutation {
             && language.is_none()
             && allow_access_from.is_none()
             && max_parallel_sessions.is_none()
+            && customer_ids.is_none()
         {
             return Err("At lease one of the optional fields must be provided to update.".into());
         }
@@ -301,6 +306,7 @@ impl AccountMutation {
             None
         };
         let max_parallel_sessions = max_parallel_sessions.map(|m| (m.old, m.new));
+        let customer_ids = customer_ids.map(|m| (m.old, m.new));
 
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
@@ -314,6 +320,7 @@ impl AccountMutation {
             &theme,
             &allow_access_from,
             &max_parallel_sessions,
+            &customer_ids,
         )?;
         Ok(username)
     }
@@ -469,6 +476,7 @@ impl AccountMutation {
             &None,
             &None,
             &None,
+            &None,
         )?;
 
         Ok(new_language)
@@ -494,6 +502,7 @@ impl AccountMutation {
             &None,
             &None,
             &Some((theme.old, theme.new)),
+            &None,
             &None,
             &None,
         )?;
@@ -680,6 +689,10 @@ impl Account {
     async fn max_parallel_sessions(&self) -> Option<u8> {
         self.inner.max_parallel_sessions
     }
+
+    async fn customer_ids(&self) -> Option<Vec<u32>> {
+        self.inner.customer_ids.clone()
+    }
 }
 
 impl From<types::Account> for Account {
@@ -761,6 +774,13 @@ struct UpdateMaxParallelSessions {
     new: Option<u8>,
 }
 
+/// The old and new values of `customer_ids` to update.
+#[derive(InputObject)]
+struct UpdateCustomerIds {
+    old: Option<Vec<u32>>,
+    new: Option<Vec<u32>>,
+}
+
 struct AccountTotalCount;
 
 #[Object]
@@ -820,6 +840,7 @@ fn initial_credential() -> anyhow::Result<types::Account> {
         database::Role::SystemAdministrator,
         "System Administrator".to_owned(),
         String::new(),
+        None,
         None,
         None,
         None,
