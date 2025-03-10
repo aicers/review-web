@@ -7,6 +7,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Updated the GraphQL APIs related to account as the `customer_ids` field was
+  added to the `Account` structure in the review-database.
+
 ### Fixed
 
 - Fixed a security issue where the `language`, `updateLanguage`, `theme`, and
