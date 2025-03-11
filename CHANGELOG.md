@@ -33,10 +33,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     Failed to parse "IpAddress": Invalid IP address: abc (occurred while
     parsing "[IpAddress!]")
     ```
-- Added the `theme` field to the `Account` struct to store the user's
-  selected screen color mode. Accordingly, the functions for inserting and
-  updating accounts have been modified, and new APIs have been added to retrieve
-  and update the user's selected screen color mode.
+- Added the `theme` field to the `Account` struct to store the user's selected
+  screen color mode. Accordingly, the functions for inserting and updating
+  accounts have been modified, and new APIs have been added to retrieve and
+  update the user's selected screen color mode.
 
 ### Changed
 
@@ -294,14 +294,15 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `AgentManager::halt` method to shut down a host.
 - Add unit test for `nodeStatusList` to check ordering of nodes and edges.
-- Add `validate_and_process_pagination_params` to check input valid
-  combinations of first, last, before, and after and apply it to GraphQL
-  queries with pagination.
+- Add `validate_and_process_pagination_params` to check input valid combinations
+  of first, last, before, and after and apply it to GraphQL queries with
+  pagination.
 - Added `LockyRansomware` detection event.
-- Added GraphQL query `resetAdminPassword` to allow resetting the password for an
-  existing user categorized as `SystemAdministrator` for administrators utilizing
-  the local network. This feature enhances the security and accessibility of user
-  accounts, providing administrators with a streamlined method for password management.
+- Added GraphQL query `resetAdminPassword` to allow resetting the password for
+  an existing user categorized as `SystemAdministrator` for administrators
+  utilizing the local network. This feature enhances the security and
+  accessibility of user accounts, providing administrators with a streamlined
+  method for password management.
 
 ### Changed
 
@@ -313,8 +314,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   `trustedDomainList`, `rankedOutliers`, `savedOutliers`, `outliers`, `models`,
   `triagePolicyList`, `nodeList` now explicitly reject user input with
   combinations of (before, after), (first, before), and (last, after)
-  parameters, following the GraphQL pagination documentation guidelines.
-  This enhancement ensures better consistency and adherence to best practices in
+  parameters, following the GraphQL pagination documentation guidelines. This
+  enhancement ensures better consistency and adherence to best practices in
   handling pagination requests.
 - GraphQL queries `insertTidb` requires `dbfile` to be encoded string of `Tidb`
   instance that is serialized with `bincode::DefaultOptions::new().serialize`
@@ -328,7 +329,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Use `halt` of `AgentManager`, instead of `send_and_recv` in `nodeShutdown`
   GraphQL API.
 - Updated review-database to 0.27.0.
-- Fix the `nodeStatusList` GraphQL API to return appropriate results for each field.
+- Fix the `nodeStatusList` GraphQL API to return appropriate results for each
+  field.
 - Remove `giganto` from `NodeStatus` struct and `nodeStatusList`.
 - Converted fields in the `nodeStatusList` GraphQL API response from returning
   `Option<i64>` and `Option<u64>` to using `StringNumber`, like
@@ -364,7 +366,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Updated the `ModelIndicator` GraphQL type. Added `name` field as the name of
   the model indicator.
-- Changed the return type of `indicatorList` GraphQL query to `[ModelIndicator!]!`.
+- Changed the return type of `indicatorList` GraphQL query to
+  `[ModelIndicator!]!`.
 - GraphQL query `updateExpirationTime` returns an error if the expiration time
   is less than one second.
 - `init_expiration_time` and `update_jwt_expires_in` take `u32` instead of `i64`
@@ -389,7 +392,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Removed the obsoleted `ModelIndicatorOutput` GraphQL type. This type was
   previously used as return type of `indicatorList` GraphQL query. With
   advancements and improvements in our system, this type is no longer necessary
-  and has been removed to streamline the codebase and enhance overall maintainability.
+  and has been removed to streamline the codebase and enhance overall
+  maintainability.
 
 ### Added
 
@@ -448,8 +452,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   requested at the same time.
   - The issue has been addressed to ensure that the user-provided `status_id` is
     now properly respected and retained.
-  - User expecting `status_id` change when `qualifier_id` is changed will need to
-    specify desired `qualifier_id` while updating cluster.
+  - User expecting `status_id` change when `qualifier_id` is changed will need
+    to specify desired `qualifier_id` while updating cluster.
 - When inserting a new filter using `filters.insert(new.name.clone(), new)`, the
   function now checks for conflicts in the filter collection.
   - If the `new.name` already exists, the function returns an error, preventing
@@ -473,10 +477,12 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Added `ranked_outlier_stream` Graphql API to fetch `RankedOutlier` periodically.
+- Added `ranked_outlier_stream` Graphql API to fetch `RankedOutlier`
+  periodically.
   - Gets the id of the currently stored `Model`.
   - Generate a `RankedOutlier` iterator corresponding to the prefix of the
-    `Model`'s id. If not first fetch, generate iterator since the last fetched key.
+    `Model`'s id. If not first fetch, generate iterator since the last fetched
+    key.
   - Stream through the `RankedOutlier` iterator, and repeat the behavior after a
     period of time.
 
@@ -487,39 +493,42 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Updated `column_statistics` according to review-database 0.21.0
   - Removed `event_range` argument.
   - Changed the `time` argument to `Vec<NaiveDateTime>`.
-  - After adjustment, `column_statistics` now returns all column statistics of the
-    specified `cluster` and created at the batch timestamp listed in the `time` argument.
-  - The timestamp is now added to the return value field `batch_ts`, representing
-    the batch timestamp for the specified `Statistics`.
-  - The returned `Statistics` are now sorted according to `batch_ts` and `column_index`.
+  - After adjustment, `column_statistics` now returns all column statistics of
+    the specified `cluster` and created at the batch timestamp listed in the
+    `time` argument.
+  - The timestamp is now added to the return value field `batch_ts`,
+    representing the batch timestamp for the specified `Statistics`.
+  - The returned `Statistics` are now sorted according to `batch_ts` and
+    `column_index`.
 
 ## [0.15.0] - 2023-11-15
 
 ### Changed
 
-- Change the type of `id` in `ranked_outlier`/`saved_outlier` queries to `StringNumber`.
-- Modified Ranked Outliers graphql query to take in a SearchFilter with
-  `tag` and `remark`
+- Change the type of `id` in `ranked_outlier`/`saved_outlier` queries to
+  `StringNumber`.
+- Modified Ranked Outliers graphql query to take in a SearchFilter with `tag`
+  and `remark`
 - Change the distance search conditions for `ranked outliers`.
   - Start only: Search for outliers with the same distance value
   - Start/End: Search for outliers with distance values in the range.
-- Change the data type of the `id` in the `RankedOutlier` structure from `StringNumber`
-  to `ID`.
-- Change the part about `RankedOutlierTotalCount` to count the total count differently
-  depending on whether it is `saved_outliers` or `ranked_outliers`.
+- Change the data type of the `id` in the `RankedOutlier` structure from
+  `StringNumber` to `ID`.
+- Change the part about `RankedOutlierTotalCount` to count the total count
+  differently depending on whether it is `saved_outliers` or `ranked_outliers`.
 
 ## [0.14.5] - 2023-11-02
 
 ### Changed
 
-- Modified Ranked Outliers graphql query to take in a SearchFilter with
-  distance range and time range
+- Modified Ranked Outliers graphql query to take in a SearchFilter with distance
+  range and time range
 
 ### Added
 
 - Added new method for Ranked Outliers `load_ranked_outliers_with_filter`,
-  `load_nodes_with_search_filter`, and `iter_through_search_filter_nodes`
-  to load Ranked Outliers depending on new Search Filter.
+  `load_nodes_with_search_filter`, and `iter_through_search_filter_nodes` to
+  load Ranked Outliers depending on new Search Filter.
 
 ## [0.14.4] - 2023-10-19
 
@@ -646,11 +655,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Modified serialization method in broadcasting of
-  `internal networks,allow/block list`. The new implementation now uses
-  `bincode::DefaultOptions::new().serialize()` instead of `bincode::serialize()`.
-  This change is aimed at maintaining consistency with other serialized data
-  across our system.
+- Modified serialization method in broadcasting of `internal
+  networks,allow/block list`. The new implementation now uses
+  `bincode::DefaultOptions::new().serialize()` instead of
+  `bincode::serialize()`. This change is aimed at maintaining consistency with
+  other serialized data across our system.
 
 ## [0.10.0] - 2023-05-31
 
@@ -670,8 +679,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Added `eventstream` Graphql API to fetch events periodically.
   - Based on the `start` time, look for events in `EventDb` that meet the
     criteria and stream them.
-  - After a period of time, look up the `EventDb` again, find the newly
-    added events, stream them, and keep repeating.
+  - After a period of time, look up the `EventDb` again, find the newly added
+    events, stream them, and keep repeating.
 
 ### Changed
 
@@ -686,12 +695,12 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   predictive certainty of the output.
 - `AgentManager` trait has been extended with three new methods.
   - `broadcast_internal_networks`: This method is responsible for broadcasting
-    the customer's network details, including intranet, extranet, and gateway
-    IP addresses to clients.
+    the customer's network details, including intranet, extranet, and gateway IP
+    addresses to clients.
   - `broadcast_allow_networks`: This method sends the IP addresses that are
     always accepted as benign to the clients.
-  - `broadcast_block_networks`: This method broadcasts the IP addresses that
-    are always considered suspicious.
+  - `broadcast_block_networks`: This method broadcasts the IP addresses that are
+    always considered suspicious.
 - Four new functions have been added to the `graphql` module to assist with the
   implementation of the `AgentManager` trait:
   - `graphql::get_allow_networks`: Fetches the list of IP addresses that are
@@ -712,9 +721,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The behavior when a new node is added or the customer of a node is changed,
   has been updated to broadcast the customer networks of the node.
-- If the customer networks of a node are updated, the changes are now
-  broadcast. This provides an additional layer of communication to keep the
-  system up-to-date with changes.
+- If the customer networks of a node are updated, the changes are now broadcast.
+  This provides an additional layer of communication to keep the system
+  up-to-date with changes.
 
 ## [0.9.0] - 2023-05-22
 
@@ -729,9 +738,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- The `update_traffic_filter_rules` function has been updated to explicitly
-  take a `host_id` as an argument, replacing the previous `agent_id@host_id`
-  argument format.
+- The `update_traffic_filter_rules` function has been updated to explicitly take
+  a `host_id` as an argument, replacing the previous `agent_id@host_id` argument
+  format.
 - Allows the clearing of filtering rules at an agent level by sending an empty
   rule set to the agent.
 
@@ -764,10 +773,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- From the GraphQL APIs `signIn` and `refreshToken`, the username field has
-  been removed from the `AuthPayload` return object. This is due to redundancy
-  as the caller of `signIn` or `refreshToken` already possesses knowledge of
-  the username.
+- From the GraphQL APIs `signIn` and `refreshToken`, the username field has been
+  removed from the `AuthPayload` return object. This is due to redundancy as the
+  caller of `signIn` or `refreshToken` already possesses knowledge of the
+  username.
 - Updated review-database to 0.9.0.
 
 ## [0.5.0] - 2023-05-08
