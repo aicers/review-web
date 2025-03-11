@@ -86,20 +86,44 @@ impl TrustedDomainMutation {
         Ok(name)
     }
 
-    /// Removes a trusted domain, returning the old value if it existed.
-    #[graphql(
-        guard = "RoleGuard::new(Role::SystemAdministrator).or(RoleGuard::new(Role::SecurityAdministrator))"
-    )]
-    async fn remove_trusted_domain(&self, ctx: &Context<'_>, name: String) -> Result<String> {
-        {
-            let store = crate::graphql::get_store(ctx).await?;
-            let map = store.trusted_domain_map();
-            map.remove(&name)?;
+    /// Removes multiple trusted domains, returning the removed values.
+    ///
+    /// On error, some trusted domains may have been removed.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    async fn remove_trusted_domains(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(validator(min_items = 1))] names: Vec<String>,
+    ) -> Result<Vec<String>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.trusted_domain_map();
+
+        let count = names.len();
+        let removed = names
+            .into_iter()
+            .try_fold(Vec::with_capacity(count), |mut removed, name| {
+                if map.remove(&name).is_ok() {
+                    removed.push(name);
+                    Ok(removed)
+                } else {
+                    Err(removed)
+                }
+            })
+            .unwrap_or_else(|r| r);
+
+        if removed.is_empty() {
+            return Err("None of the specified trusted domains was removed.".into());
         }
 
         let agent_manager = ctx.data::<Box<dyn AgentManager>>()?;
         agent_manager.broadcast_trusted_domains().await?;
-        Ok(name)
+
+        if removed.len() < count {
+            return Err("Some trusted domains were removed, but not all.".into());
+        }
+
+        Ok(removed)
     }
 }
 
@@ -173,21 +197,12 @@ mod tests {
             res.data.to_string(),
             r#"{insertTrustedDomain: "example2.org"}"#
         );
-
         let res = schema
-            .execute(r"{trustedDomainList{edges{node{name}}}}")
+            .execute(r#"mutation{insertTrustedDomain(name:"example3.org",remarks:"test")}"#)
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{trustedDomainList: {edges: [{node: {name: "example1.com"}}, {node: {name: "example2.org"}}]}}"#
-        );
-
-        let res = schema
-            .execute(r#"mutation{removeTrustedDomain(name:"example1.com")}"#)
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{removeTrustedDomain: "example1.com"}"#
+            r#"{insertTrustedDomain: "example3.org"}"#
         );
 
         let res = schema
@@ -195,7 +210,23 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{trustedDomainList: {edges: [{node: {name: "example2.org"}}]}}"#
+            r#"{trustedDomainList: {edges: [{node: {name: "example1.com"}}, {node: {name: "example2.org"}}, {node: {name: "example3.org"}}]}}"#
+        );
+
+        let res = schema
+            .execute(r#"mutation{removeTrustedDomains(names:["example1.com", "example2.org"])}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{removeTrustedDomains: ["example1.com", "example2.org"]}"#
+        );
+
+        let res = schema
+            .execute(r"{trustedDomainList{edges{node{name}}}}")
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{trustedDomainList: {edges: [{node: {name: "example3.org"}}]}}"#
         );
     }
 
