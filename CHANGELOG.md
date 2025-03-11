@@ -14,6 +14,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   different `username` parameter.
   - The `username` parameter has been removed, and the APIs now extract the
     username from the JWT for authorization.
+- Fixed a bug in the `updateNodeDraft` GraphQL API where adding a new agent to
+  an already configured node could fail.
 
 ## [0.25.0] - 2025-01-27
 
