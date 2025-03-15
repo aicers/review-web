@@ -14,6 +14,18 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   - Mutation: `insertAccount`, `updateAccount`
   - Query: `account`, `accountList`
 
+### Changed
+
+- Changed the behavior of the `sensors` field in the event filter
+  (`EventListFilterInput`):
+  - If the `sensors` field is provided, only events collected from the sensor are
+    returned.
+  - If the `sensors` field is not provided:
+    - For users with the `SystemAdministrator` role, events from all sensors are
+      returned.
+    - For users without the `SystemAdministrator` role, events are filtered to
+      include only sensors associated with the user's customer.
+
 ### Fixed
 
 - Fixed a security issue where the `language`, `updateLanguage`, `theme`, and

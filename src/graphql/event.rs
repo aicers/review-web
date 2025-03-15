@@ -32,8 +32,8 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
 use num_traits::FromPrimitive;
 use review_database::{
-    self as database, Direction, EventFilter, EventIterator, EventKind, IndexedTable, Iterable,
-    Store,
+    self as database, AgentKind, Direction, EventFilter, EventIterator, EventKind, IndexedTable,
+    Iterable, Store,
     event::RecordType,
     find_ip_country,
     types::{Endpoint, EventCategory, HostNetworkGroup},
@@ -781,7 +781,11 @@ impl EventTotalCount {
 }
 
 #[allow(clippy::too_many_lines)]
-fn from_filter_input(store: &Store, input: &EventListFilterInput) -> anyhow::Result<EventFilter> {
+fn from_filter_input(
+    ctx: &Context<'_>,
+    store: &Store,
+    input: &EventListFilterInput,
+) -> anyhow::Result<EventFilter> {
     let customers = if let Some(customers_input) = input.customers.as_deref() {
         let map = store.customer_map();
         Some(convert_customer_input(&map, customers_input)?)
@@ -868,10 +872,46 @@ fn from_filter_input(store: &Store, input: &EventListFilterInput) -> anyhow::Res
         None
     };
 
+    // Remove this allowance after resolving the TODO in the `else` block.
+    #[allow(clippy::manual_map)]
     let sensors = if let Some(sensors_input) = &input.sensors {
         let map = store.node_map();
         Some(convert_sensors(&map, sensors_input)?)
+    } else if ctx.data::<Role>() == Ok(&Role::SystemAdministrator) {
+        None
+    } else if let Some(customer_ids) = ctx
+        .data::<String>()
+        .ok()
+        .and_then(|username| store.account_map().get(username).ok())
+        .flatten()
+        .and_then(|account| account.customer_ids)
+    {
+        Some(
+            store
+                .node_map()
+                .iter(Direction::Forward, None)
+                .filter_map(Result::ok)
+                .filter(|node| {
+                    node.agents
+                        .iter()
+                        .any(|agent| agent.kind == AgentKind::Sensor)
+                        && node
+                            .profile
+                            .as_ref()
+                            .is_some_and(|profile| customer_ids.contains(&profile.customer_id))
+                })
+                .filter_map(|node| node.profile.map(|profile| profile.hostname))
+                .collect::<Vec<_>>(),
+        )
     } else {
+        // TODO: This block handles the case where the user doesn't have permission to view events.
+        // Ideally, it should return `Some(Vec::new())` to exclude all events. However, doing so
+        // currently breaks 10 test cases that do not account for sensor filtering. These test cases
+        // should be updated first.
+
+        // Normally, all accounts should belong to at least one customer, making this block
+        // unreachable. However, during migration of previous account data, it's possible for an
+        // account to temporarily have no associated customer.
         None
     };
 
@@ -1022,7 +1062,7 @@ async fn load(
 
     let start = filter.start;
     let end = filter.end;
-    let mut filter = from_filter_input(&store, filter)?;
+    let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
     let db = store.events();
     let (events, has_previous, has_next) = if let Some(last) = last {
