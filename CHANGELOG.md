@@ -7,6 +7,13 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added the `Account::customer_ids` field to store customer IDs associated with
+  the user. The affected GraphQL APIs are:
+  - Mutation: `insertAccount`, `updateAccount`
+  - Query: `account`, `accountList`
+
 ### Fixed
 
 - Fixed a security issue where the `language`, `updateLanguage`, `theme`, and
@@ -656,7 +663,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Modified serialization method in broadcasting of `internal
-  networks,allow/block list`. The new implementation now uses
+networks,allow/block list`. The new implementation now uses
   `bincode::DefaultOptions::new().serialize()` instead of
   `bincode::serialize()`. This change is aimed at maintaining consistency with
   other serialized data across our system.
