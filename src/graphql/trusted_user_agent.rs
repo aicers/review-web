@@ -154,7 +154,7 @@ impl TrustedUserAgentTotalCount {
 /// # Errors
 ///
 /// Returns an error if the user agent list database could not be retrieved.
-pub fn get_trusted_user_agent_list(db: &Store) -> Result<Vec<String>> {
+fn get_trusted_user_agent_list(db: &Store) -> Result<Vec<String>> {
     let map = db.trusted_user_agent_map();
     Ok(map
         .iter(Direction::Forward, None)
