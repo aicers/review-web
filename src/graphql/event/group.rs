@@ -234,7 +234,7 @@ impl EventGroupQuery {
                 .map_or(i128::MAX, |t| i128::from(t) << 64);
             if end > 0 { end - 1 } else { 0 }
         });
-        let filter = from_filter_input(&store, &filter)?;
+        let filter = from_filter_input(ctx, &store, &filter)?;
         let db = store.events();
         let locator = if filter.has_country() {
             Some(
@@ -311,7 +311,7 @@ async fn count_events<T>(
             .map_or(i128::MAX, |t| i128::from(t) << 64);
         if end > 0 { end - 1 } else { 0 }
     });
-    let filter = from_filter_input(&store, filter)?;
+    let filter = from_filter_input(ctx, &store, filter)?;
     let db = store.events();
     let locator = ctx.data::<ip2location::DB>().ok();
 
@@ -363,7 +363,7 @@ async fn count_events_by_network(
             .map_or(i128::MAX, |t| i128::from(t) << 64);
         if end > 0 { end - 1 } else { 0 }
     });
-    let filter = from_filter_input(&store, filter)?;
+    let filter = from_filter_input(ctx, &store, filter)?;
     let db = store.events();
     let locator = ctx.data::<ip2location::DB>().ok();
 
