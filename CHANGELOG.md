@@ -12,6 +12,17 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 - Updated the GraphQL APIs related to account as the `customer_ids` field was
   added to the `Account` structure in the review-database.
 
+- Changed the behavior of the `sensors` field in the event filter
+  (`EventListFilterInput`):
+  - If the `sensors` field is provided, only events collected from the sensors
+    are returned.
+  - If the `sensors` field is not provided:
+    - For users with the `SystemAdministrator` role, events from all sensors are
+      returned.
+    - For users without the `SystemAdministrator` role, events are filtered to
+      include only sensors associated with the user's customer. An error occurs
+      if the user is not associated with any customer.
+
 ### Fixed
 
 - Fixed a security issue where the `language`, `updateLanguage`, `theme`, and
@@ -661,7 +672,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Modified serialization method in broadcasting of `internal
-  networks,allow/block list`. The new implementation now uses
+networks,allow/block list`. The new implementation now uses
   `bincode::DefaultOptions::new().serialize()` instead of
   `bincode::serialize()`. This change is aimed at maintaining consistency with
   other serialized data across our system.
