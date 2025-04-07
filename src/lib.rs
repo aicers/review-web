@@ -122,7 +122,7 @@ where
                     .await
                 {
                     panic!("Web server encountered an error: {e:?}");
-                };
+                }
 
                 completed.notify_one();
             });
