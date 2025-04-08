@@ -67,7 +67,6 @@ pub use self::sampling::{
     Interval as SamplingInterval, Kind as SamplingKind, Period as SamplingPeriod,
     Policy as SamplingPolicy,
 };
-pub use self::trusted_user_agent::get_trusted_user_agent_list;
 use crate::backend::{AgentManager, CertManager};
 
 /// GraphQL schema type.
