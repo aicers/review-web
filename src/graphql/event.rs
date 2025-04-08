@@ -1943,6 +1943,7 @@ mod tests {
             issuer_org_unit_name: "unit".into(),
             issuer_common_name: "common".into(),
             last_alert: 3,
+            confidence: 0.8,
             category: EventCategory::CommandAndControl,
         };
 
@@ -1957,14 +1958,14 @@ mod tests {
                 eventList(filter: {{
                     start:\"{timestamp}\"
                 }}) {{ \
-                    edges {{ node {{... on SuspiciousTlsTraffic {{ srcAddr,cipher,subjectCountry }} }} }} \
+                    edges {{ node {{... on SuspiciousTlsTraffic {{ srcAddr,cipher,subjectCountry,confidence }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1", cipher: 1234, subjectCountry: "US"}}]}}"#
+            r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1", cipher: 1234, subjectCountry: "US", confidence: 0.800000011920929}}]}}"#
         );
     }
 }

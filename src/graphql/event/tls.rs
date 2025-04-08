@@ -343,6 +343,10 @@ impl SuspiciousTlsTraffic {
         self.inner.last_alert
     }
 
+    async fn confidence(&self) -> f32 {
+        self.inner.confidence
+    }
+
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
