@@ -11,6 +11,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Updated the GraphQL APIs related to account as the `customer_ids` field was
   added to the `Account` structure in the review-database.
+- Added `confidence` field to `BlockListTlsFields` event structure.
 
 ### Fixed
 
@@ -21,7 +22,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     username from the JWT for authorization.
 - Fixed a bug in the `updateNodeDraft` GraphQL API where adding a new agent to
   an already configured node could fail.
-  
+
 ### Removed
 
 - `graphql::get_trusted_user_agent_list` has been removed as it is no longer
