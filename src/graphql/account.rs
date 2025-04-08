@@ -177,11 +177,15 @@ impl AccountMutation {
         theme: Option<String>,
         allow_access_from: Option<Vec<IpAddress>>,
         max_parallel_sessions: Option<u8>,
+        customer_ids: Option<Vec<u32>>,
     ) -> Result<String> {
         let store = crate::graphql::get_store(ctx).await?;
         let table = store.account_map();
         if table.contains(&username)? {
             return Err("account already exists".into());
+        }
+        if customer_ids.is_none() && role != Role::SystemAdministrator {
+            return Err("You are not allowed to access all customers.".into());
         }
         let allow_access_from = if let Some(ip_addrs) = allow_access_from {
             let ip_addrs = to_ip_addr(&ip_addrs);
@@ -199,6 +203,7 @@ impl AccountMutation {
             theme,
             allow_access_from,
             max_parallel_sessions,
+            customer_ids,
         )?;
         table.put(&account)?;
         Ok(username)
@@ -225,6 +230,7 @@ impl AccountMutation {
                     username.as_bytes(),
                     &Some(password),
                     None,
+                    &None,
                     &None,
                     &None,
                     &None,
@@ -276,6 +282,7 @@ impl AccountMutation {
         theme: Option<UpdateTheme>,
         allow_access_from: Option<UpdateAllowAccessFrom>,
         max_parallel_sessions: Option<UpdateMaxParallelSessions>,
+        customer_ids: Option<UpdateCustomerIds>,
     ) -> Result<String> {
         if password.is_none()
             && role.is_none()
@@ -284,8 +291,33 @@ impl AccountMutation {
             && language.is_none()
             && allow_access_from.is_none()
             && max_parallel_sessions.is_none()
+            && customer_ids.is_none()
         {
             return Err("At lease one of the optional fields must be provided to update.".into());
+        }
+
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.account_map();
+
+        // Ensure that the `customer_ids` is set correctly for the account role
+        if role.is_some() || customer_ids.is_some() {
+            let Ok(Some(account)) = map.get(&username) else {
+                return Err("invalid username".into());
+            };
+            let role_to_check = role.as_ref().map_or(account.role, |update_role| {
+                database::Role::from(update_role.new)
+            });
+            let customer_ids_to_check = customer_ids
+                .as_ref()
+                .map_or(&account.customer_ids, |update_customer_ids| {
+                    &update_customer_ids.new
+                });
+
+            if customer_ids_to_check.is_none()
+                && role_to_check != database::Role::SystemAdministrator
+            {
+                return Err("You are not allowed to access all customers.".into());
+            }
         }
 
         let role = role.map(|r| (database::Role::from(r.old), database::Role::from(r.new)));
@@ -301,9 +333,8 @@ impl AccountMutation {
             None
         };
         let max_parallel_sessions = max_parallel_sessions.map(|m| (m.old, m.new));
+        let customer_ids = customer_ids.map(|m| (m.old, m.new));
 
-        let store = crate::graphql::get_store(ctx).await?;
-        let map = store.account_map();
         map.update(
             username.as_bytes(),
             &password,
@@ -314,6 +345,7 @@ impl AccountMutation {
             &theme,
             &allow_access_from,
             &max_parallel_sessions,
+            &customer_ids,
         )?;
         Ok(username)
     }
@@ -469,6 +501,7 @@ impl AccountMutation {
             &None,
             &None,
             &None,
+            &None,
         )?;
 
         Ok(new_language)
@@ -494,6 +527,7 @@ impl AccountMutation {
             &None,
             &None,
             &Some((theme.old, theme.new)),
+            &None,
             &None,
             &None,
         )?;
@@ -680,6 +714,10 @@ impl Account {
     async fn max_parallel_sessions(&self) -> Option<u8> {
         self.inner.max_parallel_sessions
     }
+
+    async fn customer_ids(&self) -> Option<Vec<u32>> {
+        self.inner.customer_ids.clone()
+    }
 }
 
 impl From<types::Account> for Account {
@@ -761,6 +799,13 @@ struct UpdateMaxParallelSessions {
     new: Option<u8>,
 }
 
+/// The old and new values of `customer_ids` to update.
+#[derive(InputObject)]
+struct UpdateCustomerIds {
+    old: Option<Vec<u32>>,
+    new: Option<Vec<u32>>,
+}
+
 struct AccountTotalCount;
 
 #[Object]
@@ -820,6 +865,7 @@ fn initial_credential() -> anyhow::Result<types::Account> {
         database::Role::SystemAdministrator,
         "System Administrator".to_owned(),
         String::new(),
+        None,
         None,
         None,
         None,
@@ -904,6 +950,7 @@ mod tests {
                     role: "SECURITY_ADMINISTRATOR",
                     name: "User One",
                     department: "Test"
+                    customerIds: [0]
                 )
             }"#,
             )
@@ -918,6 +965,7 @@ mod tests {
                     role: "SECURITY_ADMINISTRATOR",
                     name: "User Two",
                     department: "Test"
+                    customerIds: [0]
                 )
             }"#,
             )
@@ -932,6 +980,7 @@ mod tests {
                     role: "SECURITY_ADMINISTRATOR",
                     name: "User Three",
                     department: "Test"
+                    customerIds: [0]
                 )
             }"#,
             )
@@ -946,6 +995,7 @@ mod tests {
                     role: "SECURITY_ADMINISTRATOR",
                     name: "User Four",
                     department: "Test"
+                    customerIds: [0]
                 )
             }"#,
             )
@@ -1163,6 +1213,7 @@ mod tests {
                         role: "SECURITY_ADMINISTRATOR",
                         name: "John Doe",
                         department: "Security"
+                        customerIds: [0]
                     )
                 }"#,
             )
@@ -1341,6 +1392,7 @@ mod tests {
                         name: "John Doe",
                         department: "Security",
                         language: "en-US"
+                        customerIds: [0]
                     )
                 }"#,
             )
@@ -1406,6 +1458,190 @@ mod tests {
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
+    async fn insert_account() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "system administrator1",
+                        password: "password",
+                        role: "SYSTEM_ADMINISTRATOR",
+                        name: "John Doe",
+                        department: "Security",
+                        language: "en-US",
+                        allowAccessFrom: ["127.0.0.1"]
+                        theme: "dark"
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertAccount: "system administrator1"}"#
+        );
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "system administrator2",
+                        password: "password",
+                        role: "SYSTEM_ADMINISTRATOR",
+                        name: "John Doe",
+                        department: "Security",
+                        language: "en-US",
+                        allowAccessFrom: ["127.0.0.1"]
+                        theme: "dark"
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertAccount: "system administrator2"}"#
+        );
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "security administrator1",
+                        password: "password",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "John Doe",
+                        department: "Security",
+                        language: "en-US",
+                        allowAccessFrom: ["127.0.0.1"]
+                        theme: "dark"
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertAccount: "security administrator1"}"#
+        );
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                insertAccount(
+                    username: "security administrator2",
+                    password: "password",
+                    role: "SECURITY_ADMINISTRATOR",
+                    name: "John Doe",
+                    department: "Security",
+                    language: "en-US",
+                    allowAccessFrom: ["127.0.0.1"]
+                    theme: "dark"
+                )
+            }"#,
+            )
+            .await;
+
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "You are not allowed to access all customers."
+        );
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                insertAccount(
+                    username: "security manager1",
+                    password: "password",
+                    role: "SECURITY_MANAGER",
+                    name: "John Doe",
+                    department: "Security",
+                    language: "en-US",
+                    allowAccessFrom: ["127.0.0.1"]
+                    theme: "dark"
+                    customerIds: [0]
+                )
+            }"#,
+            )
+            .await;
+
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertAccount: "security manager1"}"#
+        );
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "security manager2",
+                        password: "password",
+                        role: "SECURITY_MANAGER",
+                        name: "John Doe",
+                        department: "Security",
+                        language: "en-US",
+                        allowAccessFrom: ["127.0.0.1"]
+                        theme: "dark"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "You are not allowed to access all customers."
+        );
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                insertAccount(
+                    username: "security monitor1",
+                    password: "password",
+                    role: "SECURITY_MONITOR",
+                    name: "John Doe",
+                    department: "Security",
+                    language: "en-US",
+                    allowAccessFrom: ["127.0.0.1"]
+                    theme: "dark"
+                    customerIds: [0]
+                )
+            }"#,
+            )
+            .await;
+
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertAccount: "security monitor1"}"#
+        );
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "security monitor2",
+                        password: "password",
+                        role: "SECURITY_MONITOR",
+                        name: "John Doe",
+                        department: "Security",
+                        language: "en-US",
+                        allowAccessFrom: ["127.0.0.1"]
+                        theme: "dark"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "You are not allowed to access all customers."
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn update_account() {
         let schema = TestSchema::new().await;
 
@@ -1417,10 +1653,11 @@ mod tests {
                         password: "password",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "John Doe",
-                        department: "Security",
+                        department: "Security Admin",
                         language: "en-US",
                         allowAccessFrom: ["127.0.0.1"]
                         theme: "dark"
+                        customerIds: [0]
                     )
                 }"#,
             )
@@ -1446,7 +1683,7 @@ mod tests {
 
         assert_eq!(
             res.data.to_string(),
-            r#"{account: {username: "username", role: SECURITY_ADMINISTRATOR, name: "John Doe", department: "Security", language: "en-US", theme: "dark"}}"#
+            r#"{account: {username: "username", role: SECURITY_ADMINISTRATOR, name: "John Doe", department: "Security Admin", language: "en-US", theme: "dark"}}"#
         );
 
         let res = schema
@@ -1458,15 +1695,15 @@ mod tests {
                         password: "password",
                         role: {
                             old: "SECURITY_ADMINISTRATOR",
-                            new: "SYSTEM_ADMINISTRATOR"
+                            new: "SECURITY_MONITOR"
                         },
                         name: {
                             old: "John Doe",
                             new: "Loren Ipsum"
                         },
                         department: {
-                            old: "Security",
-                            new: "Admin"
+                            old: "Security Admin",
+                            new: "Security Monitor"
                         },
                         language: {
                             old: "en-US",
@@ -1506,7 +1743,7 @@ mod tests {
 
         assert_eq!(
             res.data.to_string(),
-            r#"{account: {username: "username", role: SYSTEM_ADMINISTRATOR, name: "Loren Ipsum", department: "Admin", language: "ko-KR", allowAccessFrom: ["127.0.0.2"], theme: "light"}}"#
+            r#"{account: {username: "username", role: SECURITY_MONITOR, name: "Loren Ipsum", department: "Security Monitor", language: "ko-KR", allowAccessFrom: ["127.0.0.2"], theme: "light"}}"#
         );
 
         let res = schema
@@ -1517,16 +1754,16 @@ mod tests {
                         username: "username",
                         password: "password",
                         role: {
-                            old: "SECURITY_ADMINISTRATOR",
-                            new: "SYSTEM_ADMINISTRATOR"
+                            old: "SECURITY_MONITOR",
+                            new: "SECURITY_MANAGER"
                         },
                         name: {
                             old: "John Doe",
                             new: "Loren Ipsum"
                         },
                         department: {
-                            old: "Security",
-                            new: "Admin"
+                            old: "Security Monitor",
+                            new: "Security Manager"
                         },
                         language: {
                             old: "en-US",
@@ -1544,11 +1781,101 @@ mod tests {
                 }"#,
             )
             .await;
+
         assert_eq!(
             res.errors.first().unwrap().message.to_string(),
             "Failed to parse \"IpAddress\": Invalid IP address: 127.0.0.x (occurred while \
             parsing \"[IpAddress!]\") (occurred while parsing \"UpdateAllowAccessFrom\")"
                 .to_string()
+        );
+
+        // Failure Case 1 Related to customer id: Update `customer_ids` to `None` while the current
+        // account's `role` is set to a value other than `SYSTEM_ADMINISTRATOR`.
+        let res = schema
+            .execute(
+                r#"
+                mutation {
+                    updateAccount(
+                        username: "username",
+                        password: "password",
+                        customerIds: {
+                            old: [0]
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "You are not allowed to access all customers."
+        );
+
+        // Failure Case 2 Related to customer id: Update `role` to a value other than
+        // `SYSTEM_ADMINISTRATOR` and `customer_ids` to `None`.
+        let res = schema
+            .execute(
+                r#"
+                    mutation {
+                        updateAccount(
+                            username: "username",
+                            password: "password",
+                            role: {
+                                old: "SECURITY_MONITOR",
+                                new: "SECURITY_MANAGER"
+                            },
+                            customerIds: {
+                                old: [0]
+                            }
+                        )
+                    }"#,
+            )
+            .await;
+
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "You are not allowed to access all customers."
+        );
+
+        // Failure Case 3 Related to customer id: Update `role` to a value other than
+        // `SYSTEM_ADMINISTRATOR` while the current account's `customer_ids` is set to `None`.
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "username2",
+                        password: "password",
+                        role: "SYSTEM_ADMINISTRATOR",
+                        name: "John Doe",
+                        department: "System Admin",
+                        language: "en-US",
+                        allowAccessFrom: ["127.0.0.1"]
+                        theme: "dark"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "username2"}"#);
+
+        let res = schema
+            .execute(
+                r#"
+                mutation {
+                    updateAccount(
+                        username: "username2",
+                        password: "password",
+                        role: {
+                            old: "SYSTEM_ADMINISTRATOR",
+                            new: "SECURITY_ADMINISTRATOR"
+                        },
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "You are not allowed to access all customers."
         );
     }
 
@@ -1565,6 +1892,7 @@ mod tests {
                         name: "User One",
                         department: "Test",
                         maxParallelSessions: 2
+                        customerIds: [0]
                     )
                 }"#,
             )
@@ -1642,6 +1970,7 @@ mod tests {
                         name: "User One",
                         department: "Test",
                         allowAccessFrom: ["127.0.0.1"]
+                        customerIds: [0]
                     )
                 }"#,
             )
@@ -1679,6 +2008,7 @@ mod tests {
                         name: "User One",
                         department: "Test",
                         allowAccessFrom: ["127.0.0.1"]
+                        customerIds: [0]
                     )
                 }"#,
             )
@@ -1716,6 +2046,7 @@ mod tests {
                         name: "User One",
                         department: "Test",
                         allowAccessFrom: ["127.0.0.x"]
+                        customerIds: [0]
                     )
                 }"#,
             )
@@ -1743,6 +2074,7 @@ mod tests {
                         name: "John Doe",
                         department: "Security",
                         language: "en-US"
+                        customerIds: [0]
                     )
                 }"#,
             )
@@ -1776,6 +2108,7 @@ mod tests {
                         name: "John Doe",
                         department: "Security",
                         language: "en-US"
+                        customerIds: [0]
                     )
                 }"#,
             )
@@ -1853,6 +2186,7 @@ mod tests {
                         name: "User One",
                         department: "Test",
                         maxParallelSessions: 2
+                        customerIds: [0]
                     )
                 }"#,
             )
@@ -1890,6 +2224,7 @@ mod tests {
                         name: "User One",
                         department: "Test",
                         maxParallelSessions: 2
+                        customerIds: [0]
                     )
                 }"#,
             )
@@ -1982,6 +2317,7 @@ mod tests {
                         name: "User One",
                         department: "Test",
                         maxParallelSessions: 2
+                        customerIds: [0]
                     )
                 }"#,
             )
@@ -2020,6 +2356,7 @@ mod tests {
                         department: "Security",
                         language: "en-US",
                         theme: "dark"
+                        customerIds: [0]
                     )
                 }"#,
             )
@@ -2054,6 +2391,7 @@ mod tests {
                         department: "Security",
                         language: "en-US",
                         theme: "dark"
+                        customerIds: [0]
                     )
                 }"#,
             )

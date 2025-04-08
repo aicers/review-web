@@ -7,10 +7,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Removed
+### Changed
 
-- `graphql::get_trusted_user_agent_list` has been removed as it is no longer
-  used.
+- Updated the GraphQL APIs related to account as the `customer_ids` field was
+  added to the `Account` structure in the review-database.
 
 ### Fixed
 
@@ -21,6 +21,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     username from the JWT for authorization.
 - Fixed a bug in the `updateNodeDraft` GraphQL API where adding a new agent to
   an already configured node could fail.
+  
+### Removed
+
+- `graphql::get_trusted_user_agent_list` has been removed as it is no longer
+  used.
 
 ## [0.25.0] - 2025-01-27
 
