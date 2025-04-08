@@ -97,7 +97,7 @@ impl TidbMutation {
             match table.remove(&name) {
                 Ok(()) => removed.push(name),
                 Err(e) => return Err(format!("{e:?}").into()),
-            };
+            }
         }
         Ok(removed)
     }
