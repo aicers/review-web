@@ -7,7 +7,9 @@ use async_graphql::{
 use chrono::{DateTime, Utc};
 
 use super::{Role, RoleGuard};
-use crate::graphql::query_with_constraints;
+use crate::graphql::{
+    cluster::try_id_args_into_ints, network::id_args_into_uints, query_with_constraints,
+};
 
 #[allow(clippy::module_name_repetitions)]
 pub struct TriageResponse {
@@ -30,8 +32,12 @@ impl TriageResponse {
         &self.inner.remarks
     }
 
-    async fn tag_ids(&self) -> &[u32] {
-        self.inner.tag_ids()
+    async fn tag_ids(&self) -> Vec<ID> {
+        self.inner
+            .tag_ids()
+            .iter()
+            .map(Into::into)
+            .collect::<Vec<_>>()
     }
 }
 
@@ -52,13 +58,16 @@ impl TriageResponseTotalCount {
 #[derive(Clone, InputObject)]
 pub(super) struct TriageResponseInput {
     key: Vec<u8>,
-    tag_ids: Option<Vec<u32>>,
+    tag_ids: Option<Vec<ID>>,
     remarks: Option<String>,
 }
 
-impl From<TriageResponseInput> for review_database::TriageResponseUpdate {
-    fn from(input: TriageResponseInput) -> Self {
-        Self::new(input.key, input.tag_ids, input.remarks)
+impl TryFrom<TriageResponseInput> for review_database::TriageResponseUpdate {
+    type Error = async_graphql::Error;
+
+    fn try_from(input: TriageResponseInput) -> Result<Self, Self::Error> {
+        let tag_ids = try_id_args_into_ints::<u32>(input.tag_ids)?;
+        Ok(Self::new(input.key, tag_ids, input.remarks))
     }
 }
 
@@ -126,9 +135,10 @@ impl super::TriageResponseMutation {
         ctx: &Context<'_>,
         sensor: String,
         time: DateTime<Utc>,
-        tag_ids: Vec<u32>,
+        tag_ids: Vec<ID>,
         remarks: String,
     ) -> Result<ID> {
+        let tag_ids = id_args_into_uints(&tag_ids)?;
         let pol = review_database::TriageResponse::new(sensor, time, tag_ids, remarks);
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_response_map();
@@ -175,8 +185,8 @@ impl super::TriageResponseMutation {
 
         let store = crate::graphql::get_store(ctx).await?;
         let mut map = store.triage_response_map();
-        let old: review_database::TriageResponseUpdate = old.into();
-        let new: review_database::TriageResponseUpdate = new.into();
+        let old: review_database::TriageResponseUpdate = old.try_into()?;
+        let new: review_database::TriageResponseUpdate = new.try_into()?;
         map.update(i, &old, &new)?;
 
         Ok(id)

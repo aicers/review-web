@@ -4,10 +4,9 @@ use std::{
 };
 
 use anyhow::anyhow;
-use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    Context, Enum, InputObject, Object, Result, SimpleObject,
-    connection::{Connection, EmptyFields},
+    Context, Enum, ID, InputObject, Object, Result, SimpleObject,
+    connection::{Connection, EmptyFields, OpaqueCursor},
 };
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use review_database::{
@@ -17,7 +16,7 @@ use review_database::{
 use serde::Serialize;
 use tracing::info;
 
-use super::{IpAddress, RoleGuard};
+use super::{IpAddress, RoleGuard, cluster::try_id_args_into_ints};
 use crate::auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in};
 use crate::graphql::query_with_constraints;
 
@@ -177,8 +176,9 @@ impl AccountMutation {
         theme: Option<String>,
         allow_access_from: Option<Vec<IpAddress>>,
         max_parallel_sessions: Option<u8>,
-        customer_ids: Option<Vec<u32>>,
+        customer_ids: Option<Vec<ID>>,
     ) -> Result<String> {
+        let customer_ids = try_id_args_into_ints::<u32>(customer_ids)?;
         let store = crate::graphql::get_store(ctx).await?;
         let table = store.account_map();
         if table.contains(&username)? {
@@ -296,6 +296,13 @@ impl AccountMutation {
             return Err("At lease one of the optional fields must be provided to update.".into());
         }
 
+        let customer_ids = customer_ids
+            .map(|ids| {
+                let old = try_id_args_into_ints::<u32>(ids.old)?;
+                let new = try_id_args_into_ints::<u32>(ids.new)?;
+                Ok::<_, async_graphql::Error>((old, new))
+            })
+            .transpose()?;
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
 
@@ -310,7 +317,7 @@ impl AccountMutation {
             let customer_ids_to_check = customer_ids
                 .as_ref()
                 .map_or(&account.customer_ids, |update_customer_ids| {
-                    &update_customer_ids.new
+                    &update_customer_ids.1
                 });
 
             if customer_ids_to_check.is_none()
@@ -333,7 +340,6 @@ impl AccountMutation {
             None
         };
         let max_parallel_sessions = max_parallel_sessions.map(|m| (m.old, m.new));
-        let customer_ids = customer_ids.map(|m| (m.old, m.new));
 
         map.update(
             username.as_bytes(),
@@ -715,8 +721,11 @@ impl Account {
         self.inner.max_parallel_sessions
     }
 
-    async fn customer_ids(&self) -> Option<Vec<u32>> {
-        self.inner.customer_ids.clone()
+    async fn customer_ids(&self) -> Option<Vec<ID>> {
+        self.inner
+            .customer_ids
+            .as_ref()
+            .map(|ids| ids.iter().map(|id| ID(id.to_string())).collect())
     }
 }
 
@@ -802,8 +811,8 @@ struct UpdateMaxParallelSessions {
 /// The old and new values of `customer_ids` to update.
 #[derive(InputObject)]
 struct UpdateCustomerIds {
-    old: Option<Vec<u32>>,
-    new: Option<Vec<u32>>,
+    old: Option<Vec<ID>>,
+    new: Option<Vec<ID>>,
 }
 
 struct AccountTotalCount;
