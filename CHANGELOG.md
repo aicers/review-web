@@ -28,6 +28,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     username from the JWT for authorization.
 - Fixed a bug in the `updateNodeDraft` GraphQL API where adding a new agent to
   an already configured node could fail.
+- Fixed an issue where GraphQL APIs using `EventListFilterInput` failed to
+  filter events by `kinds`.
 
 ### Removed
 
