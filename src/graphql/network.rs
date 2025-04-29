@@ -11,6 +11,7 @@ use review_database::{self as database};
 
 use super::{
     Role, RoleGuard,
+    cluster::try_id_args_into_ints,
     customer::{Customer, HostNetworkGroup, HostNetworkGroupInput},
 };
 use crate::graphql::query_with_constraints;
@@ -75,9 +76,11 @@ impl NetworkMutation {
         name: String,
         description: String,
         networks: HostNetworkGroupInput,
-        customer_ids: Vec<u32>,
-        tag_ids: Vec<u32>,
+        customer_ids: Vec<ID>,
+        tag_ids: Vec<ID>,
     ) -> Result<ID> {
+        let customer_ids = id_args_into_uints(&customer_ids)?;
+        let tag_ids = id_args_into_uints(&tag_ids)?;
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         let entry = review_database::Network::new(
@@ -140,7 +143,7 @@ impl NetworkMutation {
 
         let store = crate::graphql::get_store(ctx).await?;
         let mut map = store.network_map();
-        map.update(i, &old.into(), &new.into())?;
+        map.update(i, &old.try_into()?, &new.try_into()?)?;
         Ok(id)
     }
 }
@@ -150,19 +153,23 @@ struct NetworkUpdateInput {
     name: Option<String>,
     description: Option<String>,
     networks: Option<HostNetworkGroupInput>,
-    customer_ids: Option<Vec<u32>>,
-    tag_ids: Option<Vec<u32>>,
+    customer_ids: Option<Vec<ID>>,
+    tag_ids: Option<Vec<ID>>,
 }
 
-impl From<NetworkUpdateInput> for review_database::NetworkUpdate {
-    fn from(input: NetworkUpdateInput) -> Self {
-        Self::new(
+impl TryFrom<NetworkUpdateInput> for review_database::NetworkUpdate {
+    type Error = async_graphql::Error;
+
+    fn try_from(input: NetworkUpdateInput) -> Result<Self, Self::Error> {
+        let customer_ids = try_id_args_into_ints::<u32>(input.customer_ids)?;
+        let tag_ids = try_id_args_into_ints::<u32>(input.tag_ids)?;
+        Ok(Self::new(
             input.name,
             input.description,
             input.networks.and_then(|v| v.try_into().ok()),
-            input.customer_ids,
-            input.tag_ids,
-        )
+            customer_ids,
+            tag_ids,
+        ))
     }
 }
 
@@ -221,6 +228,15 @@ impl From<database::Network> for Network {
     fn from(inner: database::Network) -> Self {
         Self { inner }
     }
+}
+
+pub(super) fn id_args_into_uints(ids: &[ID]) -> Result<Vec<u32>> {
+    ids.iter()
+        .map(|id| {
+            let id = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
+            Ok::<_, async_graphql::Error>(id)
+        })
+        .collect::<Result<Vec<_>, _>>()
 }
 
 struct NetworkTotalCount;

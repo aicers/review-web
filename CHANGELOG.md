@@ -2,8 +2,8 @@
 
 This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
-this project adheres to [Semantic
-Versioning](https://semver.org/spec/v2.0.0.html).
+this project adheres to
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
@@ -18,6 +18,12 @@ Versioning](https://semver.org/spec/v2.0.0.html).
     are returned.
   - If the `sensors` field is not provided, the software filters events from
     sensors owned by the customers the user belongs to.
+- Replaced `Vec<u32>` with `Vec<ID>` for `customer_ids` and `tag_ids`. The
+  affected GraphQL APIs are as follows:
+  - Parameter type changes: `insertAccount`, `updateAccount`, `insertNetwork`,
+    `updateNetwork`, `insertTriageResponse`, `updateTriageResponse`.
+  - Return type changes: `account`, `accountList`, `triageResponse`,
+    `triageResponseList`.
 
 ### Fixed
 

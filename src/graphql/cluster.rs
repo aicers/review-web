@@ -48,10 +48,10 @@ impl ClusterQuery {
         last: Option<i32>,
     ) -> Result<Connection<OpaqueCursor<(i32, i64)>, Cluster, ClusterTotalCount, EmptyFields>> {
         let model = model.as_str().parse()?;
-        let categories = try_id_args_into_ints(categories)?;
-        let detectors = try_id_args_into_ints(detectors)?;
-        let qualifiers = try_id_args_into_ints(qualifiers)?;
-        let statuses = try_id_args_into_ints(statuses)?;
+        let categories = try_id_args_into_ints::<i32>(categories)?;
+        let detectors = try_id_args_into_ints::<i32>(detectors)?;
+        let qualifiers = try_id_args_into_ints::<i32>(qualifiers)?;
+        let statuses = try_id_args_into_ints::<i32>(statuses)?;
 
         query(
             after,
@@ -414,7 +414,11 @@ async fn load(
     Ok(connection)
 }
 
-fn try_id_args_into_ints(ids: Option<Vec<ID>>) -> Result<Option<Vec<i32>>> {
+pub(super) fn try_id_args_into_ints<T>(ids: Option<Vec<ID>>) -> Result<Option<Vec<T>>>
+where
+    T: std::str::FromStr,
+    T::Err: std::error::Error + Send + Sync + 'static,
+{
     if let Some(ids) = ids {
         let mut ints = Vec::with_capacity(ids.len());
         for id in ids {
