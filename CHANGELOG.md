@@ -24,6 +24,8 @@ this project adheres to
     `updateNetwork`, `insertTriageResponse`, `updateTriageResponse`.
   - Return type changes: `account`, `accountList`, `triageResponse`,
     `triageResponseList`.
+- Updated `removeTrustedDomain` GraphQL API to `removeTrustedDomains` to support
+  multiple removals.
 
 ### Fixed
 
