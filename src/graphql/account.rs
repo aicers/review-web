@@ -153,6 +153,26 @@ impl AccountQuery {
             .ok_or_else::<async_graphql::Error, _>(|| "Account not found".into())
             .map(|account| account.theme)
     }
+
+    /// Retrieves the user's customer ids.
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
+        .or(RoleGuard::new(super::Role::SecurityAdministrator))
+        .or(RoleGuard::new(super::Role::SecurityManager))
+        .or(RoleGuard::new(super::Role::SecurityMonitor))")]
+    async fn customer_ids(&self, ctx: &Context<'_>) -> Result<Option<Vec<ID>>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.account_map();
+        let username: &String = ctx.data::<String>()?;
+
+        map.get(username)?
+            .ok_or_else::<async_graphql::Error, _>(|| "Account not found".into())
+            .map(|account: types::Account| {
+                account
+                    .customer_ids
+                    .as_ref()
+                    .map(|ids| ids.iter().map(|id| ID(id.to_string())).collect())
+            })
+    }
 }
 
 #[derive(Default)]
@@ -2465,5 +2485,40 @@ mod tests {
             res.data.to_string(),
             r#"{account: {username: "username", role: SECURITY_ADMINISTRATOR, name: "John Doe", department: "Security", language: "en-US", theme: "light"}}"#
         );
+    }
+
+    #[tokio::test]
+    async fn customer_ids() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "username").await;
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "username",
+                        password: "password",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "John Doe",
+                        department: "Security",
+                        language: "en-US",
+                        theme: "dark"
+                        customerIds: [0, 1]
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "username"}"#);
+
+        let res = schema
+            .execute(
+                r"query {
+                    customerIds
+                }",
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), "{customerIds: [\"0\", \"1\"]}");
     }
 }

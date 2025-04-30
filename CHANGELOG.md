@@ -7,6 +7,11 @@ this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Added `customerIds` GraphQL API to retrieve the list of customer IDs
+  associated with the current user.
+
 ### Changed
 
 - Updated the GraphQL APIs related to account as the `customer_ids` field was
