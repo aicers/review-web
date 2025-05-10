@@ -24,6 +24,8 @@ this project adheres to
     `updateNetwork`, `insertTriageResponse`, `updateTriageResponse`.
   - Return type changes: `account`, `accountList`, `triageResponse`,
     `triageResponseList`.
+- Updated review-database to 0.37.0, which fixes event filtering by multiple IP
+  addresses for `ExternalDdos`, `MultiHostPortScan`, and `RdpBruteForce`.
 
 ### Fixed
 
