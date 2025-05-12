@@ -7,6 +7,11 @@ this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Introduced `myAccount` GraphQL API, which allows users of all roles to query
+  their own account information.
+
 ### Changed
 
 - Updated the GraphQL APIs related to account as the `customer_ids` field was
@@ -41,6 +46,8 @@ this project adheres to
 
 - `graphql::get_trusted_user_agent_list` has been removed as it is no longer
   used.
+- The `theme` and `language` GraphQL APIs are removed. Use the `myAccount`
+  GraphQL API instead to retrieve equivalent information.
 
 ## [0.25.0] - 2025-01-27
 
