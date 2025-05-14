@@ -47,6 +47,22 @@ impl AccountQuery {
         Ok(Account { inner })
     }
 
+    /// Retrieves the current user's account information.
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
+        .or(RoleGuard::new(super::Role::SecurityAdministrator))
+        .or(RoleGuard::new(super::Role::SecurityManager))
+        .or(RoleGuard::new(super::Role::SecurityMonitor))")]
+    async fn my_account(&self, ctx: &Context<'_>) -> Result<Account> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let username = ctx.data::<String>()?;
+        let map = store.account_map();
+        let inner = map
+            .get(username)?
+            .ok_or_else::<async_graphql::Error, _>(|| "User not found".into())?;
+
+        Ok(Account { inner })
+    }
+
     /// A list of accounts.
     #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
         .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
@@ -120,38 +136,6 @@ impl AccountQuery {
         let store = crate::graphql::get_store(ctx).await?;
 
         expiration_time(&store)
-    }
-
-    /// Retrieves the user's language selection by username.
-    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
-        .or(RoleGuard::new(super::Role::SecurityAdministrator))
-        .or(RoleGuard::new(super::Role::SecurityManager))
-        .or(RoleGuard::new(super::Role::SecurityMonitor))")]
-    async fn language(&self, ctx: &Context<'_>) -> Result<Option<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
-        let map = store.account_map();
-
-        let username = ctx.data::<String>()?;
-
-        map.get(username)?
-            .ok_or_else::<async_graphql::Error, _>(|| "Account not found".into())
-            .map(|account| account.language)
-    }
-
-    /// Retrieves the user's screen color theme selection by username.
-    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
-        .or(RoleGuard::new(super::Role::SecurityAdministrator))
-        .or(RoleGuard::new(super::Role::SecurityManager))
-        .or(RoleGuard::new(super::Role::SecurityMonitor))")]
-    async fn theme(&self, ctx: &Context<'_>) -> Result<Option<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
-        let map = store.account_map();
-
-        let username = ctx.data::<String>()?;
-
-        map.get(username)?
-            .ok_or_else::<async_graphql::Error, _>(|| "Account not found".into())
-            .map(|account| account.theme)
     }
 }
 
@@ -913,8 +897,10 @@ fn read_review_admin() -> anyhow::Result<(String, String)> {
 mod tests {
     use std::{env, net::SocketAddr};
 
+    use assert_json_diff::assert_json_eq;
     use async_graphql::Value;
     use review_database::Role;
+    use serde_json::json;
     use serial_test::serial;
 
     use crate::graphql::{
@@ -1201,6 +1187,60 @@ mod tests {
         assert_eq!(username, "u1");
 
         restore_review_admin(original_review_admin);
+    }
+
+    #[tokio::test]
+    async fn my_account() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "username").await;
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "username",
+                        password: "password",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "John Doe",
+                        department: "Security",
+                        language: "en-US"
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "username"}"#);
+
+        let res = schema
+            .execute(
+                r"query {
+                    myAccount {
+                        username
+                        role
+                        name
+                        department
+                        language
+                        customerIds
+                    }
+                }",
+            )
+            .await;
+
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!(
+                {
+                    "myAccount": {
+                        "username": "username",
+                        "role": "SECURITY_ADMINISTRATOR",
+                        "name": "John Doe",
+                        "department": "Security",
+                        "language": "en-US",
+                        "customerIds": ["0"]
+                    }
+            })
+        );
     }
 
     #[tokio::test]
@@ -2069,40 +2109,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn language() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
-        let schema = TestSchema::new_with_params(agent_manager, None, "username").await;
-
-        let res = schema
-            .execute(
-                r#"mutation {
-                    insertAccount(
-                        username: "username",
-                        password: "password",
-                        role: "SECURITY_ADMINISTRATOR",
-                        name: "John Doe",
-                        department: "Security",
-                        language: "en-US"
-                        customerIds: [0]
-                    )
-                }"#,
-            )
-            .await;
-
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "username"}"#);
-
-        let res = schema
-            .execute(
-                r"query {
-                    language
-                }",
-            )
-            .await;
-
-        assert_eq!(res.data.to_string(), r#"{language: "en-US"}"#);
-    }
-
-    #[tokio::test]
     async fn update_language() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
         let schema = TestSchema::new_with_params(agent_manager, None, "username").await;
@@ -2347,41 +2353,6 @@ mod tests {
             res.errors.first().unwrap().message.to_string(),
             "incorrect username or password".to_string()
         );
-    }
-
-    #[tokio::test]
-    async fn theme() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
-        let schema = TestSchema::new_with_params(agent_manager, None, "username").await;
-
-        let res = schema
-            .execute(
-                r#"mutation {
-                    insertAccount(
-                        username: "username",
-                        password: "password",
-                        role: "SECURITY_ADMINISTRATOR",
-                        name: "John Doe",
-                        department: "Security",
-                        language: "en-US",
-                        theme: "dark"
-                        customerIds: [0]
-                    )
-                }"#,
-            )
-            .await;
-
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "username"}"#);
-
-        let res = schema
-            .execute(
-                r"query {
-                    theme
-                }",
-            )
-            .await;
-
-        assert_eq!(res.data.to_string(), r#"{theme: "dark"}"#);
     }
 
     #[tokio::test]
