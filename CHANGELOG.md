@@ -26,6 +26,8 @@ this project adheres to
     `triageResponseList`.
 - Updated `removeTrustedDomain` GraphQL API to `removeTrustedDomains` to support
   multiple removals.
+- Updated review-database to 0.37.0, which fixes event filtering by multiple IP
+  addresses for `ExternalDdos`, `MultiHostPortScan`, and `RdpBruteForce`.
 
 ### Fixed
 
