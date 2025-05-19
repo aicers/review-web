@@ -68,6 +68,8 @@ impl UserAgentMutation {
             };
             map.put(&entry)?;
         }
+
+        apply_trusted_user_agent_list(&store, ctx).await?;
         Ok(true)
     }
 
@@ -84,6 +86,8 @@ impl UserAgentMutation {
         for user_agent in user_agents {
             map.remove(&user_agent)?;
         }
+
+        apply_trusted_user_agent_list(&store, ctx).await?;
         Ok(true)
     }
 
@@ -102,21 +106,9 @@ impl UserAgentMutation {
             user_agent: new,
             updated_at: Utc::now(),
         };
-
         map.update(&old, &new)?;
-        Ok(true)
-    }
 
-    /// Broadcast the trusted user agent list to all Hogs.
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))")]
-    async fn apply_trusted_user_agent(&self, ctx: &Context<'_>) -> Result<bool> {
-        let store = crate::graphql::get_store(ctx).await?;
-        let list = get_trusted_user_agent_list(&store)?;
-        let agent_manager = ctx.data::<BoxedAgentManager>()?;
-        agent_manager
-            .broadcast_trusted_user_agent_list(&list)
-            .await?;
+        apply_trusted_user_agent_list(&store, ctx).await?;
         Ok(true)
     }
 }
@@ -160,6 +152,15 @@ fn get_trusted_user_agent_list(db: &Store) -> Result<Vec<String>> {
         .iter(Direction::Forward, None)
         .map(|res| res.map(|entry| entry.user_agent))
         .collect::<Result<Vec<_>, anyhow::Error>>()?)
+}
+
+async fn apply_trusted_user_agent_list(store: &Store, ctx: &Context<'_>) -> Result<()> {
+    let list = get_trusted_user_agent_list(store)?;
+    let agent_manager = ctx.data::<BoxedAgentManager>()?;
+    agent_manager
+        .broadcast_trusted_user_agent_list(&list)
+        .await
+        .map_err(Into::into)
 }
 
 async fn load(

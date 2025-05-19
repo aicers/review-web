@@ -724,7 +724,7 @@ impl TestSchema {
     async fn execute_stream(
         &self,
         subscription: &str,
-    ) -> impl futures_util::Stream<Item = async_graphql::Response> + use<> {
+    ) -> impl futures_util::Stream<Item = async_graphql::Response> + use<'_> {
         let request: async_graphql::Request = subscription.into();
         self.schema
             .execute_stream(request.data(RoleGuard::Role(Role::SystemAdministrator)))
