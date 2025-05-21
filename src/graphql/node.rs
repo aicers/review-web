@@ -370,11 +370,11 @@ pub fn matches_manager_hostname(hostname: &str) -> bool {
     !manager_hostname.is_empty() && manager_hostname == hostname
 }
 
-fn gen_agent_key(kind: AgentKind, host_name: &str) -> Result<String> {
+fn gen_agent_key(kind: AgentKind, hostname: &str) -> Result<String> {
     match kind {
-        AgentKind::Unsupervised => Ok(format!("{UNSUPERVISED_AGENT}@{host_name}")),
-        AgentKind::Sensor => Ok(format!("{SENSOR_AGENT}@{host_name}")),
-        AgentKind::SemiSupervised => Ok(format!("{SEMI_SUPERVISED_AGENT}@{host_name}")),
+        AgentKind::Unsupervised => Ok(format!("{UNSUPERVISED_AGENT}@{hostname}")),
+        AgentKind::Sensor => Ok(format!("{SENSOR_AGENT}@{hostname}")),
+        AgentKind::SemiSupervised => Ok(format!("{SEMI_SUPERVISED_AGENT}@{hostname}")),
         AgentKind::TimeSeriesGenerator => Err(anyhow::anyhow!("invalid node's agent type").into()),
     }
 }
