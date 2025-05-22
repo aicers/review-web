@@ -365,11 +365,9 @@ impl SamplingPolicyMutation {
             creation_time: chrono::Utc::now(),
         };
 
-        let id = {
-            let store = crate::graphql::get_store(ctx).await?;
-            let map = store.sampling_policy_map();
-            map.put(pol.clone())?
-        };
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.sampling_policy_map();
+        let id = map.put(pol.clone())?;
 
         if immutable {
             let agents = ctx.data::<BoxedAgentManager>()?;

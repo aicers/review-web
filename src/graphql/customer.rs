@@ -136,37 +136,33 @@ impl CustomerMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
-        let (removed_customer_networks, removed) = {
-            let store = crate::graphql::get_store(ctx).await?;
-            let map = store.customer_map();
-            let network_map = store.network_map();
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.customer_map();
+        let network_map = store.network_map();
 
-            let customer_id_hash = agent_keys_by_customer_id(&store)?;
-            let mut removed_customer_networks = Vec::new();
-            let mut removed = Vec::<String>::with_capacity(ids.len());
-            for id in ids {
-                let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-                let key = map.remove(i)?;
-                network_map.remove_customer(i)?;
+        let customer_id_hash = agent_keys_by_customer_id(&store)?;
+        let mut removed_customer_networks = Vec::new();
+        let mut removed = Vec::<String>::with_capacity(ids.len());
+        for id in ids {
+            let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
+            let key = map.remove(i)?;
+            network_map.remove_customer(i)?;
 
-                let name = match String::from_utf8(key) {
-                    Ok(key) => key,
-                    Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
-                };
-                removed.push(name);
+            let name = match String::from_utf8(key) {
+                Ok(key) => key,
+                Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
+            };
+            removed.push(name);
 
-                if let Some(agent_keys) = customer_id_hash.get(&i) {
-                    let network_list = NetworksTargetAgentKeysPair::new(
-                        database::HostNetworkGroup::new(vec![], vec![], vec![]),
-                        agent_keys.clone(),
-                        SEMI_SUPERVISED_AGENT,
-                    );
-                    removed_customer_networks.push(network_list);
-                }
+            if let Some(agent_keys) = customer_id_hash.get(&i) {
+                let network_list = NetworksTargetAgentKeysPair::new(
+                    database::HostNetworkGroup::new(vec![], vec![], vec![]),
+                    agent_keys.clone(),
+                    SEMI_SUPERVISED_AGENT,
+                );
+                removed_customer_networks.push(network_list);
             }
-
-            (removed_customer_networks, removed)
-        };
+        }
 
         if !removed_customer_networks.is_empty() {
             if let Err(e) =
