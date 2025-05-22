@@ -50,17 +50,14 @@ impl TrustedDomainMutation {
         name: String,
         remarks: String,
     ) -> Result<String> {
-        let name = {
-            let store = crate::graphql::get_store(ctx).await?;
-            let map = store.trusted_domain_map();
-            let entry = review_database::TrustedDomain { name, remarks };
-            map.put(&entry)?;
-            entry.name
-        };
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.trusted_domain_map();
+        let entry = review_database::TrustedDomain { name, remarks };
+        map.put(&entry)?;
 
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
         agent_manager.broadcast_trusted_domains().await?;
-        Ok(name)
+        Ok(entry.name)
     }
 
     /// Updates a trusted domain, returning the new value.
@@ -72,18 +69,15 @@ impl TrustedDomainMutation {
         old: TrustedDomainInput,
         new: TrustedDomainInput,
     ) -> Result<String> {
-        let name = {
-            let store = crate::graphql::get_store(ctx).await?;
-            let map = store.trusted_domain_map();
-            let old = review_database::TrustedDomain::from(old);
-            let new = review_database::TrustedDomain::from(new);
-            map.update(&old, &new)?;
-            new.name
-        };
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.trusted_domain_map();
+        let old = review_database::TrustedDomain::from(old);
+        let new = review_database::TrustedDomain::from(new);
+        map.update(&old, &new)?;
 
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
         agent_manager.broadcast_trusted_domains().await?;
-        Ok(name)
+        Ok(new.name)
     }
 
     /// Removes multiple trusted domains, returning the removed values.
