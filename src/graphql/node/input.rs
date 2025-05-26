@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt};
 use anyhow::Context as AnyhowContext;
 use async_graphql::{Error, InputObject, Result, types::ID};
 
-use super::{AgentKind, AgentStatus};
+use super::{AgentKind, AgentStatus, ExternalServiceKind, ExternalServiceStatus};
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, InputObject, PartialEq)]
@@ -67,16 +67,20 @@ pub struct AgentDraftInput {
     pub(super) draft: Option<String>,
 }
 
-#[allow(clippy::module_name_repetitions)]
 #[derive(Clone, InputObject)]
-pub struct GigantoInput {
-    status: AgentStatus,
-    draft: Option<String>,
+pub struct ExternalServiceInput {
+    pub(super) kind: ExternalServiceKind,
+    pub(super) key: String,
+    pub(super) status: ExternalServiceStatus,
+    pub(super) draft: Option<String>,
 }
 
-impl From<GigantoInput> for review_database::Giganto {
-    fn from(input: GigantoInput) -> Self {
+impl From<ExternalServiceInput> for review_database::ExternalService {
+    fn from(input: ExternalServiceInput) -> Self {
         Self {
+            node: u32::MAX,
+            key: input.key,
+            kind: input.kind.into(),
             status: input.status.into(),
             draft: input.draft.and_then(|draft| draft.try_into().ok()),
         }
@@ -91,7 +95,7 @@ pub(super) struct NodeInput {
     pub profile: Option<NodeProfileInput>,
     pub profile_draft: Option<NodeProfileInput>,
     pub agents: Vec<AgentInput>,
-    pub giganto: Option<GigantoInput>,
+    pub external_services: Vec<ExternalServiceInput>,
 }
 
 impl TryFrom<NodeInput> for review_database::NodeUpdate {
@@ -104,7 +108,11 @@ impl TryFrom<NodeInput> for review_database::NodeUpdate {
             profile: input.profile.map(TryInto::try_into).transpose()?,
             profile_draft: input.profile_draft.map(TryInto::try_into).transpose()?,
             agents: input.agents.into_iter().map(Into::into).collect(),
-            giganto: input.giganto.map(Into::into),
+            external_services: input
+                .external_services
+                .into_iter()
+                .map(Into::into)
+                .collect(),
         })
     }
 }
@@ -115,7 +123,7 @@ pub(super) struct NodeDraftInput {
     pub name_draft: String,
     pub profile_draft: Option<NodeProfileInput>,
     pub agents: Option<Vec<AgentDraftInput>>,
-    pub giganto: Option<GigantoInput>,
+    pub external_services: Option<Vec<ExternalServiceInput>>,
 }
 
 pub(super) fn create_draft_update(
@@ -132,7 +140,7 @@ pub(super) fn create_draft_update(
         None
     };
 
-    let old_config_map: HashMap<String, Option<String>> = old
+    let old_agent_config_map: HashMap<String, Option<String>> = old
         .agents
         .iter()
         .map(|agent| (agent.key.clone(), agent.config.clone()))
@@ -144,7 +152,7 @@ pub(super) fn create_draft_update(
             new_agents
                 .into_iter()
                 .map(|new_agent| {
-                    let config = match old_config_map.get(&new_agent.key) {
+                    let config = match old_agent_config_map.get(&new_agent.key) {
                         Some(config) => match config.as_ref() {
                             Some(c) => Some(c.clone().try_into().map_err(|_| {
                                 Error::new(format!(
@@ -181,7 +189,34 @@ pub(super) fn create_draft_update(
         .transpose()?
         .unwrap_or_default();
 
-    let giganto: Option<review_database::Giganto> = new.giganto.map(Into::into);
+    let external_services: Vec<review_database::ExternalService> = new
+        .external_services
+        .map(|new_external_services| {
+            new_external_services
+                .into_iter()
+                .map(|new_external_service| {
+                    let draft = match new_external_service.draft {
+                        Some(draft) => Some(draft.try_into().map_err(|_| {
+                            Error::new(format!(
+                                "Failed to convert the draft to TOML for the external service: {}",
+                                new_external_service.key
+                            ))
+                        })?),
+                        None => None,
+                    };
+
+                    Ok(review_database::ExternalService {
+                        node: u32::MAX,
+                        key: new_external_service.key,
+                        kind: new_external_service.kind.into(),
+                        status: new_external_service.status.into(),
+                        draft,
+                    })
+                })
+                .collect::<Result<Vec<_>, async_graphql::Error>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
 
     Ok(review_database::NodeUpdate {
         name: Some(old.name.clone()),
@@ -189,6 +224,6 @@ pub(super) fn create_draft_update(
         profile: old.profile.clone().map(TryInto::try_into).transpose()?,
         profile_draft,
         agents,
-        giganto,
+        external_services,
     })
 }

@@ -47,9 +47,25 @@ pub enum AgentKind {
     TimeSeriesGenerator,
 }
 
+#[derive(Clone, Deserialize, PartialEq, Serialize, Copy, Eq, Enum)]
+#[graphql(remote = "database::ExternalServiceKind")]
+pub enum ExternalServiceKind {
+    DataStore,
+    TiContainer,
+}
+
 #[derive(Clone, PartialEq, Deserialize, Serialize, Enum, Copy, Eq)]
 #[graphql(remote = "database::AgentStatus")]
 pub enum AgentStatus {
+    Disabled,
+    Enabled,
+    ReloadFailed,
+    Unknown,
+}
+
+#[derive(Clone, PartialEq, Deserialize, Serialize, Enum, Copy, Eq)]
+#[graphql(remote = "database::ExternalServiceStatus")]
+pub enum ExternalServiceStatus {
     Disabled,
     Enabled,
     ReloadFailed,
@@ -73,23 +89,29 @@ impl From<&database::Agent> for Agent {
             key: input.key.clone(),
             kind: input.kind.into(),
             status: input.status.into(),
-            config: input.config.clone().map(|c| c.to_string()),
-            draft: input.draft.clone().map(|c| c.to_string()),
+            config: input.config.as_ref().map(std::string::ToString::to_string),
+            draft: input.draft.as_ref().map(std::string::ToString::to_string),
         }
     }
 }
 
 #[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
-pub struct Giganto {
-    pub status: AgentStatus,
+pub struct ExternalService {
+    pub node: u32,
+    pub key: String,
+    pub kind: ExternalServiceKind,
+    pub status: ExternalServiceStatus,
     pub draft: Option<String>,
 }
 
-impl From<database::Giganto> for Giganto {
-    fn from(input: database::Giganto) -> Self {
+impl From<&database::ExternalService> for ExternalService {
+    fn from(input: &database::ExternalService) -> Self {
         Self {
+            node: input.node,
+            key: input.key.clone(),
+            kind: input.kind.into(),
             status: input.status.into(),
-            draft: input.draft.map(|c| c.to_string()),
+            draft: input.draft.as_ref().map(std::string::ToString::to_string),
         }
     }
 }
@@ -145,8 +167,12 @@ impl Node {
         self.inner.agents.iter().map(Into::into).collect()
     }
 
-    async fn giganto(&self) -> Option<Giganto> {
-        self.inner.giganto.clone().map(Into::into)
+    async fn external_services(&self) -> Vec<ExternalService> {
+        self.inner
+            .external_services
+            .iter()
+            .map(Into::into)
+            .collect()
     }
 }
 
@@ -188,6 +214,15 @@ pub struct AgentSnapshot {
     draft: Option<String>,
 }
 
+#[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
+pub struct ExternalServiceSnapshot {
+    kind: ExternalServiceKind,
+    stored_status: ExternalServiceStatus,
+
+    /// Serialized TOML string containing the draft configuration of the external service.
+    draft: Option<String>,
+}
+
 #[derive(Clone, Deserialize, Serialize, SimpleObject)]
 #[graphql(complex)]
 pub(super) struct NodeStatus {
@@ -204,9 +239,6 @@ pub(super) struct NodeStatus {
 
     profile: Option<NodeProfile>,
     profile_draft: Option<NodeProfile>,
-
-    /// The draft of the Giganto module, associated with the node.
-    giganto_draft: Option<String>,
 
     /// The average CPU usage in percent.
     cpu_usage: Option<f32>,
@@ -237,6 +269,10 @@ pub(super) struct NodeStatus {
     /// The list of agents running on the node. `AgentSnapshot` contains the agent's kind, stored
     /// status in the database, and config and draft configurations.
     agents: Vec<AgentSnapshot>,
+
+    /// The list of external services running on the node. `ExternalServiceSnapshot` contains the
+    /// external service's kind, stored status in the database, and draft configurations.
+    external_services: Vec<ExternalServiceSnapshot>,
 }
 
 #[ComplexObject]
@@ -285,16 +321,22 @@ impl NodeStatus {
             })
             .collect();
 
+        let external_services = node
+            .external_services
+            .iter()
+            .map(|agent| ExternalServiceSnapshot {
+                kind: agent.kind.into(),
+                stored_status: agent.status.into(),
+                draft: agent.draft.as_ref().map(ToString::to_string),
+            })
+            .collect();
+
         Self {
             id: node.id,
             name: node.name,
             name_draft: node.name_draft,
             profile: node.profile.as_ref().map(Into::into),
             profile_draft: node.profile_draft.as_ref().map(Into::into),
-            giganto_draft: node
-                .giganto
-                .as_ref()
-                .and_then(|g| g.draft.as_ref().map(ToString::to_string)),
             cpu_usage: resource_usage.as_ref().map(|x| x.cpu_usage),
             total_memory: resource_usage.as_ref().map(|x| x.total_memory),
             used_memory: resource_usage.as_ref().map(|x| x.used_memory),
@@ -303,6 +345,7 @@ impl NodeStatus {
             ping,
             manager,
             agents,
+            external_services,
         }
     }
 }

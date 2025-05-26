@@ -13,7 +13,7 @@ use review_database::{Direction, Store};
 use super::{
     super::{Role, RoleGuard},
     Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, gen_agent_key,
-    input::{AgentDraftInput, GigantoInput, NodeDraftInput},
+    input::{AgentDraftInput, ExternalServiceInput, NodeDraftInput},
 };
 use crate::graphql::query_with_constraints;
 
@@ -48,7 +48,7 @@ impl NodeQuery {
 
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.node_map();
-        let Some((node, _invalid_agents)) = map.get_by_id(i)? else {
+        let Some((node, _invalid_agents, _invalid_external_services)) = map.get_by_id(i)? else {
             return Err("no such node".into());
         };
         Ok(node.into())
@@ -70,7 +70,7 @@ impl NodeMutation {
         description: String,
         hostname: String,
         agents: Vec<AgentDraftInput>,
-        giganto: Option<GigantoInput>,
+        external_services: Vec<ExternalServiceInput>,
     ) -> Result<ID> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.node_map();
@@ -103,6 +103,29 @@ impl NodeMutation {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        let external_services: Vec<review_database::ExternalService> = external_services
+            .into_iter()
+            .map(|new_external_service| {
+                let draft = match new_external_service.draft {
+                    Some(draft) => Some(draft.try_into().map_err(|_| {
+                        Error::new(format!(
+                            "Failed to convert the draft to TOML for the external service: {}",
+                            new_external_service.key
+                        ))
+                    })?),
+                    None => None,
+                };
+
+                Ok::<_, Error>(review_database::ExternalService {
+                    node: u32::MAX,
+                    key: new_external_service.key,
+                    kind: new_external_service.kind.into(),
+                    status: new_external_service.status.into(),
+                    draft,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         let value = review_database::Node {
             id: u32::MAX,
             name: name.clone(),
@@ -114,7 +137,7 @@ impl NodeMutation {
                 hostname: hostname.clone(),
             }),
             agents,
-            giganto: giganto.map(Into::into),
+            external_services,
             creation_time: Utc::now(),
         };
         let id = map.put(value)?;
@@ -137,7 +160,7 @@ impl NodeMutation {
         let mut removed = Vec::<String>::with_capacity(ids.len());
         for id in ids {
             let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-            let (key, _invalid_agents) = map.remove(i)?;
+            let (key, _invalid_agents, _invalid_external_services) = map.remove(i)?;
 
             let name = match String::from_utf8(key) {
                 Ok(key) => key,
@@ -245,8 +268,8 @@ mod tests {
                             kind: SENSOR
                             status: ENABLED
                             draft: "test = 'toml'"
-                        }]
-                        giganto: null
+                        }],
+                        externalServices: []
                     )
                 }"#,
             )
@@ -281,7 +304,10 @@ mod tests {
                         config
                         draft
                     }
-                    giganto {
+                    externalServices {
+                        node
+                        key
+                        kind
                         status
                         draft
                     }
@@ -316,7 +342,7 @@ mod tests {
                         "config": null,
                         "draft": "test = 'toml'"
                     }],
-                    "giganto": null
+                    "externalServices": [],
                 }
             })
         );
@@ -352,7 +378,7 @@ mod tests {
                                     draft: "test = 'toml'"
                                 }
                             ],
-                            giganto: null,
+                            externalServices: []
                         },
                         new: {
                             nameDraft: "AdminNode",
@@ -375,7 +401,7 @@ mod tests {
                                     draft: "test = 'changed_toml'"
                                 }
                             ],
-                            giganto: null,
+                            externalServices: []
                         }
                     )
                 }"#,
@@ -411,6 +437,13 @@ mod tests {
                         config
                         draft
                     }
+                    externalServices {
+                        node
+                        key
+                        kind
+                        status
+                        draft
+                    }
                 }}"#,
             )
             .await;
@@ -442,6 +475,7 @@ mod tests {
                         "config": null,
                         "draft": "test = 'changed_toml'"
                     }],
+                    "externalServices": [],
                 }
             })
         );
@@ -477,13 +511,13 @@ mod tests {
                                 draft: null
                             }
                         ],
-                        giganto: null,
+                        externalServices: []
                     },
                     new: {
                         nameDraft: "admin node",
                         profileDraft: null,
                         agents: null,
-                        giganto: null,
+                        externalServices: null,
                     }
                 )
             }"#,
@@ -533,8 +567,8 @@ mod tests {
                             key: "sensor"
                             kind: SENSOR
                             status: ENABLED
-                        }]
-                        giganto: null
+                        }],
+                        externalServices: []
                     )
                 }"#,
             )
@@ -567,7 +601,10 @@ mod tests {
                         kind
                         status
                     }
-                    giganto {
+                    externalServices {
+                        node
+                        key
+                        kind
                         status
                         draft
                     }
@@ -598,7 +635,7 @@ mod tests {
                         "kind": "SENSOR",
                         "status": "ENABLED",
                     }],
-                    "giganto": null
+                    "externalServices": [],
                 }
             })
         );
@@ -634,7 +671,7 @@ mod tests {
                                     draft: null
                                 }
                             ],
-                            giganto: null,
+                            externalServices: []
                         },
                         new: {
                             nameDraft: "AdminNode",
@@ -652,7 +689,7 @@ mod tests {
                                     draft: null
                                 }
                             ],
-                            giganto: null,
+                            externalServices: null
                         }
                     )
                 }"#,
@@ -729,8 +766,8 @@ mod tests {
                             kind: SEMI_SUPERVISED,
                             status: ENABLED,
                             draft: ""
-                        }]
-                        giganto: null
+                        }],
+                        externalServices: []
                     )
                 }"#,
             )
@@ -770,7 +807,7 @@ mod tests {
                                 draft: ""
                             }
                         ],
-                        giganto: null
+                        externalServices: []
                     },
                     new: {
                         nameDraft: "admin node",
@@ -787,7 +824,7 @@ mod tests {
                                 draft: ""
                             }
                         ],
-                        giganto: null
+                        externalServices: null
                     }
                 )
             }"#,
@@ -818,7 +855,7 @@ mod tests {
                                 draft: ""
                             }
                         ],
-                        giganto: null
+                        externalServices: []
                     },
                     new: {
                         nameDraft: "admin node",
@@ -841,7 +878,7 @@ mod tests {
                                 draft: ""
                             }
                         ],
-                        giganto: null
+                        externalServices: null
                     }
                 )
             }"#,
@@ -871,6 +908,13 @@ mod tests {
                         kind
                         status
                         config
+                        draft
+                    }
+                    externalServices {
+                        node
+                        key
+                        kind
+                        status
                         draft
                     }
                 }
@@ -906,7 +950,8 @@ mod tests {
                             "config": null,
                             "draft": ""
                         }
-                    ]
+                    ],
+                    "externalServices": [],
                 }
             })
         );
@@ -941,8 +986,8 @@ mod tests {
                             kind: SEMI_SUPERVISED,
                             status: ENABLED,
                             draft: ""
-                        }]
-                        giganto: null
+                        }],
+                        externalServices: []
                     )
                 }"#,
             )
@@ -982,7 +1027,7 @@ mod tests {
                                 draft: "test=0"
                             }
                         ],
-                        giganto: null
+                        externalServices: []
                     },
                     new: {
                         nameDraft: "admin node",
@@ -1005,7 +1050,7 @@ mod tests {
                                 draft: "test=1"
                             }
                         ],
-                        giganto: null
+                        externalServices: null
                     }
                 )
             }"#,
@@ -1037,6 +1082,13 @@ mod tests {
                         kind
                         status
                         config
+                        draft
+                    }
+                    externalServices {
+                        node
+                        key
+                        kind
+                        status
                         draft
                     }
                 }
@@ -1072,7 +1124,8 @@ mod tests {
                             "config": null,
                             "draft": ""
                         }
-                    ]
+                    ],
+                    "externalServices": [],
                 }
             })
         );
@@ -1106,7 +1159,7 @@ mod tests {
                                 draft: ""
                             }
                         ],
-                        giganto: null
+                        externalServices: []
                     },
                     new: {
                         nameDraft: "admin node",
@@ -1129,7 +1182,7 @@ mod tests {
                                 draft: ""
                             }
                         ],
-                        giganto: null
+                        externalServices: null
                     }
                 )
             }"#,
@@ -1161,6 +1214,13 @@ mod tests {
                         kind
                         status
                         config
+                        draft
+                    }
+                    externalServices {
+                        node
+                        key
+                        kind
+                        status
                         draft
                     }
                 }
@@ -1196,7 +1256,8 @@ mod tests {
                             "config": null,
                             "draft": ""
                         }
-                    ]
+                    ],
+                    "externalServices": [],
                 }
             })
         );
