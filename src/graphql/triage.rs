@@ -4,6 +4,7 @@ mod policy;
 pub(super) mod response;
 
 use async_graphql::{Enum, ID, InputObject, Object};
+use attrievent::attribute as attr;
 use chrono::{DateTime, Utc};
 use review_database as database;
 use serde::Deserialize;
@@ -73,11 +74,39 @@ enum TiCmpKind {
 }
 
 #[derive(Clone, Copy, Enum, Eq, PartialEq, Deserialize)]
+#[graphql(remote = "attr::RawEventKind")]
+pub enum RawEventKind {
+    Bootp,
+    Conn,
+    Dhcp,
+    Dns,
+    Ftp,
+    Http,
+    Kerberos,
+    Ldap,
+    Log,
+    Mqtt,
+    Network,
+    Nfs,
+    Ntlm,
+    Rdp,
+    Smb,
+    Smtp,
+    Ssh,
+    Tls,
+    Window,
+}
+
+#[derive(Clone, Copy, Enum, Eq, PartialEq, Deserialize)]
 #[graphql(remote = "database::ValueKind")]
 pub enum ValueKind {
     String,
     Integer,
+    UInteger,
+    Vector,
     Float,
+    IpAddr,
+    Bool,
 }
 
 #[derive(Clone, Copy, Enum, Eq, PartialEq, Deserialize)]
@@ -158,6 +187,10 @@ struct PacketAttr<'a> {
 
 #[Object]
 impl PacketAttr<'_> {
+    async fn raw_event_kind(&self) -> RawEventKind {
+        self.inner.raw_event_kind.into()
+    }
+
     async fn attr_name(&self) -> &str {
         &self.inner.attr_name
     }
@@ -258,6 +291,7 @@ impl From<&TiInput> for database::Ti {
 
 #[derive(Clone, InputObject)]
 pub(super) struct PacketAttrInput {
+    raw_event_kind: RawEventKind,
     attr_name: String,
     value_kind: ValueKind,
     cmp_kind: AttrCmpKind,
@@ -324,6 +358,7 @@ impl From<TriagePolicyInput> for database::TriagePolicyUpdate {
 impl From<&PacketAttrInput> for database::PacketAttr {
     fn from(p: &PacketAttrInput) -> Self {
         Self {
+            raw_event_kind: p.raw_event_kind.into(),
             attr_name: p.attr_name.clone(),
             value_kind: p.value_kind.into(),
             cmp_kind: p.cmp_kind.into(),
@@ -362,13 +397,15 @@ mod tests {
                             weight: 0.5
                         }]
                         packetAttr: [{
-                            attrName: "conn-resp_pkts"
+                            rawEventKind: CONN
+                            attrName: "Packets Received"
                             valueKind: STRING
                             cmpKind: CONTAIN
                             firstValue: [4, 80, 79, 83, 84]
                             weight: 0.5
                         }, {
-                            attrName: "conn-resp_pkts"
+                            rawEventKind: CONN
+                            attrName: "Packets Received"
                             valueKind: INTEGER
                             cmpKind: GREATER_OR_EQUAL
                             firstValue: [251, 88, 2]
@@ -414,13 +451,15 @@ mod tests {
                                 weight: 0.5
                             }]
                             packetAttr: [{
-                                attrName: "conn-resp_pkts"
+                                rawEventKind: CONN
+                                attrName: "Packets Received"
                                 valueKind: STRING
                                 cmpKind: CONTAIN
                                 firstValue: [4, 80, 79, 83, 84]
                                 weight: 0.5
                             }, {
-                                attrName: "conn-resp_pkts"
+                                rawEventKind: CONN
+                                attrName: "Packets Received"
                                 valueKind: INTEGER
                                 cmpKind: GREATER_OR_EQUAL
                                 firstValue: [251, 88, 2]
@@ -455,13 +494,15 @@ mod tests {
                                 weight: 0.5
                             }]
                             packetAttr: [{
-                                attrName: "conn-resp_pkts"
+                                rawEventKind: CONN
+                                attrName: "Packets Received"
                                 valueKind: STRING
                                 cmpKind: CONTAIN
                                 firstValue: [4, 80, 79, 83, 84]
                                 weight: 0.5
                             }, {
-                                attrName: "conn-resp_pkts"
+                                rawEventKind: CONN
+                                attrName: "Packets Received"
                                 valueKind: INTEGER
                                 cmpKind: GREATER
                                 firstValue: [251, 88, 2]

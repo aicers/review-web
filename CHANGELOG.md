@@ -56,6 +56,18 @@ this project adheres to
     instead of just the new password.
   - Both APIs now validate that the new password is different from the current
     password and reject changes that attempt to reuse the current password.
+- Modified code related to the packet attribute triage. The scoring
+  functionality for packet attribute triage was previously not implemented, but
+  is now correctly supported on the review-database side. To reflect this,
+  the related code has been updated accordingly.
+  - A new field `raw_event_kind` of type `RawEventKind` has been added to `PacketAttrInput`.
+  - The same field has also been added as a return field to `PacketAttr`, which
+    is one of the types used in triage-related GraphQL API queries.
+  - Introduced new enum variants (`UInteger`, `Vector`, `IpAddr`, `Bool`) to the
+    `ValueKind` enum for strict type matching of packet attributes.
+  - This changes affects GraphQL APIs such as `insertTriagePolicy`,
+    `updateTriagePolicy` , `triagePolicyList`, and `triagePolicy`. They may
+    introduce breaking changes for clients relying on the previous GraphQL schema.
 
 ### Fixed
 
