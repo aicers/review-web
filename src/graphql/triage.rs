@@ -4,7 +4,6 @@ mod policy;
 pub(super) mod response;
 
 use async_graphql::{Enum, ID, InputObject, Object};
-use attrievent::attribute as attr;
 use chrono::{DateTime, Utc};
 use review_database as database;
 use serde::Deserialize;
@@ -74,7 +73,7 @@ enum TiCmpKind {
 }
 
 #[derive(Clone, Copy, Enum, Eq, PartialEq, Deserialize)]
-#[graphql(remote = "attr::RawEventKind")]
+#[graphql(remote = "database::RawEventKind")]
 pub enum RawEventKind {
     Bootp,
     Conn,
