@@ -92,14 +92,12 @@ impl NodeControlMutation {
         }
 
         if let Some(ref target_agents) = apply_scope.agents {
-            let hostname = {
-                let store = crate::graphql::get_store(ctx).await?;
-                let node_map = store.node_map();
-                let (node, _) = node_map.get_by_id(i)?.ok_or_else(|| {
-                    async_graphql::Error::new(format!("Node with ID {i} not found"))
-                })?;
-                node.profile.map(|p| p.hostname).unwrap_or_default()
-            };
+            let store = crate::graphql::get_store(ctx).await?;
+            let node_map = store.node_map();
+            let (node, _) = node_map
+                .get_by_id(i)?
+                .ok_or_else(|| async_graphql::Error::new(format!("Node with ID {i} not found")))?;
+            let hostname = node.profile.map(|p| p.hostname).unwrap_or_default();
 
             if hostname.is_empty() {
                 info!(
