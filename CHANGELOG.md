@@ -33,6 +33,15 @@ this project adheres to
   multiple removals.
 - Updated review-database to 0.37.0, which fixes event filtering by multiple IP
   addresses for `ExternalDdos`, `MultiHostPortScan`, and `RdpBruteForce`.
+- Changed behavior of blocklist, allowlist and trusted user agents updates to
+  automatically broadcast without manual apply.
+  - As a result of this change, the following GraphQL APIs used for manual apply
+    have been removed: `applyBlockNetworks`, `applyAllowNetworks`, `applyTrustedUserAgent`
+  - The following GraphQL APIs have been updated to immediately broadcast
+    changes, without requiring a separate apply step: `insertAllowNetwork`,
+    `removeAllowNetworks`, `updateAllowNetwork`, `insertBlockNetwork`,
+    `removeBlockNetworks`, `updateBlockNetwork`, `insertTrustedUserAgents`,
+    `removeTrustedUserAgents`, `updateTrustedUserAgent`
 
 ### Fixed
 
