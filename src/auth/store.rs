@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
+use review_database::{Direction, Iterable};
 
-use super::AuthError;
+use super::{AuthError, decode_token};
 use crate::Store;
 
 /// Inserts a token into the store.
@@ -37,4 +38,28 @@ pub(super) fn token_exists_in_store(
         .access_token_map()
         .contains(username, token)
         .map_err(|_| AuthError::InvalidToken("Token not found in the database".into()))
+}
+
+/// Revokes all expired tokens for a specific user from the store.
+///
+/// # Errors
+///
+/// Returns an error if the token deletion from the store fails.
+pub fn revoke_expired_tokens(store: &Store, expiry_cutoff: i64, username: &str) -> Result<()> {
+    let access_token_map = store.access_token_map();
+    let target_tokens = access_token_map
+        .iter(Direction::Forward, Some(username.as_bytes()))
+        .filter_map(|res| {
+            res.ok().and_then(|access_token| {
+                decode_token(&access_token.token)
+                    .ok()
+                    .and_then(|claims| (claims.exp <= expiry_cutoff).then_some(access_token.token))
+            })
+        })
+        .collect::<Vec<String>>();
+
+    for token in target_tokens {
+        access_token_map.revoke(username, &token)?;
+    }
+    Ok(())
 }

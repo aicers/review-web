@@ -34,6 +34,16 @@ this project adheres to
   all input agents are successfully deleted, or an error message if any agents
   could not be removed. Even in case of an error, `apply_allow_networks` is called
   to apply the removed agents.
+- Improved max parallel sessions logic in the `signIn` and `signInWithNewPassword`
+  APIs to exclude expired JWTs when evaluating active sessions.
+  - Only non-expired JWT tokens are now considered when checking session limits.
+  - Expired JWT tokens are now automatically revoked after successful sign-in
+    using the `revoke_expired_tokens` function.
+  - The `Validation.validate_exp` option within `decode_token` was set to false.
+    This change enables the decoding of expired tokens—a capability previously
+    blocked by the `jsonwebtoken` crate's default expiration check—thereby
+    allowing the `revoke_expired_tokens` function to access necessary token
+    information for deletion.
 
 ### Fixed
 

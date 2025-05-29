@@ -20,7 +20,10 @@ use tracing::info;
 
 use self::username_validation::validate_and_normalize_username;
 use super::{IpAddress, RoleGuard, cluster::try_id_args_into_ints};
-use crate::auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in};
+use crate::auth::{
+    create_token, decode_token, insert_token, revoke_expired_tokens, revoke_token,
+    update_jwt_expires_in,
+};
 use crate::graphql::query_with_constraints;
 
 #[allow(clippy::module_name_repetitions)]
@@ -562,12 +565,13 @@ impl AccountMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let account_map = store.account_map();
         let client_ip = get_client_ip(ctx);
+        let expiry_cutoff = Utc::now().timestamp();
 
         if let Some(mut account) = account_map.get(&normalized_username)? {
             validate_password(&account, &normalized_username, &password)?;
             validate_last_signin_time(&account, &normalized_username)?;
             validate_allow_access_from(&account, client_ip, &normalized_username)?;
-            validate_max_parallel_sessions(&account, &store, &normalized_username)?;
+            validate_max_parallel_sessions(&account, &store, &normalized_username, expiry_cutoff)?;
 
             sign_in_actions(
                 &mut account,
@@ -575,6 +579,7 @@ impl AccountMutation {
                 &account_map,
                 client_ip,
                 &normalized_username,
+                expiry_cutoff,
             )
         } else {
             info!("{normalized_username} is not a valid username");
@@ -602,11 +607,12 @@ impl AccountMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let account_map = store.account_map();
         let client_ip = get_client_ip(ctx);
+        let expiry_cutoff = Utc::now().timestamp();
 
         if let Some(mut account) = account_map.get(&normalized_username)? {
             validate_password(&account, &normalized_username, &password)?;
             validate_allow_access_from(&account, client_ip, &normalized_username)?;
-            validate_max_parallel_sessions(&account, &store, &normalized_username)?;
+            validate_max_parallel_sessions(&account, &store, &normalized_username, expiry_cutoff)?;
             validate_update_new_password(&password, &new_password, &normalized_username)?;
 
             account.update_password(&new_password)?;
@@ -617,6 +623,7 @@ impl AccountMutation {
                 &account_map,
                 client_ip,
                 &normalized_username,
+                expiry_cutoff,
             )
         } else {
             info!("{normalized_username} is not a valid username");
@@ -934,21 +941,17 @@ fn validate_max_parallel_sessions(
     account: &types::Account,
     store: &Store,
     username: &str,
+    expiry_cutoff: i64,
 ) -> Result<()> {
     if let Some(max_parallel_sessions) = account.max_parallel_sessions {
         let access_token_map = store.access_token_map();
         let count = access_token_map
             .iter(Direction::Forward, Some(username.as_bytes()))
-            .filter_map(|res| {
-                if let Ok(access_token) = res {
-                    if access_token.username == username {
-                        Some(access_token)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+            .filter_map(Result::ok)
+            .filter(|access_token| {
+                access_token.username == username
+                    && decode_token(&access_token.token)
+                        .is_ok_and(|claims| claims.exp > expiry_cutoff)
             })
             .count();
         if count >= max_parallel_sessions as usize {
@@ -973,6 +976,7 @@ fn sign_in_actions(
     account_map: &Table<types::Account>,
     client_ip: Option<SocketAddr>,
     username: &str,
+    expiry_cutoff: i64,
 ) -> Result<AuthPayload> {
     let (token, expiration_time) =
         create_token(account.username.clone(), account.role.to_string())?;
@@ -980,6 +984,7 @@ fn sign_in_actions(
     account_map.put(account)?;
 
     insert_token(store, &token, username)?;
+    revoke_expired_tokens(store, expiry_cutoff, username)?;
 
     if let Some(socket) = client_ip {
         info!("{username} signed in from IP: {}", socket.ip());
