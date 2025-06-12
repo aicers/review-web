@@ -58,7 +58,7 @@ impl FilterMutation {
         sensors: Option<Vec<ID>>,
         os: Option<Vec<ID>>,
         devices: Option<Vec<ID>>,
-        host_names: Option<Vec<String>>,
+        hostnames: Option<Vec<String>>,
         user_ids: Option<Vec<String>>,
         user_names: Option<Vec<String>>,
         user_departments: Option<Vec<String>>,
@@ -95,7 +95,7 @@ impl FilterMutation {
             sensors: sensors.map(|values| values.into_iter().map(Into::into).collect::<Vec<_>>()),
             os: os.map(|values| values.into_iter().map(Into::into).collect::<Vec<_>>()),
             devices: devices.map(|values| values.into_iter().map(Into::into).collect::<Vec<_>>()),
-            host_names,
+            hostnames,
             user_ids,
             user_names,
             user_departments,
@@ -333,9 +333,9 @@ impl Filter {
             .map(|devices| devices.iter().map(Into::into).collect::<Vec<_>>())
     }
 
-    async fn host_names(&self) -> Option<Vec<&str>> {
+    async fn hostnames(&self) -> Option<Vec<&str>> {
         self.inner
-            .host_names
+            .hostnames
             .as_ref()
             .map(|names| names.iter().map(String::as_str).collect())
     }
@@ -443,7 +443,7 @@ impl TryFrom<FilterInput> for database::Filter {
             devices: input
                 .devices
                 .map(|values| values.into_iter().map(Into::into).collect()),
-            host_names: input.host_names,
+            hostnames: input.hostnames,
             user_ids: input.user_ids,
             user_names: input.user_names,
             user_departments: input.user_departments,
@@ -482,7 +482,7 @@ impl PartialEq<FilterInput> for &database::Filter {
             && cmp_option_vec_string_with_id(self.sensors.as_ref(), rhs.sensors.as_ref())
             && cmp_option_vec_string_with_id(self.os.as_ref(), rhs.os.as_ref())
             && cmp_option_vec_string_with_id(self.devices.as_ref(), rhs.devices.as_ref())
-            && self.host_names == rhs.host_names
+            && self.hostnames == rhs.hostnames
             && self.user_ids == rhs.user_ids
             && self.user_names == rhs.user_names
             && self.user_departments == rhs.user_departments
@@ -527,7 +527,7 @@ struct FilterInput {
     sensors: Option<Vec<ID>>,
     os: Option<Vec<ID>>,
     devices: Option<Vec<ID>>,
-    host_names: Option<Vec<String>>,
+    hostnames: Option<Vec<String>>,
     user_ids: Option<Vec<String>>,
     user_names: Option<Vec<String>>,
     user_departments: Option<Vec<String>>,

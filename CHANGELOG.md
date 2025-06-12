@@ -33,6 +33,8 @@ this project adheres to
   multiple removals.
 - Updated review-database to 0.37.0, which fixes event filtering by multiple IP
   addresses for `ExternalDdos`, `MultiHostPortScan`, and `RdpBruteForce`.
+- Renamed `host_names` field to `hostnames` in Filter GraphQL schema to align
+  with database naming convention.
 
 ### Fixed
 
