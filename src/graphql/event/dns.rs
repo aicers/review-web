@@ -441,12 +441,12 @@ impl From<database::CryptocurrencyMiningPool> for CryptocurrencyMiningPool {
     }
 }
 
-pub(super) struct BlockListDns {
-    inner: database::BlockListDns,
+pub(super) struct BlocklistDns {
+    inner: database::BlocklistDns,
 }
 
 #[Object]
-impl BlockListDns {
+impl BlocklistDns {
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -576,8 +576,8 @@ impl BlockListDns {
     }
 }
 
-impl From<database::BlockListDns> for BlockListDns {
-    fn from(inner: database::BlockListDns) -> Self {
+impl From<database::BlocklistDns> for BlocklistDns {
+    fn from(inner: database::BlocklistDns) -> Self {
         Self { inner }
     }
 }

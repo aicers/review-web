@@ -43,29 +43,29 @@ use tracing::{error, warn};
 
 pub(super) use self::group::EventGroupQuery;
 use self::{
-    bootp::BlockListBootp,
-    conn::{BlockListConn, ExternalDdos, MultiHostPortScan, PortScan},
-    dcerpc::BlockListDceRpc,
-    dhcp::BlockListDhcp,
-    dns::{BlockListDns, CryptocurrencyMiningPool, DnsCovertChannel, LockyRansomware},
-    ftp::{BlockListFtp, FtpBruteForce, FtpPlainText},
+    bootp::BlocklistBootp,
+    conn::{BlocklistConn, ExternalDdos, MultiHostPortScan, PortScan},
+    dcerpc::BlocklistDceRpc,
+    dhcp::BlocklistDhcp,
+    dns::{BlocklistDns, CryptocurrencyMiningPool, DnsCovertChannel, LockyRansomware},
+    ftp::{BlocklistFtp, FtpBruteForce, FtpPlainText},
     http::{
-        BlockListHttp, DomainGenerationAlgorithm, HttpThreat, NonBrowser, RepeatedHttpSessions,
+        BlocklistHttp, DomainGenerationAlgorithm, HttpThreat, NonBrowser, RepeatedHttpSessions,
         TorConnection,
     },
-    kerberos::BlockListKerberos,
-    ldap::{BlockListLdap, LdapBruteForce, LdapPlainText},
+    kerberos::BlocklistKerberos,
+    ldap::{BlocklistLdap, LdapBruteForce, LdapPlainText},
     log::ExtraThreat,
-    mqtt::BlockListMqtt,
+    mqtt::BlocklistMqtt,
     network::NetworkThreat,
-    nfs::BlockListNfs,
-    ntlm::BlockListNtlm,
-    rdp::{BlockListRdp, RdpBruteForce},
-    smb::BlockListSmb,
-    smtp::BlockListSmtp,
-    ssh::BlockListSsh,
+    nfs::BlocklistNfs,
+    ntlm::BlocklistNtlm,
+    rdp::{BlocklistRdp, RdpBruteForce},
+    smb::BlocklistSmb,
+    smtp::BlocklistSmtp,
+    ssh::BlocklistSsh,
     sysmon::WindowsThreat,
-    tls::{BlockListTls, SuspiciousTlsTraffic},
+    tls::{BlocklistTls, SuspiciousTlsTraffic},
 };
 use super::{
     Role, RoleGuard,
@@ -146,23 +146,23 @@ async fn fetch_events(
     let mut non_browser_time = start_time;
     let mut external_ddos_time = start_time;
     let mut cryptocurrency_time = start_time;
-    let mut block_list_bootp_time = start_time;
-    let mut block_list_conn_time = start_time;
-    let mut block_list_dhcp_time = start_time;
-    let mut block_list_dns_time = start_time;
-    let mut block_list_dcerpc_time = start_time;
-    let mut block_list_ftp_time = start_time;
-    let mut block_list_http_time = start_time;
-    let mut block_list_kerberos_time = start_time;
-    let mut block_list_ldap_time = start_time;
-    let mut block_list_mqtt_time = start_time;
-    let mut block_list_nfs_time = start_time;
-    let mut block_list_ntlm_time = start_time;
-    let mut block_list_rdp_time = start_time;
-    let mut block_list_smb_time = start_time;
-    let mut block_list_smtp_time = start_time;
-    let mut block_list_ssh_time = start_time;
-    let mut block_list_tls_time = start_time;
+    let mut blocklist_bootp_time = start_time;
+    let mut blocklist_conn_time = start_time;
+    let mut blocklist_dhcp_time = start_time;
+    let mut blocklist_dns_time = start_time;
+    let mut blocklist_dcerpc_time = start_time;
+    let mut blocklist_ftp_time = start_time;
+    let mut blocklist_http_time = start_time;
+    let mut blocklist_kerberos_time = start_time;
+    let mut blocklist_ldap_time = start_time;
+    let mut blocklist_mqtt_time = start_time;
+    let mut blocklist_nfs_time = start_time;
+    let mut blocklist_ntlm_time = start_time;
+    let mut blocklist_rdp_time = start_time;
+    let mut blocklist_smb_time = start_time;
+    let mut blocklist_smtp_time = start_time;
+    let mut blocklist_ssh_time = start_time;
+    let mut blocklist_tls_time = start_time;
     let mut windows_threat_time = start_time;
     let mut network_threat_time = start_time;
     let mut extra_threat_time = start_time;
@@ -188,23 +188,23 @@ async fn fetch_events(
             .min(non_browser_time)
             .min(external_ddos_time)
             .min(cryptocurrency_time)
-            .min(block_list_bootp_time)
-            .min(block_list_conn_time)
-            .min(block_list_dhcp_time)
-            .min(block_list_dns_time)
-            .min(block_list_dcerpc_time)
-            .min(block_list_ftp_time)
-            .min(block_list_http_time)
-            .min(block_list_kerberos_time)
-            .min(block_list_ldap_time)
-            .min(block_list_mqtt_time)
-            .min(block_list_nfs_time)
-            .min(block_list_ntlm_time)
-            .min(block_list_rdp_time)
-            .min(block_list_smb_time)
-            .min(block_list_smtp_time)
-            .min(block_list_ssh_time)
-            .min(block_list_tls_time)
+            .min(blocklist_bootp_time)
+            .min(blocklist_conn_time)
+            .min(blocklist_dhcp_time)
+            .min(blocklist_dns_time)
+            .min(blocklist_dcerpc_time)
+            .min(blocklist_ftp_time)
+            .min(blocklist_http_time)
+            .min(blocklist_kerberos_time)
+            .min(blocklist_ldap_time)
+            .min(blocklist_mqtt_time)
+            .min(blocklist_nfs_time)
+            .min(blocklist_ntlm_time)
+            .min(blocklist_rdp_time)
+            .min(blocklist_smb_time)
+            .min(blocklist_smtp_time)
+            .min(blocklist_ssh_time)
+            .min(blocklist_tls_time)
             .min(windows_threat_time)
             .min(network_threat_time)
             .min(extra_threat_time)
@@ -316,106 +316,106 @@ async fn fetch_events(
                         cryptocurrency_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListBootp => {
-                    if event_time >= block_list_bootp_time {
+                EventKind::BlocklistBootp => {
+                    if event_time >= blocklist_bootp_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_bootp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_bootp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListConn => {
-                    if event_time >= block_list_conn_time {
+                EventKind::BlocklistConn => {
+                    if event_time >= blocklist_conn_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_conn_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_conn_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListDhcp => {
-                    if event_time >= block_list_dhcp_time {
+                EventKind::BlocklistDhcp => {
+                    if event_time >= blocklist_dhcp_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_dhcp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_dhcp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListDns => {
-                    if event_time >= block_list_dns_time {
+                EventKind::BlocklistDns => {
+                    if event_time >= blocklist_dns_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_dns_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_dns_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListDceRpc => {
-                    if event_time >= block_list_dcerpc_time {
+                EventKind::BlocklistDceRpc => {
+                    if event_time >= blocklist_dcerpc_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_dcerpc_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_dcerpc_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListFtp => {
-                    if event_time >= block_list_ftp_time {
+                EventKind::BlocklistFtp => {
+                    if event_time >= blocklist_ftp_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_ftp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_ftp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListHttp => {
-                    if event_time >= block_list_http_time {
+                EventKind::BlocklistHttp => {
+                    if event_time >= blocklist_http_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_http_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_http_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListKerberos => {
-                    if event_time >= block_list_kerberos_time {
+                EventKind::BlocklistKerberos => {
+                    if event_time >= blocklist_kerberos_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_kerberos_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_kerberos_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListLdap => {
-                    if event_time >= block_list_ldap_time {
+                EventKind::BlocklistLdap => {
+                    if event_time >= blocklist_ldap_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_ldap_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_ldap_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListMqtt => {
-                    if event_time >= block_list_mqtt_time {
+                EventKind::BlocklistMqtt => {
+                    if event_time >= blocklist_mqtt_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_mqtt_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_mqtt_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListNfs => {
-                    if event_time >= block_list_nfs_time {
+                EventKind::BlocklistNfs => {
+                    if event_time >= blocklist_nfs_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_nfs_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_nfs_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListNtlm => {
-                    if event_time >= block_list_ntlm_time {
+                EventKind::BlocklistNtlm => {
+                    if event_time >= blocklist_ntlm_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_ntlm_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_ntlm_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListRdp => {
-                    if event_time >= block_list_rdp_time {
+                EventKind::BlocklistRdp => {
+                    if event_time >= blocklist_rdp_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_rdp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_rdp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListSmb => {
-                    if event_time >= block_list_smb_time {
+                EventKind::BlocklistSmb => {
+                    if event_time >= blocklist_smb_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_smb_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_smb_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListSmtp => {
-                    if event_time >= block_list_smtp_time {
+                EventKind::BlocklistSmtp => {
+                    if event_time >= blocklist_smtp_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_smtp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_smtp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListSsh => {
-                    if event_time >= block_list_ssh_time {
+                EventKind::BlocklistSsh => {
+                    if event_time >= blocklist_ssh_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_ssh_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_ssh_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
-                EventKind::BlockListTls => {
-                    if event_time >= block_list_tls_time {
+                EventKind::BlocklistTls => {
+                    if event_time >= blocklist_tls_time {
                         tx.unbounded_send(value.into())?;
-                        block_list_tls_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                        blocklist_tls_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
                 EventKind::WindowsThreat => {
@@ -542,35 +542,35 @@ enum Event {
     /// An event that occurs when it is determined that there is a connection to a cryptocurrency mining network
     CryptocurrencyMiningPool(CryptocurrencyMiningPool),
 
-    BlockListConn(BlockListConn),
+    BlocklistConn(BlocklistConn),
 
-    BlockListDns(BlockListDns),
+    BlocklistDns(BlocklistDns),
 
-    BlockListDceRpc(BlockListDceRpc),
+    BlocklistDceRpc(BlocklistDceRpc),
 
-    BlockListFtp(BlockListFtp),
+    BlocklistFtp(BlocklistFtp),
 
-    BlockListHttp(BlockListHttp),
+    BlocklistHttp(BlocklistHttp),
 
-    BlockListKerberos(BlockListKerberos),
+    BlocklistKerberos(BlocklistKerberos),
 
-    BlockListLdap(BlockListLdap),
+    BlocklistLdap(BlocklistLdap),
 
-    BlockListMqtt(BlockListMqtt),
+    BlocklistMqtt(BlocklistMqtt),
 
-    BlockListNfs(BlockListNfs),
+    BlocklistNfs(BlocklistNfs),
 
-    BlockListNtlm(BlockListNtlm),
+    BlocklistNtlm(BlocklistNtlm),
 
-    BlockListRdp(BlockListRdp),
+    BlocklistRdp(BlocklistRdp),
 
-    BlockListSmb(BlockListSmb),
+    BlocklistSmb(BlocklistSmb),
 
-    BlockListSmtp(BlockListSmtp),
+    BlocklistSmtp(BlocklistSmtp),
 
-    BlockListSsh(BlockListSsh),
+    BlocklistSsh(BlocklistSsh),
 
-    BlockListTls(BlockListTls),
+    BlocklistTls(BlocklistTls),
 
     WindowsThreat(WindowsThreat),
 
@@ -580,9 +580,9 @@ enum Event {
 
     LockyRansomware(LockyRansomware),
 
-    BlockListBootp(BlockListBootp),
+    BlocklistBootp(BlocklistBootp),
 
-    BlockListDhcp(BlockListDhcp),
+    BlocklistDhcp(BlocklistDhcp),
 
     SuspiciousTlsTraffic(SuspiciousTlsTraffic),
 }
@@ -611,24 +611,24 @@ impl From<database::Event> for Event {
             database::Event::CryptocurrencyMiningPool(event) => {
                 Event::CryptocurrencyMiningPool(event.into())
             }
-            database::Event::BlockList(record_type) => match record_type {
-                RecordType::Bootp(event) => Event::BlockListBootp(event.into()),
-                RecordType::Conn(event) => Event::BlockListConn(event.into()),
-                RecordType::Dhcp(event) => Event::BlockListDhcp(event.into()),
-                RecordType::Dns(event) => Event::BlockListDns(event.into()),
-                RecordType::DceRpc(event) => Event::BlockListDceRpc(event.into()),
-                RecordType::Ftp(event) => Event::BlockListFtp(event.into()),
-                RecordType::Http(event) => Event::BlockListHttp(event.into()),
-                RecordType::Kerberos(event) => Event::BlockListKerberos(event.into()),
-                RecordType::Ldap(event) => Event::BlockListLdap(event.into()),
-                RecordType::Mqtt(event) => Event::BlockListMqtt(event.into()),
-                RecordType::Nfs(event) => Event::BlockListNfs(event.into()),
-                RecordType::Ntlm(event) => Event::BlockListNtlm(event.into()),
-                RecordType::Rdp(event) => Event::BlockListRdp(event.into()),
-                RecordType::Smb(event) => Event::BlockListSmb(event.into()),
-                RecordType::Smtp(event) => Event::BlockListSmtp(event.into()),
-                RecordType::Ssh(event) => Event::BlockListSsh(event.into()),
-                RecordType::Tls(event) => Event::BlockListTls(event.into()),
+            database::Event::Blocklist(record_type) => match record_type {
+                RecordType::Bootp(event) => Event::BlocklistBootp(event.into()),
+                RecordType::Conn(event) => Event::BlocklistConn(event.into()),
+                RecordType::Dhcp(event) => Event::BlocklistDhcp(event.into()),
+                RecordType::Dns(event) => Event::BlocklistDns(event.into()),
+                RecordType::DceRpc(event) => Event::BlocklistDceRpc(event.into()),
+                RecordType::Ftp(event) => Event::BlocklistFtp(event.into()),
+                RecordType::Http(event) => Event::BlocklistHttp(event.into()),
+                RecordType::Kerberos(event) => Event::BlocklistKerberos(event.into()),
+                RecordType::Ldap(event) => Event::BlocklistLdap(event.into()),
+                RecordType::Mqtt(event) => Event::BlocklistMqtt(event.into()),
+                RecordType::Nfs(event) => Event::BlocklistNfs(event.into()),
+                RecordType::Ntlm(event) => Event::BlocklistNtlm(event.into()),
+                RecordType::Rdp(event) => Event::BlocklistRdp(event.into()),
+                RecordType::Smb(event) => Event::BlocklistSmb(event.into()),
+                RecordType::Smtp(event) => Event::BlocklistSmtp(event.into()),
+                RecordType::Ssh(event) => Event::BlocklistSsh(event.into()),
+                RecordType::Tls(event) => Event::BlocklistTls(event.into()),
             },
             database::Event::WindowsThreat(event) => Event::WindowsThreat(event.into()),
             database::Event::NetworkThreat(event) => Event::NetworkThreat(event.into()),
@@ -1208,7 +1208,7 @@ mod tests {
     use chrono::{DateTime, NaiveDate, Utc};
     use futures_util::StreamExt;
     use review_database::{
-        BlockListBootpFields, BlockListDhcpFields, BlockListTlsFields, DnsEventFields,
+        BlocklistBootpFields, BlocklistDhcpFields, BlocklistTlsFields, DnsEventFields,
         EventCategory, EventKind, EventMessage,
     };
 
@@ -1726,7 +1726,7 @@ mod tests {
             .unwrap()
             .and_local_timezone(Utc)
             .unwrap();
-        let fields = BlockListDhcpFields {
+        let fields = BlocklistDhcpFields {
             sensor: "sensor1".to_string(),
             src_addr: Ipv4Addr::new(127, 0, 0, 1).into(),
             src_port: 68,
@@ -1757,7 +1757,7 @@ mod tests {
 
         let message = EventMessage {
             time: timestamp,
-            kind: EventKind::BlockListDhcp,
+            kind: EventKind::BlocklistDhcp,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
         db.put(&message).unwrap();
@@ -1792,7 +1792,7 @@ mod tests {
                     customers: [0],
                     directions: [\"OUTBOUND\"],
                 }}) {{ \
-                    edges {{ node {{... on BlockListDhcp {{ srcAddr,giaddr,reqIpAddr,classId,clientId }} }} }} \
+                    edges {{ node {{... on BlocklistDhcp {{ srcAddr,giaddr,reqIpAddr,classId,clientId }} }} }} \
                 }} \
             }}"
         );
@@ -1814,7 +1814,7 @@ mod tests {
             .unwrap()
             .and_local_timezone(Utc)
             .unwrap();
-        let fields = BlockListBootpFields {
+        let fields = BlocklistBootpFields {
             sensor: "sensor1".to_string(),
             src_addr: Ipv4Addr::new(127, 0, 0, 1).into(),
             src_port: 68,
@@ -1838,7 +1838,7 @@ mod tests {
 
         let message = EventMessage {
             time: timestamp,
-            kind: EventKind::BlockListBootp,
+            kind: EventKind::BlocklistBootp,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
         db.put(&message).unwrap();
@@ -1873,7 +1873,7 @@ mod tests {
                     customers: [0],
                     directions: [\"INBOUND\"],
                 }}) {{ \
-                    edges {{ node {{... on BlockListBootp {{ srcAddr,ciaddr,chaddr }} }} }} \
+                    edges {{ node {{... on BlocklistBootp {{ srcAddr,ciaddr,chaddr }} }} }} \
                 }} \
             }}"
         );
@@ -1951,7 +1951,7 @@ mod tests {
             .unwrap()
             .and_local_timezone(Utc)
             .unwrap();
-        let fields = BlockListTlsFields {
+        let fields = BlocklistTlsFields {
             sensor: "sensor1".to_string(),
             src_addr: Ipv4Addr::from(1).into(),
             src_port: 10000,

@@ -310,12 +310,12 @@ impl From<database::ExternalDdos> for ExternalDdos {
     }
 }
 
-pub(super) struct BlockListConn {
-    inner: database::BlockListConn,
+pub(super) struct BlocklistConn {
+    inner: database::BlocklistConn,
 }
 
 #[Object]
-impl BlockListConn {
+impl BlocklistConn {
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -430,8 +430,8 @@ impl BlockListConn {
     }
 }
 
-impl From<database::BlockListConn> for BlockListConn {
-    fn from(inner: database::BlockListConn) -> Self {
+impl From<database::BlocklistConn> for BlocklistConn {
+    fn from(inner: database::BlocklistConn) -> Self {
         Self { inner }
     }
 }
