@@ -5,12 +5,12 @@ use review_database as database;
 use super::{TriageScore, country_code, find_ip_customer, find_ip_network};
 use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
-pub(super) struct BlockListDhcp {
-    inner: database::BlockListDhcp,
+pub(super) struct BlocklistDhcp {
+    inner: database::BlocklistDhcp,
 }
 
 #[Object]
-impl BlockListDhcp {
+impl BlocklistDhcp {
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -190,8 +190,8 @@ impl BlockListDhcp {
     }
 }
 
-impl From<database::BlockListDhcp> for BlockListDhcp {
-    fn from(inner: database::BlockListDhcp) -> Self {
+impl From<database::BlocklistDhcp> for BlocklistDhcp {
+    fn from(inner: database::BlocklistDhcp) -> Self {
         Self { inner }
     }
 }

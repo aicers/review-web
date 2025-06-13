@@ -98,12 +98,12 @@ impl From<database::RdpBruteForce> for RdpBruteForce {
     }
 }
 
-pub(super) struct BlockListRdp {
-    inner: database::BlockListRdp,
+pub(super) struct BlocklistRdp {
+    inner: database::BlocklistRdp,
 }
 
 #[Object]
-impl BlockListRdp {
+impl BlocklistRdp {
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -190,8 +190,8 @@ impl BlockListRdp {
     }
 }
 
-impl From<database::BlockListRdp> for BlockListRdp {
-    fn from(inner: database::BlockListRdp) -> Self {
+impl From<database::BlocklistRdp> for BlocklistRdp {
+    fn from(inner: database::BlocklistRdp) -> Self {
         Self { inner }
     }
 }

@@ -410,7 +410,7 @@ impl TorConnection {
     }
 
     async fn referer(&self) -> &str {
-        &self.inner.referrer
+        &self.inner.referer
     }
 
     async fn version(&self) -> &str {
@@ -778,7 +778,7 @@ impl NonBrowser {
     }
 
     async fn referer(&self) -> &str {
-        &self.inner.referrer
+        &self.inner.referer
     }
 
     async fn version(&self) -> &str {
@@ -875,12 +875,12 @@ impl From<database::NonBrowser> for NonBrowser {
     }
 }
 
-pub(super) struct BlockListHttp {
-    inner: database::BlockListHttp,
+pub(super) struct BlocklistHttp {
+    inner: database::BlocklistHttp,
 }
 
 #[Object]
-impl BlockListHttp {
+impl BlocklistHttp {
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -966,7 +966,7 @@ impl BlockListHttp {
     }
 
     async fn referer(&self) -> &str {
-        &self.inner.referrer
+        &self.inner.referer
     }
 
     async fn version(&self) -> &str {
@@ -1057,8 +1057,8 @@ impl BlockListHttp {
     }
 }
 
-impl From<database::BlockListHttp> for BlockListHttp {
-    fn from(inner: database::BlockListHttp) -> Self {
+impl From<database::BlocklistHttp> for BlocklistHttp {
+    fn from(inner: database::BlocklistHttp) -> Self {
         Self { inner }
     }
 }
