@@ -244,12 +244,12 @@ impl From<database::FtpPlainText> for FtpPlainText {
 }
 
 #[allow(clippy::module_name_repetitions)]
-pub(super) struct BlockListFtp {
-    inner: database::BlockListFtp,
+pub(super) struct BlocklistFtp {
+    inner: database::BlocklistFtp,
 }
 
 #[Object]
-impl BlockListFtp {
+impl BlocklistFtp {
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -380,8 +380,8 @@ impl BlockListFtp {
     }
 }
 
-impl From<database::BlockListFtp> for BlockListFtp {
-    fn from(inner: database::BlockListFtp) -> Self {
+impl From<database::BlocklistFtp> for BlocklistFtp {
+    fn from(inner: database::BlocklistFtp) -> Self {
         Self { inner }
     }
 }

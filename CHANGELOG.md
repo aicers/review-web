@@ -33,6 +33,10 @@ this project adheres to
   multiple removals.
 - Updated review-database to 0.37.0, which fixes event filtering by multiple IP
   addresses for `ExternalDdos`, `MultiHostPortScan`, and `RdpBruteForce`.
+- Renamed `BlockList` to `Blocklist` and `block_list` to `blocklist` in line
+  with the Rust API Guidelines for acronyms/compound words. This affects GraphQL
+  APIs such as `eventList` and `eventStream` and may cause breaking changes for
+  clients relying on the old field name.
 
 ### Fixed
 
@@ -45,6 +49,8 @@ this project adheres to
   an already configured node could fail.
 - Fixed an issue where GraphQL APIs using `EventListFilterInput` failed to
   filter events by `kinds`.
+- Corrected instances of `referrer` to `referer` for the HTTP header field name
+  to align with the official HTTP standard's spelling.
 
 ### Removed
 

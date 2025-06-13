@@ -225,12 +225,12 @@ impl From<database::LdapPlainText> for LdapPlainText {
     }
 }
 
-pub(super) struct BlockListLdap {
-    inner: database::BlockListLdap,
+pub(super) struct BlocklistLdap {
+    inner: database::BlocklistLdap,
 }
 
 #[Object]
-impl BlockListLdap {
+impl BlocklistLdap {
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -345,8 +345,8 @@ impl BlockListLdap {
     }
 }
 
-impl From<database::BlockListLdap> for BlockListLdap {
-    fn from(inner: database::BlockListLdap) -> Self {
+impl From<database::BlocklistLdap> for BlocklistLdap {
+    fn from(inner: database::BlocklistLdap) -> Self {
         Self { inner }
     }
 }

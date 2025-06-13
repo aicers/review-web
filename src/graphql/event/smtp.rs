@@ -5,12 +5,12 @@ use review_database as database;
 use super::{TriageScore, country_code, find_ip_customer, find_ip_network};
 use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
-pub(super) struct BlockListSmtp {
-    inner: database::BlockListSmtp,
+pub(super) struct BlocklistSmtp {
+    inner: database::BlocklistSmtp,
 }
 
 #[Object]
-impl BlockListSmtp {
+impl BlocklistSmtp {
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -121,8 +121,8 @@ impl BlockListSmtp {
     }
 }
 
-impl From<database::BlockListSmtp> for BlockListSmtp {
-    fn from(inner: database::BlockListSmtp) -> Self {
+impl From<database::BlocklistSmtp> for BlocklistSmtp {
+    fn from(inner: database::BlocklistSmtp) -> Self {
         Self { inner }
     }
 }
