@@ -33,6 +33,9 @@ this project adheres to
   multiple removals.
 - Updated review-database to 0.37.0, which fixes event filtering by multiple IP
   addresses for `ExternalDdos`, `MultiHostPortScan`, and `RdpBruteForce`.
+- Modified `ThreatCategory` to include all MITRE categories.
+  `Collection`, `DefenseEvasion`, `Persistence`, `PrivilegeEscalation`,
+  `ResourceDevelopment` are added.
 
 ### Fixed
 
@@ -52,6 +55,7 @@ this project adheres to
   used.
 - The `theme` and `language` GraphQL APIs are removed. Use the `myAccount`
   GraphQL API instead to retrieve equivalent information.
+- The deprecated member `HttpThreat` of `ThreatCategory` is removed.
 
 ## [0.25.0] - 2025-01-27
 
