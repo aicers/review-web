@@ -82,7 +82,7 @@ impl LdapBruteForce {
         self.inner.start_time
     }
 
-    async fn last_time(&self) -> DateTime<Utc> {
+    async fn end_time(&self) -> DateTime<Utc> {
         self.inner.last_time
     }
 
@@ -297,9 +297,9 @@ impl BlocklistLdap {
         self.inner.proto
     }
 
-    /// The last time the event was seen in string wthin the range representable
+    /// The end time the event was seen in string wthin the range representable
     /// by a `i64`.
-    async fn last_time(&self) -> StringNumber<i64> {
+    async fn end_time(&self) -> StringNumber<i64> {
         StringNumber(self.inner.last_time)
     }
 

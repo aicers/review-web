@@ -74,7 +74,7 @@ impl PortScan {
         self.inner.start_time
     }
 
-    async fn last_time(&self) -> DateTime<Utc> {
+    async fn end_time(&self) -> DateTime<Utc> {
         self.inner.last_time
     }
 
@@ -183,7 +183,7 @@ impl MultiHostPortScan {
         self.inner.start_time
     }
 
-    async fn last_time(&self) -> DateTime<Utc> {
+    async fn end_time(&self) -> DateTime<Utc> {
         self.inner.last_time
     }
 
@@ -288,7 +288,7 @@ impl ExternalDdos {
         self.inner.start_time
     }
 
-    async fn last_time(&self) -> DateTime<Utc> {
+    async fn end_time(&self) -> DateTime<Utc> {
         self.inner.last_time
     }
 

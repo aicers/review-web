@@ -77,7 +77,7 @@ impl BlocklistNtlm {
         self.inner.proto
     }
 
-    async fn last_time(&self) -> i64 {
+    async fn end_time(&self) -> i64 {
         self.inner.last_time
     }
 

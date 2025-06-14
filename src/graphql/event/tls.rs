@@ -77,7 +77,7 @@ impl BlocklistTls {
         self.inner.proto
     }
 
-    async fn last_time(&self) -> StringNumber<i64> {
+    async fn end_time(&self) -> StringNumber<i64> {
         StringNumber(self.inner.last_time)
     }
 
@@ -255,7 +255,7 @@ impl SuspiciousTlsTraffic {
         self.inner.proto
     }
 
-    async fn last_time(&self) -> StringNumber<i64> {
+    async fn end_time(&self) -> StringNumber<i64> {
         StringNumber(self.inner.last_time)
     }
 

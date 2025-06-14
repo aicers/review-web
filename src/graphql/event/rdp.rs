@@ -57,7 +57,7 @@ impl RdpBruteForce {
         self.inner.start_time
     }
 
-    async fn last_time(&self) -> DateTime<Utc> {
+    async fn end_time(&self) -> DateTime<Utc> {
         self.inner.last_time
     }
 
@@ -170,7 +170,7 @@ impl BlocklistRdp {
         self.inner.proto
     }
 
-    async fn last_time(&self) -> i64 {
+    async fn end_time(&self) -> i64 {
         self.inner.last_time
     }
 
