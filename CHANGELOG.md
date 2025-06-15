@@ -11,6 +11,14 @@ this project adheres to
 
 - Introduced `myAccount` GraphQL API, which allows users of all roles to query
   their own account information.
+- Added username validation and normalization with the following rules:
+  - No whitespace allowed
+  - Only lowercase English letters, digits, and special characters
+    (`.`, `-`, `_`) are allowed
+  - No consecutive special characters or special characters at the end
+  - Must start with a lowercase English letter
+  - Length must be 3-30 characters
+  - Uppercase letters are automatically converted to lowercase
 
 ### Changed
 
