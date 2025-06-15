@@ -16,7 +16,10 @@ use review_database::{
 use serde::Serialize;
 use tracing::info;
 
-use super::{IpAddress, RoleGuard, cluster::try_id_args_into_ints, username_validation::validate_and_normalize_username};
+use super::{
+    IpAddress, RoleGuard, cluster::try_id_args_into_ints,
+    username_validation::validate_and_normalize_username,
+};
 use crate::auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in};
 use crate::graphql::query_with_constraints;
 
@@ -40,7 +43,7 @@ impl AccountQuery {
     async fn account(&self, ctx: &Context<'_>, username: String) -> Result<Account> {
         // Normalize the username for lookup (convert to lowercase)
         let normalized_username = username.to_lowercase();
-        
+
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
         let inner = map
@@ -215,7 +218,7 @@ impl AccountMutation {
     ) -> Result<String> {
         // Normalize the username for lookup (convert to lowercase)
         let normalized_username = username.to_lowercase();
-        
+
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
         if let Some(account) = map.get(&normalized_username)? {
@@ -234,7 +237,9 @@ impl AccountMutation {
                 )?;
                 return Ok(normalized_username);
             }
-            return Err(format!("reset failed due to invalid access for {normalized_username}").into());
+            return Err(
+                format!("reset failed due to invalid access for {normalized_username}").into(),
+            );
         }
 
         Err("reset failed due to invalid username".into())
@@ -301,7 +306,7 @@ impl AccountMutation {
             .transpose()?;
         // Normalize the username for lookup (convert to lowercase)
         let normalized_username = username.to_lowercase();
-        
+
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
 
@@ -373,7 +378,7 @@ impl AccountMutation {
     ) -> Result<AuthPayload> {
         // Normalize the username for lookup (convert to lowercase)
         let normalized_username = username.to_lowercase();
-        
+
         let store = crate::graphql::get_store(ctx).await?;
         let account_map = store.account_map();
         let client_ip = get_client_ip(ctx);
@@ -384,7 +389,13 @@ impl AccountMutation {
             validate_allow_access_from(&account, client_ip, &normalized_username)?;
             validate_max_parallel_sessions(&account, &store, &normalized_username)?;
 
-            sign_in_actions(&mut account, &store, &account_map, client_ip, &normalized_username)
+            sign_in_actions(
+                &mut account,
+                &store,
+                &account_map,
+                client_ip,
+                &normalized_username,
+            )
         } else {
             info!("{normalized_username} is not a valid username");
             Err("incorrect username or password".into())
@@ -407,7 +418,7 @@ impl AccountMutation {
     ) -> Result<AuthPayload> {
         // Normalize the username for lookup (convert to lowercase)
         let normalized_username = username.to_lowercase();
-        
+
         let store = crate::graphql::get_store(ctx).await?;
         let account_map = store.account_map();
         let client_ip = get_client_ip(ctx);
@@ -420,7 +431,13 @@ impl AccountMutation {
 
             account.update_password(&new_password)?;
 
-            sign_in_actions(&mut account, &store, &account_map, client_ip, &normalized_username)
+            sign_in_actions(
+                &mut account,
+                &store,
+                &account_map,
+                client_ip,
+                &normalized_username,
+            )
         } else {
             info!("{normalized_username} is not a valid username");
             Err("incorrect username or password".into())
@@ -1549,10 +1566,7 @@ mod tests {
             )
             .await;
 
-        assert_eq!(
-            res.data.to_string(),
-            r#"{insertAccount: "sysadmin1"}"#
-        );
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "sysadmin1"}"#);
 
         let res = schema
             .execute(
@@ -1571,10 +1585,7 @@ mod tests {
             )
             .await;
 
-        assert_eq!(
-            res.data.to_string(),
-            r#"{insertAccount: "sysadmin2"}"#
-        );
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "sysadmin2"}"#);
 
         let res = schema
             .execute(
@@ -1594,10 +1605,7 @@ mod tests {
             )
             .await;
 
-        assert_eq!(
-            res.data.to_string(),
-            r#"{insertAccount: "secadmin1"}"#
-        );
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "secadmin1"}"#);
 
         let res = schema
             .execute(
@@ -1639,10 +1647,7 @@ mod tests {
             )
             .await;
 
-        assert_eq!(
-            res.data.to_string(),
-            r#"{insertAccount: "secmgr1"}"#
-        );
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "secmgr1"}"#);
 
         let res = schema
             .execute(
@@ -1683,10 +1688,7 @@ mod tests {
             )
             .await;
 
-        assert_eq!(
-            res.data.to_string(),
-            r#"{insertAccount: "secmon1"}"#
-        );
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "secmon1"}"#);
 
         let res = schema
             .execute(
