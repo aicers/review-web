@@ -16,7 +16,10 @@ use review_database::{
 use serde::Serialize;
 use tracing::info;
 
-use super::{IpAddress, RoleGuard, cluster::try_id_args_into_ints};
+use super::{
+    IpAddress, RoleGuard, cluster::try_id_args_into_ints,
+    username_validation::validate_and_normalize_username,
+};
 use crate::auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in};
 use crate::graphql::query_with_constraints;
 
@@ -38,10 +41,13 @@ impl AccountQuery {
     #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
         .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
     async fn account(&self, ctx: &Context<'_>, username: String) -> Result<Account> {
+        // Normalize the username for lookup (convert to lowercase)
+        let normalized_username = username.to_lowercase();
+
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
         let inner = map
-            .get(&username)?
+            .get(&normalized_username)?
             .ok_or_else::<async_graphql::Error, _>(|| "User not found".into())?;
 
         Ok(Account { inner })
@@ -162,10 +168,14 @@ impl AccountMutation {
         max_parallel_sessions: Option<u8>,
         customer_ids: Option<Vec<ID>>,
     ) -> Result<String> {
+        // Validate and normalize the username
+        let normalized_username = validate_and_normalize_username(&username)
+            .map_err(|e| format!("Invalid username: {e}"))?;
+
         let customer_ids = try_id_args_into_ints::<u32>(customer_ids)?;
         let store = crate::graphql::get_store(ctx).await?;
         let table = store.account_map();
-        if table.contains(&username)? {
+        if table.contains(&normalized_username)? {
             return Err("account already exists".into());
         }
         if customer_ids.is_none() && role != Role::SystemAdministrator {
@@ -178,7 +188,7 @@ impl AccountMutation {
             None
         };
         let account = types::Account::new(
-            &username,
+            &normalized_username,
             &password,
             database::Role::from(role),
             name,
@@ -190,7 +200,7 @@ impl AccountMutation {
             customer_ids,
         )?;
         table.put(&account)?;
-        Ok(username)
+        Ok(normalized_username)
     }
 
     /// Resets system admin `password` for `username`.
@@ -206,9 +216,12 @@ impl AccountMutation {
         username: String,
         password: String,
     ) -> Result<String> {
+        // Normalize the username for lookup (convert to lowercase)
+        let normalized_username = username.to_lowercase();
+
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
-        if let Some(account) = map.get(&username)? {
+        if let Some(account) = map.get(&normalized_username)? {
             if account.role == review_database::Role::SystemAdministrator {
                 // Validate that the new password is different from the current password
                 if account.verify_password(&password) {
@@ -216,7 +229,7 @@ impl AccountMutation {
                 }
 
                 map.update(
-                    username.as_bytes(),
+                    normalized_username.as_bytes(),
                     &Some(password),
                     None,
                     &None,
@@ -227,9 +240,11 @@ impl AccountMutation {
                     &None,
                     &None,
                 )?;
-                return Ok(username);
+                return Ok(normalized_username);
             }
-            return Err(format!("reset failed due to invalid access for {username}").into());
+            return Err(
+                format!("reset failed due to invalid access for {normalized_username}").into(),
+            );
         }
 
         Err("reset failed due to invalid username".into())
@@ -249,8 +264,10 @@ impl AccountMutation {
         let map = store.account_map();
         let mut removed = Vec::with_capacity(usernames.len());
         for username in usernames {
-            map.delete(&username)?;
-            removed.push(username);
+            // Normalize the username for lookup (convert to lowercase)
+            let normalized_username = username.to_lowercase();
+            map.delete(&normalized_username)?;
+            removed.push(normalized_username);
         }
         Ok(removed)
     }
@@ -292,6 +309,9 @@ impl AccountMutation {
                 Ok::<_, async_graphql::Error>((old, new))
             })
             .transpose()?;
+        // Normalize the username for lookup (convert to lowercase)
+        let normalized_username = username.to_lowercase();
+
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
 
@@ -314,7 +334,7 @@ impl AccountMutation {
 
         // Ensure that the `customer_ids` is set correctly for the account role
         if role.is_some() || customer_ids.is_some() {
-            let Ok(Some(account)) = map.get(&username) else {
+            let Ok(Some(account)) = map.get(&normalized_username) else {
                 return Err("invalid username".into());
             };
             let role_to_check = role.as_ref().map_or(account.role, |update_role| {
@@ -349,7 +369,7 @@ impl AccountMutation {
         let max_parallel_sessions = max_parallel_sessions.map(|m| (m.old, m.new));
 
         map.update(
-            username.as_bytes(),
+            normalized_username.as_bytes(),
             &password_new,
             role,
             &name,
@@ -360,7 +380,7 @@ impl AccountMutation {
             &max_parallel_sessions,
             &customer_ids,
         )?;
-        Ok(username)
+        Ok(normalized_username)
     }
 
     /// Authenticates with the given username and password.
@@ -379,19 +399,28 @@ impl AccountMutation {
         username: String,
         password: String,
     ) -> Result<AuthPayload> {
+        // Normalize the username for lookup (convert to lowercase)
+        let normalized_username = username.to_lowercase();
+
         let store = crate::graphql::get_store(ctx).await?;
         let account_map = store.account_map();
         let client_ip = get_client_ip(ctx);
 
-        if let Some(mut account) = account_map.get(&username)? {
-            validate_password(&account, &username, &password)?;
-            validate_last_signin_time(&account, &username)?;
-            validate_allow_access_from(&account, client_ip, &username)?;
-            validate_max_parallel_sessions(&account, &store, &username)?;
+        if let Some(mut account) = account_map.get(&normalized_username)? {
+            validate_password(&account, &normalized_username, &password)?;
+            validate_last_signin_time(&account, &normalized_username)?;
+            validate_allow_access_from(&account, client_ip, &normalized_username)?;
+            validate_max_parallel_sessions(&account, &store, &normalized_username)?;
 
-            sign_in_actions(&mut account, &store, &account_map, client_ip, &username)
+            sign_in_actions(
+                &mut account,
+                &store,
+                &account_map,
+                client_ip,
+                &normalized_username,
+            )
         } else {
-            info!("{username} is not a valid username");
+            info!("{normalized_username} is not a valid username");
             Err("incorrect username or password".into())
         }
     }
@@ -410,21 +439,30 @@ impl AccountMutation {
         password: String,
         new_password: String,
     ) -> Result<AuthPayload> {
+        // Normalize the username for lookup (convert to lowercase)
+        let normalized_username = username.to_lowercase();
+
         let store = crate::graphql::get_store(ctx).await?;
         let account_map = store.account_map();
         let client_ip = get_client_ip(ctx);
 
-        if let Some(mut account) = account_map.get(&username)? {
-            validate_password(&account, &username, &password)?;
-            validate_allow_access_from(&account, client_ip, &username)?;
-            validate_max_parallel_sessions(&account, &store, &username)?;
-            validate_update_new_password(&password, &new_password, &username)?;
+        if let Some(mut account) = account_map.get(&normalized_username)? {
+            validate_password(&account, &normalized_username, &password)?;
+            validate_allow_access_from(&account, client_ip, &normalized_username)?;
+            validate_max_parallel_sessions(&account, &store, &normalized_username)?;
+            validate_update_new_password(&password, &new_password, &normalized_username)?;
 
             account.update_password(&new_password)?;
 
-            sign_in_actions(&mut account, &store, &account_map, client_ip, &username)
+            sign_in_actions(
+                &mut account,
+                &store,
+                &account_map,
+                client_ip,
+                &normalized_username,
+            )
         } else {
-            info!("{username} is not a valid username");
+            info!("{normalized_username} is not a valid username");
             Err("incorrect username or password".into())
         }
     }
@@ -970,7 +1008,7 @@ mod tests {
             .execute(
                 r#"mutation {
                 insertAccount(
-                    username: "u1",
+                    username: "user1",
                     password: "pw1",
                     role: "SECURITY_ADMINISTRATOR",
                     name: "User One",
@@ -980,12 +1018,12 @@ mod tests {
             }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "u1"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user1"}"#);
         let res = schema
             .execute(
                 r#"mutation {
                 insertAccount(
-                    username: "u2",
+                    username: "user2",
                     password: "pw2",
                     role: "SECURITY_ADMINISTRATOR",
                     name: "User Two",
@@ -995,12 +1033,12 @@ mod tests {
             }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "u2"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user2"}"#);
         let res = schema
             .execute(
                 r#"mutation {
                 insertAccount(
-                    username: "u3",
+                    username: "user3",
                     password: "pw3",
                     role: "SECURITY_ADMINISTRATOR",
                     name: "User Three",
@@ -1010,12 +1048,12 @@ mod tests {
             }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "u3"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user3"}"#);
         let res = schema
             .execute(
                 r#"mutation {
                 insertAccount(
-                    username: "u4",
+                    username: "user4",
                     password: "pw4",
                     role: "SECURITY_ADMINISTRATOR",
                     name: "User Four",
@@ -1025,7 +1063,7 @@ mod tests {
             }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "u4"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user4"}"#);
 
         // Retrieve the first page.
         let res = schema
@@ -1082,7 +1120,7 @@ mod tests {
         };
         assert_eq!(username, "admin");
 
-        // The last edge should be "u1".
+        // The last edge should be "user1".
         let Some(Value::Object(edge)) = edges.get(1) else {
             panic!("unexpected response: {edges:?}");
         };
@@ -1092,7 +1130,7 @@ mod tests {
         let Some(Value::String(username)) = node.get("username") else {
             panic!("unexpected response: {node:?}");
         };
-        assert_eq!(username, "u1");
+        assert_eq!(username, "user1");
         let Some(Value::String(cursor)) = edge.get("cursor") else {
             panic!("unexpected response: {edge:?}");
         };
@@ -1136,7 +1174,7 @@ mod tests {
         };
         assert!(!(*has_next_page));
 
-        // The first edge should be "u2".
+        // The first edge should be "user2".
         let Some(Value::Object(edge)) = edges.first() else {
             panic!("unexpected response: {edges:?}");
         };
@@ -1146,9 +1184,9 @@ mod tests {
         let Some(Value::String(username)) = node.get("username") else {
             panic!("unexpected response: {node:?}");
         };
-        assert_eq!(username, "u2");
+        assert_eq!(username, "user2");
 
-        // The last edge should be "u4".
+        // The last edge should be "user4".
         let Some(Value::Object(edge)) = edges.get(2) else {
             panic!("unexpected response: {edges:?}");
         };
@@ -1158,7 +1196,7 @@ mod tests {
         let Some(Value::String(username)) = node.get("username") else {
             panic!("unexpected response: {node:?}");
         };
-        assert_eq!(username, "u4");
+        assert_eq!(username, "user4");
 
         // Record the cursor of the last edge.
         let Some(Value::String(cursor)) = edge.get("cursor") else {
@@ -1204,7 +1242,7 @@ mod tests {
         };
         assert!(*has_previous_page);
 
-        // The first edge should be "u1".
+        // The first edge should be "user1".
         let Some(Value::Object(edge)) = edges.first() else {
             panic!("unexpected response: {edges:?}");
         };
@@ -1214,7 +1252,7 @@ mod tests {
         let Some(Value::String(username)) = node.get("username") else {
             panic!("unexpected response: {node:?}");
         };
-        assert_eq!(username, "u1");
+        assert_eq!(username, "user1");
 
         restore_review_admin(original_review_admin);
     }
@@ -1287,7 +1325,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     insertAccount(
-                        username: "u1",
+                        username: "user1",
                         password: "Ahh9booH",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "John Doe",
@@ -1297,14 +1335,14 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "u1"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user1"}"#);
 
         let res = schema
             .execute(r"{accountList{edges{node{username}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{accountList: {edges: [{node: {username: "admin"}}, {node: {username: "u1"}}], totalCount: 2}}"#
+            r#"{accountList: {edges: [{node: {username: "admin"}}, {node: {username: "user1"}}], totalCount: 2}}"#
         );
 
         // A non-existent username is considered removed.
@@ -1314,9 +1352,9 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{removeAccounts: ["none"]}"#);
 
         let res = schema
-            .execute(r#"mutation { removeAccounts(usernames: ["u1"]) }"#)
+            .execute(r#"mutation { removeAccounts(usernames: ["user1"]) }"#)
             .await;
-        assert_eq!(res.data.to_string(), r#"{removeAccounts: ["u1"]}"#);
+        assert_eq!(res.data.to_string(), r#"{removeAccounts: ["user1"]}"#);
 
         let res = schema.execute(r"{accountList{totalCount}}").await;
         assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
@@ -1465,7 +1503,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     insertAccount(
-                        username: "u1",
+                        username: "user1",
                         password: "Ahh9booH",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "John Doe",
@@ -1476,13 +1514,13 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "u1"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user1"}"#);
 
         let res = schema
             .execute(
                 r#"mutation {
                     insertAccount(
-                        username: "u2",
+                        username: "user2",
                         password: "Ahh9booH",
                         role: "SYSTEM_ADMINISTRATOR",
                         name: "John Doe",
@@ -1492,12 +1530,12 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "u2"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user2"}"#);
 
         let res = schema
             .execute_with_guard(
                 r#"mutation {
-                resetAdminPassword(username: "u1", password: "not admin")
+                resetAdminPassword(username: "user1", password: "not admin")
             }"#,
                 RoleGuard::Local,
             )
@@ -1507,7 +1545,7 @@ mod tests {
         let res = schema
             .execute_with_guard(
                 r#"mutation {
-                resetAdminPassword(username: "u3", password: "user not existed")
+                resetAdminPassword(username: "user3", password: "user not existed")
             }"#,
                 RoleGuard::Local,
             )
@@ -1517,17 +1555,17 @@ mod tests {
         let res = schema
             .execute_with_guard(
                 r#"mutation {
-                resetAdminPassword(username: "u2", password: "admin")
+                resetAdminPassword(username: "user2", password: "admin")
             }"#,
                 RoleGuard::Local,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{resetAdminPassword: "u2"}"#);
+        assert_eq!(res.data.to_string(), r#"{resetAdminPassword: "user2"}"#);
 
         let res = schema
             .execute_with_guard(
                 r#"mutation {
-                resetAdminPassword(username: "u2", password: "not local")
+                resetAdminPassword(username: "user2", password: "not local")
             }"#,
                 RoleGuard::Role(Role::SystemAdministrator),
             )
@@ -1544,7 +1582,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     insertAccount(
-                        username: "system administrator1",
+                        username: "sysadmin1",
                         password: "password",
                         role: "SYSTEM_ADMINISTRATOR",
                         name: "John Doe",
@@ -1558,16 +1596,13 @@ mod tests {
             )
             .await;
 
-        assert_eq!(
-            res.data.to_string(),
-            r#"{insertAccount: "system administrator1"}"#
-        );
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "sysadmin1"}"#);
 
         let res = schema
             .execute(
                 r#"mutation {
                     insertAccount(
-                        username: "system administrator2",
+                        username: "sysadmin2",
                         password: "password",
                         role: "SYSTEM_ADMINISTRATOR",
                         name: "John Doe",
@@ -1580,16 +1615,13 @@ mod tests {
             )
             .await;
 
-        assert_eq!(
-            res.data.to_string(),
-            r#"{insertAccount: "system administrator2"}"#
-        );
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "sysadmin2"}"#);
 
         let res = schema
             .execute(
                 r#"mutation {
                     insertAccount(
-                        username: "security administrator1",
+                        username: "secadmin1",
                         password: "password",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "John Doe",
@@ -1603,16 +1635,13 @@ mod tests {
             )
             .await;
 
-        assert_eq!(
-            res.data.to_string(),
-            r#"{insertAccount: "security administrator1"}"#
-        );
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "secadmin1"}"#);
 
         let res = schema
             .execute(
                 r#"mutation {
                 insertAccount(
-                    username: "security administrator2",
+                    username: "secadmin2",
                     password: "password",
                     role: "SECURITY_ADMINISTRATOR",
                     name: "John Doe",
@@ -1634,7 +1663,7 @@ mod tests {
             .execute(
                 r#"mutation {
                 insertAccount(
-                    username: "security manager1",
+                    username: "secmgr1",
                     password: "password",
                     role: "SECURITY_MANAGER",
                     name: "John Doe",
@@ -1648,16 +1677,13 @@ mod tests {
             )
             .await;
 
-        assert_eq!(
-            res.data.to_string(),
-            r#"{insertAccount: "security manager1"}"#
-        );
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "secmgr1"}"#);
 
         let res = schema
             .execute(
                 r#"mutation {
                     insertAccount(
-                        username: "security manager2",
+                        username: "secmgr2",
                         password: "password",
                         role: "SECURITY_MANAGER",
                         name: "John Doe",
@@ -1678,7 +1704,7 @@ mod tests {
             .execute(
                 r#"mutation {
                 insertAccount(
-                    username: "security monitor1",
+                    username: "secmon1",
                     password: "password",
                     role: "SECURITY_MONITOR",
                     name: "John Doe",
@@ -1692,16 +1718,13 @@ mod tests {
             )
             .await;
 
-        assert_eq!(
-            res.data.to_string(),
-            r#"{insertAccount: "security monitor1"}"#
-        );
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "secmon1"}"#);
 
         let res = schema
             .execute(
                 r#"mutation {
                     insertAccount(
-                        username: "security monitor2",
+                        username: "secmon2",
                         password: "password",
                         role: "SECURITY_MONITOR",
                         name: "John Doe",
@@ -1835,7 +1858,7 @@ mod tests {
                     updateAccount(
                         username: "username",
                         password: {
-                            old: "newpassword", 
+                            old: "newpassword",
                             new: "anotherpassword"
                         },
                         role: {
@@ -1968,7 +1991,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     insertAccount(
-                        username: "u1",
+                        username: "user1",
                         password: "pw1",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "User One",
@@ -1979,14 +2002,14 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "u1"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user1"}"#);
 
-        update_account_last_signin_time(&schema, "u1").await;
+        update_account_last_signin_time(&schema, "user1").await;
 
         let res = schema
             .execute(
                 r#"mutation {
-                    signIn(username: "u1", password: "pw1") {
+                    signIn(username: "user1", password: "pw1") {
                         token
                     }
                 }"#,
@@ -2006,7 +2029,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{signedInAccountList: [{username: "u1"}]}"#
+            r#"{signedInAccountList: [{username: "user1"}]}"#
         );
 
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -2014,7 +2037,7 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                    signIn(username: "u1", password: "pw1") {
+                    signIn(username: "user1", password: "pw1") {
                         token
                     }
                 }"#,
@@ -2027,7 +2050,7 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                    signIn(username: "u1", password: "pw1") {
+                    signIn(username: "user1", password: "pw1") {
                         token
                     }
                 }"#,
@@ -2041,12 +2064,12 @@ mod tests {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
         let test_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
 
-        let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "u1").await;
+        let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "user1").await;
         let res = schema
             .execute(
                 r#"mutation {
                     insertAccount(
-                        username: "u1",
+                        username: "user1",
                         password: "pw1",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "User One",
@@ -2057,14 +2080,14 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "u1"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user1"}"#);
 
-        update_account_last_signin_time(&schema, "u1").await;
+        update_account_last_signin_time(&schema, "user1").await;
 
         let res = schema
             .execute(
                 r#"mutation {
-                    signIn(username: "u1", password: "pw1") {
+                    signIn(username: "user1", password: "pw1") {
                         token
                     }
                 }"#,
@@ -2079,12 +2102,12 @@ mod tests {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
         let test_addr: SocketAddr = "127.0.0.2:8080".parse().unwrap();
 
-        let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "u1").await;
+        let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "user1").await;
         let res = schema
             .execute(
                 r#"mutation {
                     insertAccount(
-                        username: "u1",
+                        username: "user1",
                         password: "pw1",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "User One",
@@ -2095,14 +2118,14 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "u1"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user1"}"#);
 
-        update_account_last_signin_time(&schema, "u1").await;
+        update_account_last_signin_time(&schema, "user1").await;
 
         let res = schema
             .execute(
                 r#"mutation {
-                    signIn(username: "u1", password: "pw1") {
+                    signIn(username: "user1", password: "pw1") {
                         token
                     }
                 }"#,
@@ -2117,12 +2140,12 @@ mod tests {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
         let test_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
 
-        let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "u1").await;
+        let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "user1").await;
         let res = schema
             .execute(
                 r#"mutation {
                     insertAccount(
-                        username: "u1",
+                        username: "user1",
                         password: "pw1",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "User One",
@@ -2228,7 +2251,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     insertAccount(
-                        username: "u2",
+                        username: "user2",
                         password: "pw2",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "User One",
@@ -2239,10 +2262,10 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "u2"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user2"}"#);
 
         let query = r#"mutation {
-                    signIn(username: "u2", password: "pw2") {
+                    signIn(username: "user2", password: "pw2") {
                         token
                     }
               }"#;
@@ -2253,7 +2276,7 @@ mod tests {
             "a password change is required to proceed".to_string()
         );
 
-        update_account_last_signin_time(&schema, "u2").await;
+        update_account_last_signin_time(&schema, "user2").await;
 
         let res = schema.execute(query).await;
         assert!(res.is_ok());
@@ -2266,7 +2289,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     insertAccount(
-                        username: "u3",
+                        username: "user3",
                         password: "pw3",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "User One",
@@ -2277,12 +2300,12 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "u3"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user3"}"#);
 
         let res = schema
             .execute(
                 r#"mutation {
-                    signIn(username: "u3", password: "pw3") {
+                    signIn(username: "user3", password: "pw3") {
                         token
                     }
                 }"#,
@@ -2297,7 +2320,7 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                    signInWithNewPassword(username: "u3", password: "pw3") {
+                    signInWithNewPassword(username: "user3", password: "pw3") {
                         token
                     }
                 }"#,
@@ -2311,7 +2334,7 @@ mod tests {
         );
 
         let query = r#"mutation {
-                    signInWithNewPassword(username: "u1", password: "pw1", newPassword: "pw2") {
+                    signInWithNewPassword(username: "user1", password: "pw1", newPassword: "pw2") {
                         token
                     }
               }"#;
@@ -2324,7 +2347,7 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                    signInWithNewPassword(username: "u3", password: "pw3", newPassword: "pw3") {
+                    signInWithNewPassword(username: "user3", password: "pw3", newPassword: "pw3") {
                         token
                     }
                 }"#,
@@ -2338,7 +2361,7 @@ mod tests {
         let res = schema
             .execute(
                 r#"mutation {
-                    signInWithNewPassword(username: "u3", password: "pw3", newPassword: "pw4") {
+                    signInWithNewPassword(username: "user3", password: "pw3", newPassword: "pw4") {
                         token
                     }
                 }"#,
@@ -2348,7 +2371,7 @@ mod tests {
 
         let store = schema.store().await;
         let map = store.account_map();
-        let account = map.get("u3").unwrap().unwrap();
+        let account = map.get("user3").unwrap().unwrap();
         assert!(account.verify_password("pw4"));
     }
 
@@ -2359,7 +2382,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     insertAccount(
-                        username: "u2",
+                        username: "user2",
                         password: "pw2",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "User One",
@@ -2370,12 +2393,12 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "u2"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user2"}"#);
 
         let res = schema
             .execute(
                 r#"mutation {
-                    signIn(username: "u2", password: "pw3") {
+                    signIn(username: "user2", password: "pw3") {
                         token
                     }
                 }"#,
