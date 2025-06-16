@@ -72,6 +72,8 @@ impl BlockNetworkMutation {
             description,
         };
         let id = map.put(value)?;
+
+        apply_block_networks(&db, ctx).await?;
         Ok(ID(id.to_string()))
     }
 
@@ -100,6 +102,7 @@ impl BlockNetworkMutation {
             removed.push(name);
         }
 
+        apply_block_networks(&db, ctx).await?;
         Ok(removed)
     }
 
@@ -120,18 +123,9 @@ impl BlockNetworkMutation {
         let old: review_database::BlockNetworkUpdate = old.try_into()?;
         let new: review_database::BlockNetworkUpdate = new.try_into()?;
         map.update(i, &old, &new)?;
-        Ok(id)
-    }
 
-    /// Broadcast the block networks to all Hogs.
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))")]
-    async fn apply_block_networks(&self, ctx: &Context<'_>) -> Result<Vec<String>> {
-        let db = super::get_store(ctx).await?;
-        let networks = get_block_networks(&db)?;
-        let agent_manager = ctx.data::<BoxedAgentManager>()?;
-        let r = agent_manager.broadcast_block_networks(&networks).await;
-        r.map_err(Into::into)
+        apply_block_networks(&db, ctx).await?;
+        Ok(id)
     }
 }
 
@@ -227,6 +221,13 @@ pub fn get_block_networks(db: &Store) -> Result<database::HostNetworkGroup> {
         ip_ranges.extend(block_network.networks.ip_ranges().to_vec());
     }
     Ok(database::HostNetworkGroup::new(hosts, networks, ip_ranges))
+}
+
+async fn apply_block_networks(store: &Store, ctx: &Context<'_>) -> Result<()> {
+    let networks = get_block_networks(store)?;
+    let agent_manager = ctx.data::<BoxedAgentManager>()?;
+    agent_manager.broadcast_block_networks(&networks).await?;
+    Ok(())
 }
 
 #[cfg(test)]

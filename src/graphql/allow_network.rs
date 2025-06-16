@@ -69,6 +69,8 @@ impl AllowNetworkMutation {
             description,
         };
         let id = map.put(value)?;
+
+        apply_allow_networks(&store, ctx).await?;
         Ok(ID(id.to_string()))
     }
 
@@ -97,6 +99,7 @@ impl AllowNetworkMutation {
             removed.push(name);
         }
 
+        apply_allow_networks(&store, ctx).await?;
         Ok(removed)
     }
 
@@ -117,19 +120,9 @@ impl AllowNetworkMutation {
         let old: review_database::AllowNetworkUpdate = old.try_into()?;
         let new: review_database::AllowNetworkUpdate = new.try_into()?;
         map.update(i, &old, &new)?;
+
+        apply_allow_networks(&store, ctx).await?;
         Ok(id)
-    }
-
-    /// Broadcast the allowed networks to all Hogs.
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))")]
-    async fn apply_allow_networks(&self, ctx: &Context<'_>) -> Result<Vec<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
-
-        let networks = get_allow_networks(&store)?;
-        let agent_manager = ctx.data::<BoxedAgentManager>()?;
-        let r = agent_manager.broadcast_allow_networks(&networks).await;
-        r.map_err(Into::into)
     }
 }
 
@@ -226,6 +219,13 @@ pub fn get_allow_networks(db: &Store) -> Result<database::HostNetworkGroup> {
         ip_ranges.extend(allow_network.networks.ip_ranges().to_vec());
     }
     Ok(database::HostNetworkGroup::new(hosts, networks, ip_ranges))
+}
+
+async fn apply_allow_networks(store: &Store, ctx: &Context<'_>) -> Result<()> {
+    let networks = get_allow_networks(store)?;
+    let agent_manager = ctx.data::<BoxedAgentManager>()?;
+    agent_manager.broadcast_allow_networks(&networks).await?;
+    Ok(())
 }
 
 #[cfg(test)]

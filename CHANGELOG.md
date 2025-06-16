@@ -37,6 +37,15 @@ this project adheres to
   with the Rust API Guidelines for acronyms/compound words. This affects GraphQL
   APIs such as `eventList` and `eventStream` and may cause breaking changes for
   clients relying on the old field name.
+- Changed behavior of blocklist, allowlist and trusted user agents updates to
+  automatically broadcast without manual apply.
+  - As a result of this change, the following GraphQL APIs used for manual apply
+    have been removed: `applyBlockNetworks`, `applyAllowNetworks`, `applyTrustedUserAgent`
+  - The following GraphQL APIs have been updated to immediately broadcast
+    changes, without requiring a separate apply step: `insertAllowNetwork`,
+    `removeAllowNetworks`, `updateAllowNetwork`, `insertBlockNetwork`,
+    `removeBlockNetworks`, `updateBlockNetwork`, `insertTrustedUserAgents`,
+    `removeTrustedUserAgents`, `updateTrustedUserAgent`
 
 ### Fixed
 
