@@ -46,6 +46,9 @@ this project adheres to
     `removeAllowNetworks`, `updateAllowNetwork`, `insertBlockNetwork`,
     `removeBlockNetworks`, `updateBlockNetwork`, `insertTrustedUserAgents`,
     `removeTrustedUserAgents`, `updateTrustedUserAgent`
+- Renamed `host_names` field to `hostnames` in GraphQL types: `FilterInput`,
+  `EventListFilterInput`, and `Filter`. This affects GraphQL APIs such as
+  `insertFilter`, `replaceFilter`, `filter`, and `filterList`.
 
 ### Fixed
 

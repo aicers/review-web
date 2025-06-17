@@ -655,7 +655,7 @@ struct EventListFilterInput {
     sensors: Option<Vec<ID>>,
     os: Option<Vec<ID>>,
     devices: Option<Vec<ID>>,
-    host_names: Option<Vec<String>>,
+    hostnames: Option<Vec<String>>,
     user_ids: Option<Vec<String>>,
     user_names: Option<Vec<String>>,
     user_departments: Option<Vec<String>>,
