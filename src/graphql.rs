@@ -33,7 +33,6 @@ mod traffic_filter;
 mod triage;
 mod trusted_domain;
 mod trusted_user_agent;
-mod username_validation;
 
 use std::fmt;
 use std::future::Future;

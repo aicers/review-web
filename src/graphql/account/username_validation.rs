@@ -1,8 +1,13 @@
 use std::collections::HashSet;
 
 /// Username validation errors
+///
+/// # Errors
+///
+/// This enum represents various validation failures that can occur when
+/// processing usernames.
 #[derive(Debug, thiserror::Error)]
-pub enum UsernameValidationError {
+pub(super) enum UsernameValidationError {
     #[error("Username must be between 3 and 30 characters")]
     InvalidLength,
     #[error("Username must start with a lowercase English letter")]
@@ -27,7 +32,19 @@ pub enum UsernameValidationError {
 /// Additionally, if uppercase letters are received, they are automatically converted to lowercase.
 ///
 /// Returns the normalized (lowercase) username if valid.
-pub fn validate_and_normalize_username(username: &str) -> Result<String, UsernameValidationError> {
+///
+/// # Errors
+///
+/// Returns an error if the username fails any validation rule:
+/// - [`UsernameValidationError::ContainsWhitespace`] if the username contains whitespace characters
+/// - [`UsernameValidationError::InvalidLength`] if the username is shorter than 3 or longer than 30 characters
+/// - [`UsernameValidationError::InvalidStart`] if the username doesn't start with a lowercase English letter
+/// - [`UsernameValidationError::InvalidCharacters`] if the username contains characters other than lowercase letters, digits, or the allowed special characters (., -, _)
+/// - [`UsernameValidationError::ConsecutiveSpecialChars`] if the username contains consecutive special characters
+/// - [`UsernameValidationError::EndsWithSpecialChar`] if the username ends with a special character
+pub(super) fn validate_and_normalize_username(
+    username: &str,
+) -> Result<String, UsernameValidationError> {
     // Convert to lowercase first
     let normalized = username.to_lowercase();
 

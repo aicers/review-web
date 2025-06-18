@@ -1,3 +1,5 @@
+mod username_validation;
+
 use std::{
     env,
     net::{IpAddr, SocketAddr},
@@ -16,12 +18,10 @@ use review_database::{
 use serde::Serialize;
 use tracing::info;
 
-use super::{
-    IpAddress, RoleGuard, cluster::try_id_args_into_ints,
-    username_validation::validate_and_normalize_username,
-};
+use super::{IpAddress, RoleGuard, cluster::try_id_args_into_ints};
 use crate::auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in};
 use crate::graphql::query_with_constraints;
+use username_validation::validate_and_normalize_username;
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Serialize, SimpleObject)]
