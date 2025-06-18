@@ -2507,7 +2507,7 @@ mod tests {
             )
             .await;
 
-        assert!(res.errors.len() > 0);
+        assert!(!res.errors.is_empty());
         assert_eq!(
             res.errors.first().unwrap().message,
             "new password cannot be the same as the current password"
@@ -2528,7 +2528,7 @@ mod tests {
             )
             .await;
 
-        assert!(res.errors.len() > 0);
+        assert!(!res.errors.is_empty());
         assert_eq!(
             res.errors.first().unwrap().message,
             "incorrect current password"
@@ -2589,7 +2589,7 @@ mod tests {
             )
             .await;
 
-        assert!(res.errors.len() > 0);
+        assert!(!res.errors.is_empty());
         assert_eq!(
             res.errors.first().unwrap().message,
             "new password cannot be the same as the current password"
