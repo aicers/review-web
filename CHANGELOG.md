@@ -49,6 +49,13 @@ this project adheres to
 - Renamed `host_names` field to `hostnames` in GraphQL types: `FilterInput`,
   `EventListFilterInput`, and `Filter`. This affects GraphQL APIs such as
   `insertFilter`, `replaceFilter`, `filter`, and `filterList`.
+- Enhanced password security by preventing password reuse in `updateAccount` and
+  `resetAdminPassword` GraphQL APIs.
+  - The `updateAccount` API now requires password changes to provide both old
+    and new password values using the format `{ old: "...", new: "..." }`
+    instead of just the new password.
+  - Both APIs now validate that the new password is different from the current
+    password and reject changes that attempt to reuse the current password.
 
 ### Fixed
 
