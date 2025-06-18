@@ -82,8 +82,8 @@ impl NetworkThreat {
         &self.inner.service
     }
 
-    /// The last time the event was seen in string within the representable
-    /// range of `i64`.
+    /// The timestamp that marks the end of the event, representing the last time it was seen,
+    /// in string within the representable range of `i64`.
     async fn end_time(&self) -> StringNumber<i64> {
         StringNumber(self.inner.last_time)
     }
