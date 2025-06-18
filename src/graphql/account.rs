@@ -210,6 +210,11 @@ impl AccountMutation {
         let map = store.account_map();
         if let Some(account) = map.get(&username)? {
             if account.role == review_database::Role::SystemAdministrator {
+                // Validate that the new password is different from the current password
+                if account.verify_password(&password) {
+                    return Err("new password cannot be the same as the current password".into());
+                }
+
                 map.update(
                     username.as_bytes(),
                     &Some(password),
@@ -258,7 +263,7 @@ impl AccountMutation {
         &self,
         ctx: &Context<'_>,
         username: String,
-        password: Option<String>,
+        password: Option<UpdatePassword>,
         role: Option<UpdateRole>,
         name: Option<UpdateName>,
         department: Option<UpdateDepartment>,
@@ -290,6 +295,23 @@ impl AccountMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
 
+        // Validate password change if provided
+        if let Some(ref password_update) = password {
+            let Ok(Some(account)) = map.get(&username) else {
+                return Err("invalid username".into());
+            };
+
+            // Verify the old password is correct
+            if !account.verify_password(&password_update.old) {
+                return Err("incorrect current password".into());
+            }
+
+            // Validate that the new password is different from the old password
+            if password_update.old == password_update.new {
+                return Err("new password cannot be the same as the current password".into());
+            }
+        }
+
         // Ensure that the `customer_ids` is set correctly for the account role
         if role.is_some() || customer_ids.is_some() {
             let Ok(Some(account)) = map.get(&username) else {
@@ -311,6 +333,7 @@ impl AccountMutation {
             }
         }
 
+        let password_new = password.map(|p| p.new);
         let role = role.map(|r| (database::Role::from(r.old), database::Role::from(r.new)));
         let name = name.map(|n| (n.old, n.new));
         let dept = department.map(|d| (d.old, d.new));
@@ -327,7 +350,7 @@ impl AccountMutation {
 
         map.update(
             username.as_bytes(),
-            &password,
+            &password_new,
             role,
             &name,
             &dept,
@@ -742,6 +765,13 @@ enum Role {
     SecurityAdministrator,
     SecurityManager,
     SecurityMonitor,
+}
+
+/// The old and new values of `password` to update.
+#[derive(InputObject)]
+struct UpdatePassword {
+    old: String,
+    new: String,
 }
 
 /// The old and new values of `role` to update.
@@ -1741,7 +1771,10 @@ mod tests {
                 mutation {
                     updateAccount(
                         username: "username",
-                        password: "password",
+                        password: {
+                            old: "password",
+                            new: "newpassword"
+                        },
                         role: {
                             old: "SECURITY_ADMINISTRATOR",
                             new: "SECURITY_MONITOR"
@@ -1801,7 +1834,10 @@ mod tests {
                 mutation {
                     updateAccount(
                         username: "username",
-                        password: "password",
+                        password: {
+                            old: "newpassword", 
+                            new: "anotherpassword"
+                        },
                         role: {
                             old: "SECURITY_MONITOR",
                             new: "SECURITY_MANAGER"
@@ -1846,7 +1882,6 @@ mod tests {
                 mutation {
                     updateAccount(
                         username: "username",
-                        password: "password",
                         customerIds: {
                             old: [0]
                         }
@@ -1868,7 +1903,6 @@ mod tests {
                     mutation {
                         updateAccount(
                             username: "username",
-                            password: "password",
                             role: {
                                 old: "SECURITY_MONITOR",
                                 new: "SECURITY_MANAGER"
@@ -1912,7 +1946,6 @@ mod tests {
                 mutation {
                     updateAccount(
                         username: "username2",
-                        password: "password",
                         role: {
                             old: "SYSTEM_ADMINISTRATOR",
                             new: "SECURITY_ADMINISTRATOR"
@@ -2436,5 +2469,152 @@ mod tests {
             res.data.to_string(),
             r#"{account: {username: "username", role: SECURITY_ADMINISTRATOR, name: "John Doe", department: "Security", language: "en-US", theme: "light"}}"#
         );
+    }
+
+    #[tokio::test]
+    async fn prevent_password_reuse_update_account() {
+        let schema = TestSchema::new().await;
+
+        // Create a test account
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "testuser",
+                        password: "oldpassword",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Test User",
+                        department: "Security",
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "testuser"}"#);
+
+        // Try to update password with the same password (should fail)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateAccount(
+                        username: "testuser",
+                        password: {
+                            old: "oldpassword",
+                            new: "oldpassword"
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        assert!(res.errors.len() > 0);
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "new password cannot be the same as the current password"
+        );
+
+        // Try to update password with wrong old password (should fail)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateAccount(
+                        username: "testuser",
+                        password: {
+                            old: "wrongpassword",
+                            new: "newpassword"
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        assert!(res.errors.len() > 0);
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "incorrect current password"
+        );
+
+        // Try to update password with different new password (should succeed)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateAccount(
+                        username: "testuser",
+                        password: {
+                            old: "oldpassword",
+                            new: "newpassword"
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{updateAccount: "testuser"}"#);
+
+        // Verify the password was actually changed
+        let store = schema.store().await;
+        let map = store.account_map();
+        let account = map.get("testuser").unwrap().unwrap();
+        assert!(account.verify_password("newpassword"));
+        assert!(!account.verify_password("oldpassword"));
+    }
+
+    #[tokio::test]
+    async fn prevent_password_reuse_reset_admin_password() {
+        let schema = TestSchema::new().await;
+
+        // Create a system admin account
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "admin_user",
+                        password: "adminpassword",
+                        role: "SYSTEM_ADMINISTRATOR",
+                        name: "Admin User",
+                        department: "Admin"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "admin_user"}"#);
+
+        // Try to reset admin password with the same password (should fail)
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    resetAdminPassword(username: "admin_user", password: "adminpassword")
+                }"#,
+                RoleGuard::Local,
+            )
+            .await;
+
+        assert!(res.errors.len() > 0);
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "new password cannot be the same as the current password"
+        );
+
+        // Try to reset admin password with different password (should succeed)
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    resetAdminPassword(username: "admin_user", password: "newadminpassword")
+                }"#,
+                RoleGuard::Local,
+            )
+            .await;
+
+        assert_eq!(
+            res.data.to_string(),
+            r#"{resetAdminPassword: "admin_user"}"#
+        );
+
+        // Verify the password was actually changed
+        let store = schema.store().await;
+        let map = store.account_map();
+        let account = map.get("admin_user").unwrap().unwrap();
+        assert!(account.verify_password("newadminpassword"));
+        assert!(!account.verify_password("adminpassword"));
     }
 }
