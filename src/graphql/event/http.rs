@@ -950,7 +950,7 @@ impl BlocklistHttp {
     /// The last time of the event in string within the range representable
     /// by a `i64`.
     async fn end_time(&self) -> StringNumber<i64> {
-        StringNumber(self.inner.last_time)
+        StringNumber(self.inner.end_time)
     }
 
     async fn method(&self) -> &str {

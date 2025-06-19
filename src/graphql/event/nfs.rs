@@ -78,7 +78,7 @@ impl BlocklistNfs {
     }
 
     async fn end_time(&self) -> i64 {
-        self.inner.last_time
+        self.inner.end_time
     }
 
     async fn read_files(&self) -> &[String] {

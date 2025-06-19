@@ -78,7 +78,7 @@ impl BlocklistBootp {
     }
 
     async fn end_time(&self) -> StringNumber<i64> {
-        StringNumber(self.inner.last_time)
+        StringNumber(self.inner.end_time)
     }
 
     async fn op(&self) -> u8 {

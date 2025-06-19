@@ -75,7 +75,7 @@ impl PortScan {
     }
 
     async fn end_time(&self) -> DateTime<Utc> {
-        self.inner.last_time
+        self.inner.end_time
     }
 
     async fn category(&self) -> ThreatCategory {
@@ -184,7 +184,7 @@ impl MultiHostPortScan {
     }
 
     async fn end_time(&self) -> DateTime<Utc> {
-        self.inner.last_time
+        self.inner.end_time
     }
 
     async fn category(&self) -> ThreatCategory {
@@ -289,7 +289,7 @@ impl ExternalDdos {
     }
 
     async fn end_time(&self) -> DateTime<Utc> {
-        self.inner.last_time
+        self.inner.end_time
     }
 
     async fn category(&self) -> ThreatCategory {

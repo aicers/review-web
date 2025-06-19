@@ -78,7 +78,7 @@ impl BlocklistSmb {
     }
 
     async fn end_time(&self) -> i64 {
-        self.inner.last_time
+        self.inner.end_time
     }
 
     async fn command(&self) -> u8 {
