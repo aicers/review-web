@@ -3,8 +3,8 @@ use chrono::{DateTime, Utc};
 use review_database as database;
 
 use super::{
-    EventLevel, TriageScore, country_code, find_ip_customer, find_ip_network, get_event_level,
-    get_learning_method,
+    EventLearningMethod, EventThreatLevel, ThreatLevel, TriageScore, country_code,
+    find_ip_customer, find_ip_network,
 };
 use crate::graphql::{
     customer::Customer, filter::LearningMethod, network::Network, triage::ThreatCategory,
@@ -139,12 +139,24 @@ impl NetworkThreat {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
-    async fn level(&self) -> EventLevel {
-        get_event_level("NetworkThreat")
+    async fn level(&self) -> ThreatLevel {
+        Self::get_threat_level()
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        get_learning_method("NetworkThreat")
+        Self::get_learning_method()
+    }
+}
+
+impl EventThreatLevel for NetworkThreat {
+    fn get_threat_level() -> ThreatLevel {
+        ThreatLevel::Medium
+    }
+}
+
+impl EventLearningMethod for NetworkThreat {
+    fn get_learning_method() -> LearningMethod {
+        LearningMethod::Unsupervised
     }
 }
 

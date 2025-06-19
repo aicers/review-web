@@ -3,8 +3,8 @@ use chrono::{DateTime, Utc};
 use review_database as database;
 
 use super::{
-    EventLevel, TriageScore, country_code, find_ip_customer, find_ip_network, get_event_level,
-    get_learning_method,
+    EventLearningMethod, EventThreatLevel, ThreatLevel, TriageScore, country_code,
+    find_ip_customer, find_ip_network,
 };
 use crate::graphql::{
     customer::Customer, filter::LearningMethod, network::Network, triage::ThreatCategory,
@@ -229,12 +229,24 @@ impl HttpThreat {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
-    async fn level(&self) -> EventLevel {
-        get_event_level("HttpThreat")
+    async fn level(&self) -> ThreatLevel {
+        Self::get_threat_level()
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        get_learning_method("HttpThreat")
+        Self::get_learning_method()
+    }
+}
+
+impl EventThreatLevel for HttpThreat {
+    fn get_threat_level() -> ThreatLevel {
+        ThreatLevel::Low
+    }
+}
+
+impl EventLearningMethod for HttpThreat {
+    fn get_learning_method() -> LearningMethod {
+        LearningMethod::Unsupervised
     }
 }
 
@@ -327,12 +339,24 @@ impl RepeatedHttpSessions {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
-    async fn level(&self) -> EventLevel {
-        get_event_level("RepeatedHttpSessions")
+    async fn level(&self) -> ThreatLevel {
+        Self::get_threat_level()
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        get_learning_method("RepeatedHttpSessions")
+        Self::get_learning_method()
+    }
+}
+
+impl EventThreatLevel for RepeatedHttpSessions {
+    fn get_threat_level() -> ThreatLevel {
+        ThreatLevel::Medium
+    }
+}
+
+impl EventLearningMethod for RepeatedHttpSessions {
+    fn get_learning_method() -> LearningMethod {
+        LearningMethod::SemiSupervised
     }
 }
 
@@ -521,12 +545,24 @@ impl TorConnection {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
-    async fn level(&self) -> EventLevel {
-        get_event_level("TorConnection")
+    async fn level(&self) -> ThreatLevel {
+        Self::get_threat_level()
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        get_learning_method("TorConnection")
+        Self::get_learning_method()
+    }
+}
+
+impl EventThreatLevel for TorConnection {
+    fn get_threat_level() -> ThreatLevel {
+        ThreatLevel::Medium
+    }
+}
+
+impl EventLearningMethod for TorConnection {
+    fn get_learning_method() -> LearningMethod {
+        LearningMethod::SemiSupervised
     }
 }
 
@@ -715,12 +751,24 @@ impl DomainGenerationAlgorithm {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
-    async fn level(&self) -> EventLevel {
-        get_event_level("DomainGenerationAlgorithm")
+    async fn level(&self) -> ThreatLevel {
+        Self::get_threat_level()
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        get_learning_method("DomainGenerationAlgorithm")
+        Self::get_learning_method()
+    }
+}
+
+impl EventThreatLevel for DomainGenerationAlgorithm {
+    fn get_threat_level() -> ThreatLevel {
+        ThreatLevel::Medium
+    }
+}
+
+impl EventLearningMethod for DomainGenerationAlgorithm {
+    fn get_learning_method() -> LearningMethod {
+        LearningMethod::SemiSupervised
     }
 }
 
@@ -905,12 +953,24 @@ impl NonBrowser {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
-    async fn level(&self) -> EventLevel {
-        get_event_level("NonBrowser")
+    async fn level(&self) -> ThreatLevel {
+        Self::get_threat_level()
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        get_learning_method("NonBrowser")
+        Self::get_learning_method()
+    }
+}
+
+impl EventThreatLevel for NonBrowser {
+    fn get_threat_level() -> ThreatLevel {
+        ThreatLevel::Medium
+    }
+}
+
+impl EventLearningMethod for NonBrowser {
+    fn get_learning_method() -> LearningMethod {
+        LearningMethod::SemiSupervised
     }
 }
 
@@ -1101,12 +1161,24 @@ impl BlocklistHttp {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
-    async fn level(&self) -> EventLevel {
-        get_event_level("BlocklistHttp")
+    async fn level(&self) -> ThreatLevel {
+        Self::get_threat_level()
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        get_learning_method("BlocklistHttp")
+        Self::get_learning_method()
+    }
+}
+
+impl EventThreatLevel for BlocklistHttp {
+    fn get_threat_level() -> ThreatLevel {
+        ThreatLevel::Medium
+    }
+}
+
+impl EventLearningMethod for BlocklistHttp {
+    fn get_learning_method() -> LearningMethod {
+        LearningMethod::SemiSupervised
     }
 }
 

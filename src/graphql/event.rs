@@ -79,29 +79,23 @@ const DEFAULT_CONNECTION_SIZE: usize = 100;
 const DEFAULT_EVENT_FETCH_TIME: u64 = 20;
 const ADD_TIME_FOR_NEXT_COMPARE: i64 = 1;
 
-/// Event threat level.
+/// Threat level.
 #[derive(Clone, Copy, Enum, Eq, PartialEq)]
-pub(super) enum EventLevel {
+pub(super) enum ThreatLevel {
     Low,
     Medium,
 }
 
-/// Returns the event level for a given event type.
-fn get_event_level(event_type: &str) -> EventLevel {
-    match event_type {
-        "HttpThreat" => EventLevel::Low,
-        _ => EventLevel::Medium,
-    }
+/// Trait for event types that can provide their threat level directly.
+pub(super) trait EventThreatLevel {
+    /// Returns the threat level for this event type.
+    fn get_threat_level() -> ThreatLevel;
 }
 
-/// Returns the learning method for a given event type.
-fn get_learning_method(event_type: &str) -> LearningMethod {
-    match event_type {
-        "HttpThreat" | "NetworkThreat" | "WindowsThreat" | "ExtraThreat" => {
-            LearningMethod::Unsupervised
-        }
-        _ => LearningMethod::SemiSupervised,
-    }
+/// Trait for event types that can provide their learning method directly.
+pub(super) trait EventLearningMethod {
+    /// Returns the learning method for this event type.
+    fn get_learning_method() -> LearningMethod;
 }
 
 #[derive(Default)]
