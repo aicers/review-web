@@ -79,8 +79,8 @@ impl BlocklistKerberos {
 
     /// The last time the event was seen in string wthin the range
     /// representable by a `i64`.
-    async fn last_time(&self) -> StringNumber<i64> {
-        StringNumber(self.inner.last_time)
+    async fn end_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.end_time)
     }
 
     /// The client time in string wthin the range representable

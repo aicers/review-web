@@ -78,8 +78,8 @@ impl FtpBruteForce {
         self.inner.start_time
     }
 
-    async fn last_time(&self) -> DateTime<Utc> {
-        self.inner.last_time
+    async fn end_time(&self) -> DateTime<Utc> {
+        self.inner.end_time
     }
 
     async fn is_internal(&self) -> bool {
@@ -316,8 +316,8 @@ impl BlocklistFtp {
         self.inner.proto
     }
 
-    async fn last_time(&self) -> StringNumber<i64> {
-        StringNumber(self.inner.last_time)
+    async fn end_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.end_time)
     }
 
     async fn user(&self) -> &str {

@@ -14,6 +14,11 @@ this project adheres to
 
 ### Changed
 
+- Renamed GraphQL field `lastTime` to `endTime` in all event types to better
+  reflect its semantic meaning. This affects all event objects in the GraphQL
+  schema, including but not limited to `PortScan`, `MultiHostPortScan`,
+  `ExternalDdos`, `BlockListConn`, `BlockListTls`, `SuspiciousTlsTraffic`, and
+  other event types in the `src/graphql/event/` modules.
 - Updated the GraphQL APIs related to account as the `customer_ids` field was
   added to the `Account` structure in the review-database.
 - Added `confidence` field to `BlockListTlsFields` event structure.

@@ -77,8 +77,8 @@ impl BlocklistSmtp {
         self.inner.proto
     }
 
-    async fn last_time(&self) -> i64 {
-        self.inner.last_time
+    async fn end_time(&self) -> i64 {
+        self.inner.end_time
     }
 
     async fn mailfrom(&self) -> &str {

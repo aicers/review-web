@@ -57,8 +57,8 @@ impl RdpBruteForce {
         self.inner.start_time
     }
 
-    async fn last_time(&self) -> DateTime<Utc> {
-        self.inner.last_time
+    async fn end_time(&self) -> DateTime<Utc> {
+        self.inner.end_time
     }
 
     /// The two-letter country code of the source IP address. `"XX"` if the
@@ -170,8 +170,8 @@ impl BlocklistRdp {
         self.inner.proto
     }
 
-    async fn last_time(&self) -> i64 {
-        self.inner.last_time
+    async fn end_time(&self) -> i64 {
+        self.inner.end_time
     }
 
     async fn cookie(&self) -> String {
