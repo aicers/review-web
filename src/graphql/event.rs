@@ -24,7 +24,7 @@ use std::{cmp, net::IpAddr, num::NonZeroU8, sync::Arc};
 
 use anyhow::{Context as AnyhowContext, anyhow, bail};
 use async_graphql::{
-    Context, ID, InputObject, Object, Result, Subscription, Union,
+    Context, Enum, ID, InputObject, Object, Result, Subscription, Union,
     connection::{Connection, Edge, EmptyFields},
 };
 use chrono::{DateTime, Utc};
@@ -78,6 +78,31 @@ use crate::graphql::query;
 const DEFAULT_CONNECTION_SIZE: usize = 100;
 const DEFAULT_EVENT_FETCH_TIME: u64 = 20;
 const ADD_TIME_FOR_NEXT_COMPARE: i64 = 1;
+
+/// Event threat level.
+#[derive(Clone, Copy, Enum, Eq, PartialEq)]
+pub(super) enum EventLevel {
+    Low,
+    Medium,
+}
+
+/// Returns the event level for a given event type.
+fn get_event_level(event_type: &str) -> EventLevel {
+    match event_type {
+        "HttpThreat" => EventLevel::Low,
+        _ => EventLevel::Medium,
+    }
+}
+
+/// Returns the learning method for a given event type.
+fn get_learning_method(event_type: &str) -> LearningMethod {
+    match event_type {
+        "HttpThreat" | "NetworkThreat" | "WindowsThreat" | "ExtraThreat" => {
+            LearningMethod::Unsupervised
+        }
+        _ => LearningMethod::SemiSupervised,
+    }
+}
 
 #[derive(Default)]
 pub(super) struct EventStream;
@@ -1245,6 +1270,33 @@ mod tests {
             kind: EventKind::DnsCovertChannel,
             fields: bincode::serialize(&fields).expect("serializable"),
         }
+    }
+
+    #[tokio::test]
+    async fn event_level_and_learning_method() {
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2018, 1, 26)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(ts, 1, 2)).unwrap();
+
+        let query = format!(
+            "{{ \
+                eventList(filter: {{start:\"{ts}\"}}) {{ \
+                    edges {{ node {{... on DnsCovertChannel {{ level, learningMethod }} }} }} \
+                }} \
+            }}"
+        );
+        let res = schema.execute(&query).await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventList: {edges: [{node: {level: MEDIUM, learningMethod: SEMI_SUPERVISED}}]}}"#
+        );
     }
 
     #[tokio::test]
