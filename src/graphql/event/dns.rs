@@ -2,8 +2,13 @@ use async_graphql::{Context, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
-use super::{TriageScore, country_code, find_ip_customer, find_ip_network};
-use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
+use super::{
+    EventLevel, TriageScore, country_code, find_ip_customer, find_ip_network, get_event_level,
+    get_learning_method,
+};
+use crate::graphql::{
+    customer::Customer, filter::LearningMethod, network::Network, triage::ThreatCategory,
+};
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct DnsCovertChannel {
@@ -143,6 +148,14 @@ impl DnsCovertChannel {
             .triage_scores
             .as_ref()
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
+    }
+
+    async fn level(&self) -> EventLevel {
+        get_event_level("DnsCovertChannel")
+    }
+
+    async fn learning_method(&self) -> LearningMethod {
+        get_learning_method("DnsCovertChannel")
     }
 }
 
