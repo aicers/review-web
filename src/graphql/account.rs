@@ -298,8 +298,7 @@ impl AccountMutation {
 
     /// Updates an existing account.
     #[allow(clippy::too_many_arguments)]
-    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
-        .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)")]
     async fn update_account(
         &self,
         ctx: &Context<'_>,
@@ -608,6 +607,77 @@ impl AccountMutation {
         )?;
 
         Ok(new_theme)
+    }
+
+    /// Updates the current user's own account information.
+    #[allow(clippy::too_many_arguments)]
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
+        .or(RoleGuard::new(super::Role::SecurityAdministrator))
+        .or(RoleGuard::new(super::Role::SecurityManager))
+        .or(RoleGuard::new(super::Role::SecurityMonitor))")]
+    async fn update_my_account(
+        &self,
+        ctx: &Context<'_>,
+        password: Option<UpdatePassword>,
+        name: Option<String>,
+        department: Option<String>,
+        language: Option<String>,
+        theme: Option<String>,
+    ) -> Result<String> {
+        if password.is_none()
+            && name.is_none()
+            && department.is_none()
+            && language.is_none()
+            && theme.is_none()
+        {
+            return Err("At least one of the optional fields must be provided to update.".into());
+        }
+
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.account_map();
+        let username = ctx.data::<String>()?;
+
+        // Validate password change if provided
+        if let Some(ref password_update) = password {
+            let Ok(Some(account)) = map.get(username) else {
+                return Err("invalid username".into());
+            };
+
+            // Verify the old password is correct
+            if !account.verify_password(&password_update.old) {
+                return Err("incorrect current password".into());
+            }
+
+            // Validate that the new password is different from the old password
+            if password_update.old == password_update.new {
+                return Err("new password cannot be the same as the current password".into());
+            }
+        }
+
+        // Get current account values for update
+        let Ok(Some(current_account)) = map.get(username) else {
+            return Err("invalid username".into());
+        };
+
+        let password_new = password.map(|p| p.new);
+        let name_update = name.map(|n| (current_account.name.clone(), n));
+        let dept_update = department.map(|d| (current_account.department.clone(), d));
+        let language_update = language.map(|l| (current_account.language.clone(), Some(l)));
+        let theme_update = theme.map(|t| (current_account.theme.clone(), Some(t)));
+
+        map.update(
+            username.as_bytes(),
+            &password_new,
+            None,
+            &name_update,
+            &dept_update,
+            &language_update,
+            &theme_update,
+            &None,
+            &None,
+            &None,
+        )?;
+        Ok(username.clone())
     }
 }
 
