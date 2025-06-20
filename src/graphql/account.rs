@@ -1393,6 +1393,8 @@ mod tests {
         assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
 
         let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        super::init_expiration_time(&store, 3600).unwrap();
         update_account_last_signin_time(&schema, "admin").await;
         let res = schema
             .execute(
@@ -2049,6 +2051,8 @@ mod tests {
     #[tokio::test]
     async fn max_parallel_sessions() {
         let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        super::init_expiration_time(&store, 3600).unwrap();
         let res = schema
             .execute(
                 r#"mutation {
