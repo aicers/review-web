@@ -2,8 +2,8 @@ use async_graphql::{ID, Object};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
-use super::TriageScore;
-use crate::graphql::triage::ThreatCategory;
+use super::{ThreatLevel, TriageScore};
+use crate::graphql::{filter::LearningMethod, triage::ThreatCategory};
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct WindowsThreat {
@@ -88,6 +88,14 @@ impl WindowsThreat {
             .triage_scores
             .as_ref()
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
+    }
+
+    async fn level(&self) -> ThreatLevel {
+        ThreatLevel::Medium
+    }
+
+    async fn learning_method(&self) -> LearningMethod {
+        LearningMethod::Unsupervised
     }
 }
 
