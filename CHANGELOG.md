@@ -11,6 +11,11 @@ this project adheres to
 
 - Introduced `myAccount` GraphQL API, which allows users of all roles to query
   their own account information.
+- Added `updateMyAccount` GraphQL mutation that allows authenticated users to
+  update their own account information including password, name, department,
+  language, and theme settings. This enables user self-service account
+  management for all user roles (`SystemAdministrator`, `SecurityAdministrator`,
+  `SecurityManager`, `SecurityMonitor`).
 - Added username validation and normalization with the following rules:
   - No whitespace allowed
   - Only lowercase English letters, digits, and special characters
@@ -22,6 +27,9 @@ this project adheres to
 
 ### Changed
 
+- Restricted `updateAccount` GraphQL mutation access to `SystemAdministrator`
+  role only for enhanced security. Previously accessible to both
+  `SystemAdministrator` and `SecurityAdministrator` roles.
 - Renamed GraphQL field `lastTime` to `endTime` in all event types to better
   reflect its semantic meaning. This affects all event objects in the GraphQL
   schema, including but not limited to `PortScan`, `MultiHostPortScan`,
