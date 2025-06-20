@@ -168,6 +168,10 @@ impl AccountMutation {
         max_parallel_sessions: Option<u8>,
         customer_ids: Option<Vec<ID>>,
     ) -> Result<String> {
+        if role == Role::SystemAdministrator {
+            return Err("Invalid role request".into());
+        }
+
         // Validate and normalize the username
         let normalized_username = validate_and_normalize_username(&username)
             .map_err(|e| format!("Invalid username: {e}"))?;
@@ -266,6 +270,13 @@ impl AccountMutation {
         for username in usernames {
             // Normalize the username for lookup (convert to lowercase)
             let normalized_username = username.to_lowercase();
+
+            if let Some(account) = map.get(&normalized_username)? {
+                if account.role == review_database::Role::SystemAdministrator {
+                    return Err("System administrator can not be removed".into());
+                }
+            }
+
             map.delete(&normalized_username)?;
             removed.push(normalized_username);
         }
@@ -1364,6 +1375,28 @@ mod tests {
 
     #[tokio::test]
     #[serial]
+    async fn remove_admin_account() {
+        // given
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+        let schema = TestSchema::new().await;
+
+        // when
+        let res = schema
+            .execute(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
+            .await;
+
+        // then
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "System administrator can not be removed"
+        );
+
+        restore_review_admin(original_review_admin);
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn default_account() {
         let original_review_admin = backup_and_set_review_admin();
         assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
@@ -1497,8 +1530,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reset_admin_password() {
+    async fn reset_admin_password_security_administrator() {
         let schema = TestSchema::new().await;
+
+        // given
         let res = schema
             .execute(
                 r#"mutation {
@@ -1516,22 +1551,7 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertAccount: "user1"}"#);
 
-        let res = schema
-            .execute(
-                r#"mutation {
-                    insertAccount(
-                        username: "user2",
-                        password: "Ahh9booH",
-                        role: "SYSTEM_ADMINISTRATOR",
-                        name: "John Doe",
-                        department: "Admin",
-                        language: "en-US"
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "user2"}"#);
-
+        // when
         let res = schema
             .execute_with_guard(
                 r#"mutation {
@@ -1540,28 +1560,34 @@ mod tests {
                 RoleGuard::Local,
             )
             .await;
-        assert_eq!(res.data.to_string(), r"null");
 
+        // then
+        assert_eq!(res.data.to_string(), r"null");
+    }
+
+    #[tokio::test]
+    async fn reset_admin_password_system_administrator() {
+        // given
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+        let schema = TestSchema::new().await;
+
+        // when
+        // : Change password in local
         let res = schema
             .execute_with_guard(
                 r#"mutation {
-                resetAdminPassword(username: "user3", password: "user not existed")
+                resetAdminPassword(username: "admin", password: "Reset-password1!")
             }"#,
                 RoleGuard::Local,
             )
             .await;
-        assert_eq!(res.data.to_string(), r"null");
 
-        let res = schema
-            .execute_with_guard(
-                r#"mutation {
-                resetAdminPassword(username: "user2", password: "admin")
-            }"#,
-                RoleGuard::Local,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{resetAdminPassword: "user2"}"#);
+        // then
+        assert_eq!(res.data.to_string(), r#"{resetAdminPassword: "admin"}"#);
 
+        // when
+        // : Change passowrd not in local
         let res = schema
             .execute_with_guard(
                 r#"mutation {
@@ -1570,33 +1596,37 @@ mod tests {
                 RoleGuard::Role(Role::SystemAdministrator),
             )
             .await;
+
+        // then
         assert_eq!(res.data.to_string(), r"null");
+        assert!(!res.errors.is_empty());
+
+        restore_review_admin(original_review_admin);
+    }
+
+    #[tokio::test]
+    async fn reset_admin_password_unregistered_person() {
+        let schema = TestSchema::new().await;
+
+        // when
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+            resetAdminPassword(username: "user", password: "user not existed")
+        }"#,
+                RoleGuard::Local,
+            )
+            .await;
+
+        // then
+        assert_eq!(res.data.to_string(), r"null");
+        assert!(!res.errors.is_empty());
     }
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn insert_account() {
         let schema = TestSchema::new().await;
-
-        let res = schema
-            .execute(
-                r#"mutation {
-                    insertAccount(
-                        username: "sysadmin1",
-                        password: "password",
-                        role: "SYSTEM_ADMINISTRATOR",
-                        name: "John Doe",
-                        department: "Security",
-                        language: "en-US",
-                        allowAccessFrom: ["127.0.0.1"]
-                        theme: "dark"
-                        customerIds: [0]
-                    )
-                }"#,
-            )
-            .await;
-
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "sysadmin1"}"#);
 
         let res = schema
             .execute(
@@ -1615,7 +1645,7 @@ mod tests {
             )
             .await;
 
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "sysadmin2"}"#);
+        assert_eq!(res.errors.first().unwrap().message, "Invalid role request");
 
         let res = schema
             .execute(
@@ -1945,30 +1975,14 @@ mod tests {
 
         // Failure Case 3 Related to customer id: Update `role` to a value other than
         // `SYSTEM_ADMINISTRATOR` while the current account's `customer_ids` is set to `None`.
-        let res = schema
-            .execute(
-                r#"mutation {
-                    insertAccount(
-                        username: "username2",
-                        password: "password",
-                        role: "SYSTEM_ADMINISTRATOR",
-                        name: "John Doe",
-                        department: "System Admin",
-                        language: "en-US",
-                        allowAccessFrom: ["127.0.0.1"]
-                        theme: "dark"
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "username2"}"#);
+        let original_review_admin = backup_and_set_review_admin();
 
         let res = schema
             .execute(
                 r#"
                 mutation {
                     updateAccount(
-                        username: "username2",
+                        username: "admin",
                         role: {
                             old: "SYSTEM_ADMINISTRATOR",
                             new: "SECURITY_ADMINISTRATOR"
@@ -1982,6 +1996,8 @@ mod tests {
             res.errors.first().unwrap().message,
             "You are not allowed to access all customers."
         );
+
+        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
@@ -2584,29 +2600,14 @@ mod tests {
 
     #[tokio::test]
     async fn prevent_password_reuse_reset_admin_password() {
+        let original_review_admin = backup_and_set_review_admin();
         let schema = TestSchema::new().await;
-
-        // Create a system admin account
-        let res = schema
-            .execute(
-                r#"mutation {
-                    insertAccount(
-                        username: "admin_user",
-                        password: "adminpassword",
-                        role: "SYSTEM_ADMINISTRATOR",
-                        name: "Admin User",
-                        department: "Admin"
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "admin_user"}"#);
 
         // Try to reset admin password with the same password (should fail)
         let res = schema
             .execute_with_guard(
                 r#"mutation {
-                    resetAdminPassword(username: "admin_user", password: "adminpassword")
+                    resetAdminPassword(username: "admin", password: "admin")
                 }"#,
                 RoleGuard::Local,
             )
@@ -2622,22 +2623,21 @@ mod tests {
         let res = schema
             .execute_with_guard(
                 r#"mutation {
-                    resetAdminPassword(username: "admin_user", password: "newadminpassword")
+                    resetAdminPassword(username: "admin", password: "newadminpassword")
                 }"#,
                 RoleGuard::Local,
             )
             .await;
 
-        assert_eq!(
-            res.data.to_string(),
-            r#"{resetAdminPassword: "admin_user"}"#
-        );
+        assert_eq!(res.data.to_string(), r#"{resetAdminPassword: "admin"}"#);
 
         // Verify the password was actually changed
         let store = schema.store().await;
         let map = store.account_map();
-        let account = map.get("admin_user").unwrap().unwrap();
+        let account = map.get("admin").unwrap().unwrap();
         assert!(account.verify_password("newadminpassword"));
         assert!(!account.verify_password("adminpassword"));
+
+        restore_review_admin(original_review_admin);
     }
 }
