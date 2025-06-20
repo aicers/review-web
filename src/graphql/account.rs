@@ -28,6 +28,11 @@ use crate::graphql::query_with_constraints;
 pub struct SignedInAccount {
     username: String,
     expire_times: Vec<DateTime<Utc>>,
+    signin_times: Vec<DateTime<Utc>>,
+    durations: Vec<i64>,
+    name: String,
+    department: String,
+    role: Role,
 }
 
 const REVIEW_ADMIN: &str = "REVIEW_ADMIN";
@@ -99,34 +104,53 @@ impl AccountQuery {
         use review_database::Iterable;
 
         let store = crate::graphql::get_store(ctx).await?;
-        let map = store.access_token_map();
+        let access_token_map = store.access_token_map();
+        let account_map = store.account_map();
 
-        let signed = map
+        // Get the current expiration time for calculating session durations
+        let jwt_expires_in = expiration_time(&store)? as i64;
+
+        let signed = access_token_map
             .iter(Direction::Forward, None)
             .filter_map(|e| {
                 let e = e.ok()?;
                 let username = e.username;
-                let exp_time = decode_token(&e.token)
-                    .ok()
-                    .map(|t| Utc.timestamp_nanos(t.exp * 1_000_000_000))?;
+                let decoded_token = decode_token(&e.token).ok()?;
+                let exp_time = Utc.timestamp_nanos(decoded_token.exp * 1_000_000_000);
                 if Utc::now() < exp_time {
-                    Some((username, exp_time))
+                    // Calculate sign-in time from expiration time
+                    let signin_time = exp_time - chrono::Duration::seconds(jwt_expires_in);
+                    // Calculate session duration in seconds
+                    let duration = (Utc::now() - signin_time).num_seconds();
+                    Some((username, exp_time, signin_time, duration))
                 } else {
                     None
                 }
             })
             .fold(
                 HashMap::new(),
-                |mut res: HashMap<_, Vec<_>>, (username, time)| {
-                    let e = res.entry(username).or_default();
-                    e.push(time);
+                |mut res: HashMap<_, (Vec<_>, Vec<_>, Vec<_>)>,
+                 (username, exp_time, signin_time, duration)| {
+                    let (expire_times, signin_times, durations) = res.entry(username).or_default();
+                    expire_times.push(exp_time);
+                    signin_times.push(signin_time);
+                    durations.push(duration);
                     res
                 },
             )
             .into_iter()
-            .map(|(username, expire_times)| SignedInAccount {
-                username,
-                expire_times,
+            .filter_map(|(username, (expire_times, signin_times, durations))| {
+                // Get account details for additional fields
+                let account = account_map.get(&username).ok()??;
+                Some(SignedInAccount {
+                    username,
+                    expire_times,
+                    signin_times,
+                    durations,
+                    name: account.name.clone(),
+                    department: account.department.clone(),
+                    role: account.role.into(),
+                })
             })
             .collect::<Vec<_>>();
 
@@ -796,7 +820,7 @@ struct AuthPayload {
     expiration_time: NaiveDateTime,
 }
 
-#[derive(Clone, Copy, Enum, Eq, PartialEq)]
+#[derive(Clone, Copy, Enum, Eq, PartialEq, Serialize)]
 #[graphql(remote = "database::Role")]
 enum Role {
     SystemAdministrator,
@@ -1396,13 +1420,51 @@ mod tests {
                 r"query {
                     signedInAccountList {
                         username
+                        name
+                        department
+                        role
+                        signinTimes
+                        durations
+                        expireTimes
                     }
                 }",
             )
             .await;
+
+        // Verify the response contains the enhanced fields
+        let Value::Object(retval) = res.data else {
+            panic!("unexpected response: {res:?}");
+        };
+        let Some(Value::List(signed_in_list)) = retval.get("signedInAccountList") else {
+            panic!("unexpected response: {retval:?}");
+        };
+        assert_eq!(signed_in_list.len(), 1);
+
+        let Some(Value::Object(account)) = signed_in_list.first() else {
+            panic!("unexpected response: {signed_in_list:?}");
+        };
+
+        // Verify all required fields are present
+        assert!(account.contains_key("username"));
+        assert!(account.contains_key("name"));
+        assert!(account.contains_key("department"));
+        assert!(account.contains_key("role"));
+        assert!(account.contains_key("signinTimes"));
+        assert!(account.contains_key("durations"));
+        assert!(account.contains_key("expireTimes"));
+
+        // Verify specific values
         assert_eq!(
-            res.data.to_string(),
-            r#"{signedInAccountList: [{username: "admin"}]}"#
+            account.get("username").unwrap(),
+            &Value::String("admin".to_string())
+        );
+        assert_eq!(
+            account.get("name").unwrap(),
+            &Value::String("System Administrator".to_string())
+        );
+        assert_eq!(
+            account.get("role").unwrap(),
+            &Value::Enum(async_graphql::Name::new("SYSTEM_ADMINISTRATOR"))
         );
 
         restore_review_admin(original_review_admin);
