@@ -140,11 +140,11 @@ impl NetworkThreat {
     }
 
     async fn level(&self) -> ThreatLevel {
-        Self::get_threat_level()
+        ThreatLevel::Medium
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        Self::get_learning_method()
+        LearningMethod::Unsupervised
     }
 }
 

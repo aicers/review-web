@@ -230,11 +230,11 @@ impl HttpThreat {
     }
 
     async fn level(&self) -> ThreatLevel {
-        Self::get_threat_level()
+        ThreatLevel::Low
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        Self::get_learning_method()
+        LearningMethod::Unsupervised
     }
 }
 
@@ -340,11 +340,11 @@ impl RepeatedHttpSessions {
     }
 
     async fn level(&self) -> ThreatLevel {
-        Self::get_threat_level()
+        ThreatLevel::Low
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        Self::get_learning_method()
+        LearningMethod::Unsupervised
     }
 }
 
@@ -546,11 +546,11 @@ impl TorConnection {
     }
 
     async fn level(&self) -> ThreatLevel {
-        Self::get_threat_level()
+        ThreatLevel::Low
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        Self::get_learning_method()
+        LearningMethod::Unsupervised
     }
 }
 
@@ -752,11 +752,11 @@ impl DomainGenerationAlgorithm {
     }
 
     async fn level(&self) -> ThreatLevel {
-        Self::get_threat_level()
+        ThreatLevel::Low
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        Self::get_learning_method()
+        LearningMethod::Unsupervised
     }
 }
 
@@ -954,11 +954,11 @@ impl NonBrowser {
     }
 
     async fn level(&self) -> ThreatLevel {
-        Self::get_threat_level()
+        ThreatLevel::Low
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        Self::get_learning_method()
+        LearningMethod::Unsupervised
     }
 }
 
@@ -1162,11 +1162,11 @@ impl BlocklistHttp {
     }
 
     async fn level(&self) -> ThreatLevel {
-        Self::get_threat_level()
+        ThreatLevel::Low
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        Self::get_learning_method()
+        LearningMethod::Unsupervised
     }
 }
 
