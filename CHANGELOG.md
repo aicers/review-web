@@ -22,6 +22,12 @@ this project adheres to
 
 ### Changed
 
+- Fixed the event stream query iterator performance issue by implementing
+  dynamic advancement of stuck event time variables. Added
+  `event_stuck_check_interval` parameter to `eventStream` to configure the
+  check interval (defaults to 15 minutes). This prevents the iterator from
+  getting stuck on old timestamps when certain event types become inactive
+  for extended periods.
 - Renamed GraphQL field `lastTime` to `endTime` in all event types to better
   reflect its semantic meaning. This affects all event objects in the GraphQL
   schema, including but not limited to `PortScan`, `MultiHostPortScan`,
