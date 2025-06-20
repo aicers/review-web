@@ -104,6 +104,7 @@ impl EventStream {
         ctx: &Context<'_>,
         start: DateTime<Utc>,
         fetch_interval: Option<u64>,
+        event_stuck_check_interval: Option<u64>,
     ) -> Result<impl Stream<Item = Event> + use<>> {
         use tokio::sync::RwLock;
         let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
@@ -120,6 +121,7 @@ impl EventStream {
                 start.timestamp_nanos_opt().unwrap_or_default(),
                 tx,
                 fetch_time,
+                event_stuck_check_interval,
             )
             .await;
             if let Err(e) = fetch {
@@ -136,8 +138,12 @@ async fn fetch_events(
     start_time: i64,
     tx: UnboundedSender<Event>,
     fecth_time: u64,
+    event_stuck_check_interval: Option<u64>,
 ) -> Result<()> {
     let mut itv = time::interval(time::Duration::from_secs(fecth_time));
+    let mut iter_time_key = start_time;
+    let stuck_check_interval = event_stuck_check_interval.unwrap_or(900); // Default 15 minutes in seconds
+    let mut last_stuck_check = std::time::Instant::now();
     let mut dns_covert_time = start_time;
     let mut http_threat_time = start_time;
     let mut rdp_brute_time = start_time;
@@ -178,6 +184,176 @@ async fn fetch_events(
 
     loop {
         itv.tick().await;
+
+        // Check if we need to advance stuck event time variables
+        if last_stuck_check.elapsed().as_secs() >= stuck_check_interval {
+            // Collect all event time variables
+            let event_times = vec![
+                dns_covert_time,
+                http_threat_time,
+                rdp_brute_time,
+                repeat_http_time,
+                tor_time,
+                dga_time,
+                ftp_brute_time,
+                ftp_plain_time,
+                port_scan_time,
+                multi_host_time,
+                ldap_brute_time,
+                ldap_plain_time,
+                non_browser_time,
+                external_ddos_time,
+                cryptocurrency_time,
+                blocklist_bootp_time,
+                blocklist_conn_time,
+                blocklist_dhcp_time,
+                blocklist_dns_time,
+                blocklist_dcerpc_time,
+                blocklist_ftp_time,
+                blocklist_http_time,
+                blocklist_kerberos_time,
+                blocklist_ldap_time,
+                blocklist_mqtt_time,
+                blocklist_nfs_time,
+                blocklist_ntlm_time,
+                blocklist_rdp_time,
+                blocklist_smb_time,
+                blocklist_smtp_time,
+                blocklist_ssh_time,
+                blocklist_tls_time,
+                windows_threat_time,
+                network_threat_time,
+                extra_threat_time,
+                locky_ransomware_time,
+                suspicious_tls_time,
+            ];
+
+            // Find the minimum time greater than iter_time_key
+            if let Some(min_time_key) = event_times
+                .iter()
+                .filter(|&&time| time > iter_time_key)
+                .min()
+                .copied()
+            {
+                // Update any event time variables that are stuck at iter_time_key
+                if dns_covert_time == iter_time_key {
+                    dns_covert_time = min_time_key;
+                }
+                if http_threat_time == iter_time_key {
+                    http_threat_time = min_time_key;
+                }
+                if rdp_brute_time == iter_time_key {
+                    rdp_brute_time = min_time_key;
+                }
+                if repeat_http_time == iter_time_key {
+                    repeat_http_time = min_time_key;
+                }
+                if tor_time == iter_time_key {
+                    tor_time = min_time_key;
+                }
+                if dga_time == iter_time_key {
+                    dga_time = min_time_key;
+                }
+                if ftp_brute_time == iter_time_key {
+                    ftp_brute_time = min_time_key;
+                }
+                if ftp_plain_time == iter_time_key {
+                    ftp_plain_time = min_time_key;
+                }
+                if port_scan_time == iter_time_key {
+                    port_scan_time = min_time_key;
+                }
+                if multi_host_time == iter_time_key {
+                    multi_host_time = min_time_key;
+                }
+                if ldap_brute_time == iter_time_key {
+                    ldap_brute_time = min_time_key;
+                }
+                if ldap_plain_time == iter_time_key {
+                    ldap_plain_time = min_time_key;
+                }
+                if non_browser_time == iter_time_key {
+                    non_browser_time = min_time_key;
+                }
+                if external_ddos_time == iter_time_key {
+                    external_ddos_time = min_time_key;
+                }
+                if cryptocurrency_time == iter_time_key {
+                    cryptocurrency_time = min_time_key;
+                }
+                if blocklist_bootp_time == iter_time_key {
+                    blocklist_bootp_time = min_time_key;
+                }
+                if blocklist_conn_time == iter_time_key {
+                    blocklist_conn_time = min_time_key;
+                }
+                if blocklist_dhcp_time == iter_time_key {
+                    blocklist_dhcp_time = min_time_key;
+                }
+                if blocklist_dns_time == iter_time_key {
+                    blocklist_dns_time = min_time_key;
+                }
+                if blocklist_dcerpc_time == iter_time_key {
+                    blocklist_dcerpc_time = min_time_key;
+                }
+                if blocklist_ftp_time == iter_time_key {
+                    blocklist_ftp_time = min_time_key;
+                }
+                if blocklist_http_time == iter_time_key {
+                    blocklist_http_time = min_time_key;
+                }
+                if blocklist_kerberos_time == iter_time_key {
+                    blocklist_kerberos_time = min_time_key;
+                }
+                if blocklist_ldap_time == iter_time_key {
+                    blocklist_ldap_time = min_time_key;
+                }
+                if blocklist_mqtt_time == iter_time_key {
+                    blocklist_mqtt_time = min_time_key;
+                }
+                if blocklist_nfs_time == iter_time_key {
+                    blocklist_nfs_time = min_time_key;
+                }
+                if blocklist_ntlm_time == iter_time_key {
+                    blocklist_ntlm_time = min_time_key;
+                }
+                if blocklist_rdp_time == iter_time_key {
+                    blocklist_rdp_time = min_time_key;
+                }
+                if blocklist_smb_time == iter_time_key {
+                    blocklist_smb_time = min_time_key;
+                }
+                if blocklist_smtp_time == iter_time_key {
+                    blocklist_smtp_time = min_time_key;
+                }
+                if blocklist_ssh_time == iter_time_key {
+                    blocklist_ssh_time = min_time_key;
+                }
+                if blocklist_tls_time == iter_time_key {
+                    blocklist_tls_time = min_time_key;
+                }
+                if windows_threat_time == iter_time_key {
+                    windows_threat_time = min_time_key;
+                }
+                if network_threat_time == iter_time_key {
+                    network_threat_time = min_time_key;
+                }
+                if extra_threat_time == iter_time_key {
+                    extra_threat_time = min_time_key;
+                }
+                if locky_ransomware_time == iter_time_key {
+                    locky_ransomware_time = min_time_key;
+                }
+                if suspicious_tls_time == iter_time_key {
+                    suspicious_tls_time = min_time_key;
+                }
+
+                // Update iter_time_key to the new minimum time
+                iter_time_key = min_time_key;
+            }
+
+            last_stuck_check = std::time::Instant::now();
+        }
 
         // Select the minimum time for DB search
         let start = dns_covert_time
