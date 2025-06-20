@@ -94,7 +94,7 @@ impl NodeControlMutation {
         if let Some(ref target_agents) = apply_scope.agents {
             let store = crate::graphql::get_store(ctx).await?;
             let node_map = store.node_map();
-            let (node, _) = node_map
+            let (node, _, _) = node_map
                 .get_by_id(i)?
                 .ok_or_else(|| async_graphql::Error::new(format!("Node with ID {i} not found")))?;
             let hostname = node.profile.map(|p| p.hostname).unwrap_or_default();
@@ -343,8 +343,8 @@ mod tests {
                             kind: SENSOR
                             status: ENABLED
                             draft: "test = 'toml'"
-                        }]
-                        giganto: null
+                        }],
+                        externalServices: []
                     )
                 }"#,
             )
@@ -380,7 +380,10 @@ mod tests {
                                 config
                                 draft
                             }
-                            giganto {
+                            externalServices {
+                                node
+                                key
+                                kind
                                 status
                                 draft
                             }
@@ -425,7 +428,7 @@ mod tests {
                                       "draft": "test = 'toml'"
                                     }
                                   ],
-                                "giganto": null,
+                                "externalServices": []
                             }
                         }
                     ]
@@ -464,7 +467,7 @@ mod tests {
                                     draft: "test = 'toml'"
                                 }
                             ],
-                            giganto: null
+                            externalServices: []
                         }
                     )
                 }"#,
@@ -501,7 +504,10 @@ mod tests {
                                 config
                                 draft
                             }
-                            giganto {
+                            externalServices {
+                                node
+                                key
+                                kind
                                 status
                                 draft
                             }
@@ -550,7 +556,7 @@ mod tests {
                                       "draft": "test = 'toml'"
                                     }
                                   ],
-                                "giganto": null,
+                                "externalServices": []
                             }
                         }
                     ]
@@ -593,7 +599,7 @@ mod tests {
                                     draft: "test = 'toml'"
                                 }
                             ],
-                            giganto: null,
+                            externalServices: [],
                         },
                         new: {
                             nameDraft: "admin node with new name",
@@ -616,7 +622,7 @@ mod tests {
                                     draft: "test = 'toml'"
                                 }
                             ],
-                            giganto: null,
+                            externalServices: null,
                         }
                     )
                 }"#,
@@ -653,7 +659,10 @@ mod tests {
                                 config
                                 draft
                             }
-                            giganto {
+                            externalServices {
+                                node
+                                key
+                                kind
                                 status
                                 draft
                             }
@@ -703,7 +712,7 @@ mod tests {
                                       "draft": "test = 'toml'"
                                     }
                                   ],
-                                "giganto": null,
+                                "externalServices": []
                             }
                         }
                     ]
@@ -746,7 +755,7 @@ mod tests {
                                     draft: "test = 'toml'"
                                 }
                             ],
-                            giganto: null
+                            externalServices: []
                         }
                     )
                 }"#,
@@ -783,7 +792,10 @@ mod tests {
                                 config
                                 draft
                             }
-                            giganto {
+                            externalServices {
+                                node
+                                key
+                                kind
                                 status
                                 draft
                             }
@@ -832,7 +844,7 @@ mod tests {
                                       "draft": "test = 'toml'"
                                     }
                                 ],
-                                "giganto": null
+                                "externalServices": []
                             }
                         }
                     ]
@@ -840,7 +852,7 @@ mod tests {
             })
         );
 
-        // update giganto draft
+        // update data store draft
         let res = schema
             .execute(
                 r#"mutation {
@@ -875,7 +887,7 @@ mod tests {
                                     draft: "test = 'toml'"
                                 }
                             ],
-                            giganto: null,
+                            externalServices: []
                         },
                         new: {
                             nameDraft: "admin node with new name",
@@ -898,10 +910,14 @@ mod tests {
                                     draft: "test = 'toml'"
                                 }
                             ],
-                            giganto: {
-                                status: ENABLED,
-                                draft: "test = 'giganto_toml'"
-                            }
+                            externalServices: [
+                                {
+                                    key: "data_store",
+                                    kind: DATA_STORE,
+                                    status: ENABLED,
+                                    draft: "test = 'data_store_toml'"
+                                }
+                            ]
                         }
                     )
                 }"#,
@@ -945,10 +961,14 @@ mod tests {
                                     draft: "test = 'toml'"
                                 }
                             ],
-                            giganto: {
-                                status: ENABLED,
-                                draft: "test = 'giganto_toml'"
-                            }
+                            externalServices: [
+                                {
+                                    key: "data_store",
+                                    kind: DATA_STORE,
+                                    status: ENABLED,
+                                    draft: "test = 'data_store_toml'"
+                                }
+                            ]
                         }
                     )
                 }"#,
@@ -986,7 +1006,10 @@ mod tests {
                                     config
                                     draft
                                 }
-                                giganto {
+                                externalServices {
+                                    node
+                                    key
+                                    kind
                                     status
                                     draft
                                 }
@@ -1036,10 +1059,15 @@ mod tests {
                                         "draft": "test = 'toml'"
                                     }
                                 ],
-                                "giganto": {
-                                    "status": "ENABLED",
-                                    "draft": "test = 'giganto_toml'"
-                                }
+                                "externalServices": [
+                                    {
+                                        "node": 0,
+                                        "key": "data_store",
+                                        "kind": "DATA_STORE",
+                                        "status": "ENABLED",
+                                        "draft": "test = 'data_store_toml'"
+                                    }
+                                ]
                             }
                         }
                     ]
@@ -1082,10 +1110,14 @@ mod tests {
                                     draft: "test = 'toml'"
                                 }
                             ],
-                            giganto: {
+                            externalServices: [
+                                {
+                                    key: "data_store",
+                                    kind: DATA_STORE,
                                     status: ENABLED,
-                                    draft: "test = 'giganto_toml'"
-                            }
+                                    draft: "test = 'data_store_toml'"
+                                }
+                            ],
                         },
                         new: {
                             nameDraft: "admin node with new name",
@@ -1108,10 +1140,14 @@ mod tests {
                                     draft: "test = 'changed_toml'"
                                 }
                             ],
-                            giganto: {
-                                status: ENABLED,
-                                draft: "test = 'giganto_toml'"
-                            }
+                            externalServices: [
+                                {
+                                    key: "data_store",
+                                    kind: DATA_STORE,
+                                    status: ENABLED,
+                                    draft: "test = 'data_store_toml'"
+                                }
+                            ],
                         }
                     )
                 }"#,
@@ -1149,7 +1185,10 @@ mod tests {
                                 config
                                 draft
                             }
-                            giganto {
+                            externalServices {
+                                node
+                                key
+                                kind
                                 status
                                 draft
                             }
@@ -1199,10 +1238,15 @@ mod tests {
                                       "draft": "test = 'changed_toml'"
                                     }
                                   ],
-                                "giganto": {
-                                    "status": "ENABLED",
-                                    "draft": "test = 'giganto_toml'"
-                                },
+                                "externalServices": [
+                                    {
+                                        "node": 0,
+                                        "key": "data_store",
+                                        "kind": "DATA_STORE",
+                                        "status": "ENABLED",
+                                        "draft": "test = 'data_store_toml'"
+                                    }
+                                ]
                             }
                         }
                     ]
@@ -1245,10 +1289,14 @@ mod tests {
                                     draft: "test = 'changed_toml'"
                                 }
                             ],
-                            giganto: {
-                                status: ENABLED,
-                                draft: "test = 'giganto_toml'"
-                            }
+                            externalServices: [
+                                {
+                                    key: "data_store",
+                                    kind: DATA_STORE,
+                                    status: ENABLED,
+                                    draft: "test = 'data_store_toml'"
+                                }
+                            ]
                         }
                     )
                 }"#,
@@ -1286,7 +1334,10 @@ mod tests {
                                     config
                                     draft
                                 }
-                                giganto {
+                                externalServices {
+                                    node
+                                    key
+                                    kind
                                     status
                                     draft
                                 }
@@ -1336,10 +1387,15 @@ mod tests {
                                         "draft": "test = 'changed_toml'"
                                     }
                                 ],
-                                "giganto": {
-                                    "status": "ENABLED",
-                                    "draft": "test = 'giganto_toml'"
-                                }
+                                "externalServices": [
+                                    {
+                                        "node": 0,
+                                        "key": "data_store",
+                                        "kind": "DATA_STORE",
+                                        "status": "ENABLED",
+                                        "draft": "test = 'data_store_toml'"
+                                    }
+                                ]
                             }
                         }
                     ]
@@ -1382,10 +1438,14 @@ mod tests {
                                     draft: "test = 'changed_toml'"
                                 }
                             ],
-                            giganto: {
-                                status: "ENABLED",
-                                draft: "test = 'giganto_toml'"
-                            }
+                            externalServices: [
+                                {
+                                    key: "data_store",
+                                    kind: DATA_STORE,
+                                    status: ENABLED,
+                                    draft: "test = 'data_store_toml'"
+                                }
+                            ]
                         },
                         new: {
                             nameDraft: "admin node with new name",
@@ -1408,10 +1468,14 @@ mod tests {
                                     draft: null
                                 }
                             ],
-                            giganto: {
-                                status: "ENABLED",
-                                draft: "test = 'giganto_toml'"
-                            }
+                            externalServices: [
+                                {
+                                    key: "data_store",
+                                    kind: DATA_STORE,
+                                    status: ENABLED,
+                                    draft: "test = 'data_store_toml'"
+                                }
+                            ]
                         }
                     )
                 }"#,
@@ -1449,7 +1513,10 @@ mod tests {
                                 config
                                 draft
                             }
-                            giganto {
+                            externalServices {
+                                node
+                                key
+                                kind
                                 status
                                 draft
                             }
@@ -1499,10 +1566,15 @@ mod tests {
                                       "draft": null
                                     }
                                   ],
-                                "giganto": {
-                                    "status": "ENABLED",
-                                    "draft": "test = 'giganto_toml'"
-                                },
+                                "externalServices": [
+                                    {
+                                        "node": 0,
+                                        "key": "data_store",
+                                        "kind": "DATA_STORE",
+                                        "status": "ENABLED",
+                                        "draft": "test = 'data_store_toml'"
+                                    }
+                                ]
                             }
                         }
                     ]
@@ -1546,10 +1618,14 @@ mod tests {
                                         draft: null
                                     }
                                 ],
-                                giganto: {
-                                    status: "ENABLED",
-                                    draft: "test = 'giganto_toml'"
-                                }
+                                externalServices: [
+                                    {
+                                        key: "data_store",
+                                        kind: DATA_STORE,
+                                        status: ENABLED,
+                                        draft: "test = 'data_store_toml'"
+                                    }
+                                ]
                             }
                         )
                     }"#,
@@ -1586,7 +1662,10 @@ mod tests {
                                     config
                                     draft
                                 }
-                                giganto {
+                                externalServices {
+                                    node
+                                    key
+                                    kind
                                     status
                                     draft
                                 }
@@ -1628,10 +1707,15 @@ mod tests {
                                       "draft": "test = 'toml'"
                                     }
                                 ],
-                                "giganto": {
-                                    "status": "ENABLED",
-                                    "draft": "test = 'giganto_toml'"
-                                }
+                                "externalServices": [
+                                    {
+                                        "node": 0,
+                                        "key": "data_store",
+                                        "kind": "DATA_STORE",
+                                        "status": "ENABLED",
+                                        "draft": "test = 'data_store_toml'"
+                                    }
+                                ]
                             }
                         }
                     ]
@@ -1667,7 +1751,7 @@ mod tests {
                             status: ENABLED
                             draft: ""
                         }]
-                        giganto: null
+                        externalServices: []
                     )
                 }"#,
             )
@@ -1698,7 +1782,7 @@ mod tests {
                                         draft: ""
                                     }
                                 ],
-                                giganto: null
+                                externalServices: []
                             }
                         )
                     }"#,
@@ -1735,7 +1819,10 @@ mod tests {
                                     config
                                     draft
                                 }
-                                giganto {
+                                externalServices {
+                                    node
+                                    key
+                                    kind
                                     status
                                     draft
                                 }
@@ -1776,7 +1863,7 @@ mod tests {
                                       "draft": ""
                                     }
                                   ],
-                                "giganto": null,
+                                "externalServices": []
                             }
                         }
                     ]
@@ -1815,7 +1902,7 @@ mod tests {
                             status: ENABLED
                             draft: "test = 'toml'"
                         }]
-                        giganto: null
+                        externalServices: []
                     )
                 }"#,
             )
@@ -1823,7 +1910,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
         // Simulate a situation where `name_draft` is set to `None`
-        let (node, _invalid_agents) = schema
+        let (node, _, _) = schema
             .store()
             .await
             .node_map()
@@ -1868,7 +1955,7 @@ mod tests {
                                     draft: "test = 'toml'"
                                 }
                             ],
-                            giganto: null
+                            externalServices: []
                         }
                     )
                 }"#,
@@ -1909,7 +1996,7 @@ mod tests {
                             status: ENABLED
                             draft: "test = 'toml'"
                         }]
-                        giganto: null
+                        externalServices: []
                     )
                 }"#,
             )
@@ -1947,7 +2034,7 @@ mod tests {
                                     draft: "test = 'different_toml'"
                                 }
                             ],
-                            giganto: null
+                            externalServices: []
                         }
                     )
                 }"#,
@@ -1988,7 +2075,7 @@ mod tests {
                             status: ENABLED
                             draft: "test = 'toml'"
                         }]
-                        giganto: null
+                        externalServices: []
                     )
                 }"#,
             )
@@ -2026,7 +2113,7 @@ mod tests {
                                     draft: "test = 'toml'"
                                 }
                             ],
-                            giganto: null
+                            externalServices: []
                         }
                     )
                 }"#,
@@ -2066,7 +2153,7 @@ mod tests {
                             status: ENABLED
                             draft: "test = 'toml'"
                         }]
-                        giganto: null
+                        externalServices: []
                     )
                 }"#,
             )
@@ -2104,7 +2191,7 @@ mod tests {
                                     draft: "test = 'toml'"
                                 }
                             ],
-                            giganto: null
+                            externalServices: []
                         }
                     )
                 }"#,

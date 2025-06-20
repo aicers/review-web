@@ -81,6 +81,25 @@ this project adheres to
   - This changes affects GraphQL APIs such as `insertTriagePolicy`,
     `updateTriagePolicy` , `triagePolicyList`, and `triagePolicy`. They may
     introduce breaking changes for clients relying on the previous GraphQL schema.
+- Modified code related to node management. The review-database has introduced
+  the concept of "external service" to clearly distinguish applications that
+  provide an API for interaction and operate outside the REview agent ecosystem,
+  from directly connected agents over QUIC. To reflect this concept, the
+  node-related code has been updated accordingly.
+  - Added new structs `ExternalService` and `ExternalServiceSnapshot`, along
+    with enums `ExternalServiceStatus` and `ExternalServiceKind`, to represent
+    configuration for external services. The previously used `Giganto` struct,
+    which was responsible for storing configuration for the DataStore, has been
+    removed and replaced by `ExternalService`.
+  - Replaced the `giganto` field of type `Option<GigantoInput>` in both
+    `NodeInput` and `NodeDraftInput` with an `external_services` field of type
+    `Vec<ExternalServiceInput>`. The `GigantoInput` struct, which was limited to
+    handling input for the DataStore only, has been removed. Configuration input
+    for all external services—including DataStore—is now provided through `ExternalServiceInput`.
+  - Breaking changes have been introduced in the GraphQL APIs (`nodeStatusList`,
+    `nodeList`, `node`, `insertNode`, `updateNodeDraft`, `applyNode`). So
+    clients that use the affected APIs may need to update their code to maintain
+    compatibility.
 
 ### Fixed
 

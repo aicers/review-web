@@ -1016,7 +1016,7 @@ fn convert_sensors(map: &database::NodeTable, sensors: &[ID]) -> anyhow::Result<
             .as_str()
             .parse::<u32>()
             .context(format!("invalid ID: {}", id.as_str()))?;
-        let Some((node, _invalid_agents)) = map.get_by_id(i)? else {
+        let Some((node, _invalid_agents, _invalid_external_services)) = map.get_by_id(i)? else {
             bail!("no such sensor")
         };
 
@@ -1323,8 +1323,8 @@ mod tests {
                             key: "sensor"
                             kind: SENSOR
                             status: ENABLED
-                        }]
-                        giganto: null
+                        }],
+                        externalServices: [],
                     )
                 }"#,
             )
@@ -1351,6 +1351,7 @@ mod tests {
                                     status: "ENABLED"
                                 }
                             ],
+                            externalServices: []
                         }
                     )
                 }"#,

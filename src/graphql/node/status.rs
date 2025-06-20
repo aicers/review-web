@@ -243,8 +243,8 @@ mod tests {
                             status: ENABLED
                             draft: "my_val=1"
                         }}
-                    ]
-                    giganto: null
+                    ],
+                    externalServices: []
                 )
             }}"#
         );
@@ -274,7 +274,7 @@ mod tests {
                                         config: null
                                         draft: "my_val=1"
                                     }}],
-                                giganto: null
+                                externalServices: []
                             }}
                         )
                     }}"#
@@ -303,8 +303,8 @@ mod tests {
                             kind: SEMI_SUPERVISED
                             status: ENABLED
                             draft: "my_val=2"
-                        }]
-                        giganto: null
+                        }],
+                        externalServices: []
                     )
                 }"#,
             )
@@ -339,7 +339,7 @@ mod tests {
                                 config: null
                                 draft: "my_val=2"
                             }],
-                            giganto: null
+                            externalServices: []
                         }
                     )
                 }"#,
@@ -366,7 +366,6 @@ mod tests {
                                     description
                                     hostname
                                 }
-                                gigantoDraft
                                 cpuUsage
                                 totalMemory
                                 usedMemory
@@ -378,6 +377,11 @@ mod tests {
                                     kind
                                     storedStatus
                                     config
+                                    draft
+                                }
+                                externalServices {
+                                    kind
+                                    storedStatus
                                     draft
                                 }
                             }
@@ -406,7 +410,6 @@ mod tests {
                                     "description": "This node has the Manager.",
                                     "hostname": manager_hostname
                                 },
-                                "gigantoDraft": null,
                                 "ping": 0.0,
                                 "manager": true,
                                 "agents": [
@@ -416,7 +419,8 @@ mod tests {
                                         "config": "my_val=1",
                                         "draft": "my_val=1",
                                     }
-                                ]
+                                ],
+                                "externalServices": [],
                             }
                         },
                         {
@@ -433,7 +437,6 @@ mod tests {
                                     "description": "This is the node for the Unsupervised and the Semi-supervised module.",
                                     "hostname": "analysis"
                                 },
-                                "gigantoDraft": null,
                                 "cpuUsage": 20.0,
                                 "totalMemory": "1000",
                                 "usedMemory": "100",
@@ -454,7 +457,8 @@ mod tests {
                                         "config": "my_val=2",
                                         "draft": "my_val=2"
                                     }
-                                ]
+                                ],
+                                "externalServices": [],
                             }
                         }
                     ]
@@ -498,8 +502,8 @@ mod tests {
                             key: "semi-supervised"
                             kind: SEMI_SUPERVISED
                             status: ENABLED
-                        }]
-                        giganto: null
+                        }],
+                        externalServices: []
                     )
                 }"#,
             )
@@ -523,8 +527,8 @@ mod tests {
                             key: "semi-supervised"
                             kind: SEMI_SUPERVISED
                             status: ENABLED
-                        }]
-                        giganto: null
+                        }],
+                        externalServices: []
                     )
                 }"#,
             )
@@ -548,8 +552,8 @@ mod tests {
                             key: "semi-supervised"
                             kind: SEMI_SUPERVISED
                             status: ENABLED
-                        }]
-                        giganto: null
+                        }],
+                        externalServices: []
                     )
                 }"#,
             )
@@ -573,8 +577,8 @@ mod tests {
                             key: "semi-supervised"
                             kind: SEMI_SUPERVISED
                             status: ENABLED
-                        }]
-                        giganto: null
+                        }],
+                        externalServices: []
                         )
                     }"#,
             )
@@ -593,8 +597,8 @@ mod tests {
                             key: "sensor1@collector"
                             kind: SENSOR
                             status: ENABLED
-                        }]
-                        giganto: null
+                        }],
+                        externalServices: []
                     )
             }"#,
             )
