@@ -11,6 +11,9 @@ this project adheres to
 
 - Introduced `myAccount` GraphQL API, which allows users of all roles to query
   their own account information.
+- Enhanced `signedInAccountList` GraphQL API to include additional account
+  details (`name`, `department`, `role`) in the `SignedInAccount` type, providing
+  richer information about currently signed-in users.
 - Added username validation and normalization with the following rules:
   - No whitespace allowed
   - Only lowercase English letters, digits, and special characters
