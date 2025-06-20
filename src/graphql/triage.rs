@@ -152,8 +152,11 @@ pub enum ThreatCategory {
     CommandAndControl,
     Exfiltration,
     Impact,
-    #[deprecated(note = "Use `Reconnaissance` instead.")]
-    HttpThreat,
+    Collection,
+    DefenseEvasion,
+    Persistence,
+    PrivilegeEscalation,
+    ResourceDevelopment,
 }
 
 struct Ti<'a> {
