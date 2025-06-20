@@ -2,10 +2,7 @@ use async_graphql::{Context, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
-use super::{
-    EventLearningMethod, EventThreatLevel, ThreatLevel, TriageScore, country_code,
-    find_ip_customer, find_ip_network,
-};
+use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
 use crate::graphql::{
     customer::Customer, filter::LearningMethod, network::Network, triage::ThreatCategory,
 };
@@ -155,18 +152,6 @@ impl DnsCovertChannel {
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        LearningMethod::SemiSupervised
-    }
-}
-
-impl EventThreatLevel for DnsCovertChannel {
-    fn get_threat_level() -> ThreatLevel {
-        ThreatLevel::Medium
-    }
-}
-
-impl EventLearningMethod for DnsCovertChannel {
-    fn get_learning_method() -> LearningMethod {
         LearningMethod::SemiSupervised
     }
 }

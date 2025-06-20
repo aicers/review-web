@@ -2,10 +2,7 @@ use async_graphql::{Context, ID, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
-use super::{
-    EventLearningMethod, EventThreatLevel, ThreatLevel, TriageScore, country_code,
-    find_ip_customer, find_ip_network,
-};
+use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
 use crate::graphql::{
     customer::Customer, filter::LearningMethod, network::Network, triage::ThreatCategory,
 };
@@ -238,18 +235,6 @@ impl HttpThreat {
     }
 }
 
-impl EventThreatLevel for HttpThreat {
-    fn get_threat_level() -> ThreatLevel {
-        ThreatLevel::Low
-    }
-}
-
-impl EventLearningMethod for HttpThreat {
-    fn get_learning_method() -> LearningMethod {
-        LearningMethod::Unsupervised
-    }
-}
-
 impl From<database::HttpThreat> for HttpThreat {
     fn from(inner: database::HttpThreat) -> Self {
         Self { inner }
@@ -345,18 +330,6 @@ impl RepeatedHttpSessions {
 
     async fn learning_method(&self) -> LearningMethod {
         LearningMethod::Unsupervised
-    }
-}
-
-impl EventThreatLevel for RepeatedHttpSessions {
-    fn get_threat_level() -> ThreatLevel {
-        ThreatLevel::Medium
-    }
-}
-
-impl EventLearningMethod for RepeatedHttpSessions {
-    fn get_learning_method() -> LearningMethod {
-        LearningMethod::SemiSupervised
     }
 }
 
@@ -554,18 +527,6 @@ impl TorConnection {
     }
 }
 
-impl EventThreatLevel for TorConnection {
-    fn get_threat_level() -> ThreatLevel {
-        ThreatLevel::Medium
-    }
-}
-
-impl EventLearningMethod for TorConnection {
-    fn get_learning_method() -> LearningMethod {
-        LearningMethod::SemiSupervised
-    }
-}
-
 impl From<database::TorConnection> for TorConnection {
     fn from(inner: database::TorConnection) -> Self {
         Self { inner }
@@ -760,18 +721,6 @@ impl DomainGenerationAlgorithm {
     }
 }
 
-impl EventThreatLevel for DomainGenerationAlgorithm {
-    fn get_threat_level() -> ThreatLevel {
-        ThreatLevel::Medium
-    }
-}
-
-impl EventLearningMethod for DomainGenerationAlgorithm {
-    fn get_learning_method() -> LearningMethod {
-        LearningMethod::SemiSupervised
-    }
-}
-
 impl From<database::DomainGenerationAlgorithm> for DomainGenerationAlgorithm {
     fn from(inner: database::DomainGenerationAlgorithm) -> Self {
         Self { inner }
@@ -959,18 +908,6 @@ impl NonBrowser {
 
     async fn learning_method(&self) -> LearningMethod {
         LearningMethod::Unsupervised
-    }
-}
-
-impl EventThreatLevel for NonBrowser {
-    fn get_threat_level() -> ThreatLevel {
-        ThreatLevel::Medium
-    }
-}
-
-impl EventLearningMethod for NonBrowser {
-    fn get_learning_method() -> LearningMethod {
-        LearningMethod::SemiSupervised
     }
 }
 
@@ -1167,18 +1104,6 @@ impl BlocklistHttp {
 
     async fn learning_method(&self) -> LearningMethod {
         LearningMethod::Unsupervised
-    }
-}
-
-impl EventThreatLevel for BlocklistHttp {
-    fn get_threat_level() -> ThreatLevel {
-        ThreatLevel::Medium
-    }
-}
-
-impl EventLearningMethod for BlocklistHttp {
-    fn get_learning_method() -> LearningMethod {
-        LearningMethod::SemiSupervised
     }
 }
 

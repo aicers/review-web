@@ -2,7 +2,7 @@ use async_graphql::{ID, Object};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
-use super::{EventLearningMethod, EventThreatLevel, ThreatLevel, TriageScore};
+use super::{ThreatLevel, TriageScore};
 use crate::graphql::{filter::LearningMethod, triage::ThreatCategory};
 
 #[allow(clippy::module_name_repetitions)]
@@ -95,18 +95,6 @@ impl WindowsThreat {
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        LearningMethod::Unsupervised
-    }
-}
-
-impl EventThreatLevel for WindowsThreat {
-    fn get_threat_level() -> ThreatLevel {
-        ThreatLevel::Medium
-    }
-}
-
-impl EventLearningMethod for WindowsThreat {
-    fn get_learning_method() -> LearningMethod {
         LearningMethod::Unsupervised
     }
 }

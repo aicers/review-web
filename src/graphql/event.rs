@@ -86,18 +86,6 @@ pub(super) enum ThreatLevel {
     Medium,
 }
 
-/// Trait for event types that can provide their threat level directly.
-pub(super) trait EventThreatLevel {
-    /// Returns the threat level for this event type.
-    fn get_threat_level() -> ThreatLevel;
-}
-
-/// Trait for event types that can provide their learning method directly.
-pub(super) trait EventLearningMethod {
-    /// Returns the learning method for this event type.
-    fn get_learning_method() -> LearningMethod;
-}
-
 #[derive(Default)]
 pub(super) struct EventStream;
 
