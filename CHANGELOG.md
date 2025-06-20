@@ -17,8 +17,7 @@ this project adheres to
 - Added `updateMyAccount` GraphQL mutation that allows authenticated users to
   update their own account information including password, name, department,
   language, and theme settings. This enables user self-service account
-  management for all user roles (`SystemAdministrator`, `SecurityAdministrator`,
-  `SecurityManager`, `SecurityMonitor`).
+  management for all user roles.
 - Added username validation and normalization with the following rules:
   - No whitespace allowed
   - Only lowercase English letters, digits, and special characters

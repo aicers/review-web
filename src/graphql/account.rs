@@ -611,10 +611,6 @@ impl AccountMutation {
 
     /// Updates the current user's own account information.
     #[allow(clippy::too_many_arguments)]
-    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
-        .or(RoleGuard::new(super::Role::SecurityAdministrator))
-        .or(RoleGuard::new(super::Role::SecurityManager))
-        .or(RoleGuard::new(super::Role::SecurityMonitor))")]
     async fn update_my_account(
         &self,
         ctx: &Context<'_>,
