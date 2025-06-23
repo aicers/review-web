@@ -100,6 +100,9 @@ this project adheres to
     `nodeList`, `node`, `insertNode`, `updateNodeDraft`, `applyNode`). So
     clients that use the affected APIs may need to update their code to maintain
     compatibility.
+- Modified `ThreatCategory` to include all MITRE categories.
+  `Collection`, `DefenseEvasion`, `Persistence`, `PrivilegeEscalation`,
+  `ResourceDevelopment` are added.
 
 ### Fixed
 
@@ -121,6 +124,7 @@ this project adheres to
   used.
 - The `theme` and `language` GraphQL APIs are removed. Use the `myAccount`
   GraphQL API instead to retrieve equivalent information.
+- The deprecated member `HttpThreat` of `ThreatCategory` is removed.
 
 ## [0.25.0] - 2025-01-27
 
