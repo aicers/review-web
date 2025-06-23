@@ -2,10 +2,7 @@ use async_graphql::{Context, ID, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
-use super::{
-    EventLearningMethod, EventThreatLevel, ThreatLevel, TriageScore, country_code,
-    find_ip_customer, find_ip_network,
-};
+use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
 use crate::graphql::{
     customer::Customer, filter::LearningMethod, network::Network, triage::ThreatCategory,
 };
@@ -230,22 +227,10 @@ impl HttpThreat {
     }
 
     async fn level(&self) -> ThreatLevel {
-        Self::get_threat_level()
+        ThreatLevel::Low
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        Self::get_learning_method()
-    }
-}
-
-impl EventThreatLevel for HttpThreat {
-    fn get_threat_level() -> ThreatLevel {
-        ThreatLevel::Low
-    }
-}
-
-impl EventLearningMethod for HttpThreat {
-    fn get_learning_method() -> LearningMethod {
         LearningMethod::Unsupervised
     }
 }
@@ -340,22 +325,10 @@ impl RepeatedHttpSessions {
     }
 
     async fn level(&self) -> ThreatLevel {
-        Self::get_threat_level()
+        ThreatLevel::Medium
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        Self::get_learning_method()
-    }
-}
-
-impl EventThreatLevel for RepeatedHttpSessions {
-    fn get_threat_level() -> ThreatLevel {
-        ThreatLevel::Medium
-    }
-}
-
-impl EventLearningMethod for RepeatedHttpSessions {
-    fn get_learning_method() -> LearningMethod {
         LearningMethod::SemiSupervised
     }
 }
@@ -546,22 +519,10 @@ impl TorConnection {
     }
 
     async fn level(&self) -> ThreatLevel {
-        Self::get_threat_level()
+        ThreatLevel::Medium
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        Self::get_learning_method()
-    }
-}
-
-impl EventThreatLevel for TorConnection {
-    fn get_threat_level() -> ThreatLevel {
-        ThreatLevel::Medium
-    }
-}
-
-impl EventLearningMethod for TorConnection {
-    fn get_learning_method() -> LearningMethod {
         LearningMethod::SemiSupervised
     }
 }
@@ -752,22 +713,10 @@ impl DomainGenerationAlgorithm {
     }
 
     async fn level(&self) -> ThreatLevel {
-        Self::get_threat_level()
+        ThreatLevel::Medium
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        Self::get_learning_method()
-    }
-}
-
-impl EventThreatLevel for DomainGenerationAlgorithm {
-    fn get_threat_level() -> ThreatLevel {
-        ThreatLevel::Medium
-    }
-}
-
-impl EventLearningMethod for DomainGenerationAlgorithm {
-    fn get_learning_method() -> LearningMethod {
         LearningMethod::SemiSupervised
     }
 }
@@ -954,22 +903,10 @@ impl NonBrowser {
     }
 
     async fn level(&self) -> ThreatLevel {
-        Self::get_threat_level()
+        ThreatLevel::Medium
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        Self::get_learning_method()
-    }
-}
-
-impl EventThreatLevel for NonBrowser {
-    fn get_threat_level() -> ThreatLevel {
-        ThreatLevel::Medium
-    }
-}
-
-impl EventLearningMethod for NonBrowser {
-    fn get_learning_method() -> LearningMethod {
         LearningMethod::SemiSupervised
     }
 }
@@ -1162,22 +1099,10 @@ impl BlocklistHttp {
     }
 
     async fn level(&self) -> ThreatLevel {
-        Self::get_threat_level()
+        ThreatLevel::Medium
     }
 
     async fn learning_method(&self) -> LearningMethod {
-        Self::get_learning_method()
-    }
-}
-
-impl EventThreatLevel for BlocklistHttp {
-    fn get_threat_level() -> ThreatLevel {
-        ThreatLevel::Medium
-    }
-}
-
-impl EventLearningMethod for BlocklistHttp {
-    fn get_learning_method() -> LearningMethod {
         LearningMethod::SemiSupervised
     }
 }
