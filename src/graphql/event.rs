@@ -142,7 +142,7 @@ async fn fetch_events(
 ) -> Result<()> {
     let mut itv = time::interval(time::Duration::from_secs(fecth_time));
     let mut iter_time_key = start_time;
-    let stuck_check_interval = event_stuck_check_interval.unwrap_or(900); // Default 15 minutes in seconds
+    let stuck_check_interval = event_stuck_check_interval.unwrap_or(300); // Default 5 minutes in seconds
     let mut last_stuck_check = std::time::Instant::now();
     let mut dns_covert_time = start_time;
     let mut http_threat_time = start_time;
