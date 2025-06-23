@@ -615,10 +615,10 @@ impl AccountMutation {
         &self,
         ctx: &Context<'_>,
         password: Option<UpdatePassword>,
-        name: Option<String>,
-        department: Option<String>,
-        language: Option<String>,
-        theme: Option<String>,
+        name: Option<UpdateName>,
+        department: Option<UpdateDepartment>,
+        language: Option<UpdateLanguage>,
+        theme: Option<UpdateTheme>,
     ) -> Result<String> {
         if password.is_none()
             && name.is_none()
@@ -650,16 +650,16 @@ impl AccountMutation {
             }
         }
 
-        // Get current account values for update
-        let Ok(Some(current_account)) = map.get(username) else {
+        // Validate username exists
+        let Ok(Some(_)) = map.get(username) else {
             return Err("invalid username".into());
         };
 
         let password_new = password.map(|p| p.new);
-        let name_update = name.map(|n| (current_account.name.clone(), n));
-        let dept_update = department.map(|d| (current_account.department.clone(), d));
-        let language_update = language.map(|l| (current_account.language.clone(), Some(l)));
-        let theme_update = theme.map(|t| (current_account.theme.clone(), Some(t)));
+        let name_update = name.map(|n| (n.old, n.new));
+        let dept_update = department.map(|d| (d.old, d.new));
+        let language_update = language.map(|l| (l.old, l.new));
+        let theme_update = theme.map(|t| (t.old, t.new));
 
         map.update(
             username.as_bytes(),
