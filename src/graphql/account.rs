@@ -2920,9 +2920,9 @@ mod tests {
         // Try to update without providing any fields
         let res = schema
             .execute(
-                r#"mutation {
+                r"mutation {
                     updateMyAccount
-                }"#,
+                }",
             )
             .await;
 
