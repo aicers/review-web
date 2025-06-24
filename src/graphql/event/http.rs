@@ -2,8 +2,10 @@ use async_graphql::{Context, ID, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
-use super::{TriageScore, country_code, find_ip_customer, find_ip_network};
-use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
+use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
+use crate::graphql::{
+    customer::Customer, filter::LearningMethod, network::Network, triage::ThreatCategory,
+};
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct HttpThreat {
@@ -223,6 +225,14 @@ impl HttpThreat {
             .as_ref()
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
+
+    async fn level(&self) -> ThreatLevel {
+        ThreatLevel::Low
+    }
+
+    async fn learning_method(&self) -> LearningMethod {
+        LearningMethod::Unsupervised
+    }
 }
 
 impl From<database::HttpThreat> for HttpThreat {
@@ -312,6 +322,14 @@ impl RepeatedHttpSessions {
             .triage_scores
             .as_ref()
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
+    }
+
+    async fn level(&self) -> ThreatLevel {
+        ThreatLevel::Medium
+    }
+
+    async fn learning_method(&self) -> LearningMethod {
+        LearningMethod::SemiSupervised
     }
 }
 
@@ -499,6 +517,14 @@ impl TorConnection {
             .as_ref()
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
+
+    async fn level(&self) -> ThreatLevel {
+        ThreatLevel::Medium
+    }
+
+    async fn learning_method(&self) -> LearningMethod {
+        LearningMethod::SemiSupervised
+    }
 }
 
 impl From<database::TorConnection> for TorConnection {
@@ -685,6 +711,14 @@ impl DomainGenerationAlgorithm {
             .as_ref()
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
+
+    async fn level(&self) -> ThreatLevel {
+        ThreatLevel::Medium
+    }
+
+    async fn learning_method(&self) -> LearningMethod {
+        LearningMethod::SemiSupervised
+    }
 }
 
 impl From<database::DomainGenerationAlgorithm> for DomainGenerationAlgorithm {
@@ -866,6 +900,14 @@ impl NonBrowser {
             .triage_scores
             .as_ref()
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
+    }
+
+    async fn level(&self) -> ThreatLevel {
+        ThreatLevel::Medium
+    }
+
+    async fn learning_method(&self) -> LearningMethod {
+        LearningMethod::SemiSupervised
     }
 }
 
@@ -1054,6 +1096,14 @@ impl BlocklistHttp {
             .triage_scores
             .as_ref()
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
+    }
+
+    async fn level(&self) -> ThreatLevel {
+        ThreatLevel::Medium
+    }
+
+    async fn learning_method(&self) -> LearningMethod {
+        LearningMethod::SemiSupervised
     }
 }
 

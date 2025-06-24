@@ -22,6 +22,11 @@ this project adheres to
   - Must start with a lowercase English letter
   - Length must be 3-30 characters
   - Uppercase letters are automatically converted to lowercase
+- Added `level` and `learningMethod` fields to all detected event types:
+  - Threat level: `HttpThreat` events return `LOW`, all others return `MEDIUM`
+  - Learning method: `HttpThreat`, `NetworkThreat`, `WindowsThreat`, and
+    `ExtraThreat` events return `UNSUPERVISED`, all others return
+    `SEMI_SUPERVISED`
 
 ### Changed
 
