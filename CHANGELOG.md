@@ -31,6 +31,9 @@ this project adheres to
   - Learning method: `HttpThreat`, `NetworkThreat`, `WindowsThreat`, and
     `ExtraThreat` events return `UNSUPERVISED`, all others return
     `SEMI_SUPERVISED`
+- Added `forceSignOut` GraphQL mutation to allow system administrators and
+  security administrators to forcefully terminate all active sessions for any
+  user, enhancing security management capabilities.
 
 ### Changed
 

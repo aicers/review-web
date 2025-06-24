@@ -504,6 +504,89 @@ impl AccountMutation {
         Ok(token)
     }
 
+    /// Forcefully terminates all sessions for a specific user. Only system administrators
+    /// and security administrators can perform this operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the username is invalid or if the operation fails.
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
+        .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
+    async fn force_sign_out(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+    ) -> Result<ForceSignOutResult> {
+        // Normalize the username for lookup (convert to lowercase)
+        let normalized_username = username.to_lowercase();
+
+        let store = crate::graphql::get_store(ctx).await?;
+        let account_map = store.account_map();
+
+        // Verify the target user exists
+        if !account_map.contains(&normalized_username)? {
+            return Err(format!("User '{normalized_username}' not found").into());
+        }
+
+        let access_token_map = store.access_token_map();
+        let mut revoked_sessions = Vec::new();
+        let mut failed_revocations = Vec::new();
+
+        // Find all active sessions for the user
+        let user_sessions: Vec<_> = access_token_map
+            .iter(Direction::Forward, Some(normalized_username.as_bytes()))
+            .filter_map(|res| {
+                if let Ok(access_token) = res {
+                    if access_token.username == normalized_username {
+                        // Verify the token hasn't expired
+                        if let Ok(decoded_token) = decode_token(&access_token.token) {
+                            let exp_time = Utc.timestamp_nanos(decoded_token.exp * 1_000_000_000);
+                            if Utc::now() < exp_time {
+                                return Some(access_token.token);
+                            }
+                        }
+                    }
+                }
+                None
+            })
+            .collect();
+
+        // Revoke all active sessions
+        for token in user_sessions {
+            match revoke_token(&store, &token) {
+                Ok(()) => {
+                    revoked_sessions.push(token);
+                }
+                Err(e) => {
+                    failed_revocations.push(format!("Failed to revoke token: {e}"));
+                }
+            }
+        }
+
+        let admin_username = ctx.data::<String>()?;
+        if revoked_sessions.is_empty() && failed_revocations.is_empty() {
+            info!(
+                "{admin_username} attempted to force sign out {normalized_username}, but no active sessions found"
+            );
+        } else {
+            info!(
+                "{admin_username} forcefully signed out {normalized_username} ({} sessions terminated)",
+                revoked_sessions.len()
+            );
+        }
+
+        Ok(ForceSignOutResult {
+            username: normalized_username,
+            sessions_terminated: i32::try_from(revoked_sessions.len())
+                .map_err(|_| "Too many sessions terminated")?,
+            errors: if failed_revocations.is_empty() {
+                None
+            } else {
+                Some(failed_revocations)
+            },
+        })
+    }
+
     /// Obtains a new access token with renewed expiration time. The given
     /// access token will be revoked.
     #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
@@ -884,6 +967,13 @@ fn to_ip_addr(ip_addrs: &[IpAddress]) -> Vec<IpAddr> {
 struct AuthPayload {
     token: String,
     expiration_time: NaiveDateTime,
+}
+
+#[derive(SimpleObject)]
+struct ForceSignOutResult {
+    username: String,
+    sessions_terminated: i32,
+    errors: Option<Vec<String>>,
 }
 
 #[derive(Clone, Copy, Enum, Eq, PartialEq, Serialize)]
@@ -3094,5 +3184,176 @@ mod tests {
         let account = map.get("testuser").unwrap().unwrap();
         assert_eq!(account.language, None);
         assert_eq!(account.theme, None);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn force_sign_out() {
+        let original_review_admin = backup_and_set_review_admin();
+
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        super::init_expiration_time(&store, 3600).unwrap();
+
+        // Create a test user
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "testuser",
+                        password: "password123",
+                        role: "SECURITY_MANAGER",
+                        name: "Test User",
+                        department: "Testing",
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "testuser"}"#);
+
+        // Sign in the test user to create an active session
+        update_account_last_signin_time(&schema, "testuser").await;
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signIn(username: "testuser", password: "password123") {
+                        token
+                    }
+                }"#,
+            )
+            .await;
+        assert!(res.data.to_string().contains("token"));
+
+        // Verify the user has an active session
+        let res = schema
+            .execute(
+                r"query {
+                    signedInAccountList {
+                        username
+                    }
+                }",
+            )
+            .await;
+        assert!(res.data.to_string().contains("testuser"));
+
+        // Force sign out the user as admin
+        let res = schema
+            .execute(
+                r#"mutation {
+                    forceSignOut(username: "testuser") {
+                        username
+                        sessionsTerminated
+                        errors
+                    }
+                }"#,
+            )
+            .await;
+
+        // Verify the force sign out was successful
+        let Value::Object(retval) = res.data else {
+            panic!("unexpected response: {res:?}");
+        };
+        let Some(Value::Object(force_sign_out)) = retval.get("forceSignOut") else {
+            panic!("unexpected response: {retval:?}");
+        };
+
+        assert_eq!(
+            force_sign_out.get("username"),
+            Some(&Value::String("testuser".to_string()))
+        );
+        assert_eq!(
+            force_sign_out.get("sessionsTerminated"),
+            Some(&Value::Number(serde_json::Number::from(1)))
+        );
+        assert_eq!(force_sign_out.get("errors"), Some(&Value::Null));
+
+        // Verify the user no longer has active sessions
+        let res = schema
+            .execute(
+                r"query {
+                    signedInAccountList {
+                        username
+                    }
+                }",
+            )
+            .await;
+        assert!(!res.data.to_string().contains("testuser"));
+
+        restore_review_admin(original_review_admin);
+    }
+
+    #[tokio::test]
+    async fn force_sign_out_nonexistent_user() {
+        let schema = TestSchema::new().await;
+
+        // Try to force sign out a non-existent user
+        let res = schema
+            .execute(
+                r#"mutation {
+                    forceSignOut(username: "nonexistent") {
+                        username
+                        sessionsTerminated
+                        errors
+                    }
+                }"#,
+            )
+            .await;
+
+        // Should return an error
+        assert!(!res.errors.is_empty());
+        assert!(res.errors.first().unwrap().message.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn force_sign_out_no_active_sessions() {
+        let schema = TestSchema::new().await;
+
+        // Create a test user but don't sign them in
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "inactiveuser",
+                        password: "password123",
+                        role: "SECURITY_MONITOR",
+                        name: "Inactive User",
+                        department: "Testing",
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "inactiveuser"}"#);
+
+        // Force sign out the user (who has no active sessions)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    forceSignOut(username: "inactiveuser") {
+                        username
+                        sessionsTerminated
+                        errors
+                    }
+                }"#,
+            )
+            .await;
+
+        // Should succeed but terminate 0 sessions
+        let Value::Object(retval) = res.data else {
+            panic!("unexpected response: {res:?}");
+        };
+        let Some(Value::Object(force_sign_out)) = retval.get("forceSignOut") else {
+            panic!("unexpected response: {retval:?}");
+        };
+
+        assert_eq!(
+            force_sign_out.get("username"),
+            Some(&Value::String("inactiveuser".to_string()))
+        );
+        assert_eq!(
+            force_sign_out.get("sessionsTerminated"),
+            Some(&Value::Number(serde_json::Number::from(0)))
+        );
     }
 }
