@@ -2772,4 +2772,327 @@ mod tests {
         assert!(account.verify_password("newadminpassword"));
         assert!(!account.verify_password("adminpassword"));
     }
+
+    #[tokio::test]
+    async fn update_my_account_success() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // Create a test account
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "testuser",
+                        password: "initialpassword",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Initial Name",
+                        department: "Initial Department",
+                        language: "en-US",
+                        theme: "dark",
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "testuser"}"#);
+
+        // Update all fields
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateMyAccount(
+                        password: {
+                            old: "initialpassword",
+                            new: "newpassword"
+                        },
+                        name: {
+                            old: "Initial Name",
+                            new: "Updated Name"
+                        },
+                        department: {
+                            old: "Initial Department",
+                            new: "Updated Department"
+                        },
+                        language: {
+                            old: "en-US",
+                            new: "ko-KR"
+                        },
+                        theme: {
+                            old: "dark",
+                            new: "light"
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{updateMyAccount: "testuser"}"#);
+
+        // Verify all changes were applied
+        let store = schema.store().await;
+        let map = store.account_map();
+        let account = map.get("testuser").unwrap().unwrap();
+        assert!(account.verify_password("newpassword"));
+        assert_eq!(account.name, "Updated Name");
+        assert_eq!(account.department, "Updated Department");
+        assert_eq!(account.language, Some("ko-KR".to_string()));
+        assert_eq!(account.theme, Some("light".to_string()));
+    }
+
+    #[tokio::test]
+    async fn update_my_account_partial_updates() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // Create a test account
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "testuser",
+                        password: "password",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Test User",
+                        department: "Security",
+                        language: "en-US",
+                        theme: "dark",
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "testuser"}"#);
+
+        // Update only name and department
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateMyAccount(
+                        name: {
+                            old: "Test User",
+                            new: "New Name"
+                        },
+                        department: {
+                            old: "Security",
+                            new: "Engineering"
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{updateMyAccount: "testuser"}"#);
+
+        // Verify only specified fields were changed
+        let store = schema.store().await;
+        let map = store.account_map();
+        let account = map.get("testuser").unwrap().unwrap();
+        assert!(account.verify_password("password")); // Password unchanged
+        assert_eq!(account.name, "New Name");
+        assert_eq!(account.department, "Engineering");
+        assert_eq!(account.language, Some("en-US".to_string())); // Language unchanged
+        assert_eq!(account.theme, Some("dark".to_string())); // Theme unchanged
+    }
+
+    #[tokio::test]
+    async fn update_my_account_no_fields_provided() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // Create a test account
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "testuser",
+                        password: "password",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Test User",
+                        department: "Security",
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "testuser"}"#);
+
+        // Try to update without providing any fields
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateMyAccount
+                }"#,
+            )
+            .await;
+
+        assert!(!res.errors.is_empty());
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "At least one of the optional fields must be provided to update."
+        );
+    }
+
+    #[tokio::test]
+    async fn update_my_account_wrong_old_password() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // Create a test account
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "testuser",
+                        password: "correctpassword",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Test User",
+                        department: "Security",
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "testuser"}"#);
+
+        // Try to update password with wrong old password
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateMyAccount(
+                        password: {
+                            old: "wrongpassword",
+                            new: "newpassword"
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        assert!(!res.errors.is_empty());
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "incorrect current password"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_my_account_same_old_new_password() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // Create a test account
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "testuser",
+                        password: "samepassword",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Test User",
+                        department: "Security",
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "testuser"}"#);
+
+        // Try to update password with same old and new password
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateMyAccount(
+                        password: {
+                            old: "samepassword",
+                            new: "samepassword"
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        assert!(!res.errors.is_empty());
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "new password cannot be the same as the current password"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_my_account_language_theme_null_values() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // Create a test account with null language and theme
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "testuser",
+                        password: "password",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Test User",
+                        department: "Security",
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "testuser"}"#);
+
+        // Update from null to values
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateMyAccount(
+                        language: {
+                            old: null,
+                            new: "en-US"
+                        },
+                        theme: {
+                            old: null,
+                            new: "dark"
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{updateMyAccount: "testuser"}"#);
+
+        // Verify values were set
+        let store = schema.store().await;
+        let map = store.account_map();
+        let account = map.get("testuser").unwrap().unwrap();
+        assert_eq!(account.language, Some("en-US".to_string()));
+        assert_eq!(account.theme, Some("dark".to_string()));
+
+        // Update from values back to null
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateMyAccount(
+                        language: {
+                            old: "en-US",
+                            new: null
+                        },
+                        theme: {
+                            old: "dark",
+                            new: null
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{updateMyAccount: "testuser"}"#);
+
+        // Verify values were cleared
+        let store = schema.store().await;
+        let map = store.account_map();
+        let account = map.get("testuser").unwrap().unwrap();
+        assert_eq!(account.language, None);
+        assert_eq!(account.theme, None);
+    }
 }
