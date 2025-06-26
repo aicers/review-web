@@ -5,6 +5,17 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added best-effort duplicate hostname check in `applyNode` GraphQL mutation.
+  The system now checks for hostname conflicts across all existing nodes before
+  applying node configuration changes. While this check does not guarantee
+  absolute uniqueness due to potential race conditions, it helps catch most
+  duplicate hostname scenarios and improves user feedback during the node
+  application process.
+
 ## [0.26.0] - 2025-06-25
 
 ### Added
