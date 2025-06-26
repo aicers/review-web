@@ -303,7 +303,7 @@ impl AccountMutation {
         &self,
         ctx: &Context<'_>,
         username: String,
-        password: Option<UpdatePassword>,
+        password: Option<String>,
         role: Option<UpdateRole>,
         name: Option<UpdateName>,
         department: Option<UpdateDepartment>,
@@ -339,18 +339,13 @@ impl AccountMutation {
         let map = store.account_map();
 
         // Validate password change if provided
-        if let Some(ref password_update) = password {
+        if let Some(ref new_password) = password {
             let Ok(Some(account)) = map.get(&username) else {
                 return Err("invalid username".into());
             };
 
-            // Verify the old password is correct
-            if !account.verify_password(&password_update.old) {
-                return Err("incorrect current password".into());
-            }
-
-            // Validate that the new password is different from the old password
-            if password_update.old == password_update.new {
+            // Validate that the new password is different from the current password
+            if account.verify_password(new_password) {
                 return Err("new password cannot be the same as the current password".into());
             }
         }
@@ -376,7 +371,7 @@ impl AccountMutation {
             }
         }
 
-        let password_new = password.map(|p| p.new);
+        let password_new = password;
         let role = role.map(|r| (database::Role::from(r.old), database::Role::from(r.new)));
         let name = name.map(|n| (n.old, n.new));
         let dept = department.map(|d| (d.old, d.new));
@@ -2014,10 +2009,7 @@ mod tests {
                 mutation {
                     updateAccount(
                         username: "username",
-                        password: {
-                            old: "password",
-                            new: "newpassword"
-                        },
+                        password: "newpassword",
                         role: {
                             old: "SECURITY_ADMINISTRATOR",
                             new: "SECURITY_MONITOR"
@@ -2077,10 +2069,7 @@ mod tests {
                 mutation {
                     updateAccount(
                         username: "username",
-                        password: {
-                            old: "newpassword",
-                            new: "anotherpassword"
-                        },
+                        password: "anotherpassword",
                         role: {
                             old: "SECURITY_MONITOR",
                             new: "SECURITY_MANAGER"
@@ -2743,10 +2732,7 @@ mod tests {
                 r#"mutation {
                     updateAccount(
                         username: "testuser",
-                        password: {
-                            old: "oldpassword",
-                            new: "oldpassword"
-                        }
+                        password: "oldpassword"
                     )
                 }"#,
             )
@@ -2758,37 +2744,27 @@ mod tests {
             "new password cannot be the same as the current password"
         );
 
-        // Try to update password with wrong old password (should fail)
+        // Update password without requiring old password (should succeed)
         let res = schema
             .execute(
                 r#"mutation {
                     updateAccount(
                         username: "testuser",
-                        password: {
-                            old: "wrongpassword",
-                            new: "newpassword"
-                        }
+                        password: "newpassword"
                     )
                 }"#,
             )
             .await;
 
-        assert!(!res.errors.is_empty());
-        assert_eq!(
-            res.errors.first().unwrap().message,
-            "incorrect current password"
-        );
+        assert_eq!(res.data.to_string(), r#"{updateAccount: "testuser"}"#);
 
-        // Try to update password with different new password (should succeed)
+        // Update password with a different new password (should succeed)
         let res = schema
             .execute(
                 r#"mutation {
                     updateAccount(
                         username: "testuser",
-                        password: {
-                            old: "oldpassword",
-                            new: "newpassword"
-                        }
+                        password: "differentpassword"
                     )
                 }"#,
             )
@@ -2800,7 +2776,7 @@ mod tests {
         let store = schema.store().await;
         let map = store.account_map();
         let account = map.get("testuser").unwrap().unwrap();
-        assert!(account.verify_password("newpassword"));
+        assert!(account.verify_password("differentpassword"));
         assert!(!account.verify_password("oldpassword"));
     }
 
