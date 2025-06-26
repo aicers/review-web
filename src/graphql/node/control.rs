@@ -1,5 +1,6 @@
 use async_graphql::{Context, ID, Object, Result};
 use futures::future::join_all;
+use review_database::Direction;
 use tracing::{error, info};
 
 use super::{
@@ -46,8 +47,22 @@ impl NodeControlMutation {
     /// This function updates the node's `name` with `name_draft`, `profile` with `profile_draft`,
     /// and `config` values of agents with their `draft` values.
     ///
+    /// Best-effort duplicate hostname check: Before applying changes, this function performs
+    /// a best-effort check to detect duplicate hostnames across all nodes. If a duplicate is found,
+    /// the operation will fail with an error. Note that this check does not guarantee absolute
+    /// uniqueness due to potential race conditions or concurrent updates, but it helps catch most
+    /// duplicate hostname scenarios before they are committed to the database.
+    ///
     /// Returns success as long as the database update is successful, regardless of the outcome of
     /// notifying agents or broadcasting customer ID changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The node ID is invalid
+    /// - The node is missing required fields (e.g., `name_draft`)
+    /// - A duplicate hostname is detected (best-effort check)
+    /// - Database update fails
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_node(&self, ctx: &Context<'_>, id: ID, node: NodeInput) -> Result<ID> {
@@ -223,6 +238,7 @@ async fn update_db(
 
     update.profile.clone_from(&update.profile_draft);
 
+
     // Update agents, removing those whose keys are in `disable_agent_ids`
     update.agents = update
         .agents
@@ -237,6 +253,31 @@ async fn update_db(
             }
         })
         .collect();
+
+    // Best-effort duplicate hostname check
+    if let Some(ref profile_draft) = update.profile_draft {
+        let new_hostname = &profile_draft.hostname;
+        // Iterate through all existing nodes to check for hostname conflicts
+        for entry in map.iter(Direction::Forward, None) {
+            let existing_node = entry.map_err(|_| "Failed to read node from database")?;
+
+            // Skip the current node being updated
+            if existing_node.id == i {
+                continue;
+            }
+
+            // Check only current profile for hostname conflicts
+            if let Some(ref existing_profile) = existing_node.profile {
+                if &existing_profile.hostname == new_hostname {
+                    return Err(format!(
+                        "Hostname '{}' is already in use by node '{}'",
+                        new_hostname, existing_node.name
+                    )
+                    .into());
+                }
+            }
+        }
+    }
 
     let old = node.clone().try_into()?;
     let new = update.try_into()?;
@@ -2417,5 +2458,436 @@ mod tests {
             .await;
 
         assert_eq!(res.data.to_string(), r#"{nodeShutdown: "analysis"}"#);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn test_apply_node_duplicate_hostname_error() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["unsupervised@host1", "unsupervised@host2"],
+        });
+
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // Insert first node with hostname "host1"
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "node1",
+                        customerId: 0,
+                        description: "First node",
+                        hostname: "host1",
+                        agents: [{
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
+                            status: ENABLED
+                            draft: "test = 'toml'"
+                        }],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Apply the first node to commit its hostname
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "node1",
+                            nameDraft: "node1",
+                            profile: null,
+                            profileDraft: {
+                                customerId: "0",
+                                description: "First node",
+                                hostname: "host1"
+                            },
+                            agents: [
+                                {
+                                    key: "unsupervised",
+                                    kind: UNSUPERVISED,
+                                    status: ENABLED,
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+
+        // Insert second node with different hostname initially
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "node2",
+                        customerId: 0,
+                        description: "Second node",
+                        hostname: "host2",
+                        agents: [{
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
+                            status: ENABLED
+                            draft: "test = 'toml'"
+                        }],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
+
+        // Try to apply second node with the same hostname as first node (should fail)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(
+                        id: "1"
+                        node: {
+                            name: "node2",
+                            nameDraft: "node2",
+                            profile: null,
+                            profileDraft: {
+                                customerId: "0",
+                                description: "Second node",
+                                hostname: "host1"
+                            },
+                            agents: [
+                                {
+                                    key: "unsupervised",
+                                    kind: UNSUPERVISED,
+                                    status: ENABLED,
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        // Check that the operation failed due to duplicate hostname
+        assert!(res.is_err());
+        let error_message = res.errors[0].message.clone();
+        assert!(error_message.contains("Hostname 'host1' is already in use"));
+    }
+
+    #[tokio::test]
+    async fn test_apply_node_duplicate_hostname_draft_error() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["unsupervised@host1", "unsupervised@host2"],
+        });
+
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // Insert first node with hostname "host1" but only in draft
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "node1",
+                        customerId: 0,
+                        description: "First node",
+                        hostname: "host1",
+                        agents: [{
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
+                            status: ENABLED
+                            draft: "test = 'toml'"
+                        }],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Insert second node with different hostname
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "node2",
+                        customerId: 0,
+                        description: "Second node",
+                        hostname: "host2",
+                        agents: [{
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
+                            status: ENABLED
+                            draft: "test = 'toml'"
+                        }],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
+
+        // Try to apply second node with same hostname as first node's draft (should fail)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(
+                        id: "1"
+                        node: {
+                            name: "node2",
+                            nameDraft: "node2",
+                            profile: null,
+                            profileDraft: {
+                                customerId: "0",
+                                description: "Second node",
+                                hostname: "host1"
+                            },
+                            agents: [
+                                {
+                                    key: "unsupervised",
+                                    kind: UNSUPERVISED,
+                                    status: ENABLED,
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        // Check that the operation failed due to duplicate hostname
+        assert!(res.is_err());
+        let error_message = res.errors[0].message.clone();
+        assert!(error_message.contains("Hostname 'host1' is already in use"));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn test_apply_node_empty_hostname_allowed() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["unsupervised@", "unsupervised@"],
+        });
+
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // Insert first node with empty hostname
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "node1",
+                        customerId: 0,
+                        description: "First node",
+                        hostname: "",
+                        agents: [{
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
+                            status: ENABLED
+                            draft: "test = 'toml'"
+                        }],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Insert second node with empty hostname
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "node2",
+                        customerId: 0,
+                        description: "Second node",
+                        hostname: "",
+                        agents: [{
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
+                            status: ENABLED
+                            draft: "test = 'toml'"
+                        }],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
+
+        // Apply both nodes with empty hostnames (should succeed)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "node1",
+                            nameDraft: "node1",
+                            profile: null,
+                            profileDraft: {
+                                customerId: "0",
+                                description: "First node",
+                                hostname: ""
+                            },
+                            agents: [
+                                {
+                                    key: "unsupervised",
+                                    kind: UNSUPERVISED,
+                                    status: ENABLED,
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(
+                        id: "1"
+                        node: {
+                            name: "node2",
+                            nameDraft: "node2",
+                            profile: null,
+                            profileDraft: {
+                                customerId: "0",
+                                description: "Second node",
+                                hostname: ""
+                            },
+                            agents: [
+                                {
+                                    key: "unsupervised",
+                                    kind: UNSUPERVISED,
+                                    status: ENABLED,
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{applyNode: "1"}"#);
+    }
+
+    #[tokio::test]
+    async fn test_apply_node_same_node_hostname_update_allowed() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["unsupervised@host1"],
+        });
+
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // Insert node with hostname "host1"
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "node1",
+                        customerId: 0,
+                        description: "Test node",
+                        hostname: "host1",
+                        agents: [{
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
+                            status: ENABLED
+                            draft: "test = 'toml'"
+                        }],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Apply the node first time (should succeed - initial apply)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "node1",
+                            nameDraft: "node1",
+                            profile: null,
+                            profileDraft: {
+                                customerId: "0",
+                                description: "Test node",
+                                hostname: "host1"
+                            },
+                            agents: [
+                                {
+                                    key: "unsupervised",
+                                    kind: UNSUPERVISED,
+                                    status: ENABLED,
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+
+        // Apply the same node again with same hostname (should succeed - same node)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "node1",
+                            nameDraft: "node1",
+                            profile: {
+                                customerId: "0",
+                                description: "Test node",
+                                hostname: "host1"
+                            },
+                            profileDraft: {
+                                customerId: "0",
+                                description: "Test node",
+                                hostname: "host1"
+                            },
+                            agents: [
+                                {
+                                    key: "unsupervised",
+                                    kind: UNSUPERVISED,
+                                    status: ENABLED,
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
     }
 }

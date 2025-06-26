@@ -12,6 +12,12 @@ this project adheres to
 - Added `confidence` field to most Blocklist GraphQL objects for consistency
   with `BlocklistTls`. The field provides confidence scores for security
   detections across different protocol blocklists.
+- Added best-effort duplicate hostname check in `applyNode` GraphQL mutation.
+  The system now checks for hostname conflicts across all existing nodes before
+  applying node configuration changes. While this check does not guarantee
+  absolute uniqueness due to potential race conditions, it helps catch most
+  duplicate hostname scenarios and improves user feedback during the node
+  application process.
 
 ### Changed
 
@@ -19,7 +25,6 @@ this project adheres to
   changed from `Option<UpdatePassword>` to `Option<String>`. The mutation now
   accepts the new password directly without requiring the old password, as
   SystemAdministrators do not have access to users' current passwords.
-
 ## [0.26.0] - 2025-06-25
 
 ### Added
