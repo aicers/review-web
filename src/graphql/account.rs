@@ -193,7 +193,7 @@ impl AccountMutation {
         customer_ids: Option<Vec<ID>>,
     ) -> Result<String> {
         if role == Role::SystemAdministrator {
-            return Err("Role not allowed.".into());
+            return Err("Invalid role request".into());
         }
 
         // Validate and normalize the username
@@ -359,13 +359,6 @@ impl AccountMutation {
             if account.verify_password(new_password) {
                 return Err("new password cannot be the same as the current password".into());
             }
-        }
-
-        // Disallow update to SystemAdministrator
-        if role.as_ref().is_some_and(|role| {
-            (role.old == Role::SystemAdministrator) ^ (role.new == Role::SystemAdministrator)
-        }) {
-            return Err("Role not allowed.".into());
         }
 
         // Ensure that the `customer_ids` is set correctly for the account role
@@ -1867,7 +1860,7 @@ mod tests {
             )
             .await;
 
-        assert_eq!(res.errors.first().unwrap().message, "Role not allowed.");
+        assert_eq!(res.errors.first().unwrap().message, "Invalid role request");
 
         let res = schema
             .execute(
@@ -2189,8 +2182,8 @@ mod tests {
             "You are not allowed to access all customers."
         );
 
-        // Failure Case 3 Related to role: A SystemAdministrator attempted to change their role to a
-        // non-SystemAdministrator role.
+        // Failure Case 3 Related to customer id: Update `role` to a value other than
+        // `SYSTEM_ADMINISTRATOR` while the current account's `customer_ids` is set to `None`.
         let original_review_admin = backup_and_set_review_admin();
 
         let res = schema
@@ -2208,26 +2201,10 @@ mod tests {
             )
             .await;
 
-        assert_eq!(res.errors.first().unwrap().message, "Role not allowed.");
-
-        // Failure Case 4 Related to role: A user who was not a SystemAdministrator attempted to
-        // change their role to SystemAdministrator.
-        let res = schema
-            .execute(
-                r#"
-                mutation {
-                    updateAccount(
-                        username: "admin",
-                        role: {
-                            old: "SECURITY_ADMINISTRATOR",
-                            new: "SYSTEM_ADMINISTRATOR"
-                        },
-                    )
-                }"#,
-            )
-            .await;
-
-        assert_eq!(res.errors.first().unwrap().message, "Role not allowed.");
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "You are not allowed to access all customers."
+        );
 
         restore_review_admin(original_review_admin);
     }
