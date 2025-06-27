@@ -109,6 +109,10 @@ impl BlocklistMqtt {
         self.inner.category.into()
     }
 
+    async fn confidence(&self) -> f32 {
+        self.inner.confidence
+    }
+
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
         self.inner
             .triage_scores
