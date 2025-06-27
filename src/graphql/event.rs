@@ -1964,6 +1964,7 @@ mod tests {
             client_id_type: 1,
             client_id: vec![7, 8, 9],
             category: EventCategory::InitialAccess,
+            confidence: 0.8,
         };
 
         let message = EventMessage {
@@ -2045,6 +2046,7 @@ mod tests {
             sname: "server_name".to_string(),
             file: "boot_file_name".to_string(),
             category: EventCategory::InitialAccess,
+            confidence: 0.8,
         };
 
         let message = EventMessage {

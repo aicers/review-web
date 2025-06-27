@@ -7,6 +7,12 @@ this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Added `confidence` field to most Blocklist GraphQL objects for consistency
+  with `BlocklistTls`. The field provides confidence scores for security
+  detections across different protocol blocklists.
+
 ### Changed
 
 - The `updateAccount` GraphQL mutation's `password` parameter type has been
