@@ -7,7 +7,7 @@ use async_graphql::{
     types::ID,
 };
 use chrono::{DateTime, Utc};
-use review_database::{self as database};
+use review_database::{self as database, Direction, Iterable};
 
 use super::{
     Role, RoleGuard,
@@ -83,6 +83,15 @@ impl NetworkMutation {
         let tag_ids = id_args_into_uints(&tag_ids)?;
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
+
+        // Check if a network with the same name already exists
+        for entry in map.iter(Direction::Forward, None) {
+            let network = entry?;
+            if network.name == name {
+                return Err("network with the same name already exists".into());
+            }
+        }
+
         let entry = review_database::Network::new(
             name,
             description,
@@ -379,5 +388,83 @@ mod tests {
             res.data.to_string(),
             r#"{networkList: {edges: [{node: {name: "n1", tagIds: ["0", "1", "2"]}}], totalCount: 1}}"#
         );
+    }
+
+    #[tokio::test]
+    async fn insert_duplicate_network_name() {
+        let schema = TestSchema::new().await;
+
+        // Insert the first network
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNetwork(name: "duplicate_name", description: "first", networks: {
+                        hosts: [], networks: [], ranges: []
+                    }, customerIds: [], tagIds: [])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
+
+        // Try to insert a second network with the same name
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNetwork(name: "duplicate_name", description: "second", networks: {
+                        hosts: [], networks: [], ranges: []
+                    }, customerIds: [], tagIds: [])
+                }"#,
+            )
+            .await;
+
+        // Should fail with an error
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0]
+                .message
+                .contains("network with the same name already exists")
+        );
+
+        // Verify only one network exists
+        let res = schema
+            .execute(r"{networkList{edges{node{name description}}totalCount}}")
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{networkList: {edges: [{node: {name: "duplicate_name", description: "first"}}], totalCount: 1}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn insert_networks_with_different_names() {
+        let schema = TestSchema::new().await;
+
+        // Insert the first network
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNetwork(name: "network1", description: "first", networks: {
+                        hosts: [], networks: [], ranges: []
+                    }, customerIds: [], tagIds: [])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
+
+        // Insert a second network with a different name - should succeed
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNetwork(name: "network2", description: "second", networks: {
+                        hosts: [], networks: [], ranges: []
+                    }, customerIds: [], tagIds: [])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetwork: "1"}"#);
+
+        // Verify both networks exist
+        let res = schema.execute(r"{networkList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{networkList: {totalCount: 2}}");
     }
 }
