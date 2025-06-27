@@ -14,6 +14,13 @@ this project adheres to
   accepts the new password directly without requiring the old password, as
   SystemAdministrators do not have access to users' current passwords.
 
+### Fixed
+
+- Network tag creation now prevents duplicate tag names. The
+  `insertNetworkTag` mutation will return an error if attempting to create
+  a tag with a name that already exists, ensuring data integrity and preventing
+  confusion from multiple tags with identical names.
+
 ## [0.26.0] - 2025-06-25
 
 ### Added
