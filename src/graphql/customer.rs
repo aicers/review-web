@@ -8,7 +8,7 @@ use async_graphql::{
     types::ID,
 };
 use chrono::{DateTime, Utc};
-use review_database::{self as database, Store};
+use review_database::{self as database, Direction, Iterable, Store};
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
@@ -129,7 +129,8 @@ impl CustomerMutation {
 
     /// Removes customers, returning the customer names that no longer exist.
     ///
-    /// On error, some customers may have been removed.
+    /// Returns an error if any accounts or nodes still reference the customers to be removed.
+    /// On error, no customers will be removed.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn remove_customers(
         &self,
@@ -140,11 +141,20 @@ impl CustomerMutation {
         let map = store.customer_map();
         let network_map = store.network_map();
 
+        // Parse customer IDs before validation to catch invalid IDs early
+        let customer_ids: Result<Vec<u32>, _> = ids
+            .iter()
+            .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID"))
+            .collect();
+        let customer_ids = customer_ids?;
+
+        // Validate that no accounts or nodes reference these customers
+        validate_customer_removal(&store, &customer_ids)?;
+
         let customer_id_hash = agent_keys_by_customer_id(&store)?;
         let mut removed_customer_networks = Vec::new();
-        let mut removed = Vec::<String>::with_capacity(ids.len());
-        for id in ids {
-            let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
+        let mut removed = Vec::<String>::with_capacity(customer_ids.len());
+        for i in customer_ids {
             let key = map.remove(i)?;
             network_map.remove_customer(i)?;
 
@@ -219,6 +229,61 @@ impl CustomerMutation {
 
         Ok(id)
     }
+}
+
+/// Validates that customers can be safely removed by checking for references in accounts and nodes.
+///
+/// # Errors
+///
+/// Returns an error if any accounts or nodes still reference the customers to be removed.
+fn validate_customer_removal(store: &Store, customer_ids: &[u32]) -> Result<()> {
+    let account_map = store.account_map();
+    let node_map = store.node_map();
+
+    // Check for account references
+    for entry in account_map.iter(Direction::Forward, None) {
+        let account = entry.map_err(|_| "failed to iterate accounts")?;
+        if let Some(account_customer_ids) = &account.customer_ids {
+            for customer_id in customer_ids {
+                if account_customer_ids.contains(customer_id) {
+                    return Err(format!(
+                        "Cannot remove customer {}: still referenced by account {}",
+                        customer_id, account.username
+                    )
+                    .into());
+                }
+            }
+        }
+    }
+
+    // Check for node references
+    for entry in node_map.iter(Direction::Forward, None) {
+        let node = entry.map_err(|_| "failed to iterate nodes")?;
+        for customer_id in customer_ids {
+            // Check current profile
+            if let Some(profile) = &node.profile {
+                if profile.customer_id == *customer_id {
+                    return Err(format!(
+                        "Cannot remove customer {}: still referenced by node {}",
+                        customer_id, node.name
+                    )
+                    .into());
+                }
+            }
+            // Check draft profile
+            if let Some(profile_draft) = &node.profile_draft {
+                if profile_draft.customer_id == *customer_id {
+                    return Err(format!(
+                        "Cannot remove customer {}: still referenced by node {} (draft profile)",
+                        customer_id, node.name
+                    )
+                    .into());
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 pub(super) struct Customer {
@@ -760,6 +825,59 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             r"{networkList: {edges: [{node: {customerList: []}}], totalCount: 1}}"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_customers_with_account_reference() {
+        let schema = TestSchema::new().await;
+
+        // Create a customer
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertCustomer(name: "test_customer", description: "", networks: [])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        // Create an account that references this customer
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "test_user",
+                        password: "test_password",
+                        role: "SECURITY_MONITOR",
+                        name: "Test User",
+                        department: "IT",
+                        maxParallelSessions: 1,
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty());
+
+        // Try to remove the customer - should fail
+        let res = schema
+            .execute(r#"mutation { removeCustomers(ids: ["0"]) }"#)
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0]
+                .message
+                .contains("still referenced by account")
+        );
+
+        // Verify customer is still there
+        let res = schema
+            .execute(r"{customerList{edges{node{name}}totalCount}}")
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{customerList: {edges: [{node: {name: "test_customer"}}], totalCount: 1}}"#
         );
     }
 }
