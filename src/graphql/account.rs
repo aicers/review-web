@@ -306,6 +306,12 @@ impl AccountMutation {
             return Err("At lease one of the optional fields must be provided to update.".into());
         }
 
+        if role.as_ref().is_some_and(|role| {
+            (role.old != Role::SystemAdministrator) && (role.new == Role::SystemAdministrator)
+        }) {
+            return Err("Role not allowed.".into());
+        }
+
         let customer_ids = customer_ids
             .map(|ids| {
                 let old = try_id_args_into_ints::<u32>(ids.old)?;
@@ -1537,6 +1543,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn reset_admin_password_system_administrator() {
         // given
         let original_review_admin = backup_and_set_review_admin();
@@ -1562,7 +1569,7 @@ mod tests {
         let res = schema
             .execute_with_guard(
                 r#"mutation {
-                resetAdminPassword(username: "user2", password: "not local")
+                resetAdminPassword(username: "admin", password: "not local")
             }"#,
                 RoleGuard::Role(Role::SystemAdministrator),
             )
@@ -1745,8 +1752,6 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn update_account() {
-        let original_review_admin = backup_and_set_review_admin();
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
         let schema = TestSchema::new().await;
 
         let res = schema
@@ -1944,6 +1949,14 @@ mod tests {
             res.errors.first().unwrap().message,
             "You are not allowed to access all customers."
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn update_account_case_system_administrator() {
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+        let schema = TestSchema::new().await;
 
         // Failure Case 3 Related to customer id: Update `role` to a value other than
         // `SYSTEM_ADMINISTRATOR` while the current account's `customer_ids` is set to `None`.
@@ -2569,6 +2582,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn prevent_password_reuse_reset_admin_password() {
         let original_review_admin = backup_and_set_review_admin();
         let schema = TestSchema::new().await;
