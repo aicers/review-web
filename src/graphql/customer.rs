@@ -142,11 +142,10 @@ impl CustomerMutation {
         let network_map = store.network_map();
 
         // Parse customer IDs before validation to catch invalid IDs early
-        let customer_ids: Result<Vec<u32>, _> = ids
+        let customer_ids = ids
             .iter()
             .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID"))
-            .collect();
-        let customer_ids = customer_ids?;
+            .collect::<Result<Vec<u32>, _>>()?;
 
         // Validate that no accounts or nodes reference these customers
         validate_customer_removal(&store, &customer_ids)?;
