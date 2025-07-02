@@ -16,9 +16,9 @@ this project adheres to
 
 ### Fixed
 
-- Fixed customer removal allowing stale references in account and node tables.
-  Customer removal now validates that no accounts or nodes still reference the
-  customers being removed and returns an error if such references exist.
+- Improved customer removal to prevent stale references in account and node
+  tables. The process now checks for existing references in accounts or nodes
+  and returns an error if any are found.
 
 ## [0.26.0] - 2025-06-25
 
