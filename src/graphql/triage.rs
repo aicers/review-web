@@ -142,20 +142,20 @@ pub enum ResponseKind {
 #[repr(u8)]
 pub enum ThreatCategory {
     Unknown = 0,
-    Reconnaissance = 1,
-    InitialAccess,
-    Execution,
-    CredentialAccess,
-    Discovery,
-    LateralMovement,
-    CommandAndControl,
-    Exfiltration,
-    Impact,
-    Collection,
-    DefenseEvasion,
-    Persistence,
-    PrivilegeEscalation,
-    ResourceDevelopment,
+    Reconnaissance = 1,  // 1st (the first in the kill chain)
+    InitialAccess,       // 3rd
+    Execution,           // 4th
+    CredentialAccess,    // 8th
+    Discovery,           // 9th
+    LateralMovement,     // 10th
+    CommandAndControl,   // 12th
+    Exfiltration,        // 13th
+    Impact,              // 14th (the last in the kill chain)
+    Collection,          // 11th
+    DefenseEvasion,      // 7th
+    Persistence,         // 5th
+    PrivilegeEscalation, // 6th
+    ResourceDevelopment, // 2nd
 }
 
 struct Ti<'a> {
