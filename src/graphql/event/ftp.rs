@@ -2,7 +2,7 @@ use async_graphql::{Context, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
-use super::{TriageScore, country_code, find_ip_customer, find_ip_network};
+use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
 use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
 #[allow(clippy::module_name_repetitions)]
@@ -95,6 +95,10 @@ impl FtpBruteForce {
             .triage_scores
             .as_ref()
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
+    }
+
+    async fn level(&self) -> ThreatLevel {
+        ThreatLevel::Medium
     }
 }
 
@@ -234,6 +238,10 @@ impl FtpPlainText {
             .triage_scores
             .as_ref()
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
+    }
+
+    async fn level(&self) -> ThreatLevel {
+        ThreatLevel::Low
     }
 }
 
@@ -377,6 +385,10 @@ impl BlocklistFtp {
             .triage_scores
             .as_ref()
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
+    }
+
+    async fn level(&self) -> ThreatLevel {
+        ThreatLevel::Medium
     }
 }
 

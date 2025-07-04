@@ -301,6 +301,10 @@ impl LockyRansomware {
             .as_ref()
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
+
+    async fn level(&self) -> ThreatLevel {
+        ThreatLevel::Medium
+    }
 }
 
 impl From<database::LockyRansomware> for LockyRansomware {
@@ -442,6 +446,10 @@ impl CryptocurrencyMiningPool {
             .triage_scores
             .as_ref()
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
+    }
+
+    async fn level(&self) -> ThreatLevel {
+        ThreatLevel::Medium
     }
 }
 
@@ -588,6 +596,10 @@ impl BlocklistDns {
             .triage_scores
             .as_ref()
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
+    }
+
+    async fn level(&self) -> ThreatLevel {
+        ThreatLevel::Medium
     }
 }
 
