@@ -32,12 +32,22 @@ pub(in crate::graphql) struct NetworkTagMutation;
 #[Object]
 impl NetworkTagMutation {
     /// Inserts a new network tag, returning the ID of the new tag.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a tag with the same name already exists.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))")]
     async fn insert_network_tag(&self, ctx: &Context<'_>, name: String) -> Result<ID> {
         let store = crate::graphql::get_store(ctx).await?;
         let mut tags = store.network_tag_set()?;
+
+        // Check if a tag with the same name already exists
+        if tags.tags().any(|tag| tag.name == name) {
+            return Err(format!("Network tag with name '{name}' already exists").into());
+        }
+
         let id = tags.insert(&name)?;
         Ok(ID(id.to_string()))
     }
@@ -119,5 +129,36 @@ mod tests {
 
         let res = schema.execute(r#"{network(id: "0") {tagIds}}"#).await;
         assert_eq!(res.data.to_string(), r"{network: {tagIds: []}}");
+    }
+
+    #[tokio::test]
+    async fn insert_duplicate_network_tag_fails() {
+        let schema = TestSchema::new().await;
+
+        // Insert the first tag
+        let res = schema
+            .execute(r#"mutation {insertNetworkTag(name: "duplicate")}"#)
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "0"}"#);
+
+        // Attempt to insert a tag with the same name
+        let res = schema
+            .execute(r#"mutation {insertNetworkTag(name: "duplicate")}"#)
+            .await;
+
+        // Verify the operation failed with an error
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0]
+                .message
+                .contains("Network tag with name 'duplicate' already exists")
+        );
+
+        // Verify only one tag exists
+        let res = schema.execute(r"{networkTagList{name}}").await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{networkTagList: [{name: "duplicate"}]}"#
+        );
     }
 }
