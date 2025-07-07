@@ -20,6 +20,12 @@ this project adheres to
   accepts the new password directly without requiring the old password, as
   SystemAdministrators do not have access to users' current passwords.
 
+### Fixed
+
+- Improved customer removal to prevent stale references in account and node
+  tables. The process now checks for existing references in accounts or nodes
+  and returns an error if any are found.
+
 ## [0.26.0] - 2025-06-25
 
 ### Added
