@@ -15,6 +15,10 @@ this project adheres to
 - Added `level` field to 27 detection event types that previously lacked
   ThreatLevel values. All blocklist and brute force events return Medium
   threat level, while plain text events return Low threat level.
+- Added protection against SystemAdministrators deleting or demoting themselves.
+  The `removeAccounts` and `updateAccount` GraphQL mutations now prevent
+  SystemAdministrators from removing or demoting their own accounts to avoid
+  potential race conditions.
 
 ### Changed
 

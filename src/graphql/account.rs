@@ -281,6 +281,10 @@ impl AccountMutation {
     /// Removes accounts, returning the usernames that no longer exist.
     ///
     /// On error, some usernames may have been removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a user attempts to delete themselves.
     #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
         .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
     async fn remove_accounts(
@@ -290,12 +294,24 @@ impl AccountMutation {
     ) -> Result<Vec<String>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
-        let mut removed = Vec::with_capacity(usernames.len());
-        for username in usernames {
-            // Normalize the username for lookup (convert to lowercase)
-            let normalized_username = username.to_lowercase();
-            map.delete(&normalized_username)?;
-            removed.push(normalized_username);
+        let current_username = ctx.data::<String>()?;
+
+        // Normalize usernames for lookup
+        let normalized_usernames: Vec<String> = usernames
+            .into_iter()
+            .map(|username| username.to_lowercase())
+            .collect();
+
+        // Check if the current user is trying to delete themselves
+        if normalized_usernames.contains(&current_username.to_lowercase()) {
+            return Err("Users cannot delete themselves".into());
+        }
+
+        // Proceed with deletion if validation passes
+        let mut removed = Vec::with_capacity(normalized_usernames.len());
+        for username in normalized_usernames {
+            map.delete(&username)?;
+            removed.push(username);
         }
         Ok(removed)
     }
@@ -329,8 +345,9 @@ impl AccountMutation {
             return Err("At lease one of the optional fields must be provided to update.".into());
         }
 
+        // Disallow update to SystemAdministrator
         if role.as_ref().is_some_and(|role| {
-            (role.old != Role::SystemAdministrator) && (role.new == Role::SystemAdministrator)
+            (role.old == Role::SystemAdministrator) ^ (role.new == Role::SystemAdministrator)
         }) {
             return Err("Role not allowed.".into());
         }
@@ -1502,7 +1519,8 @@ mod tests {
         let original_review_admin = backup_and_set_review_admin();
         assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
 
-        let schema = TestSchema::new().await;
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "admin").await;
         let res = schema.execute(r"{accountList{totalCount}}").await;
         assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
 
@@ -1544,7 +1562,81 @@ mod tests {
         let res = schema.execute(r"{accountList{totalCount}}").await;
         assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
 
+        // Test that users cannot delete themselves
+        let res = schema
+            .execute(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0]
+                .message
+                .contains("Users cannot delete themselves")
+        );
+
+        // Verify admin account still exists
+        let res = schema.execute(r"{accountList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
+
         restore_review_admin(original_review_admin);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn prevent_admin_self_deletion() {
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "admin").await;
+
+        // Start with default admin account (SystemAdministrator)
+        let res = schema.execute(r"{accountList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
+
+        // Try to delete self - should fail
+        let res = schema
+            .execute(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0]
+                .message
+                .contains("Users cannot delete themselves")
+        );
+
+        restore_review_admin(original_review_admin);
+    }
+
+    #[tokio::test]
+    async fn prevent_user_self_deletion() {
+        let schema = TestSchema::new_with_params(Box::new(MockAgentManager {}), None, "user").await;
+
+        // Try to delete self - should fail
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "user",
+                        password: "Ahh9booH",
+                        role: "SECURITY_MANAGER",
+                        name: "John Doe",
+                        department: "Security"
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user"}"#);
+
+        let res = schema
+            .execute(r#"mutation { removeAccounts(usernames: ["user"]) }"#)
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0]
+                .message
+                .contains("Users cannot delete themselves")
+        );
     }
 
     #[tokio::test]
@@ -2184,11 +2276,7 @@ mod tests {
             )
             .await;
 
-        assert_eq!(
-            res.errors.first().unwrap().message,
-            "You are not allowed to access all customers."
-        );
-
+        assert_eq!(res.errors.first().unwrap().message, "Role not allowed.");
         restore_review_admin(original_review_admin);
     }
 
