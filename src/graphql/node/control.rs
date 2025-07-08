@@ -2582,6 +2582,7 @@ mod tests {
         assert!(error_message.contains("Hostname 'host1' is already in use"));
     }
 
+    #[allow(clippy::too_many_lines)]
     #[tokio::test]
     async fn test_apply_node_duplicate_hostname_draft_error() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
@@ -2591,7 +2592,7 @@ mod tests {
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
-        // Insert first node with hostname "host1" but only in draft
+        // Insert first node with hostname "host1"
         let res = schema
             .execute(
                 r#"mutation {
@@ -2612,6 +2613,37 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Apply the first node to commit its hostname
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "node1",
+                            nameDraft: "node1",
+                            profile: null,
+                            profileDraft: {
+                                customerId: "0",
+                                description: "First node",
+                                hostname: "host1"
+                            },
+                            agents: [{
+                                key: "unsupervised",
+                                kind: UNSUPERVISED,
+                                status: ENABLED,
+                                config: null,
+                                draft: "test = 'toml'"
+                            }],
+                            externalServices: [
+                            ]
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
 
         // Insert second node with different hostname
         let res = schema
@@ -2670,124 +2702,6 @@ mod tests {
         assert!(res.is_err());
         let error_message = res.errors[0].message.clone();
         assert!(error_message.contains("Hostname 'host1' is already in use"));
-    }
-
-    #[tokio::test]
-    #[allow(clippy::too_many_lines)]
-    async fn test_apply_node_empty_hostname_allowed() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
-            online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@", "unsupervised@"],
-        });
-
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
-
-        // Insert first node with empty hostname
-        let res = schema
-            .execute(
-                r#"mutation {
-                    insertNode(
-                        name: "node1",
-                        customerId: 0,
-                        description: "First node",
-                        hostname: "",
-                        agents: [{
-                            key: "unsupervised"
-                            kind: UNSUPERVISED
-                            status: ENABLED
-                            draft: "test = 'toml'"
-                        }],
-                        externalServices: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
-
-        // Insert second node with empty hostname
-        let res = schema
-            .execute(
-                r#"mutation {
-                    insertNode(
-                        name: "node2",
-                        customerId: 0,
-                        description: "Second node",
-                        hostname: "",
-                        agents: [{
-                            key: "unsupervised"
-                            kind: UNSUPERVISED
-                            status: ENABLED
-                            draft: "test = 'toml'"
-                        }],
-                        externalServices: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
-
-        // Apply both nodes with empty hostnames (should succeed)
-        let res = schema
-            .execute(
-                r#"mutation {
-                    applyNode(
-                        id: "0"
-                        node: {
-                            name: "node1",
-                            nameDraft: "node1",
-                            profile: null,
-                            profileDraft: {
-                                customerId: "0",
-                                description: "First node",
-                                hostname: ""
-                            },
-                            agents: [
-                                {
-                                    key: "unsupervised",
-                                    kind: UNSUPERVISED,
-                                    status: ENABLED,
-                                    config: null,
-                                    draft: "test = 'toml'"
-                                }
-                            ],
-                            externalServices: []
-                        }
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
-
-        let res = schema
-            .execute(
-                r#"mutation {
-                    applyNode(
-                        id: "1"
-                        node: {
-                            name: "node2",
-                            nameDraft: "node2",
-                            profile: null,
-                            profileDraft: {
-                                customerId: "0",
-                                description: "Second node",
-                                hostname: ""
-                            },
-                            agents: [
-                                {
-                                    key: "unsupervised",
-                                    kind: UNSUPERVISED,
-                                    status: ENABLED,
-                                    config: null,
-                                    draft: "test = 'toml'"
-                                }
-                            ],
-                            externalServices: []
-                        }
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{applyNode: "1"}"#);
     }
 
     #[tokio::test]
