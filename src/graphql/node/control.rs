@@ -238,7 +238,6 @@ async fn update_db(
 
     update.profile.clone_from(&update.profile_draft);
 
-
     // Update agents, removing those whose keys are in `disable_agent_ids`
     update.agents = update
         .agents

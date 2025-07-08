@@ -25,6 +25,7 @@ this project adheres to
   changed from `Option<UpdatePassword>` to `Option<String>`. The mutation now
   accepts the new password directly without requiring the old password, as
   SystemAdministrators do not have access to users' current passwords.
+
 ## [0.26.0] - 2025-06-25
 
 ### Added
