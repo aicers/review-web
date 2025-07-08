@@ -277,6 +277,10 @@ impl AccountMutation {
     /// Removes accounts, returning the usernames that no longer exist.
     ///
     /// On error, some usernames may have been removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if attempting to delete the last SystemAdministrator account.
     #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
         .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
     async fn remove_accounts(
@@ -286,12 +290,41 @@ impl AccountMutation {
     ) -> Result<Vec<String>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
-        let mut removed = Vec::with_capacity(usernames.len());
-        for username in usernames {
-            // Normalize the username for lookup (convert to lowercase)
-            let normalized_username = username.to_lowercase();
-            map.delete(&normalized_username)?;
-            removed.push(normalized_username);
+
+        // Normalize usernames for lookup
+        let normalized_usernames: Vec<String> = usernames
+            .into_iter()
+            .map(|username| username.to_lowercase())
+            .collect();
+
+        // Check if any of the accounts to be deleted are SystemAdministrators
+        let mut admin_accounts_to_delete = Vec::new();
+        for username in &normalized_usernames {
+            if let Some(account) = map.get(username)? {
+                if account.role == review_database::Role::SystemAdministrator {
+                    admin_accounts_to_delete.push(username.clone());
+                }
+            }
+        }
+
+        // If we're trying to delete SystemAdministrators, check if it would leave zero
+        if !admin_accounts_to_delete.is_empty() {
+            let total_admin_count = map
+                .iter(review_database::Direction::Forward, None)
+                .filter_map(std::result::Result::ok)
+                .filter(|account| account.role == review_database::Role::SystemAdministrator)
+                .count();
+
+            if total_admin_count <= admin_accounts_to_delete.len() {
+                return Err("Cannot delete the last SystemAdministrator account".into());
+            }
+        }
+
+        // Proceed with deletion if validation passes
+        let mut removed = Vec::with_capacity(normalized_usernames.len());
+        for username in normalized_usernames {
+            map.delete(&username)?;
+            removed.push(username);
         }
         Ok(removed)
     }
@@ -1533,6 +1566,130 @@ mod tests {
 
         let res = schema.execute(r"{accountList{totalCount}}").await;
         assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
+
+        // Test that deleting the last SystemAdministrator is prevented
+        let res = schema
+            .execute(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0]
+                .message
+                .contains("Cannot delete the last SystemAdministrator account")
+        );
+
+        // Verify admin account still exists
+        let res = schema.execute(r"{accountList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
+
+        restore_review_admin(original_review_admin);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn prevent_delete_last_system_admin() {
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+
+        let schema = TestSchema::new().await;
+
+        // Start with default admin account (SystemAdministrator)
+        let res = schema.execute(r"{accountList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
+
+        // Try to delete the only SystemAdministrator - should fail
+        let res = schema
+            .execute(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0]
+                .message
+                .contains("Cannot delete the last SystemAdministrator account")
+        );
+
+        // Create another SystemAdministrator
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "admin2",
+                        password: "Ahh9booH",
+                        role: "SYSTEM_ADMINISTRATOR",
+                        name: "Admin Two",
+                        department: "IT"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "admin2"}"#);
+
+        // Now we should be able to delete one SystemAdministrator
+        let res = schema
+            .execute(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
+            .await;
+        assert_eq!(res.data.to_string(), r#"{removeAccounts: ["admin"]}"#);
+
+        // But not the last one
+        let res = schema
+            .execute(r#"mutation { removeAccounts(usernames: ["admin2"]) }"#)
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0]
+                .message
+                .contains("Cannot delete the last SystemAdministrator account")
+        );
+
+        // Create a non-admin account
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "user1",
+                        password: "Ahh9booH",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "John Doe",
+                        department: "Security"
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user1"}"#);
+
+        // Should be able to delete non-admin accounts even with only one SystemAdministrator
+        let res = schema
+            .execute(r#"mutation { removeAccounts(usernames: ["user1"]) }"#)
+            .await;
+        assert_eq!(res.data.to_string(), r#"{removeAccounts: ["user1"]}"#);
+
+        // Test batch deletion that would leave zero SystemAdministrators
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "admin3",
+                        password: "Ahh9booH",
+                        role: "SYSTEM_ADMINISTRATOR",
+                        name: "Admin Three",
+                        department: "IT"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "admin3"}"#);
+
+        // Try to delete all SystemAdministrators at once - should fail
+        let res = schema
+            .execute(r#"mutation { removeAccounts(usernames: ["admin2", "admin3"]) }"#)
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0]
+                .message
+                .contains("Cannot delete the last SystemAdministrator account")
+        );
 
         restore_review_admin(original_review_admin);
     }
