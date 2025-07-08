@@ -12,6 +12,9 @@ this project adheres to
 - Added `confidence` field to most Blocklist GraphQL objects for consistency
   with `BlocklistTls`. The field provides confidence scores for security
   detections across different protocol blocklists.
+- Added protection against deleting the last SystemAdministrator account. The
+  `removeAccounts` GraphQL mutation now prevents deletion if it would leave
+  zero SystemAdministrator accounts in the system.
 
 ### Changed
 
