@@ -12,6 +12,12 @@ this project adheres to
 - Added `confidence` field to most Blocklist GraphQL objects for consistency
   with `BlocklistTls`. The field provides confidence scores for security
   detections across different protocol blocklists.
+- Added best-effort duplicate hostname check in `applyNode` GraphQL mutation.
+  The system now checks for hostname conflicts across all existing nodes before
+  applying node configuration changes. While this check does not guarantee
+  absolute uniqueness due to potential race conditions, it helps catch most
+  duplicate hostname scenarios and improves user feedback during the node
+  application process.
 
 ### Changed
 
