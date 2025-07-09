@@ -14,6 +14,7 @@ use tracing::error;
 
 use super::node::SEMI_SUPERVISED_AGENT;
 use super::{BoxedAgentManager, Role, RoleGuard, agent_keys_by_customer_id};
+use crate::error_with_username;
 use crate::graphql::query_with_constraints;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -168,7 +169,7 @@ impl CustomerMutation {
             if let Err(e) =
                 send_agent_specific_customer_networks(ctx, &removed_customer_networks).await
             {
-                error!("failed to broadcast internal networks. {e:?}");
+                error_with_username!(ctx, "Failed to broadcast internal networks: {e:?}");
             }
         }
 
@@ -212,7 +213,7 @@ impl CustomerMutation {
                 );
 
                 if let Err(e) = send_agent_specific_customer_networks(ctx, &[network_list]).await {
-                    error!("failed to broadcast internal networks. {e:?}");
+                    error_with_username!(ctx, "Failed to broadcast internal networks: {e:?}");
                 }
             }
         }
