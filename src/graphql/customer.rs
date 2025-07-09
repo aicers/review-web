@@ -142,26 +142,46 @@ impl CustomerMutation {
 
         let customer_id_hash = agent_keys_by_customer_id(&store)?;
         let mut removed_customer_networks = Vec::new();
-        let mut removed = Vec::<String>::with_capacity(ids.len());
-        for id in ids {
-            let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-            let key = map.remove(i)?;
-            network_map.remove_customer(i)?;
 
-            let name = match String::from_utf8(key) {
-                Ok(key) => key,
-                Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
-            };
-            removed.push(name);
+        let count = ids.len();
+        let removed = ids
+            .into_iter()
+            .try_fold(
+                Vec::with_capacity(count),
+                |mut removed, id| -> Result<Vec<String>, Vec<String>> {
+                    let Ok(i) = id.as_str().parse::<u32>() else {
+                        return Err(removed);
+                    };
+                    match map.remove(i) {
+                        Ok(key) => {
+                            if network_map.remove_customer(i).is_err() {
+                                return Err(removed);
+                            }
 
-            if let Some(agent_keys) = customer_id_hash.get(&i) {
-                let network_list = NetworksTargetAgentKeysPair::new(
-                    database::HostNetworkGroup::new(vec![], vec![], vec![]),
-                    agent_keys.clone(),
-                    SEMI_SUPERVISED_AGENT,
-                );
-                removed_customer_networks.push(network_list);
-            }
+                            let name = match String::from_utf8(key) {
+                                Ok(key) => key,
+                                Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
+                            };
+                            removed.push(name);
+
+                            if let Some(agent_keys) = customer_id_hash.get(&i) {
+                                let network_list = NetworksTargetAgentKeysPair::new(
+                                    database::HostNetworkGroup::new(vec![], vec![], vec![]),
+                                    agent_keys.clone(),
+                                    SEMI_SUPERVISED_AGENT,
+                                );
+                                removed_customer_networks.push(network_list);
+                            }
+                            Ok(removed)
+                        }
+                        Err(_) => Err(removed),
+                    }
+                },
+            )
+            .unwrap_or_else(|removed| removed);
+
+        if removed.is_empty() {
+            return Err("None of the specified customers were removed.".into());
         }
 
         if !removed_customer_networks.is_empty() {
@@ -170,6 +190,10 @@ impl CustomerMutation {
             {
                 error!("failed to broadcast internal networks. {e:?}");
             }
+        }
+
+        if removed.len() < count {
+            return Err("Some customers were removed, but not all.".into());
         }
 
         Ok(removed)

@@ -19,6 +19,10 @@ this project adheres to
   changed from `Option<UpdatePassword>` to `Option<String>`. The mutation now
   accepts the new password directly without requiring the old password, as
   SystemAdministrators do not have access to users' current passwords.
+- Improved exception handling for GraphQL APIs that perform multiple removals.
+  All removal functions now attempt to process all items in the input list and
+  provide clear error messages for partial failures, ensuring users are
+  informed when some items are successfully removed while others fail.
 
 ## [0.26.0] - 2025-06-25
 

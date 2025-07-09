@@ -100,14 +100,34 @@ impl TrafficFilterMutation {
         agent: String,
         networks: Vec<String>,
     ) -> Result<usize> {
+        let _count = networks.len();
         let mut new_rules: Vec<IpNet> = Vec::new();
+        let mut failed_count = 0;
+
         for network in networks {
-            new_rules.push(parse_network(&network)?);
+            match parse_network(&network) {
+                Ok(rule) => new_rules.push(rule),
+                Err(_) => failed_count += 1,
+            }
         }
+
+        if new_rules.is_empty() && failed_count > 0 {
+            return Err("None of the specified traffic filter rules were valid.".into());
+        }
+
         let store = crate::graphql::get_store(ctx).await?;
         let table = store.traffic_filter_map();
 
-        table.remove_rules(&agent, &new_rules).map_err(Into::into)
+        let removed_count = table.remove_rules(&agent, &new_rules)?;
+
+        if failed_count > 0 {
+            return Err(format!(
+                "Some traffic filter rules were processed, but {failed_count} were invalid."
+            )
+            .into());
+        }
+
+        Ok(removed_count)
     }
 
     /// applies traffic filtering rules to the agents if it is connected

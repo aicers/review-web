@@ -69,8 +69,29 @@ impl IndicatorMutation {
     ) -> Result<Vec<String>> {
         let store = super::get_store(ctx).await?;
         let map = store.model_indicator_map();
-        map.remove(names.iter().map(String::as_str))
-            .map_err(Into::into)
+
+        let count = names.len();
+        let removed = names
+            .into_iter()
+            .try_fold(Vec::with_capacity(count), |mut removed, name| {
+                if map.remove(std::iter::once(name.as_str())).is_ok() {
+                    removed.push(name);
+                    Ok(removed)
+                } else {
+                    Err(removed)
+                }
+            })
+            .unwrap_or_else(|removed| removed);
+
+        if removed.is_empty() {
+            return Err("None of the specified indicators were removed.".into());
+        }
+
+        if removed.len() < count {
+            return Err("Some indicators were removed, but not all.".into());
+        }
+
+        Ok(removed)
     }
 
     /// Updates the given indicator, returning the indicator name that was updated.
