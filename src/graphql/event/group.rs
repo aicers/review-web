@@ -254,7 +254,7 @@ impl EventGroupQuery {
             let (key, event) = match item {
                 Ok(kv) => kv,
                 Err(e) => {
-                    warn!("invalid event: {:?}", e);
+                    warn!("Invalid event: {:?}", e);
                     continue;
                 }
             };
@@ -322,7 +322,7 @@ async fn count_events<T>(
         let (key, event) = match item {
             Ok(kv) => kv,
             Err(e) => {
-                warn!("invalid event: {:?}", e);
+                warn!("Invalid event: {:?}", e);
                 continue;
             }
         };
@@ -375,7 +375,7 @@ async fn count_events_by_network(
         let (key, event) = match item {
             Ok(kv) => kv,
             Err(e) => {
-                warn!("invalid event: {:?}", e);
+                warn!("Invalid event: {:?}", e);
                 continue;
             }
         };

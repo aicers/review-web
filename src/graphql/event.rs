@@ -125,7 +125,7 @@ impl EventStream {
             )
             .await;
             if let Err(e) = fetch {
-                error!("{e:?}");
+                error!("Failed to fetch events: {e:?}");
             }
         });
         Ok(rx)
@@ -947,7 +947,7 @@ impl EventTotalCount {
             let (key, event) = match item {
                 Ok(kv) => kv,
                 Err(e) => {
-                    warn!("invalid event: {:?}", e);
+                    warn!("Invalid event: {:?}", e);
                     continue;
                 }
             };
@@ -1355,7 +1355,7 @@ fn iter_to_events(
         let (key, mut event) = match item {
             Ok(kv) => kv,
             Err(e) => {
-                warn!("invalid event: {:?}", e);
+                warn!("Invalid event: {:?}", e);
                 continue;
             }
         };

@@ -1,6 +1,6 @@
 use async_graphql::{Context, ID, Object, Result};
 use futures::future::join_all;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard},
@@ -51,6 +51,7 @@ impl NodeControlMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_node(&self, ctx: &Context<'_>, id: ID, node: NodeInput) -> Result<ID> {
+        let username = ctx.data::<String>().map(String::as_str).unwrap_or_default();
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
         if node.name_draft.is_none() {
@@ -71,7 +72,7 @@ impl NodeControlMutation {
             .await?;
 
             info!(
-                "[{}] Node ID {i} - Node's drafts are applied.\nName: {}, Name draft: {}\nProfile: {}, Profile draft: {}",
+                "user={username} [{}] Node ID {i} - Node's drafts are applied.\nName: {}, Name draft: {}\nProfile: {}, Profile draft: {}",
                 chrono::Utc::now(),
                 node.name,
                 node.name_draft
@@ -101,7 +102,7 @@ impl NodeControlMutation {
 
             if hostname.is_empty() {
                 info!(
-                    "Node ID {i} - Node's agents are not notified because the hostname is empty."
+                    "user={username} Node ID {i} - Node's agents are not notified because the hostname is empty."
                 );
             } else {
                 let agent_manager = ctx.data::<BoxedAgentManager>()?;
@@ -113,13 +114,13 @@ impl NodeControlMutation {
                 )
                 .await
                 {
-                    error!(
-                        "Failed to notify agents for node {i} to be updated. This failure may impact configuration synchronization.\nDetails: {e:?}"
+                    warn!(
+                        "user={username} Failed to notify agents for node {i} to be updated. This failure may impact configuration synchronization.\nDetails: {e:?}"
                     );
                 }
 
                 info!(
-                    "[{}] Node ID {i} - Node's agents are notified to be updated. {:?}",
+                    "user={username} [{}] Node ID {i} - Node's agents are notified to be updated. {:?}",
                     chrono::Utc::now(),
                     target_agents.updates,
                 );
@@ -288,7 +289,7 @@ async fn send_customer_change(
     let network_list =
         NetworksTargetAgentKeysPair::new(networks, agent_keys, SEMI_SUPERVISED_AGENT);
     if let Err(e) = send_agent_specific_customer_networks(ctx, &[network_list]).await {
-        error!("failed to broadcast internal networks. {e:?}");
+        error!("Failed to broadcast internal networks: {e:?}");
     }
 
     Ok(())

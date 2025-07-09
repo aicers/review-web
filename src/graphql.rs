@@ -408,7 +408,7 @@ where
 
     for node in &nodes {
         let Err(e) = node else { continue };
-        warn!("failed to load account: {}", e);
+        warn!("Failed to load from DB: {}", e);
         return Err("database error".into());
     }
 
