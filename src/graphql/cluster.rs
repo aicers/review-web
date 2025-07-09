@@ -87,9 +87,16 @@ impl ClusterQuery {
             .ok_or("invalid size")?;
 
         let db = ctx.data::<Database>()?;
-        let counts = db
-            .get_top_ip_addresses_of_cluster(model, &cluster_id, size)
-            .await?;
+        let cluster_ids = db
+            .load_cluster_ids(model, Some(cluster_id.as_str()))
+            .await?
+            .into_iter()
+            .map(|(id, _name)| id)
+            .collect::<Vec<_>>();
+
+        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+        let map = db.column_stats_map();
+        let counts = map.get_top_ip_addresses_of_cluster(model, &cluster_ids, size)?;
         Ok(counts.into_iter().map(Into::into).collect())
     }
 

@@ -74,8 +74,9 @@ impl ModelQuery {
         ctx: &Context<'_>,
         model: i32,
     ) -> Result<Vec<StructuredColumnType>> {
-        let db = ctx.data::<Database>()?;
-        let types = db.get_column_types_of_model(model).await?;
+        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+        let map = db.column_stats_map();
+        let types = map.get_column_types_of_model(model)?;
         Ok(types.into_iter().map(Into::into).collect())
     }
 
@@ -175,9 +176,24 @@ impl ModelQuery {
             .to_usize()
             .ok_or("invalid size")?;
         let db = ctx.data::<Database>()?;
-        let counts = db
-            .get_top_columns_of_model(model, size, time, portion_of_clusters, portion_of_top_n)
-            .await?;
+        let cluster_ids = db
+            .load_cluster_ids_with_size_limit(model, portion_of_clusters)
+            .await?
+            .into_iter()
+            .map(|id| u32::try_from(id).expect("cluster id should be a valid u32"))
+            .collect::<Vec<_>>();
+
+        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+
+        let map = db.csv_column_extra_map();
+        let top_n = map
+            .get_by_model(model)?
+            .and_then(|c| c.column_top_n)
+            .unwrap_or_default();
+
+        let map = db.column_stats_map();
+        let counts =
+            map.get_top_columns_of_model(model, cluster_ids, &top_n, size, time, portion_of_top_n)?;
         Ok(counts.into_iter().map(Into::into).collect())
     }
 
@@ -201,15 +217,23 @@ impl ModelQuery {
             .ok_or("invalid size")?;
 
         let db = ctx.data::<Database>()?;
-        let counts = db
-            .get_top_ip_addresses_of_model(
-                model,
-                size,
-                time,
-                portion_of_clusters,
-                portion_of_top_elements,
-            )
-            .await?;
+
+        let cluster_ids = db
+            .load_cluster_ids_with_size_limit(model, portion_of_clusters)
+            .await?
+            .into_iter()
+            .map(|id| u32::try_from(id).expect("cluster id should be a valid u32"))
+            .collect::<Vec<_>>();
+
+        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+        let map = db.column_stats_map();
+        let counts = map.get_top_ip_addresses_of_model(
+            model,
+            &cluster_ids,
+            size,
+            time,
+            portion_of_top_elements,
+        )?;
         Ok(counts.into_iter().map(Into::into).collect())
     }
 
@@ -235,13 +259,37 @@ impl ModelQuery {
             .unwrap_or(DEFAULT_MIN_MAP_SIZE)
             .to_usize()
             .ok_or("invalid minMapSize")?;
-        let db = ctx.data::<Database>()?;
-        let types = db.get_column_types_of_model(model).await?;
 
         let db = ctx.data::<Database>()?;
-        let maps = db
-            .get_top_multimaps_of_model(model, size, min_map_size, time, types)
-            .await?;
+        let cluster_ids = db
+            .load_cluster_ids(model, None)
+            .await?
+            .into_iter()
+            .map(|(id, name)| {
+                (
+                    u32::try_from(id).expect("cluster id should be a valid u32"),
+                    name,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+        let csv_extra = db.csv_column_extra_map();
+        let config = csv_extra.get_by_model(model)?;
+        let col_1 = config
+            .as_ref()
+            .and_then(|c| c.column_1.clone())
+            .unwrap_or_default();
+        let col_n = config.and_then(|c| c.column_n.clone()).unwrap_or_default();
+        let map = db.column_stats_map();
+        let maps = map.get_top_multimaps_of_model(
+            model,
+            cluster_ids,
+            (&col_1, &col_n),
+            size,
+            min_map_size,
+            time,
+        )?;
         Ok(maps.into_iter().map(Into::into).collect())
     }
 }

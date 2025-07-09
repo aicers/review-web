@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
     Context, Object, OutputType, Result, StringNumber,
@@ -6,8 +8,9 @@ use async_graphql::{
 };
 use chrono::{DateTime, NaiveDateTime};
 use num_traits::ToPrimitive;
-use review_database::{BatchInfo, Database};
+use review_database::{BatchInfo, Store};
 use serde_json::Value as JsonValue;
+use tokio::sync::RwLock;
 
 use super::{Role, RoleGuard, slicing};
 use crate::graphql::{query, query_with_constraints};
@@ -28,8 +31,9 @@ impl StatisticsQuery {
         time: Vec<NaiveDateTime>,
     ) -> Result<JsonValue> {
         let cluster = cluster.as_str().parse()?;
-        let db = ctx.data::<Database>()?;
-        let result = db.get_column_statistics(cluster, time).await?;
+        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+        let map = db.column_stats_map();
+        let result = map.get_column_statistics(cluster, time)?;
         Ok(serde_json::to_value(result)?)
     }
 
@@ -107,8 +111,13 @@ struct TotalCountByCluster {
 impl TotalCountByCluster {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<i64> {
-        let db = ctx.data::<Database>()?;
-        Ok(db.count_rounds_by_cluster(self.cluster).await?)
+        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+        let map = db.column_stats_map();
+        Ok(map.count_rounds_by_cluster(
+            self.cluster
+                .to_u32()
+                .expect("cluster id should be valid u32"),
+        )?)
     }
 }
 
@@ -185,16 +194,15 @@ async fn load_rounds_by_cluster(
 > {
     let is_first = first.is_some();
     let limit = slicing::len(first, last)?;
-    let db = ctx.data::<Database>()?;
-    let (model, batches) = db
-        .load_rounds_by_cluster(
-            cluster,
-            &after.map(|k| i64_to_naive_date_time(k.0.1)),
-            &before.map(|k| i64_to_naive_date_time(k.0.1)),
-            is_first,
-            limit + 1,
-        )
-        .await?;
+    let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+    let map = db.column_stats_map();
+    let (model, batches) = map.load_rounds_by_cluster(
+        cluster.to_u32().expect("Cluster ID should be a valid u32"),
+        &after.map(|k| i64_to_naive_date_time(k.0.1)),
+        &before.map(|k| i64_to_naive_date_time(k.0.1)),
+        is_first,
+        limit + 1,
+    )?;
 
     let (batches, has_previous, has_next) = slicing::page_info(is_first, limit, batches);
     let batch_infos: Vec<_> = {

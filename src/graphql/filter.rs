@@ -105,6 +105,7 @@ impl FilterMutation {
             kinds,
             learning_methods: learning_methods.map(|v| v.into_iter().map(Into::into).collect()),
             confidence,
+            period: database::PeriodForSearch::Recent("1 hour".to_string()), // set to default for now
         };
 
         map.insert(filter)?;
@@ -455,6 +456,7 @@ impl TryFrom<FilterInput> for database::Filter {
                 .learning_methods
                 .map(|values| values.into_iter().map(Into::into).collect()),
             confidence: input.confidence,
+            period: database::PeriodForSearch::Recent("1 hour".to_string()), // set to default for now
         })
     }
 }
