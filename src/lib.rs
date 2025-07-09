@@ -36,7 +36,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tower_http::{services::ServeDir, trace::TraceLayer};
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::auth::{AuthError, validate_token};
 use crate::backend::{AgentManager, CertManager};
@@ -348,7 +348,7 @@ fn build_client_config<P: AsRef<Path>>(
             root_store.add(c)?;
         }
         for e in certs.errors {
-            tracing::warn!("Could not load platform certificate: {:#}", e);
+            warn!("Could not load platform certificate: {:#}", e);
         }
     }
     for root in root_ca {
@@ -371,4 +371,49 @@ fn read_certificate_from_path<P: AsRef<Path>>(
     let cert = read(&path)?;
     let certs = rustls_pemfile::certs(&mut &*cert).collect::<Result<_, _>>()?;
     Ok(certs)
+}
+
+#[macro_export]
+macro_rules! error_with_username {
+    ($ctx:expr, $($arg:tt)+) => {{
+        let username = $ctx
+            .data::<String>()
+            .map(String::as_str)
+            .unwrap_or("<unknown user>");
+
+        error!("user={} {}", username, format!($($arg)+));
+    }};
+    (username: $username:expr, $($arg:tt)+) => {{
+        error!("user={} {}", $username, format!($($arg)+));
+    }};
+}
+
+#[macro_export]
+macro_rules! info_with_username {
+    ($ctx:expr, $($arg:tt)+) => {{
+        let username = $ctx
+            .data::<String>()
+            .map(String::as_str)
+            .unwrap_or("<unknown user>");
+
+        info!("user={} {}", username, format!($($arg)+));
+    }};
+    (username: $username:expr, $($arg:tt)+) => {{
+        info!("user={} {}", $username, format!($($arg)+));
+    }};
+}
+
+#[macro_export]
+macro_rules! warn_with_username {
+    ($ctx:expr, $($arg:tt)+) => {{
+        let username = $ctx
+            .data::<String>()
+            .map(String::as_str)
+            .unwrap_or("<unknown user>");
+
+        warn!("user={} {}", username, format!($($arg)+));
+    }};
+    (username: $username:expr, $($arg:tt)+) => {{
+        warn!("user={} {}", $username, format!($($arg)+));
+    }};
 }

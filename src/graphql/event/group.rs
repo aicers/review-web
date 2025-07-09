@@ -7,7 +7,10 @@ use review_database::{self as database, Direction, Event, EventFilter};
 use tracing::warn;
 
 use super::{EventListFilterInput, from_filter_input};
-use crate::graphql::{Role, RoleGuard};
+use crate::{
+    graphql::{Role, RoleGuard},
+    warn_with_username,
+};
 
 #[derive(Default)]
 pub(in crate::graphql) struct EventGroupQuery;
@@ -254,7 +257,7 @@ impl EventGroupQuery {
             let (key, event) = match item {
                 Ok(kv) => kv,
                 Err(e) => {
-                    warn!("invalid event: {:?}", e);
+                    warn_with_username!(ctx, "Invalid event: {:?}", e);
                     continue;
                 }
             };
@@ -322,7 +325,7 @@ async fn count_events<T>(
         let (key, event) = match item {
             Ok(kv) => kv,
             Err(e) => {
-                warn!("invalid event: {:?}", e);
+                warn_with_username!(ctx, "Invalid event: {:?}", e);
                 continue;
             }
         };
@@ -375,7 +378,7 @@ async fn count_events_by_network(
         let (key, event) = match item {
             Ok(kv) => kv,
             Err(e) => {
-                warn!("invalid event: {:?}", e);
+                warn_with_username!(ctx, "Invalid event: {:?}", e);
                 continue;
             }
         };
