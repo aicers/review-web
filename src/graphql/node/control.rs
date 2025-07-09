@@ -179,6 +179,10 @@ fn node_apply_scope(node: &NodeInput) -> NodeApplyScope {
     let is_name_changed = node.name_draft.as_ref() != Some(&node.name);
     let is_profile_changed = node.profile_draft != node.profile;
     let is_any_agent_changed = node.agents.iter().any(|agent| agent.draft != agent.config);
+    let is_any_external_service_changed = node
+        .external_services
+        .iter()
+        .any(|service| service.draft.is_none());
 
     let target_agents = if is_any_agent_changed {
         let (disables, updates) = node.agents.iter().fold(
@@ -202,7 +206,10 @@ fn node_apply_scope(node: &NodeInput) -> NodeApplyScope {
     };
 
     NodeApplyScope {
-        db: is_name_changed || is_profile_changed || is_any_agent_changed,
+        db: is_name_changed
+            || is_profile_changed
+            || is_any_agent_changed
+            || is_any_external_service_changed,
         agents: target_agents,
     }
 }
@@ -234,6 +241,19 @@ async fn update_db(
                 let mut updated_agent = agent.clone();
                 updated_agent.config.clone_from(&updated_agent.draft);
                 Some(updated_agent)
+            }
+        })
+        .collect();
+
+    // Update external services, removing those whose draft is set to None
+    update.external_services = update
+        .external_services
+        .iter()
+        .filter_map(|service| {
+            if service.draft.is_none() {
+                None
+            } else {
+                Some(service.clone())
             }
         })
         .collect();
@@ -2122,6 +2142,193 @@ mod tests {
 
         // Check that the operation succeeds
         assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn test_apply_node_external_service_removal() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["unsupervised@all-in-one"],
+        });
+
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // insert node with external service
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "admin node",
+                        customerId: 0,
+                        description: "This is the admin node running review.",
+                        hostname: "all-in-one",
+                        agents: [{
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
+                            status: ENABLED
+                            draft: "test = 'toml'"
+                        }]
+                        externalServices: [{
+                            key: "data_store"
+                            kind: DATA_STORE
+                            status: ENABLED
+                            draft: "test = 'data_store_toml'"
+                        }]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // apply node to save the initial state
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "admin node",
+                            nameDraft: "admin node",
+                            profile: null,
+                            profileDraft: {
+                                customerId: "0",
+                                description: "This is the admin node running review.",
+                                hostname: "all-in-one"
+                            },
+                            agents: [{
+                                key: "unsupervised",
+                                kind: UNSUPERVISED,
+                                status: ENABLED,
+                                config: null,
+                                draft: "test = 'toml'"
+                            }],
+                            externalServices: [{
+                                key: "data_store",
+                                kind: DATA_STORE,
+                                status: ENABLED,
+                                draft: "test = 'data_store_toml'"
+                            }]
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+
+        // verify external service is present
+        let res = schema
+            .execute(
+                r"query {
+                    nodeList(first: 10) {
+                        edges {
+                            node {
+                                externalServices {
+                                    key
+                                    kind
+                                    status
+                                    draft
+                                }
+                            }
+                        }
+                    }
+                }",
+            )
+            .await;
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeList": {
+                    "edges": [
+                        {
+                            "node": {
+                                "externalServices": [
+                                    {
+                                        "key": "data_store",
+                                        "kind": "DATA_STORE",
+                                        "status": "ENABLED",
+                                        "draft": "test = 'data_store_toml'"
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            })
+        );
+
+        // apply node with external service draft set to null (should remove it)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "admin node",
+                            nameDraft: "admin node",
+                            profile: {
+                                customerId: "0",
+                                description: "This is the admin node running review.",
+                                hostname: "all-in-one"
+                            },
+                            profileDraft: {
+                                customerId: "0",
+                                description: "This is the admin node running review.",
+                                hostname: "all-in-one"
+                            },
+                            agents: [{
+                                key: "unsupervised",
+                                kind: UNSUPERVISED,
+                                status: ENABLED,
+                                config: "test = 'toml'",
+                                draft: "test = 'toml'"
+                            }],
+                            externalServices: [{
+                                key: "data_store",
+                                kind: DATA_STORE,
+                                status: ENABLED,
+                                draft: null
+                            }]
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+
+        // verify external service is removed
+        let res = schema
+            .execute(
+                r"query {
+                    nodeList(first: 10) {
+                        edges {
+                            node {
+                                externalServices {
+                                    key
+                                    kind
+                                    status
+                                    draft
+                                }
+                            }
+                        }
+                    }
+                }",
+            )
+            .await;
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeList": {
+                    "edges": [
+                        {
+                            "node": {
+                                "externalServices": []
+                            }
+                        }
+                    ]
+                }
+            })
+        );
     }
 
     #[tokio::test]

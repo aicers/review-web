@@ -20,6 +20,12 @@ this project adheres to
   accepts the new password directly without requiring the old password, as
   SystemAdministrators do not have access to users' current passwords.
 
+### Fixed
+
+- Fixed external service removal in `apply_node` mutation. When an external
+  service's draft is set to `null`, the service is now properly removed from
+  the node during application.
+
 ## [0.26.0] - 2025-06-25
 
 ### Added
