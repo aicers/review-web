@@ -179,7 +179,7 @@ fn node_apply_scope(node: &NodeInput) -> NodeApplyScope {
     let is_name_changed = node.name_draft.as_ref() != Some(&node.name);
     let is_profile_changed = node.profile_draft != node.profile;
     let is_any_agent_changed = node.agents.iter().any(|agent| agent.draft != agent.config);
-    let is_any_external_service_changed = node
+    let is_any_external_service_removed = node
         .external_services
         .iter()
         .any(|service| service.draft.is_none());
@@ -209,7 +209,7 @@ fn node_apply_scope(node: &NodeInput) -> NodeApplyScope {
         db: is_name_changed
             || is_profile_changed
             || is_any_agent_changed
-            || is_any_external_service_changed,
+            || is_any_external_service_removed,
         agents: target_agents,
     }
 }
@@ -233,30 +233,21 @@ async fn update_db(
     // Update agents, removing those whose keys are in `disable_agent_ids`
     update.agents = update
         .agents
-        .iter()
-        .filter_map(|agent| {
+        .into_iter()
+        .filter_map(|mut agent| {
             if disable_agent_ids.contains(&agent.key.as_str()) {
                 None
             } else {
-                let mut updated_agent = agent.clone();
-                updated_agent.config.clone_from(&updated_agent.draft);
-                Some(updated_agent)
+                agent.config.clone_from(&agent.draft);
+                Some(agent)
             }
         })
         .collect();
 
     // Update external services, removing those whose draft is set to None
-    update.external_services = update
+    update
         .external_services
-        .iter()
-        .filter_map(|service| {
-            if service.draft.is_none() {
-                None
-            } else {
-                Some(service.clone())
-            }
-        })
-        .collect();
+        .retain(|service| service.draft.is_some());
 
     let old = node.clone().try_into()?;
     let new = update.try_into()?;
