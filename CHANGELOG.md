@@ -22,7 +22,7 @@ this project adheres to
 
 ### Fixed
 
-- Fixed external service removal in `apply_node` mutation. When an external
+- Fixed external service removal in `applyNode` mutation. When an external
   service's draft is set to `null`, the service is now properly removed from
   the node during application.
 
