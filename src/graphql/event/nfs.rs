@@ -2,7 +2,7 @@ use async_graphql::{Context, Object, Result};
 use chrono::{DateTime, Utc};
 use review_database as database;
 
-use super::{TriageScore, country_code, find_ip_customer, find_ip_network};
+use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
 use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
 pub(super) struct BlocklistNfs {
@@ -102,6 +102,10 @@ impl BlocklistNfs {
             .triage_scores
             .as_ref()
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
+    }
+
+    async fn level(&self) -> ThreatLevel {
+        ThreatLevel::Medium
     }
 }
 
