@@ -136,16 +136,36 @@ impl TriagePolicyMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_policy_map();
 
-        let mut removed = Vec::<String>::with_capacity(ids.len());
-        for id in ids {
-            let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-            let key = map.remove(i)?;
+        let count = ids.len();
+        let removed = ids
+            .into_iter()
+            .try_fold(
+                Vec::with_capacity(count),
+                |mut removed, id| -> Result<Vec<String>, Vec<String>> {
+                    let Ok(i) = id.as_str().parse::<u32>() else {
+                        return Err(removed);
+                    };
+                    match map.remove(i) {
+                        Ok(key) => {
+                            let name = match String::from_utf8(key) {
+                                Ok(key) => key,
+                                Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
+                            };
+                            removed.push(name);
+                            Ok(removed)
+                        }
+                        Err(_) => Err(removed),
+                    }
+                },
+            )
+            .unwrap_or_else(|removed| removed);
 
-            let name = match String::from_utf8(key) {
-                Ok(key) => key,
-                Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
-            };
-            removed.push(name);
+        if removed.is_empty() {
+            return Err("None of the specified triage policies were removed.".into());
+        }
+
+        if removed.len() < count {
+            return Err("Some triage policies were removed, but not all.".into());
         }
 
         Ok(removed)

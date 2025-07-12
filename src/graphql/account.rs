@@ -286,13 +286,30 @@ impl AccountMutation {
     ) -> Result<Vec<String>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
-        let mut removed = Vec::with_capacity(usernames.len());
-        for username in usernames {
-            // Normalize the username for lookup (convert to lowercase)
-            let normalized_username = username.to_lowercase();
-            map.delete(&normalized_username)?;
-            removed.push(normalized_username);
+
+        let count = usernames.len();
+        let removed = usernames
+            .into_iter()
+            .try_fold(Vec::with_capacity(count), |mut removed, username| {
+                // Normalize the username for lookup (convert to lowercase)
+                let normalized_username = username.to_lowercase();
+                if map.delete(&normalized_username).is_ok() {
+                    removed.push(normalized_username);
+                    Ok(removed)
+                } else {
+                    Err(removed)
+                }
+            })
+            .unwrap_or_else(|removed| removed);
+
+        if removed.is_empty() {
+            return Err("None of the specified accounts were removed.".into());
         }
+
+        if removed.len() < count {
+            return Err("Some accounts were removed, but not all.".into());
+        }
+
         Ok(removed)
     }
 

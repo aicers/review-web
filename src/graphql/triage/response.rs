@@ -160,12 +160,32 @@ impl super::TriageResponseMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_response_map();
 
-        let mut removed = Vec::<String>::with_capacity(ids.len());
-        for id in ids {
-            let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-            let _key = map.remove(i)?;
+        let count = ids.len();
+        let removed = ids
+            .into_iter()
+            .try_fold(
+                Vec::with_capacity(count),
+                |mut removed, id| -> Result<Vec<String>, Vec<String>> {
+                    let Ok(i) = id.as_str().parse::<u32>() else {
+                        return Err(removed);
+                    };
+                    match map.remove(i) {
+                        Ok(_key) => {
+                            removed.push(i.to_string());
+                            Ok(removed)
+                        }
+                        Err(_) => Err(removed),
+                    }
+                },
+            )
+            .unwrap_or_else(|removed| removed);
 
-            removed.push(i.to_string());
+        if removed.is_empty() {
+            return Err("None of the specified triage responses were removed.".into());
+        }
+
+        if removed.len() < count {
+            return Err("Some triage responses were removed, but not all.".into());
         }
 
         Ok(removed)

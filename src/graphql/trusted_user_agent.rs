@@ -83,11 +83,26 @@ impl UserAgentMutation {
     ) -> Result<bool> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.trusted_user_agent_map();
+
+        let count = user_agents.len();
+        let mut removed_count = 0;
+
         for user_agent in user_agents {
-            map.remove(&user_agent)?;
+            if map.remove(&user_agent).is_ok() {
+                removed_count += 1;
+            }
+        }
+
+        if removed_count == 0 {
+            return Err("None of the specified trusted user agents were removed.".into());
         }
 
         apply_trusted_user_agent_list(&store, ctx).await?;
+
+        if removed_count < count {
+            return Err("Some trusted user agents were removed, but not all.".into());
+        }
+
         Ok(true)
     }
 

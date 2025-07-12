@@ -92,13 +92,28 @@ impl TidbMutation {
     ) -> Result<Vec<String>> {
         let store = super::get_store(ctx).await?;
         let table = store.tidb_map();
-        let mut removed = Vec::with_capacity(names.len());
-        for name in names {
-            match table.remove(&name) {
-                Ok(()) => removed.push(name),
-                Err(e) => return Err(format!("{e:?}").into()),
-            }
+
+        let count = names.len();
+        let removed = names
+            .into_iter()
+            .try_fold(Vec::with_capacity(count), |mut removed, name| {
+                if table.remove(&name).is_ok() {
+                    removed.push(name);
+                    Ok(removed)
+                } else {
+                    Err(removed)
+                }
+            })
+            .unwrap_or_else(|removed| removed);
+
+        if removed.is_empty() {
+            return Err("None of the specified tidb entries were removed.".into());
         }
+
+        if removed.len() < count {
+            return Err("Some tidb entries were removed, but not all.".into());
+        }
+
         Ok(removed)
     }
 

@@ -126,8 +126,29 @@ impl FilterMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.filter_map();
         let username = ctx.data::<String>()?;
-        map.remove(username, names.iter().map(String::as_str))?;
-        Ok(names)
+
+        let count = names.len();
+        let removed = names
+            .into_iter()
+            .try_fold(Vec::with_capacity(count), |mut removed, name| {
+                if map.remove(username, std::iter::once(name.as_str())).is_ok() {
+                    removed.push(name);
+                    Ok(removed)
+                } else {
+                    Err(removed)
+                }
+            })
+            .unwrap_or_else(|removed| removed);
+
+        if removed.is_empty() {
+            return Err("None of the specified filters were removed.".into());
+        }
+
+        if removed.len() < count {
+            return Err("Some filters were removed, but not all.".into());
+        }
+
+        Ok(removed)
     }
 
     /// Updates the given filter, returning the filter name that was updated.
