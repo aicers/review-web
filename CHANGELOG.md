@@ -18,6 +18,7 @@ this project adheres to
 
 ### Changed
 
+- Updated review-database to 0.39.0.
 - The `updateAccount` GraphQL mutation's `password` parameter type has been
   changed from `Option<UpdatePassword>` to `Option<String>`. The mutation now
   accepts the new password directly without requiring the old password, as
