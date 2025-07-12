@@ -168,7 +168,7 @@ impl CustomerMutation {
             if let Err(e) =
                 send_agent_specific_customer_networks(ctx, &removed_customer_networks).await
             {
-                error!("failed to broadcast internal networks. {e:?}");
+                error!("Failed to broadcast internal networks: {e:?}");
             }
         }
 
@@ -212,7 +212,7 @@ impl CustomerMutation {
                 );
 
                 if let Err(e) = send_agent_specific_customer_networks(ctx, &[network_list]).await {
-                    error!("failed to broadcast internal networks. {e:?}");
+                    error!("Failed to broadcast internal networks: {e:?}");
                 }
             }
         }

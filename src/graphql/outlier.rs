@@ -55,7 +55,7 @@ impl OutlierStream {
             )
             .await
             {
-                error!("{e:?}");
+                error!("Fetch failed: {e:?}");
             }
         });
         Ok(rx)
