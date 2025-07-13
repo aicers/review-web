@@ -269,16 +269,6 @@ fn validate_customer_removal(store: &Store, customer_ids: &[u32]) -> Result<()> 
                     .into());
                 }
             }
-            // Check draft profile
-            if let Some(profile_draft) = &node.profile_draft {
-                if profile_draft.customer_id == *customer_id {
-                    return Err(format!(
-                        "Cannot remove customer {}: still referenced by node {} (draft profile)",
-                        customer_id, node.name
-                    )
-                    .into());
-                }
-            }
         }
     }
 
