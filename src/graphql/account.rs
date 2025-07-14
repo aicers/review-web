@@ -280,7 +280,7 @@ impl AccountMutation {
     ///
     /// # Errors
     ///
-    /// Returns an error if attempting to delete the last SystemAdministrator account.
+    /// Returns an error if a SystemAdministrator attempts to delete themselves.
     #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
         .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
     async fn remove_accounts(
@@ -290,6 +290,7 @@ impl AccountMutation {
     ) -> Result<Vec<String>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
+        let current_username = ctx.data::<String>()?;
 
         // Normalize usernames for lookup
         let normalized_usernames: Vec<String> = usernames
@@ -297,26 +298,11 @@ impl AccountMutation {
             .map(|username| username.to_lowercase())
             .collect();
 
-        // Check if any of the accounts to be deleted are SystemAdministrators
-        let mut admin_accounts_to_delete = Vec::new();
-        for username in &normalized_usernames {
-            if let Some(account) = map.get(username)? {
-                if account.role == review_database::Role::SystemAdministrator {
-                    admin_accounts_to_delete.push(username.clone());
-                }
-            }
-        }
-
-        // If we're trying to delete SystemAdministrators, check if it would leave zero
-        if !admin_accounts_to_delete.is_empty() {
-            let total_admin_count = map
-                .iter(review_database::Direction::Forward, None)
-                .filter_map(std::result::Result::ok)
-                .filter(|account| account.role == review_database::Role::SystemAdministrator)
-                .count();
-
-            if total_admin_count <= admin_accounts_to_delete.len() {
-                return Err("Cannot delete the last SystemAdministrator account".into());
+        // Check if the current user is a SystemAdministrator trying to delete themselves
+        if let Ok(Some(current_account)) = map.get(current_username) {
+            if current_account.role == review_database::Role::SystemAdministrator
+                && normalized_usernames.contains(&current_username.to_lowercase()) {
+                return Err("SystemAdministrators cannot delete themselves".into());
             }
         }
 
@@ -380,6 +366,23 @@ impl AccountMutation {
             // Validate that the new password is different from the current password
             if account.verify_password(new_password) {
                 return Err("new password cannot be the same as the current password".into());
+            }
+        }
+
+        // Get current user context
+        let current_username = ctx.data::<String>()?;
+
+        // Prevent SystemAdministrators from demoting themselves
+        if let Some(ref role_update) = role {
+            if normalized_username == current_username.to_lowercase() {
+                if let Ok(Some(current_account)) = map.get(current_username) {
+                    let new_role = database::Role::from(role_update.new);
+                    if current_account.role == database::Role::SystemAdministrator
+                        && new_role != database::Role::SystemAdministrator
+                    {
+                        return Err("SystemAdministrators cannot demote themselves".into());
+                    }
+                }
             }
         }
 
@@ -1525,7 +1528,8 @@ mod tests {
         let original_review_admin = backup_and_set_review_admin();
         assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
 
-        let schema = TestSchema::new().await;
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "admin").await;
         let res = schema.execute(r"{accountList{totalCount}}").await;
         assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
 
@@ -1567,7 +1571,7 @@ mod tests {
         let res = schema.execute(r"{accountList{totalCount}}").await;
         assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
 
-        // Test that deleting the last SystemAdministrator is prevented
+        // Test that SystemAdministrators cannot delete themselves
         let res = schema
             .execute(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
             .await;
@@ -1575,7 +1579,7 @@ mod tests {
         assert!(
             res.errors[0]
                 .message
-                .contains("Cannot delete the last SystemAdministrator account")
+                .contains("SystemAdministrators cannot delete themselves")
         );
 
         // Verify admin account still exists
@@ -1587,17 +1591,18 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn prevent_delete_last_system_admin() {
+    async fn prevent_admin_self_deletion() {
         let original_review_admin = backup_and_set_review_admin();
         assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
 
-        let schema = TestSchema::new().await;
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "admin").await;
 
         // Start with default admin account (SystemAdministrator)
         let res = schema.execute(r"{accountList{totalCount}}").await;
         assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
 
-        // Try to delete the only SystemAdministrator - should fail
+        // Try to delete self as SystemAdministrator - should fail
         let res = schema
             .execute(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
             .await;
@@ -1605,7 +1610,7 @@ mod tests {
         assert!(
             res.errors[0]
                 .message
-                .contains("Cannot delete the last SystemAdministrator account")
+                .contains("SystemAdministrators cannot delete themselves")
         );
 
         // Create another SystemAdministrator
@@ -1624,22 +1629,22 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertAccount: "admin2"}"#);
 
-        // Now we should be able to delete one SystemAdministrator
+        // Admin still cannot delete themselves even with another admin present
         let res = schema
             .execute(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
-            .await;
-        assert_eq!(res.data.to_string(), r#"{removeAccounts: ["admin"]}"#);
-
-        // But not the last one
-        let res = schema
-            .execute(r#"mutation { removeAccounts(usernames: ["admin2"]) }"#)
             .await;
         assert!(!res.errors.is_empty());
         assert!(
             res.errors[0]
                 .message
-                .contains("Cannot delete the last SystemAdministrator account")
+                .contains("SystemAdministrators cannot delete themselves")
         );
+
+        // But can delete other admins
+        let res = schema
+            .execute(r#"mutation { removeAccounts(usernames: ["admin2"]) }"#)
+            .await;
+        assert_eq!(res.data.to_string(), r#"{removeAccounts: ["admin2"]}"#);
 
         // Create a non-admin account
         let res = schema
@@ -1664,7 +1669,7 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{removeAccounts: ["user1"]}"#);
 
-        // Test batch deletion that would leave zero SystemAdministrators
+        // Test that admin cannot delete themselves in batch operations
         let res = schema
             .execute(
                 r#"mutation {
@@ -1680,16 +1685,86 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertAccount: "admin3"}"#);
 
-        // Try to delete all SystemAdministrators at once - should fail
+        // Try to delete themselves with other admins - should fail
         let res = schema
-            .execute(r#"mutation { removeAccounts(usernames: ["admin2", "admin3"]) }"#)
+            .execute(r#"mutation { removeAccounts(usernames: ["admin", "admin3"]) }"#)
             .await;
         assert!(!res.errors.is_empty());
         assert!(
             res.errors[0]
                 .message
-                .contains("Cannot delete the last SystemAdministrator account")
+                .contains("SystemAdministrators cannot delete themselves")
         );
+
+        restore_review_admin(original_review_admin);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn prevent_admin_self_demotion() {
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let schema = TestSchema::new_with_params(agent_manager, None, "admin").await;
+
+        // Try to demote self from SystemAdministrator - should fail
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateAccount(
+                        username: "admin",
+                        role: {
+                            old: SYSTEM_ADMINISTRATOR,
+                            new: SECURITY_ADMINISTRATOR
+                        },
+                        customerIds: {
+                            old: null,
+                            new: [0]
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0]
+                .message
+                .contains("SystemAdministrators cannot demote themselves")
+        );
+
+        // Create another account
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "user1",
+                        password: "Ahh9booH",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "John Doe",
+                        department: "Security"
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user1"}"#);
+
+        // Admin should be able to modify other accounts
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateAccount(
+                        username: "user1",
+                        role: {
+                            old: SECURITY_ADMINISTRATOR,
+                            new: SECURITY_MANAGER
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{updateAccount: "user1"}"#);
 
         restore_review_admin(original_review_admin);
     }
