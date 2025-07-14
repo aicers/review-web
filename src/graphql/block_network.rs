@@ -87,6 +87,11 @@ impl BlockNetworkMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
+        let ids: Vec<u32> = ids
+            .iter()
+            .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID"))
+            .collect::<Result<_, _>>()?;
+
         let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
         let map = db.block_network_map();
 
@@ -95,10 +100,7 @@ impl BlockNetworkMutation {
             .into_iter()
             .try_fold(
                 Vec::with_capacity(count),
-                |mut removed, id| -> Result<Vec<String>, Vec<String>> {
-                    let Ok(i) = id.as_str().parse::<u32>() else {
-                        return Err(removed);
-                    };
+                |mut removed, i| -> Result<Vec<String>, Vec<String>> {
                     match map.remove(i) {
                         Ok(key) => {
                             let name = match String::from_utf8(key) {

@@ -397,6 +397,11 @@ impl SamplingPolicyMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
+        let ids: Vec<u32> = ids
+            .iter()
+            .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID"))
+            .collect::<Result<_, _>>()?;
+
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.sampling_policy_map();
 
@@ -405,10 +410,7 @@ impl SamplingPolicyMutation {
             .into_iter()
             .try_fold(
                 Vec::with_capacity(count),
-                |mut removed, id| -> Result<Vec<String>, Vec<String>> {
-                    let Ok(i) = id.as_str().parse::<u32>() else {
-                        return Err(removed);
-                    };
+                |mut removed, i| -> Result<Vec<String>, Vec<String>> {
                     match map.remove(i) {
                         Ok(key) => {
                             let name = match String::from_utf8(key) {
