@@ -301,7 +301,8 @@ impl AccountMutation {
         // Check if the current user is a SystemAdministrator trying to delete themselves
         if let Ok(Some(current_account)) = map.get(current_username) {
             if current_account.role == review_database::Role::SystemAdministrator
-                && normalized_usernames.contains(&current_username.to_lowercase()) {
+                && normalized_usernames.contains(&current_username.to_lowercase())
+            {
                 return Err("SystemAdministrators cannot delete themselves".into());
             }
         }
