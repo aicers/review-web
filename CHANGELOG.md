@@ -9,6 +9,10 @@ this project adheres to
 
 ### Added
 
+- Added `comprehensiveUserList` GraphQL query for system administrators to
+  fetch all user accounts with security status information including account
+  lock/suspension status, creation time, last signin time, and access
+  restrictions.
 - Added `confidence` field to most Blocklist GraphQL objects for consistency
   with `BlocklistTls`. The field provides confidence scores for security
   detections across different protocol blocklists.
