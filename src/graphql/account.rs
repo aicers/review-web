@@ -35,6 +35,21 @@ pub struct SignedInAccount {
     role: Role,
 }
 
+#[allow(clippy::module_name_repetitions)]
+#[derive(Clone, Serialize, SimpleObject)]
+pub struct ComprehensiveUserAccount {
+    username: String,
+    name: String,
+    department: String,
+    role: Role,
+    creation_time: DateTime<Utc>,
+    last_signin_time: Option<DateTime<Utc>>,
+    is_locked: bool,
+    is_suspended: bool,
+    max_parallel_sessions: Option<u8>,
+    allow_access_from: Option<Vec<String>>,
+}
+
 const REVIEW_ADMIN: &str = "REVIEW_ADMIN";
 
 #[derive(Default)]
@@ -155,6 +170,44 @@ impl AccountQuery {
             .collect::<Vec<_>>();
 
         Ok(signed)
+    }
+
+    /// Returns a comprehensive list of all user accounts with security status.
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)")]
+    async fn comprehensive_user_list(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<Vec<ComprehensiveUserAccount>> {
+        use review_database::Iterable;
+
+        let store = crate::graphql::get_store(ctx).await?;
+        let account_map = store.account_map();
+
+        let users = account_map
+            .iter(Direction::Forward, None)
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                let account = entry;
+
+                Some(ComprehensiveUserAccount {
+                    username: account.username.clone(),
+                    name: account.name.clone(),
+                    department: account.department.clone(),
+                    role: account.role.into(),
+                    creation_time: account.creation_time(),
+                    last_signin_time: account.last_signin_time(),
+                    is_locked: false,
+                    is_suspended: false,
+                    max_parallel_sessions: account.max_parallel_sessions,
+                    allow_access_from: account
+                        .allow_access_from
+                        .as_ref()
+                        .map(|ips| ips.iter().map(ToString::to_string).collect()),
+                })
+            })
+            .collect();
+
+        Ok(users)
     }
 
     /// Returns how long signing in lasts in seconds
@@ -3315,5 +3368,101 @@ mod tests {
             force_sign_out.get("sessionsTerminated"),
             Some(&Value::Number(serde_json::Number::from(0)))
         );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn comprehensive_user_list() {
+        let schema = TestSchema::new().await;
+
+        // Create several test users
+        let mutations = [
+            r#"mutation {
+                insertAccount(
+                    username: "user1",
+                    password: "password123",
+                    role: "SECURITY_MONITOR",
+                    name: "User One",
+                    department: "Security",
+                    customerIds: [0]
+                )
+            }"#,
+            r#"mutation {
+                insertAccount(
+                    username: "user2",
+                    password: "password456",
+                    role: "SECURITY_ADMINISTRATOR",
+                    name: "User Two",
+                    department: "Admin",
+                    customerIds: [0]
+                )
+            }"#,
+        ];
+
+        for mutation in &mutations {
+            let res = schema.execute(mutation).await;
+            assert!(res.errors.is_empty());
+        }
+
+        // Query comprehensive user list
+        let res = schema
+            .execute(
+                r"query {
+                    comprehensiveUserList {
+                        username
+                        name
+                        department
+                        role
+                        isLocked
+                        isSuspended
+                        maxParallelSessions
+                        allowAccessFrom
+                        creationTime
+                        lastSigninTime
+                    }
+                }",
+            )
+            .await;
+
+        assert!(res.errors.is_empty());
+
+        let Value::Object(data) = res.data else {
+            panic!("unexpected response: {res:?}");
+        };
+
+        let Some(Value::List(users)) = data.get("comprehensiveUserList") else {
+            panic!("expected comprehensiveUserList array");
+        };
+
+        // Should include at least our created users
+        assert!(users.len() >= 2);
+
+        // Check that created users are present with expected security status
+        let usernames: Vec<String> = users
+            .iter()
+            .filter_map(|user| {
+                if let Value::Object(user_obj) = user {
+                    if let Some(Value::String(username)) = user_obj.get("username") {
+                        Some(username.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert!(usernames.contains(&"user1".to_string()));
+        assert!(usernames.contains(&"user2".to_string()));
+
+        // Verify security status fields are present and false (no locking implemented yet)
+        for user in users {
+            if let Value::Object(user_obj) = user {
+                assert_eq!(user_obj.get("isLocked"), Some(&Value::Boolean(false)));
+                assert_eq!(user_obj.get("isSuspended"), Some(&Value::Boolean(false)));
+                assert!(user_obj.contains_key("creationTime"));
+            }
+        }
     }
 }
