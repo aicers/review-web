@@ -23,6 +23,10 @@ this project adheres to
   All removal functions now attempt to process all items in the input list and
   provide clear error messages for partial failures, ensuring users are
   informed when some items are successfully removed while others fail.
+- Changed `removeTrafficFilterRules` and `removeTrustedUserAgents` GraphQL
+  mutation return types from `usize` and `bool` respectively to `Vec<String>`
+  to return the list of successfully removed items, providing consistency with
+  other multi-remove APIs.
 
 ## [0.26.0] - 2025-06-25
 

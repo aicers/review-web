@@ -99,14 +99,18 @@ impl TrafficFilterMutation {
         ctx: &Context<'_>,
         agent: String,
         networks: Vec<String>,
-    ) -> Result<usize> {
+    ) -> Result<Vec<String>> {
         let _count = networks.len();
         let mut new_rules: Vec<IpNet> = Vec::new();
+        let mut removed_networks: Vec<String> = Vec::new();
         let mut failed_count = 0;
 
         for network in networks {
             match parse_network(&network) {
-                Ok(rule) => new_rules.push(rule),
+                Ok(rule) => {
+                    new_rules.push(rule);
+                    removed_networks.push(network);
+                }
                 Err(_) => failed_count += 1,
             }
         }
@@ -127,7 +131,7 @@ impl TrafficFilterMutation {
             .into());
         }
 
-        Ok(removed_count)
+        Ok(removed_networks.into_iter().take(removed_count).collect())
     }
 
     /// applies traffic filtering rules to the agents if it is connected
@@ -350,7 +354,10 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r"{removeTrafficFilterRules: 1}");
+        assert_eq!(
+            res.data.to_string(),
+            r#"{removeTrafficFilterRules: ["0.0.0.0/0"]}"#
+        );
 
         let res: async_graphql::Response = schema
             .execute(
