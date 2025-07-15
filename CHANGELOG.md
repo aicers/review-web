@@ -23,6 +23,8 @@ this project adheres to
   changed from `Option<UpdatePassword>` to `Option<String>`. The mutation now
   accepts the new password directly without requiring the old password, as
   SystemAdministrators do not have access to users' current passwords.
+- Modified the GraphQL API to prevent additional System administrator accounts
+  from being created during insert/update.
 
 ### Fixed
 
