@@ -280,7 +280,7 @@ impl AccountMutation {
     ///
     /// # Errors
     ///
-    /// Returns an error if a SystemAdministrator attempts to delete themselves.
+    /// Returns an error if a user attempts to delete themselves.
     #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
         .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
     async fn remove_accounts(
@@ -298,13 +298,9 @@ impl AccountMutation {
             .map(|username| username.to_lowercase())
             .collect();
 
-        // Check if the current user is a SystemAdministrator trying to delete themselves
-        if let Ok(Some(current_account)) = map.get(current_username) {
-            if current_account.role == review_database::Role::SystemAdministrator
-                && normalized_usernames.contains(&current_username.to_lowercase())
-            {
-                return Err("SystemAdministrators cannot delete themselves".into());
-            }
+        // Check if the current user is trying to delete themselves
+        if normalized_usernames.contains(&current_username.to_lowercase()) {
+            return Err("Users cannot delete themselves".into());
         }
 
         // Proceed with deletion if validation passes
@@ -373,15 +369,13 @@ impl AccountMutation {
         // Get current user context
         let current_username = ctx.data::<String>()?;
 
-        // Prevent SystemAdministrators from demoting themselves
+        // Prevent users from demoting themselves
         if let Some(ref role_update) = role {
             if normalized_username == current_username.to_lowercase() {
                 if let Ok(Some(current_account)) = map.get(current_username) {
                     let new_role = database::Role::from(role_update.new);
-                    if current_account.role == database::Role::SystemAdministrator
-                        && new_role != database::Role::SystemAdministrator
-                    {
-                        return Err("SystemAdministrators cannot demote themselves".into());
+                    if current_account.role != new_role {
+                        return Err("Users cannot demote themselves".into());
                     }
                 }
             }
@@ -1572,7 +1566,7 @@ mod tests {
         let res = schema.execute(r"{accountList{totalCount}}").await;
         assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
 
-        // Test that SystemAdministrators cannot delete themselves
+        // Test that users cannot delete themselves
         let res = schema
             .execute(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
             .await;
@@ -1580,7 +1574,7 @@ mod tests {
         assert!(
             res.errors[0]
                 .message
-                .contains("SystemAdministrators cannot delete themselves")
+                .contains("Users cannot delete themselves")
         );
 
         // Verify admin account still exists
@@ -1603,7 +1597,7 @@ mod tests {
         let res = schema.execute(r"{accountList{totalCount}}").await;
         assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
 
-        // Try to delete self as SystemAdministrator - should fail
+        // Try to delete self - should fail
         let res = schema
             .execute(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
             .await;
@@ -1611,7 +1605,7 @@ mod tests {
         assert!(
             res.errors[0]
                 .message
-                .contains("SystemAdministrators cannot delete themselves")
+                .contains("Users cannot delete themselves")
         );
 
         // Create another SystemAdministrator
@@ -1638,7 +1632,7 @@ mod tests {
         assert!(
             res.errors[0]
                 .message
-                .contains("SystemAdministrators cannot delete themselves")
+                .contains("Users cannot delete themselves")
         );
 
         // But can delete other admins
@@ -1694,7 +1688,7 @@ mod tests {
         assert!(
             res.errors[0]
                 .message
-                .contains("SystemAdministrators cannot delete themselves")
+                .contains("Users cannot delete themselves")
         );
 
         restore_review_admin(original_review_admin);
@@ -1709,7 +1703,7 @@ mod tests {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
         let schema = TestSchema::new_with_params(agent_manager, None, "admin").await;
 
-        // Try to demote self from SystemAdministrator - should fail
+        // Try to demote self - should fail
         let res = schema
             .execute(
                 r#"mutation {
@@ -1731,7 +1725,7 @@ mod tests {
         assert!(
             res.errors[0]
                 .message
-                .contains("SystemAdministrators cannot demote themselves")
+                .contains("Users cannot demote themselves")
         );
 
         // Create another account
