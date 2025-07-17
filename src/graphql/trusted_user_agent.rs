@@ -73,22 +73,41 @@ impl UserAgentMutation {
         Ok(true)
     }
 
-    /// Removes a trusted user agents, Returns true if the deletion was successful.
+    /// Removes trusted user agents, returning the list of successfully removed user agents.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn remove_trusted_user_agents(
         &self,
         ctx: &Context<'_>,
         user_agents: Vec<String>,
-    ) -> Result<bool> {
+    ) -> Result<Vec<String>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.trusted_user_agent_map();
-        for user_agent in user_agents {
-            map.remove(&user_agent)?;
+
+        let count = user_agents.len();
+        let removed = user_agents
+            .into_iter()
+            .try_fold(Vec::with_capacity(count), |mut removed, user_agent| {
+                if map.remove(&user_agent).is_ok() {
+                    removed.push(user_agent);
+                    Ok(removed)
+                } else {
+                    Err(removed)
+                }
+            })
+            .unwrap_or_else(|r| r);
+
+        if removed.is_empty() {
+            return Err("None of the specified trusted user agents was removed.".into());
         }
 
         apply_trusted_user_agent_list(&store, ctx).await?;
-        Ok(true)
+
+        if removed.len() < count {
+            return Err("Some trusted user agents were removed, but not all.".into());
+        }
+
+        Ok(removed)
     }
 
     /// Updates the given trusted user agent.
