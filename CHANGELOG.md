@@ -5,6 +5,20 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `removeAccountsExact` GraphQL mutation for removing accounts using exact
+  username matching without normalization. This provides backward compatibility
+  for accounts created before strict username validation was enforced.
+
+### Changed
+
+- Updated `removeAccounts` GraphQL mutation to use proper username validation
+  and normalization (same as account creation), ensuring consistent handling
+  of usernames across all account operations.
+
 ## [0.27.0] - 2025-07-15
 
 ### Added
@@ -992,6 +1006,7 @@ this project adheres to
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.27.0...main
 [0.27.0]: https://github.com/aicers/review-web/compare/0.26.0...0.27.0
 [0.26.0]: https://github.com/aicers/review-web/compare/0.25.0...0.26.0
 [0.25.0]: https://github.com/aicers/review-web/compare/0.24.0...0.25.0
