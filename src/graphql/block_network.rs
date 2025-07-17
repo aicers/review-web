@@ -77,9 +77,7 @@ impl BlockNetworkMutation {
         Ok(ID(id.to_string()))
     }
 
-    /// Removes blocked networks, returning the IDs that no longer exist.
-    ///
-    /// On error, some blocked networks may have been removed.
+    /// Removes blocked networks, returning the names of successfully removed networks.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn remove_block_networks(
@@ -90,19 +88,38 @@ impl BlockNetworkMutation {
         let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
         let map = db.block_network_map();
 
-        let mut removed = Vec::<String>::with_capacity(ids.len());
-        for id in ids {
-            let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-            let key = map.remove(i)?;
+        let ids: Vec<u32> = ids
+            .iter()
+            .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID"))
+            .collect::<Result<_, _>>()?;
 
-            let name = match String::from_utf8(key) {
-                Ok(key) => key,
-                Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
-            };
-            removed.push(name);
+        let count = ids.len();
+        let removed = ids
+            .into_iter()
+            .try_fold(Vec::with_capacity(count), |mut removed, id| {
+                if let Ok(key) = map.remove(id) {
+                    let name = match String::from_utf8(key) {
+                        Ok(key) => key,
+                        Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
+                    };
+                    removed.push(name);
+                    Ok(removed)
+                } else {
+                    Err(removed)
+                }
+            })
+            .unwrap_or_else(|r| r);
+
+        if removed.is_empty() {
+            return Err("None of the specified blocked networks was removed.".into());
         }
 
         apply_block_networks(&db, ctx).await?;
+
+        if removed.len() < count {
+            return Err("Some blocked networks were removed, but not all.".into());
+        }
+
         Ok(removed)
     }
 
