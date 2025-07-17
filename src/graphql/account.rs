@@ -33,6 +33,25 @@ pub struct SignedInAccount {
     name: String,
     department: String,
     role: Role,
+    customer_ids: Option<Vec<ID>>,
+}
+
+/// GraphQL type for the current user's account information, including expiration times.
+#[allow(clippy::module_name_repetitions)]
+#[derive(Clone, SimpleObject)]
+pub struct MyAccount {
+    username: String,
+    role: Role,
+    name: String,
+    department: String,
+    language: Option<String>,
+    theme: Option<String>,
+    creation_time: DateTime<Utc>,
+    last_signin_time: Option<DateTime<Utc>>,
+    allow_access_from: Option<Vec<String>>,
+    max_parallel_sessions: Option<u8>,
+    customer_ids: Option<Vec<ID>>,
+    expire_times: Vec<DateTime<Utc>>,
 }
 
 #[allow(clippy::module_name_repetitions)]
@@ -78,15 +97,57 @@ impl AccountQuery {
         .or(RoleGuard::new(super::Role::SecurityAdministrator))
         .or(RoleGuard::new(super::Role::SecurityManager))
         .or(RoleGuard::new(super::Role::SecurityMonitor))")]
-    async fn my_account(&self, ctx: &Context<'_>) -> Result<Account> {
+    async fn my_account(&self, ctx: &Context<'_>) -> Result<MyAccount> {
+        use review_database::Iterable;
+
         let store = crate::graphql::get_store(ctx).await?;
         let username = ctx.data::<String>()?;
-        let map = store.account_map();
-        let inner = map
+        let account_map = store.account_map();
+        let access_token_map = store.access_token_map();
+
+        let inner = account_map
             .get(username)?
             .ok_or_else::<async_graphql::Error, _>(|| "User not found".into())?;
 
-        Ok(Account { inner })
+        // Get expire times for the current user's active tokens
+        let expire_times = access_token_map
+            .iter(Direction::Forward, None)
+            .filter_map(|e| {
+                let e = e.ok()?;
+                if e.username == *username {
+                    let decoded_token = decode_token(&e.token).ok()?;
+                    let exp_time = Utc.timestamp_nanos(decoded_token.exp * 1_000_000_000);
+                    if Utc::now() < exp_time {
+                        Some(exp_time)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        Ok(MyAccount {
+            username: inner.username.clone(),
+            role: inner.role.into(),
+            name: inner.name.clone(),
+            department: inner.department.clone(),
+            language: inner.language.clone(),
+            theme: inner.theme.clone(),
+            creation_time: inner.creation_time(),
+            last_signin_time: inner.last_signin_time(),
+            allow_access_from: inner
+                .allow_access_from
+                .as_ref()
+                .map(|ips| ips.iter().map(ToString::to_string).collect::<Vec<String>>()),
+            max_parallel_sessions: inner.max_parallel_sessions,
+            customer_ids: inner
+                .customer_ids
+                .as_ref()
+                .map(|ids| ids.iter().map(|id| ID(id.to_string())).collect()),
+            expire_times,
+        })
     }
 
     /// A list of accounts.
@@ -165,6 +226,10 @@ impl AccountQuery {
                     name: account.name.clone(),
                     department: account.department.clone(),
                     role: account.role.into(),
+                    customer_ids: account
+                        .customer_ids
+                        .as_ref()
+                        .map(|ids| ids.iter().map(|id| ID(id.to_string())).collect()),
                 })
             })
             .collect::<Vec<_>>();
