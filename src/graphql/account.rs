@@ -98,8 +98,6 @@ impl AccountQuery {
         .or(RoleGuard::new(super::Role::SecurityManager))
         .or(RoleGuard::new(super::Role::SecurityMonitor))")]
     async fn my_account(&self, ctx: &Context<'_>) -> Result<MyAccount> {
-        use review_database::Iterable;
-
         let store = crate::graphql::get_store(ctx).await?;
         let username = ctx.data::<String>()?;
         let account_map = store.account_map();
@@ -111,17 +109,13 @@ impl AccountQuery {
 
         // Get expire times for the current user's active tokens
         let expire_times = access_token_map
-            .iter(Direction::Forward, None)
+            .tokens(username)
             .filter_map(|e| {
                 let e = e.ok()?;
-                if e.username == *username {
-                    let decoded_token = decode_token(&e.token).ok()?;
-                    let exp_time = Utc.timestamp_nanos(decoded_token.exp * 1_000_000_000);
-                    if Utc::now() < exp_time {
-                        Some(exp_time)
-                    } else {
-                        None
-                    }
+                let decoded_token = decode_token(&e.token).ok()?;
+                let exp_time = Utc.timestamp_nanos(decoded_token.exp * 1_000_000_000);
+                if Utc::now() < exp_time {
+                    Some(exp_time)
                 } else {
                     None
                 }
