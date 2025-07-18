@@ -5,6 +5,15 @@ file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Changed the return type of the `removeTrustedUserAgents` GraphQL API from
+  `bool` to `Vec<String>`. The API now returns a list of successfully removed
+  user agents instead of a boolean status, providing more detailed feedback
+  about which specific user agents were removed.
+
 ## [0.27.0] - 2025-07-15
 
 ### Added
