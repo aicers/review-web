@@ -1,6 +1,6 @@
 use async_graphql::{Context, ID, Object, Result};
 use futures::future::join_all;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard},
@@ -11,6 +11,7 @@ use crate::graphql::{
     get_customer_networks,
     node::input::NodeInput,
 };
+use crate::{error_with_username, info_with_username, warn_with_username};
 
 #[Object]
 impl NodeControlMutation {
@@ -70,7 +71,8 @@ impl NodeControlMutation {
             )
             .await?;
 
-            info!(
+            info_with_username!(
+                ctx,
                 "[{}] Node ID {i} - Node's drafts are applied.\nName: {}, Name draft: {}\nProfile: {}, Profile draft: {}",
                 chrono::Utc::now(),
                 node.name,
@@ -100,8 +102,9 @@ impl NodeControlMutation {
             let hostname = node.profile.map(|p| p.hostname).unwrap_or_default();
 
             if hostname.is_empty() {
-                info!(
-                    "Node ID {i} - Node's agents are not notified because the hostname is empty."
+                info_with_username!(
+                    ctx,
+                    "Node ID {i} - Node's agents are not notified because the hostname is empty.",
                 );
             } else {
                 let agent_manager = ctx.data::<BoxedAgentManager>()?;
@@ -113,12 +116,14 @@ impl NodeControlMutation {
                 )
                 .await
                 {
-                    error!(
+                    warn_with_username!(
+                        ctx,
                         "Failed to notify agents for node {i} to be updated. This failure may impact configuration synchronization.\nDetails: {e:?}"
                     );
                 }
 
-                info!(
+                info_with_username!(
+                    ctx,
                     "[{}] Node ID {i} - Node's agents are notified to be updated. {:?}",
                     chrono::Utc::now(),
                     target_agents.updates,
@@ -267,11 +272,15 @@ async fn send_customer_change_if_needed(ctx: &Context<'_>, i: u32, node: &NodeIn
             .filter_map(|agent| gen_agent_key(agent.kind, hostname).ok())
             .collect::<Vec<String>>();
         let Ok(customer_id) = customer_id.parse::<u32>() else {
-            error!("Failed to parse customer ID from node {i} for broadcasting customer change");
+            error_with_username!(
+                ctx,
+                "Failed to parse customer ID from node {i} for broadcasting customer change"
+            );
             return;
         };
         if let Err(e) = send_customer_change(ctx, customer_id, agent_keys).await {
-            error!(
+            error_with_username!(
+                ctx,
                 "Failed to broadcast customer change for customer ID {customer_id} on node {i}. The failure did not affect the node application operation. Error: {e:?}",
             );
         }
@@ -299,7 +308,7 @@ async fn send_customer_change(
     let network_list =
         NetworksTargetAgentKeysPair::new(networks, agent_keys, SEMI_SUPERVISED_AGENT);
     if let Err(e) = send_agent_specific_customer_networks(ctx, &[network_list]).await {
-        error!("failed to broadcast internal networks. {e:?}");
+        error_with_username!(ctx, "Failed to broadcast internal networks: {e:?}");
     }
 
     Ok(())
