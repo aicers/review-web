@@ -9,7 +9,7 @@ this project adheres to
 
 ### Added
 
-- Added TorConnectionConn event detection for connection-level Tor network
+- Added `TorConnectionConn` event detection for connection-level Tor network
   monitoring. This extends existing Tor detection capabilities beyond HTTP
   connections to include all connection types.
 
@@ -1000,6 +1000,7 @@ this project adheres to
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.27.0...main
 [0.27.0]: https://github.com/aicers/review-web/compare/0.26.0...0.27.0
 [0.26.0]: https://github.com/aicers/review-web/compare/0.25.0...0.26.0
 [0.25.0]: https://github.com/aicers/review-web/compare/0.24.0...0.25.0
