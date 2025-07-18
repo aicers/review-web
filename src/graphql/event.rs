@@ -44,7 +44,7 @@ use tracing::{error, warn};
 pub(super) use self::group::EventGroupQuery;
 use self::{
     bootp::BlocklistBootp,
-    conn::{BlocklistConn, ExternalDdos, MultiHostPortScan, PortScan},
+    conn::{BlocklistConn, ExternalDdos, MultiHostPortScan, PortScan, TorConnectionConn},
     dcerpc::BlocklistDceRpc,
     dhcp::BlocklistDhcp,
     dns::{BlocklistDns, CryptocurrencyMiningPool, DnsCovertChannel, LockyRansomware},
@@ -149,6 +149,7 @@ async fn fetch_events(
     let mut rdp_brute_time = start_time;
     let mut repeat_http_time = start_time;
     let mut tor_time = start_time;
+    let mut tor_connection_conn_time = start_time;
     let mut dga_time = start_time;
     let mut ftp_brute_time = start_time;
     let mut ftp_plain_time = start_time;
@@ -194,6 +195,7 @@ async fn fetch_events(
                 rdp_brute_time,
                 repeat_http_time,
                 tor_time,
+                tor_connection_conn_time,
                 dga_time,
                 ftp_brute_time,
                 ftp_plain_time,
@@ -250,6 +252,9 @@ async fn fetch_events(
                 }
                 if tor_time == iter_time_key {
                     tor_time = min_time_key;
+                }
+                if tor_connection_conn_time == iter_time_key {
+                    tor_connection_conn_time = min_time_key;
                 }
                 if dga_time == iter_time_key {
                     dga_time = min_time_key;
@@ -361,6 +366,7 @@ async fn fetch_events(
             .min(rdp_brute_time)
             .min(repeat_http_time)
             .min(tor_time)
+            .min(tor_connection_conn_time)
             .min(dga_time)
             .min(ftp_brute_time)
             .min(ftp_plain_time)
@@ -437,6 +443,12 @@ async fn fetch_events(
                     if event_time >= tor_time {
                         tx.unbounded_send(value.into())?;
                         tor_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::TorConnectionConn => {
+                    if event_time >= tor_connection_conn_time {
+                        tx.unbounded_send(value.into())?;
+                        tor_connection_conn_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
                 EventKind::DomainGenerationAlgorithm => {
@@ -694,6 +706,9 @@ enum Event {
     /// An HTTP connection to a Tor exit node.
     TorConnection(TorConnection),
 
+    /// A connection-level Tor connection detection.
+    TorConnectionConn(TorConnectionConn),
+
     /// DGA (Domain Generation Algorithm) generated hostname in HTTP request message
     DomainGenerationAlgorithm(DomainGenerationAlgorithm),
 
@@ -780,6 +795,7 @@ impl From<database::Event> for Event {
                 Event::RepeatedHttpSessions(event.into())
             }
             database::Event::TorConnection(event) => Event::TorConnection(event.into()),
+            database::Event::TorConnectionConn(event) => Event::TorConnectionConn(event.into()),
             database::Event::DomainGenerationAlgorithm(event) => {
                 Event::DomainGenerationAlgorithm(event.into())
             }

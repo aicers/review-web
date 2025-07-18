@@ -327,7 +327,7 @@ async fn run(config: Config) -> Result<Arc<Notify>> {
     } else {
         None
     };
-    let db = Database::new(config.database_url(), &config.ca_certs())
+    let db = Database::new(config.database_url(), &config.ca_certs(), config.data_dir())
         .await
         .context("failed to connect to the PostgreSQL database")?;
     let store = Store::new(config.data_dir(), config.backup_dir())?;
