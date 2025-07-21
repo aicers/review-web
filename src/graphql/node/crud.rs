@@ -140,7 +140,7 @@ impl NodeMutation {
             external_services,
             creation_time: Utc::now(),
         };
-        let id = map.put(value)?;
+        let id = map.put(&value)?;
         Ok(ID(id.to_string()))
     }
 
