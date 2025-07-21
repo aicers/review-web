@@ -22,6 +22,7 @@ this project adheres to
 - Implemented account lockout functionality for failed login attempts. Accounts
   are locked for 30 minutes after 5 consecutive failed login attempts to prevent
   brute force attacks.
+- Added `confidence` field to `TidbRule` GraphQL API.
 
 ### Changed
 
