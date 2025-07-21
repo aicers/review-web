@@ -16,6 +16,9 @@ this project adheres to
   fetch all user accounts with security status information including account
   lock/suspension status, creation time, last signin time, and access
   restrictions.
+- Implemented account lockout functionality for failed login attempts. Accounts
+  are locked for 30 minutes after 5 consecutive failed login attempts to prevent
+  brute force attacks.
 
 ### Changed
 
