@@ -37,6 +37,9 @@ this project adheres to
 
 ### Fixed
 
+- Fixed JWT token revocation for expired tokens. The `signOut` and
+  `refreshToken` GraphQL APIs can now properly remove expired tokens from the
+  database by disabling built-in expiration validation in `decode_token`.
 - Improved customer removal to prevent stale references in account and node
   tables. The process now checks for existing references in accounts or nodes
   and returns an error if any are found.

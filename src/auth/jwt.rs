@@ -67,11 +67,9 @@ pub fn decode_token(token: &str) -> anyhow::Result<Claims> {
     let jwt_secret = JWT_SECRET
         .read()
         .map_err(|e| AuthError::ReadJwtSecret(e.to_string()))?;
-    let token_data = decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(&jwt_secret),
-        &Validation::default(),
-    )?;
+    let mut validation = Validation::default();
+    validation.validate_exp = false;
+    let token_data = decode::<Claims>(token, &DecodingKey::from_secret(&jwt_secret), &validation)?;
     Ok(token_data.claims)
 }
 
