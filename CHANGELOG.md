@@ -16,6 +16,7 @@ this project adheres to
   fetch all user accounts with security status information including account
   lock/suspension status, creation time, last signin time, and access
   restrictions.
+- Added `confidence` field to `TidbRule` GraphQL API.
 
 ### Changed
 

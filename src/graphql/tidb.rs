@@ -218,6 +218,10 @@ impl TidbRule {
     async fn signatures(&self) -> &Option<Vec<String>> {
         &self.inner.signatures
     }
+
+    async fn confidence(&self) -> Option<f32> {
+        self.inner.confidence
+    }
 }
 
 impl From<database::TidbRule> for TidbRule {
