@@ -29,6 +29,11 @@ this project adheres to
 - Updated `myAccount` GraphQL API to return the new `MyAccount` type instead of
   `Account`. The `MyAccount` type adds an `expire_times` field, which provides JWT
   expiration times for all active sessions of the current user.
+- Changed the return type of the `removeTrustedUserAgents` GraphQL API from
+  `bool` to `Vec<String>`. The API now returns a list of removed user agents when
+  all input agents are successfully deleted, or an error message if any agents
+  could not be removed. Even in case of an error, `apply_allow_networks` is called
+  to apply the removed agents.
 
 ### Fixed
 
