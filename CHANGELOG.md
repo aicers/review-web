@@ -39,6 +39,9 @@ this project adheres to
 - Fixed external service removal in `applyNode` mutation. When an external
   service's draft is set to `null`, the service is now properly removed from
   the node during application.
+- Improved customer removal to prevent stale references in account and node
+  tables. The process now checks for existing references in accounts or nodes
+  and returns an error if any are found.
 
 ## [0.26.0] - 2025-06-25
 
