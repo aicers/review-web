@@ -12,26 +12,35 @@ this project adheres to
 - Added `TorConnectionConn` event detection for connection-level Tor network
   monitoring. This extends existing Tor detection capabilities beyond HTTP
   connections to include all connection types.
+- Added `comprehensiveUserList` GraphQL query for system administrators to
+  fetch all user accounts with security status information including account
+  lock/suspension status, creation time, last signin time, and access
+  restrictions.
+
+### Changed
+
+- Added safeguards to the `updateAccount` GraphQL mutation to prevent system administrators
+  from demoting themselves and to block other roles from promoting themselves to
+  system administrator.
+- Updated the `removeAccounts` GraphQL mutation to prevent users from removing
+  their own accounts.
+
+### Fixed
+
+- Improved customer removal to prevent stale references in account and node
+  tables. The process now checks for existing references in accounts or nodes
+  and returns an error if any are found.
 
 ## [0.27.0] - 2025-07-15
 
 ### Added
 
-- Added `comprehensiveUserList` GraphQL query for system administrators to
-  fetch all user accounts with security status information including account
-  lock/suspension status, creation time, last signin time, and access
-  restrictions.
 - Added `confidence` field to most Blocklist GraphQL objects for consistency
   with `BlocklistTls`. The field provides confidence scores for security
   detections across different protocol blocklists.
 - Added `level` field to 27 detection event types that previously lacked
   ThreatLevel values. All blocklist and brute force events return Medium
   threat level, while plain text events return Low threat level.
-- Added safeguards to the `updateAccount` GraphQL mutation to prevent system administrators
-  from demoting themselves and to block other roles from promoting themselves to
-  system administrator.
-- Updated the `removeAccounts` GraphQL mutation to prevent users from removing
-  their own accounts.
 
 ### Changed
 
@@ -48,9 +57,6 @@ this project adheres to
 - Fixed external service removal in `applyNode` mutation. When an external
   service's draft is set to `null`, the service is now properly removed from
   the node during application.
-- Improved customer removal to prevent stale references in account and node
-  tables. The process now checks for existing references in accounts or nodes
-  and returns an error if any are found.
 
 ## [0.26.0] - 2025-06-25
 
