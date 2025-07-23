@@ -24,6 +24,11 @@ this project adheres to
   system administrator.
 - Updated the `removeAccounts` GraphQL mutation to prevent users from removing
   their own accounts.
+- Enhanced `signedInAccountList` GraphQL API to include customer IDs in the `SignedInAccount`
+  type.
+- Updated `myAccount` GraphQL API to return the new `MyAccount` type instead of
+  `Account`. The `MyAccount` type adds an `expire_times` field, which provides JWT
+  expiration times for all active sessions of the current user.
 
 ### Fixed
 
