@@ -16,6 +16,9 @@ this project adheres to
   fetch all user accounts with security status information including account
   lock/suspension status, creation time, last signin time, and access
   restrictions.
+- Added `removeAccountsExact` GraphQL mutation for removing accounts using exact
+  username matching without normalization. This provides backward compatibility
+  for accounts created before strict username validation was enforced.
 
 ### Changed
 
@@ -34,6 +37,9 @@ this project adheres to
   all input agents are successfully deleted, or an error message if any agents
   could not be removed. Even in case of an error, `apply_allow_networks` is called
   to apply the removed agents.
+- Updated `removeAccounts` GraphQL mutation to use proper username validation
+  and normalization (same as account creation), ensuring consistent handling
+  of usernames across all account operations.
 
 ### Fixed
 
