@@ -40,12 +40,12 @@ key = "/path/to/key.pem"                    # path to a key file
 log_dir = "/path/to/log"                    # path to a log directory
 
 [[reverse_proxies]]
-base = "archive"                            # proxy name for Giganto
-uri = "https://localhost:8443/graphql"      # Giganto's GraphQL address
+base = "archive"                    # proxy name for Giganto
+uri = "https://localhost:8443"      # Giganto's address
 
 [[reverse_proxies]]
-base = "tivan"                              # proxy name for Tivan
-uri = "https://localhost:8444/graphql"      # Tivan's GraphQL address
+base = "tivan"                      # proxy name for Tivan
+uri = "https://localhost:8444"      # Tivan's address
 ```
 
 ## License
