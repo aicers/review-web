@@ -411,17 +411,26 @@ fn read_private_key_from_path<P: AsRef<Path>>(
     let mut key_reader = &*key;
 
     // Try to read various private key formats
-    if let Some(key) = rustls_pemfile::rsa_private_keys(&mut key_reader).flatten().next() {
+    if let Some(key) = rustls_pemfile::rsa_private_keys(&mut key_reader)
+        .flatten()
+        .next()
+    {
         return Ok(PrivateKeyDer::Pkcs1(key));
     }
 
     key_reader = &*key;
-    if let Some(key) = rustls_pemfile::pkcs8_private_keys(&mut key_reader).flatten().next() {
+    if let Some(key) = rustls_pemfile::pkcs8_private_keys(&mut key_reader)
+        .flatten()
+        .next()
+    {
         return Ok(PrivateKeyDer::Pkcs8(key));
     }
 
     key_reader = &*key;
-    if let Some(key) = rustls_pemfile::ec_private_keys(&mut key_reader).flatten().next() {
+    if let Some(key) = rustls_pemfile::ec_private_keys(&mut key_reader)
+        .flatten()
+        .next()
+    {
         return Ok(PrivateKeyDer::Sec1(key));
     }
 
