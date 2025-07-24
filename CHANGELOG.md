@@ -41,6 +41,13 @@ this project adheres to
   tables. The process now checks for existing references in accounts or nodes
   and returns an error if any are found.
 
+### Security
+
+- Added support for client certificate authentication when communicating with
+  Giganto GraphQL endpoints. REview Web now presents client certificates for
+  mutual TLS authentication when `client_cert` and `client_key` configuration
+  options are provided.
+
 ## [0.27.0] - 2025-07-15
 
 ### Added

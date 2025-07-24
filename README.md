@@ -31,6 +31,8 @@ The config file has the following options:
 backup_dir = "/path/to/backup"              # path to a backup directory
 ca_certs = ["/path/to/cert.pem"]            # paths to CA certificate files
 cert = "/path/to/cert.pem"                  # path to a certificate file
+client_cert = "/path/to/client.pem"         # client cert for mTLS (optional)
+client_key = "/path/to/client-key.pem"      # client key for mTLS (optional)
 data_dir = "/path/to/data"                  # path to a RocksDB data directory
 database_url = "postgres://id:pw@host/db"   # PostgreSQL URL
 graphql_srv_addr = "127.0.0.1:8442"         # GraphQL address
