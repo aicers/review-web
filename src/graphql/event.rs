@@ -73,7 +73,7 @@ use super::{
     filter::{FlowKind, LearningMethod, TrafficDirection},
     network::Network,
 };
-use crate::graphql::query;
+use crate::{error_with_username, graphql::query, warn_with_username};
 
 const DEFAULT_CONNECTION_SIZE: usize = 100;
 const DEFAULT_EVENT_FETCH_TIME: u64 = 20;
@@ -113,6 +113,10 @@ impl EventStream {
         } else {
             DEFAULT_EVENT_FETCH_TIME
         };
+        let username = ctx
+            .data::<String>()
+            .cloned()
+            .unwrap_or("<unknown user>".to_string());
         let (tx, rx) = unbounded();
         tokio::spawn(async move {
             let store = store.read().await;
@@ -125,7 +129,7 @@ impl EventStream {
             )
             .await;
             if let Err(e) = fetch {
-                error!("{e:?}");
+                error_with_username!(username: username, "Failed to fetch events: {e:?}");
             }
         });
         Ok(rx)
@@ -963,7 +967,7 @@ impl EventTotalCount {
             let (key, event) = match item {
                 Ok(kv) => kv,
                 Err(e) => {
-                    warn!("invalid event: {:?}", e);
+                    warn_with_username!(ctx, "Invalid event: {:?}", e);
                     continue;
                 }
             };
@@ -1371,7 +1375,7 @@ fn iter_to_events(
         let (key, mut event) = match item {
             Ok(kv) => kv,
             Err(e) => {
-                warn!("invalid event: {:?}", e);
+                warn_with_username!(ctx, "Invalid event: {:?}", e);
                 continue;
             }
         };

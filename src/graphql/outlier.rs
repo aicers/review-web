@@ -21,6 +21,7 @@ use tokio::{sync::RwLock, time};
 use tracing::error;
 
 use super::{Role, RoleGuard, model::ModelDigest, query};
+use crate::error_with_username;
 
 const MAX_EVENT_NUM_OF_OUTLIER: usize = 50;
 const DEFAULT_RANKED_OUTLIER_FETCH_TIME: u64 = 60;
@@ -44,6 +45,10 @@ impl OutlierStream {
         let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
         let db = ctx.data::<Database>()?.clone();
         let fetch_time = fetch_interval.unwrap_or(DEFAULT_RANKED_OUTLIER_FETCH_TIME);
+        let username = ctx
+            .data::<String>()
+            .cloned()
+            .unwrap_or("<unknown user>".to_string());
         let (tx, rx) = unbounded();
         tokio::spawn(async move {
             if let Err(e) = fetch_ranked_outliers(
@@ -55,7 +60,7 @@ impl OutlierStream {
             )
             .await
             {
-                error!("{e:?}");
+                error_with_username!(username: username, "Fetch failed: {e:?}");
             }
         });
         Ok(rx)
