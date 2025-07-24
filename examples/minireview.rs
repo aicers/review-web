@@ -163,6 +163,8 @@ pub struct Config {
     ca_certs: Vec<PathBuf>,
     ip2location: Option<PathBuf>,
     reverse_proxies: Vec<review_web::archive::Config>,
+    client_cert: Option<PathBuf>,
+    client_key: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -179,6 +181,8 @@ struct ConfigParser {
     ip2location: Option<PathBuf>,
     archive: Option<review_web::archive::Config>,
     reverse_proxies: Option<Vec<review_web::archive::Config>>,
+    client_cert: Option<PathBuf>,
+    client_key: Option<PathBuf>,
 }
 
 impl Config {
@@ -237,6 +241,8 @@ impl Config {
             ca_certs: config.ca_certs.unwrap_or_default(),
             ip2location: config.ip2location,
             reverse_proxies,
+            client_cert: config.client_cert,
+            client_key: config.client_key,
         })
     }
 
@@ -349,6 +355,8 @@ async fn run(config: Config) -> Result<Arc<Notify>> {
             .map(Path::to_path_buf)
             .collect(),
         reverse_proxies: config.reverse_proxies(),
+        client_cert_path: config.client_cert.clone(),
+        client_key_path: config.client_key.clone(),
     };
     let web_srv_shutdown_handle = web::serve(web_config, db, store, ip_locator, agent_manager);
 
