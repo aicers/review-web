@@ -20,8 +20,11 @@ use tracing::info;
 
 use self::username_validation::validate_and_normalize_username;
 use super::{IpAddress, RoleGuard, cluster::try_id_args_into_ints};
-use crate::auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in};
 use crate::graphql::query_with_constraints;
+use crate::{
+    auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in},
+    info_with_username,
+};
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Serialize, SimpleObject)]
@@ -632,9 +635,7 @@ impl AccountMutation {
     async fn sign_out(&self, ctx: &Context<'_>, token: String) -> Result<String> {
         let store = crate::graphql::get_store(ctx).await?;
         revoke_token(&store, &token)?;
-        let decoded_token = decode_token(&token)?;
-        let username = decoded_token.sub;
-        info!("{username} signed out");
+        info_with_username!(ctx, "Signed out");
         Ok(token)
     }
 
@@ -697,14 +698,15 @@ impl AccountMutation {
             }
         }
 
-        let admin_username = ctx.data::<String>()?;
         if revoked_sessions.is_empty() && failed_revocations.is_empty() {
-            info!(
-                "{admin_username} attempted to force sign out {normalized_username}, but no active sessions found"
+            info_with_username!(
+                ctx,
+                "Attempted to forcefully sign out {normalized_username}, but no active sessions found"
             );
         } else {
-            info!(
-                "{admin_username} forcefully signed out {normalized_username} ({} sessions terminated)",
+            info_with_username!(
+                ctx,
+                "Forcefully signed out {normalized_username} ({} sessions terminated)",
                 revoked_sessions.len()
             );
         }
@@ -896,7 +898,7 @@ impl AccountMutation {
 
 fn validate_password(account: &types::Account, username: &str, password: &str) -> Result<()> {
     if !account.verify_password(password) {
-        info!("wrong password for {username}");
+        info!("Wrong password for {username}");
         return Err("incorrect username or password".into());
     }
     Ok(())
@@ -904,7 +906,7 @@ fn validate_password(account: &types::Account, username: &str, password: &str) -
 
 fn validate_last_signin_time(account: &types::Account, username: &str) -> Result<()> {
     if account.last_signin_time().is_none() {
-        info!("a password change is required to proceed for {username}");
+        info!("Password change is required to proceed for {username}");
         return Err("a password change is required to proceed".into());
     }
     Ok(())
@@ -919,11 +921,11 @@ fn validate_allow_access_from(
         if let Some(socket) = client_ip {
             let ip = socket.ip();
             if !allow_access_from.contains(&ip) {
-                info!("access denied for {username} from IP: {ip}");
+                info!("Access denied for {username} from IP: {ip}");
                 return Err("access denied from this IP".into());
             }
         } else {
-            info!("unable to retrieve client IP for {username}");
+            info!("Unable to retrieve client IP for {username}");
             return Err("unable to retrieve client IP".into());
         }
     }
@@ -952,7 +954,7 @@ fn validate_max_parallel_sessions(
             })
             .count();
         if count >= max_parallel_sessions as usize {
-            info!("maximum parallel sessions exceeded for {username}");
+            info!("Maximum parallel sessions exceeded for {username}");
             return Err("maximum parallel sessions exceeded".into());
         }
     }
@@ -961,7 +963,7 @@ fn validate_max_parallel_sessions(
 
 fn validate_update_new_password(password: &str, new_password: &str, username: &str) -> Result<()> {
     if password.eq(new_password) {
-        info!("password is the same as the previous one for {username}");
+        info!("Password is the same as the previous one for {username}");
         return Err("password is the same as the previous one".into());
     }
     Ok(())
@@ -982,9 +984,9 @@ fn sign_in_actions(
     insert_token(store, &token, username)?;
 
     if let Some(socket) = client_ip {
-        info!("{username} signed in from IP: {}", socket.ip());
+        info_with_username!(username: username, "Signed in from IP: {}", socket.ip());
     } else {
-        info!("{username} signed in");
+        info_with_username!(username: username, "Signed in");
     }
     Ok(AuthPayload {
         token,
