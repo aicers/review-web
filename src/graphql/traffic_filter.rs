@@ -4,8 +4,10 @@ use async_graphql::{Context, Object, Result};
 use chrono::{DateTime, Utc};
 use ipnet::IpNet;
 use review_database::{self as database};
+use tracing::info;
 
 use super::{BoxedAgentManager, Role, RoleGuard};
+use crate::info_with_username;
 
 #[derive(Default)]
 pub(super) struct TrafficFilterQuery;
@@ -87,6 +89,7 @@ impl TrafficFilterMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let table = store.traffic_filter_map();
 
+        info_with_username!(ctx, "All traffic filters have been deleted");
         table.remove(&agent).map_err(Into::into).map(|()| 0)
     }
 

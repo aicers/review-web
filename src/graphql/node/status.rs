@@ -7,12 +7,14 @@ use async_graphql::{
 };
 use review_database::UniqueKey;
 use roxy::ResourceUsage;
+use tracing::info;
 
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard},
     NodeStatus, NodeStatusQuery, NodeStatusTotalCount, matches_manager_hostname,
 };
 use crate::graphql::query_with_constraints;
+use crate::info_with_username;
 
 #[Object]
 impl NodeStatusQuery {
@@ -28,6 +30,7 @@ impl NodeStatusQuery {
         last: Option<i32>,
     ) -> Result<Connection<OpaqueCursor<Vec<u8>>, NodeStatus, NodeStatusTotalCount, EmptyFields>>
     {
+        info_with_username!(ctx, "Node status lookup requested");
         query_with_constraints(
             after,
             before,

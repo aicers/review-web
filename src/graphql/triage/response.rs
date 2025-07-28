@@ -5,11 +5,13 @@ use async_graphql::{
     types::ID,
 };
 use chrono::{DateTime, Utc};
+use tracing::info;
 
 use super::{Role, RoleGuard};
 use crate::graphql::{
     cluster::try_id_args_into_ints, network::id_args_into_uints, query_with_constraints,
 };
+use crate::info_with_username;
 
 #[allow(clippy::module_name_repetitions)]
 pub struct TriageResponse {
@@ -143,6 +145,7 @@ impl super::TriageResponseMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_response_map();
         let id = map.put(pol)?;
+        info_with_username!(ctx, "Triage response {id} has been registered");
 
         Ok(ID(id.to_string()))
     }
@@ -164,6 +167,7 @@ impl super::TriageResponseMutation {
         for id in ids {
             let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
             let _key = map.remove(i)?;
+            info_with_username!(ctx, "Triage response {i} has been deleted");
 
             removed.push(i.to_string());
         }
@@ -188,6 +192,7 @@ impl super::TriageResponseMutation {
         let old: review_database::TriageResponseUpdate = old.try_into()?;
         let new: review_database::TriageResponseUpdate = new.try_into()?;
         map.update(i, &old, &new)?;
+        info_with_username!(ctx, "Triage response {i} has been modified");
 
         Ok(id)
     }
