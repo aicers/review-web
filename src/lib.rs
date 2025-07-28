@@ -484,4 +484,3 @@ macro_rules! warn_with_username {
         warn!("user={} {}", $username, format!($($arg)+));
     }};
 }
-}
