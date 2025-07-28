@@ -3,9 +3,11 @@ use async_graphql::{
     Context, InputObject, Object, Result, SimpleObject,
     connection::{Connection, EmptyFields},
 };
+use tracing::info;
 
 use super::{AgentManager, BoxedAgentManager, Role, RoleGuard};
 use crate::graphql::query_with_constraints;
+use crate::info_with_username;
 
 #[derive(Default)]
 pub(super) struct TrustedDomainQuery;
@@ -57,6 +59,7 @@ impl TrustedDomainMutation {
 
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
         agent_manager.broadcast_trusted_domains().await?;
+        info_with_username!(ctx, "Trusted domain {} has been registered", entry.name);
         Ok(entry.name)
     }
 
@@ -77,6 +80,12 @@ impl TrustedDomainMutation {
 
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
         agent_manager.broadcast_trusted_domains().await?;
+        info_with_username!(
+            ctx,
+            "Trusted domain {} has been updated to {}",
+            old.name,
+            new.name
+        );
         Ok(new.name)
     }
 
@@ -98,6 +107,7 @@ impl TrustedDomainMutation {
             .into_iter()
             .try_fold(Vec::with_capacity(count), |mut removed, name| {
                 if map.remove(&name).is_ok() {
+                    info_with_username!(ctx, "Trusted domain {name} has been deleted");
                     removed.push(name);
                     Ok(removed)
                 } else {

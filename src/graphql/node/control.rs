@@ -22,8 +22,10 @@ impl NodeControlMutation {
         let agents = ctx.data::<BoxedAgentManager>()?;
         let review_hostname = roxy::hostname();
         if !review_hostname.is_empty() && review_hostname == hostname {
+            info_with_username!(ctx, "Node reboot skipped: manager is running on {hostname}");
             Err("cannot reboot. review reboot is not allowed".into())
         } else {
+            info_with_username!(ctx, "Reboot request sent to {hostname}");
             agents.reboot(&hostname).await?;
             Ok(hostname)
         }
@@ -35,8 +37,13 @@ impl NodeControlMutation {
         let agents = ctx.data::<BoxedAgentManager>()?;
         let review_hostname = roxy::hostname();
         if !review_hostname.is_empty() && review_hostname == hostname {
+            info_with_username!(
+                ctx,
+                "Node shutdown skipped: manager is running on {hostname}"
+            );
             Err("cannot shutdown. review shutdown is not allowed".into())
         } else {
+            info_with_username!(ctx, "Shutdown request sent to {hostname}");
             agents.halt(&hostname).await?;
             Ok(hostname)
         }

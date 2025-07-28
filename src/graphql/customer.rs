@@ -11,11 +11,13 @@ use chrono::{DateTime, Utc};
 use review_database::{self as database, Direction, Iterable, Store};
 use serde::{Deserialize, Serialize};
 use tracing::error;
+use tracing::info;
 
 use super::node::SEMI_SUPERVISED_AGENT;
 use super::{BoxedAgentManager, Role, RoleGuard, agent_keys_by_customer_id};
 use crate::error_with_username;
 use crate::graphql::query_with_constraints;
+use crate::info_with_username;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct NetworksTargetAgentKeysPair {
@@ -66,6 +68,7 @@ impl CustomerQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Customer, CustomerTotalCount, EmptyFields>> {
+        info_with_username!(ctx, "Customer list requested");
         query_with_constraints(
             after,
             before,
@@ -119,12 +122,13 @@ impl CustomerMutation {
         }
         let value = database::Customer {
             id: u32::MAX,
-            name,
+            name: name.clone(),
             description,
             networks,
             creation_time: Utc::now(),
         };
         let id = map.put(value)?;
+        info_with_username!(ctx, "Customer {name} has been registered");
         Ok(ID(id.to_string()))
     }
 
@@ -162,6 +166,7 @@ impl CustomerMutation {
                 Ok(key) => key,
                 Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
             };
+            info_with_username!(ctx, "Customer {name} has been deleted");
             removed.push(name);
 
             if let Some(agent_keys) = customer_id_hash.get(&i) {
@@ -201,6 +206,12 @@ impl CustomerMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let mut map = store.customer_map();
         map.update(i, &old, &new)?;
+        info_with_username!(
+            ctx,
+            "Customer {:?} has been updated to {:?}",
+            old.name,
+            new.name
+        );
 
         if let Some(new_networks) = new.networks {
             let customer_id_hash = agent_keys_by_customer_id(&store)?;
