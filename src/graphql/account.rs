@@ -74,6 +74,10 @@ pub struct ComprehensiveUserAccount {
 
 const REVIEW_ADMIN: &str = "REVIEW_ADMIN";
 
+// Account lockout constants
+const MAX_FAILED_LOGIN_ATTEMPTS_BEFORE_LOCKOUT: u8 = 5;
+const ACCOUNT_LOCKOUT_DURATION: chrono::Duration = chrono::Duration::minutes(30);
+
 #[derive(Default)]
 pub(super) struct AccountQuery;
 
@@ -595,7 +599,8 @@ impl AccountMutation {
         let client_ip = get_client_ip(ctx);
 
         if let Some(mut account) = account_map.get(&normalized_username)? {
-            validate_password(&account, &normalized_username, &password)?;
+            check_account_lockout_status(&mut account, &account_map, &normalized_username)?;
+            validate_password(&mut account, &account_map, &normalized_username, &password)?;
             validate_last_signin_time(&account, &normalized_username)?;
             validate_allow_access_from(&account, client_ip, &normalized_username)?;
             validate_max_parallel_sessions(&account, &store, &normalized_username)?;
@@ -635,7 +640,8 @@ impl AccountMutation {
         let client_ip = get_client_ip(ctx);
 
         if let Some(mut account) = account_map.get(&normalized_username)? {
-            validate_password(&account, &normalized_username, &password)?;
+            check_account_lockout_status(&mut account, &account_map, &normalized_username)?;
+            validate_password(&mut account, &account_map, &normalized_username, &password)?;
             validate_allow_access_from(&account, client_ip, &normalized_username)?;
             validate_max_parallel_sessions(&account, &store, &normalized_username)?;
             validate_update_new_password(&password, &new_password, &normalized_username)?;
@@ -924,11 +930,39 @@ impl AccountMutation {
     }
 }
 
-fn validate_password(account: &types::Account, username: &str, password: &str) -> Result<()> {
+fn validate_password(
+    account: &mut types::Account,
+    account_map: &Table<types::Account>,
+    username: &str,
+    password: &str,
+) -> Result<()> {
     if !account.verify_password(password) {
-        info!("Wrong password for {username}");
+        info!("wrong password for {username}");
+
+        // Increment failed login attempts
+        account.failed_login_attempts += 1;
+
+        // Check if we've reached the lockout threshold
+        if account.failed_login_attempts >= MAX_FAILED_LOGIN_ATTEMPTS_BEFORE_LOCKOUT {
+            let lockout_until = Utc::now() + ACCOUNT_LOCKOUT_DURATION;
+            account.locked_out_until = Some(lockout_until);
+
+            // Persist changes to database
+            account_map.put(account)?;
+
+            return Err(format!(
+                "{username} has been locked due to multiple failed login attempts. It will remain locked until {lockout_until}"
+            ).into());
+        }
+
+        // Persist the incremented failed login attempts
+        account_map.put(account)?;
         return Err("incorrect username or password".into());
     }
+
+    // Reset failed attempts on successful password validation
+    account.failed_login_attempts = 0;
+    account_map.put(account)?;
     Ok(())
 }
 
@@ -936,6 +970,27 @@ fn validate_last_signin_time(account: &types::Account, username: &str) -> Result
     if account.last_signin_time().is_none() {
         info!("Password change is required to proceed for {username}");
         return Err("a password change is required to proceed".into());
+    }
+    Ok(())
+}
+
+fn check_account_lockout_status(
+    account: &mut types::Account,
+    account_map: &Table<types::Account>,
+    username: &str,
+) -> Result<()> {
+    // Check if the account has lockout fields - this will help us determine if the feature is supported
+    // Try to access the fields directly
+    if let Some(locked_until) = &account.locked_out_until {
+        if *locked_until > Utc::now() {
+            return Err(format!("{username} is locked until {locked_until}").into());
+        }
+        // Lockout period has expired, reset the fields
+        account.locked_out_until = None;
+        account.failed_login_attempts = 0;
+
+        // Persist changes to database
+        account_map.put(account)?;
     }
     Ok(())
 }

@@ -19,6 +19,9 @@ this project adheres to
 - Added `removeAccountsExact` GraphQL mutation for removing accounts using exact
   username matching without normalization. This provides backward compatibility
   for accounts created before strict username validation was enforced.
+- Implemented account lockout functionality for failed login attempts. Accounts
+  are locked for 30 minutes after 5 consecutive failed login attempts to prevent
+  brute force attacks.
 
 ### Changed
 
