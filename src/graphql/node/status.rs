@@ -534,7 +534,6 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), "null");
-        // assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
 
         let res = schema
             .execute(
