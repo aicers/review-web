@@ -393,7 +393,9 @@ impl AccountMutation {
         Err("reset failed due to invalid username".into())
     }
 
-    /// Removes accounts, returning the usernames that no longer exist.
+    /// Removes accounts using normalized usernames, returning the usernames that no longer exist.
+    /// This is the main API for account removal that handles usernames according to current
+    /// username validation rules.
     ///
     /// On error, some usernames may have been removed.
     ///
@@ -411,11 +413,15 @@ impl AccountMutation {
         let map = store.account_map();
         let current_username = ctx.data::<String>()?;
 
-        // Normalize usernames for lookup
-        let normalized_usernames: Vec<String> = usernames
-            .into_iter()
-            .map(|username| username.to_lowercase())
-            .collect();
+        // Normalize usernames for lookup and validate them
+        let mut normalized_usernames = Vec::with_capacity(usernames.len());
+        for username in usernames {
+            // Normalize the username using the same validation as account creation
+            let normalized_username =
+                self::username_validation::validate_and_normalize_username(&username)
+                    .map_err(|e| format!("Invalid username '{username}': {e}"))?;
+            normalized_usernames.push(normalized_username);
+        }
 
         // Check if the current user is trying to delete themselves
         if normalized_usernames.contains(&current_username.to_lowercase()) {
@@ -425,6 +431,28 @@ impl AccountMutation {
         // Proceed with deletion if validation passes
         let mut removed = Vec::with_capacity(normalized_usernames.len());
         for username in normalized_usernames {
+            map.delete(&username)?;
+            removed.push(username);
+        }
+        Ok(removed)
+    }
+
+    /// Removes accounts using exact usernames without normalization, returning the usernames that no longer exist.
+    /// This is a secondary API for backward compatibility with accounts created before strict validation.
+    ///
+    /// On error, some usernames may have been removed.
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
+        .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
+    async fn remove_accounts_exact(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(validator(min_items = 1))] usernames: Vec<String>,
+    ) -> Result<Vec<String>> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.account_map();
+        let mut removed = Vec::with_capacity(usernames.len());
+        for username in usernames {
+            // Use exact username without normalization for legacy accounts
             map.delete(&username)?;
             removed.push(username);
         }
@@ -1727,22 +1755,6 @@ mod tests {
 
         // Try to delete self - should fail
         let res = schema
-            .execute(
-                r#"mutation {
-                    insertAccount(
-                        username: "user",
-                        password: "Ahh9booH",
-                        role: "SECURITY_MANAGER",
-                        name: "John Doe",
-                        department: "Security"
-                        customerIds: [0]
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertAccount: "user"}"#);
-
-        let res = schema
             .execute(r#"mutation { removeAccounts(usernames: ["user"]) }"#)
             .await;
         assert!(!res.errors.is_empty());
@@ -1751,6 +1763,88 @@ mod tests {
                 .message
                 .contains("Users cannot delete themselves")
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn remove_accounts_with_normalization() {
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+
+        let schema = TestSchema::new().await;
+
+        // Insert an account with a username that will be normalized
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "TestUser1",
+                        password: "Ahh9booH",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Test User",
+                        department: "Security"
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        // Should be normalized to "testuser1"
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "testuser1"}"#);
+
+        // Test removing with uppercase - should normalize and find the account
+        let res = schema
+            .execute(r#"mutation { removeAccounts(usernames: ["TestUser1"]) }"#)
+            .await;
+        assert_eq!(res.data.to_string(), r#"{removeAccounts: ["testuser1"]}"#);
+
+        let res = schema.execute(r"{accountList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
+
+        restore_review_admin(original_review_admin);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn remove_accounts_exact() {
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+
+        let schema = TestSchema::new().await;
+
+        // Insert an account using GraphQL - this will be normalized
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "testuser2",
+                        password: "Ahh9booH",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Test User 2",
+                        department: "Security"
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "testuser2"}"#);
+
+        // Verify the account exists
+        let res = schema.execute(r"{accountList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 2}}");
+
+        // Test exact removal API - should work with normalized username
+        let res = schema
+            .execute(r#"mutation { removeAccountsExact(usernames: ["testuser2"]) }"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{removeAccountsExact: ["testuser2"]}"#
+        );
+
+        let res = schema.execute(r"{accountList{totalCount}}").await;
+        assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
+
+        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
