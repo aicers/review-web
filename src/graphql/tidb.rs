@@ -1,5 +1,5 @@
 use async_graphql::{Context, Enum, ID, Object, Result, SimpleObject};
-use review_database::{self as database};
+use review_database::{self as database, TidbRuleKind as DbTidbRuleKind};
 
 use super::{Role, RoleGuard, triage::ThreatCategory};
 
@@ -185,6 +185,12 @@ enum TidbKind {
     Regex,
 }
 
+#[derive(Copy, Clone, Enum, Eq, PartialEq)]
+enum TidbRuleKind {
+    Os,
+    AgentSoftware,
+}
+
 struct TidbRule {
     inner: database::TidbRule,
 }
@@ -221,6 +227,13 @@ impl TidbRule {
 
     async fn confidence(&self) -> Option<f32> {
         self.inner.confidence
+    }
+
+    async fn kind(&self) -> Option<TidbRuleKind> {
+        self.inner.kind.map(|k| match k {
+            DbTidbRuleKind::Os => TidbRuleKind::Os,
+            DbTidbRuleKind::AgentSoftware => TidbRuleKind::AgentSoftware,
+        })
     }
 }
 
