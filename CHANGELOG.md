@@ -44,7 +44,7 @@ this project adheres to
 ### Security
 
 - Added support for client certificate authentication when communicating with
-  Giganto GraphQL endpoints. REview Web now presents client certificates for
+  all proxied servers. Review Web now presents client certificates for
   mutual TLS authentication when `client_cert` and `client_key` configuration
   options are provided.
 
