@@ -23,6 +23,7 @@ this project adheres to
   are locked for 30 minutes after 5 consecutive failed login attempts to prevent
   brute force attacks.
 - Added `confidence` field to `tidbRule` GraphQL API.
+- Added `kind` field to `tidbRule` GraphQL API.
 
 ### Changed
 
