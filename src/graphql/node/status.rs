@@ -533,7 +533,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
+        assert_eq!(res.data.to_string(), "null");
 
         let res = schema
             .execute(
@@ -542,7 +542,7 @@ mod tests {
                         name: "test3",
                         customerId: 0,
                         description: "This node has the Unsupervised and the Semi-supervised.",
-                        hostname: "admin.aice-security.com",
+                        hostname: "admin3.aice-security.com",
                         agents: [{
                             key: "unsupervised"
                             kind: UNSUPERVISED
@@ -558,7 +558,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "2"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
 
         let res = schema
             .execute(
@@ -567,7 +567,7 @@ mod tests {
                         name: "test4",
                         customerId: 0,
                         description: "This node has the Unsupervised and the Semi-supervised.",
-                        hostname: "admin.aice-security.com",
+                        hostname: "admin4.aice-security.com",
                         agents: [{
                             key: "unsupervised"
                             kind: UNSUPERVISED
@@ -583,7 +583,7 @@ mod tests {
                     }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "3"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertNode: "2"}"#);
 
         let res = schema
             .execute(
@@ -592,7 +592,7 @@ mod tests {
                         name: "test5",
                         customerId: 0,
                         description: "This node has the Sensor.",
-                        hostname: "admin.aice-security.com",
+                        hostname: "admin5.aice-security.com",
                         agents: [{
                             key: "sensor1@collector"
                             kind: SENSOR
@@ -603,14 +603,14 @@ mod tests {
             }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "4"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertNode: "3"}"#);
 
         let res = schema
             .execute(r"{nodeStatusList(first:5){edges{node{name}}}}")
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{nodeStatusList: {edges: [{node: {name: "test1"}}, {node: {name: "test2"}}, {node: {name: "test3"}}, {node: {name: "test4"}}, {node: {name: "test5"}}]}}"#
+            r#"{nodeStatusList: {edges: [{node: {name: "test1"}}, {node: {name: "test3"}}, {node: {name: "test4"}}, {node: {name: "test5"}}]}}"#
         );
 
         let res = schema
@@ -618,7 +618,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{nodeStatusList: {edges: [{node: {name: "test1"}}, {node: {name: "test2"}}, {node: {name: "test3"}}, {node: {name: "test4"}}, {node: {name: "test5"}}], pageInfo: {endCursor: "WzExNiwxMDEsMTE1LDExNiw1M10"}}}"#
+            r#"{nodeStatusList: {edges: [{node: {name: "test1"}}, {node: {name: "test3"}}, {node: {name: "test4"}}, {node: {name: "test5"}}], pageInfo: {endCursor: "WzExNiwxMDEsMTE1LDExNiw1M10"}}}"#
         );
 
         let res = schema
@@ -626,7 +626,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{nodeStatusList: {edges: [{node: {name: "test1"}}, {node: {name: "test2"}}], pageInfo: {startCursor: "WzExNiwxMDEsMTE1LDExNiw0OV0"}}}"#
+            r#"{nodeStatusList: {edges: [{node: {name: "test1"}}], pageInfo: {startCursor: "WzExNiwxMDEsMTE1LDExNiw0OV0"}}}"#
         );
 
         let res = schema
