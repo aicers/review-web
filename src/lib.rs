@@ -29,7 +29,10 @@ use axum_extra::{
 };
 use graphql::RoleGuard;
 use review_database::{Database, Store};
-use rustls::{ClientConfig, RootCertStore, pki_types::CertificateDer};
+use rustls::{
+    ClientConfig, RootCertStore,
+    pki_types::{CertificateDer, PrivateKeyDer},
+};
 use serde_json::json;
 use tokio::{
     sync::{Notify, RwLock},
@@ -49,6 +52,8 @@ pub struct ServerConfig {
     pub cert_reload_handle: Arc<Notify>,
     pub ca_certs: Vec<PathBuf>,
     pub reverse_proxies: Vec<archive::Config>,
+    pub client_cert_path: Option<PathBuf>,
+    pub client_key_path: Option<PathBuf>,
 }
 
 /// Runs a web server.
@@ -79,7 +84,11 @@ where
     );
     let web_srv_shutdown_handle = Arc::new(Notify::new());
     let shutdown_handle = web_srv_shutdown_handle.clone();
-    let client = client(&config.ca_certs);
+    let client = client(
+        &config.ca_certs,
+        config.client_cert_path.as_ref(),
+        config.client_key_path.as_ref(),
+    );
     let server: JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
         loop {
             let static_files = get_service(ServeDir::new(config.document_root.clone()));
@@ -159,10 +168,19 @@ where
     shutdown_handle
 }
 
-pub(crate) fn client<P: AsRef<std::path::Path>>(ca_certs: &[P]) -> Option<reqwest::Client> {
+pub(crate) fn client<P: AsRef<std::path::Path>>(
+    ca_certs: &[P],
+    client_cert_path: Option<&PathBuf>,
+    client_key_path: Option<&PathBuf>,
+) -> Option<reqwest::Client> {
     let with_platform_root = false;
-    let tls_config =
-        build_client_config(ca_certs, with_platform_root).expect("failed to add cert to store");
+    let tls_config = build_client_config(
+        ca_certs,
+        with_platform_root,
+        client_cert_path,
+        client_key_path,
+    )
+    .expect("failed to add cert to store");
 
     reqwest::ClientBuilder::new()
         .use_preconfigured_tls(tls_config)
@@ -340,6 +358,8 @@ impl From<http::Error> for Error {
 fn build_client_config<P: AsRef<Path>>(
     root_ca: &[P],
     with_platform_root: bool,
+    client_cert_path: Option<&PathBuf>,
+    client_key_path: Option<&PathBuf>,
 ) -> Result<ClientConfig, anyhow::Error> {
     let mut root_store = RootCertStore::empty();
     if with_platform_root {
@@ -358,9 +378,20 @@ fn build_client_config<P: AsRef<Path>>(
         }
     }
 
-    let mut builder = rustls::ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
+    let mut builder = match (client_cert_path, client_key_path) {
+        (Some(cert_path), Some(key_path)) => {
+            let client_certs = read_certificate_from_path(cert_path)?;
+            let client_key = read_private_key_from_path(key_path)?;
+
+            rustls::ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_client_auth_cert(client_certs, client_key)?
+        }
+        _ => rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth(),
+    };
+
     builder.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
     Ok(builder)
 }
@@ -371,6 +402,42 @@ fn read_certificate_from_path<P: AsRef<Path>>(
     let cert = read(&path)?;
     let certs = rustls_pemfile::certs(&mut &*cert).collect::<Result<_, _>>()?;
     Ok(certs)
+}
+
+fn read_private_key_from_path<P: AsRef<Path>>(
+    path: P,
+) -> Result<PrivateKeyDer<'static>, anyhow::Error> {
+    let key = read(&path)?;
+    let mut key_reader = &*key;
+
+    // Try to read various private key formats
+    if let Some(key) = rustls_pemfile::rsa_private_keys(&mut key_reader)
+        .flatten()
+        .next()
+    {
+        return Ok(PrivateKeyDer::Pkcs1(key));
+    }
+
+    key_reader = &*key;
+    if let Some(key) = rustls_pemfile::pkcs8_private_keys(&mut key_reader)
+        .flatten()
+        .next()
+    {
+        return Ok(PrivateKeyDer::Pkcs8(key));
+    }
+
+    key_reader = &*key;
+    if let Some(key) = rustls_pemfile::ec_private_keys(&mut key_reader)
+        .flatten()
+        .next()
+    {
+        return Ok(PrivateKeyDer::Sec1(key));
+    }
+
+    anyhow::bail!(
+        "No supported private key found in {}",
+        path.as_ref().display()
+    )
 }
 
 #[macro_export]
