@@ -6,12 +6,14 @@ use async_graphql::{
 use database::Direction;
 use review_database::{self as database, Store};
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use super::{
     BoxedAgentManager, Role, RoleGuard,
     customer::{HostNetworkGroup, HostNetworkGroupInput},
 };
 use crate::graphql::query_with_constraints;
+use crate::info_with_username;
 
 #[derive(Default)]
 pub(super) struct AllowNetworkQuery;
@@ -62,6 +64,7 @@ impl AllowNetworkMutation {
         let map = store.allow_network_map();
         let networks: database::HostNetworkGroup =
             networks.try_into().map_err(|_| "invalid network")?;
+        let name_clone = name.clone();
         let value = review_database::AllowNetwork {
             id: u32::MAX,
             name,
@@ -69,6 +72,7 @@ impl AllowNetworkMutation {
             description,
         };
         let id = map.put(value)?;
+        info_with_username!(ctx, "Allowlist {name_clone} has been registered");
 
         apply_allow_networks(&store, ctx).await?;
         Ok(ID(id.to_string()))
@@ -99,6 +103,7 @@ impl AllowNetworkMutation {
                         Ok(key) => key,
                         Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
                     };
+                    info_with_username!(ctx, "Allowlist {name} has been deleted");
                     removed.push(name);
                     Ok(removed)
                 } else {
@@ -137,6 +142,12 @@ impl AllowNetworkMutation {
         let old: review_database::AllowNetworkUpdate = old.try_into()?;
         let new: review_database::AllowNetworkUpdate = new.try_into()?;
         map.update(i, &old, &new)?;
+        info_with_username!(
+            ctx,
+            "Allowlist {:?} has been updated to {:?}",
+            old.name,
+            new.name
+        );
 
         apply_allow_networks(&store, ctx).await?;
         Ok(id)

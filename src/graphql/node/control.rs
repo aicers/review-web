@@ -24,6 +24,7 @@ impl NodeControlMutation {
         if !review_hostname.is_empty() && review_hostname == hostname {
             Err("cannot reboot. review reboot is not allowed".into())
         } else {
+            info_with_username!(ctx, "Reboot request sent to {hostname}");
             agents.reboot(&hostname).await?;
             Ok(hostname)
         }
@@ -37,6 +38,7 @@ impl NodeControlMutation {
         if !review_hostname.is_empty() && review_hostname == hostname {
             Err("cannot shutdown. review shutdown is not allowed".into())
         } else {
+            info_with_username!(ctx, "Shutdown request sent to {hostname}");
             agents.halt(&hostname).await?;
             Ok(hostname)
         }

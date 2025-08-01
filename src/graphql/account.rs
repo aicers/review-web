@@ -162,6 +162,7 @@ impl AccountQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Account, AccountTotalCount, EmptyFields>> {
+        info_with_username!(ctx, "Account list requested");
         query_with_constraints(
             after,
             before,
@@ -235,6 +236,7 @@ impl AccountQuery {
             })
             .collect::<Vec<_>>();
 
+        info_with_username!(ctx, "Account connection status retrieved");
         Ok(signed)
     }
 
@@ -284,6 +286,7 @@ impl AccountQuery {
     async fn expiration_time(&self, ctx: &Context<'_>) -> Result<i64> {
         let store = crate::graphql::get_store(ctx).await?;
 
+        info_with_username!(ctx, "Account session expiration settings retrieved");
         expiration_time(&store)
     }
 }
@@ -347,6 +350,7 @@ impl AccountMutation {
             customer_ids,
         )?;
         table.put(&account)?;
+        info_with_username!(ctx, "Created a new user {normalized_username}");
         Ok(normalized_username)
     }
 
@@ -387,6 +391,10 @@ impl AccountMutation {
                     &None,
                     &None,
                 )?;
+                info_with_username!(
+                    ctx,
+                    "System administrator {normalized_username}'s password has been changed"
+                );
                 return Ok(normalized_username);
             }
             return Err(
@@ -458,6 +466,7 @@ impl AccountMutation {
         for username in usernames {
             // Use exact username without normalization for legacy accounts
             map.delete(&username)?;
+            info_with_username!(ctx, "Deleted user {username}");
             removed.push(username);
         }
         Ok(removed)
@@ -522,6 +531,7 @@ impl AccountMutation {
             if account.verify_password(new_password) {
                 return Err("new password cannot be the same as the current password".into());
             }
+            info_with_username!(ctx, "Password change requested");
         }
 
         // Ensure that the `customer_ids` is set correctly for the account role
@@ -572,6 +582,10 @@ impl AccountMutation {
             &max_parallel_sessions,
             &customer_ids,
         )?;
+        info_with_username!(
+            ctx,
+            "Updated profile information for user {normalized_username}"
+        );
         Ok(normalized_username)
     }
 
@@ -774,6 +788,7 @@ impl AccountMutation {
             revoke_token(&store, &new_token)?;
             Err(e.into())
         } else {
+            info_with_username!(ctx, "Login session extended");
             Ok(AuthPayload {
                 token: new_token,
                 expiration_time,
@@ -797,6 +812,10 @@ impl AccountMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_policy_map();
         map.update_expiry_period(expires_in)?;
+        info_with_username!(
+            ctx,
+            "Account session expiration settings have been modified"
+        );
 
         update_jwt_expires_in(expires_in)?;
         Ok(time)
