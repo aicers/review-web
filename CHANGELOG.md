@@ -27,6 +27,9 @@ this project adheres to
 
 ### Changed
 
+- Updated `review-database` dependency to include RocksDB support for
+  `csv_column_extra` operations. The dependency now uses RocksDB exclusively
+  for CSV column configuration storage and retrieval.
 - Added safeguards to the `updateAccount` GraphQL mutation to prevent system administrators
   from demoting themselves and to block other roles from promoting themselves to
   system administrator.
