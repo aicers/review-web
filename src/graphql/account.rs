@@ -1020,20 +1020,16 @@ fn validate_max_parallel_sessions(
     store: &Store,
     username: &str,
 ) -> Result<()> {
+    let expiry_cutoff = Utc::now().timestamp();
     if let Some(max_parallel_sessions) = account.max_parallel_sessions {
         let access_token_map = store.access_token_map();
         let count = access_token_map
             .iter(Direction::Forward, Some(username.as_bytes()))
-            .filter_map(|res| {
-                if let Ok(access_token) = res {
-                    if access_token.username == username {
-                        Some(access_token)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+            .filter_map(Result::ok)
+            .filter(|access_token| {
+                access_token.username == username
+                    && decode_token(&access_token.token)
+                        .is_ok_and(|claims| claims.exp > expiry_cutoff)
             })
             .count();
         if count >= max_parallel_sessions as usize {

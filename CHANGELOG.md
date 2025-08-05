@@ -45,6 +45,14 @@ this project adheres to
 - Updated `removeAccounts` GraphQL mutation to use proper username validation
   and normalization (same as account creation), ensuring consistent handling
   of usernames across all account operations.
+- Improved max parallel sessions logic in the `signIn` and `signInWithNewPassword`
+  APIs to exclude expired JWTs when evaluating active sessions.
+  - Now, only unexpired JWT tokens are considered when checking session limits,
+    made possible by disabling the `Validation.validate_exp` option in
+    `decode_token`. This change allows decoding of expired tokens—a behavior
+    previously blocked by the `jsonwebtoken` crate’s default expiration
+    check—and ensures that `validate_max_parallel_sessions` accurately counts
+    only valid, unexpired tokens.
 
 ### Fixed
 
