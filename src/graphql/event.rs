@@ -78,6 +78,7 @@ use crate::graphql::query;
 const DEFAULT_CONNECTION_SIZE: usize = 100;
 const DEFAULT_EVENT_FETCH_TIME: u64 = 20;
 const ADD_TIME_FOR_NEXT_COMPARE: i64 = 1;
+const MAX_EVENT_COUNT: usize = 20;
 
 /// Threat level.
 #[derive(Clone, Copy, Enum, Eq, PartialEq)]
@@ -663,6 +664,132 @@ impl EventQuery {
         )
         .await
     }
+
+    /// A list of events with timestamp on or after `start` and before `end`.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityManager))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
+    async fn event_triage_list(
+        &self,
+        ctx: &Context<'_>,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        semi_percent: usize,
+        dns_covert_channel_percent: usize,
+        unlabeled_http_threat_percent: usize,
+    ) -> Result<Vec<Event>> {
+        let store = crate::graphql::get_store(ctx).await?;
+
+        // Ratio of semi-supervised vs unsupervised events
+        let (semi_count, unsup_count) = calc_split_by_percent(MAX_EVENT_COUNT, semi_percent);
+        // Distribution of semi-supervised events: DnsCovertChannel / DGA
+        let (dns_count, dga_count) = calc_split_by_percent(semi_count, dns_covert_channel_percent);
+        // Distribution of unsupervised events: UnlabeledHttpThreat / HttpThreat
+        let (unlabeled_count, _http_threat) =
+            calc_split_by_percent(unsup_count, unlabeled_http_threat_percent);
+
+        // trusted domain list
+        let trusted_domain_map = store.trusted_domain_map();
+        let trusted_domain = trusted_domain_map
+            .iter(Direction::Forward, None)
+            .filter_map(|domain| match domain {
+                Ok(trusted_domain) => Some(trusted_domain.name),
+                Err(e) => {
+                    warn!("Failed to read trusted domain: {:?}", e);
+                    None
+                }
+            })
+            .collect::<Vec<String>>();
+
+        let event_db = store.events();
+        let start = i128::from(start.timestamp_nanos_opt().unwrap_or_default()) << 64;
+        let end = i128::from(end.timestamp_nanos_opt().unwrap_or_default()) << 64;
+
+        let mut dns_covert_channel_events = Vec::new();
+        let mut dga_events = Vec::new();
+        let mut unlabeled_http_threat_events = Vec::new();
+        let mut http_threat_events = Vec::new();
+        for item in event_db.iter_from(start, Direction::Forward) {
+            let (key, event) = match item {
+                Ok(kv) => kv,
+                Err(e) => {
+                    warn!("invalid event: {:?}", e);
+                    continue;
+                }
+            };
+            if key > end {
+                break;
+            }
+            match event {
+                review_database::Event::DnsCovertChannel(ref dns_event) => {
+                    if !is_trusted(&dns_event.query, &trusted_domain) {
+                        dns_covert_channel_events.push(event);
+                    }
+                }
+                review_database::Event::DomainGenerationAlgorithm(ref dga_event) => {
+                    if !is_trusted(&dga_event.host, &trusted_domain) {
+                        dga_events.push(event);
+                    }
+                }
+                review_database::Event::HttpThreat(ref http_event) => {
+                    if http_event.cluster_id.is_some() {
+                        if http_threat_events.len() < MAX_EVENT_COUNT {
+                            http_threat_events.push(event);
+                        }
+                    } else if unlabeled_http_threat_events.len() < unlabeled_count {
+                        unlabeled_http_threat_events.push(event);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Sort events by confidence (highest first)
+        let sort_by_confidence = |a: &review_database::Event, b: &review_database::Event| {
+            let a_confidence = match a {
+                review_database::Event::DnsCovertChannel(event) => event.confidence,
+                review_database::Event::DomainGenerationAlgorithm(event) => event.confidence,
+                _ => unreachable!(),
+            };
+            let b_confidence = match b {
+                review_database::Event::DnsCovertChannel(event) => event.confidence,
+                review_database::Event::DomainGenerationAlgorithm(event) => event.confidence,
+                _ => unreachable!(),
+            };
+            b_confidence
+                .partial_cmp(&a_confidence)
+                .unwrap_or(cmp::Ordering::Equal)
+        };
+        dns_covert_channel_events.sort_unstable_by(sort_by_confidence);
+        dga_events.sort_unstable_by(sort_by_confidence);
+
+        let total_events: Vec<Event> = dns_covert_channel_events
+            .into_iter()
+            .take(dns_count)
+            .chain(dga_events.into_iter().take(dga_count))
+            .chain(unlabeled_http_threat_events.into_iter())
+            .chain(http_threat_events.into_iter())
+            .take(MAX_EVENT_COUNT)
+            .map(Into::into)
+            .collect();
+
+        Ok(total_events)
+    }
+}
+
+/// Calculate the number of items based on a percentage, and the remainder
+/// e.g., if total = 50, percent = 70 → (35, 15)
+fn calc_split_by_percent(total: usize, percent: usize) -> (usize, usize) {
+    let selected_count = (total * percent) / 100;
+    let remaining_count = total - selected_count;
+    (selected_count, remaining_count)
+}
+
+fn is_trusted(query: &str, trusted_domains: &[String]) -> bool {
+    trusted_domains
+        .iter()
+        .any(|domain| query == domain || query.ends_with(&format!(".{domain}")))
 }
 
 /// An endpoint of a network flow. One of `predefined`, `side`, and `custom` is
