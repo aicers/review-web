@@ -53,6 +53,8 @@ this project adheres to
     previously blocked by the `jsonwebtoken` crate’s default expiration
     check—and ensures that `validate_max_parallel_sessions` accurately counts
     only valid, unexpired tokens.
+- Documentation of the following GraphQL APIs is updated:
+  - `BlocklistBootp`
 
 ### Fixed
 
