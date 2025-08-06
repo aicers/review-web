@@ -5,12 +5,12 @@ use review_database as database;
 use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
 use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
-/// Bootstrap Protocol (BOOTP) related threat event detected in network traffic.
 pub(super) struct BlocklistBootp {
     inner: database::BlocklistBootp,
 }
 
 #[Object]
+/// Bootstrap Protocol (BOOTP) related threat event detected in network traffic.
 impl BlocklistBootp {
     /// Start Time
     async fn time(&self) -> DateTime<Utc> {
