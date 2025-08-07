@@ -12,72 +12,72 @@ pub(super) struct WindowsThreat {
 
 #[Object]
 impl WindowsThreat {
-    /// Timestamp (타임스탬프)
+    /// Timestamp
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
-    /// Sensor (센서)
+    /// Sensor
     async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
-    /// Service Name (서비스 이름)
+    /// Service Name
     async fn service(&self) -> &str {
         &self.inner.service
     }
 
-    /// Agent Name (에이전트 이름)
+    /// Agent Name
     async fn agent_name(&self) -> &str {
         &self.inner.agent_name
     }
 
-    /// Agent ID (에이전트 ID)
+    /// Agent ID
     async fn agent_id(&self) -> &str {
         &self.inner.agent_id
     }
 
-    /// Process GUID (프로세스 GUID)
+    /// Process GUID
     async fn process_guid(&self) -> &str {
         &self.inner.process_guid
     }
 
-    /// Process ID (프로세스 ID)
+    /// Process ID
     async fn process_id(&self) -> u32 {
         self.inner.process_id
     }
 
-    /// Executable Path (실행 파일 경로)
+    /// Executable Path
     async fn image(&self) -> &str {
         &self.inner.image
     }
 
-    /// User (사용자)
+    /// User
     async fn user(&self) -> &str {
         &self.inner.user
     }
 
-    /// Event Content (이벤트 내용)
+    /// Event Content
     async fn content(&self) -> &str {
         &self.inner.content
     }
 
-    /// Database Name (데이터베이스 이름)
+    /// Database Name
     async fn db_name(&self) -> &str {
         &self.inner.db_name
     }
 
-    /// Rule ID (규칙 ID)
+    /// Rule ID
     async fn rule_id(&self) -> u32 {
         self.inner.rule_id
     }
 
-    /// Referenced Label (참조 레이블)
+    /// Referenced Label
     async fn matched_to(&self) -> &str {
         &self.inner.matched_to
     }
 
-    /// Cluster ID (클러스터 ID)
+    /// Cluster ID
     async fn cluster_id(&self) -> ID {
         ID(self
             .inner
@@ -85,22 +85,22 @@ impl WindowsThreat {
             .map_or(String::new(), |id| id.to_string()))
     }
 
-    /// Attack Kind (공격 유형)
+    /// Attack Kind
     async fn attack_kind(&self) -> &str {
         &self.inner.attack_kind
     }
 
-    /// Confidence Score (신뢰도)
+    /// Confidence Score
     async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
-    /// Threat Category (위협 범주)
+    /// Threat Category
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
 
-    /// Triage Scores (분류 점수)
+    /// Triage Scores
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
         self.inner
             .triage_scores
@@ -108,12 +108,12 @@ impl WindowsThreat {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
-    /// Threat Level (위협 수준)
+    /// Threat Level
     async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
 
-    /// Learning Method (학습 방법)
+    /// Learning Method
     async fn learning_method(&self) -> LearningMethod {
         LearningMethod::Unsupervised
     }

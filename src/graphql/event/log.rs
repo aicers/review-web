@@ -12,43 +12,45 @@ pub(super) struct ExtraThreat {
 
 #[Object]
 impl ExtraThreat {
-    /// Timestamp (타임스탬프)
+    /// Timestamp
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
-    /// Sensor (센서)
+    /// Sensor
     async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
-    /// Service Name (서비스 이름)
+    /// Service Name
     async fn service(&self) -> &str {
         &self.inner.service
     }
 
-    /// Event Content (이벤트 내용)
+    /// Event Content
     async fn content(&self) -> &str {
         &self.inner.content
     }
 
-    /// Database Name (데이터베이스 이름)
+    /// Database Name
     async fn db_name(&self) -> &str {
         &self.inner.db_name
     }
 
-    /// Rule ID (규칙 ID) - The rule id of the event in string wthin the range representable
+    /// Rule ID
+    /// The rule id of the event in string wthin the range representable
     /// by a `u32`.
     async fn rule_id(&self) -> ID {
         ID(self.inner.rule_id.to_string())
     }
 
-    /// Referenced Label (참조 레이블)
+    /// Referenced Label
     async fn matched_to(&self) -> &str {
         &self.inner.matched_to
     }
 
-    /// Cluster ID (클러스터 ID) - The cluster id of the event in string wthin the range representable
+    /// Cluster ID
+    /// The cluster id of the event in string wthin the range representable
     /// by a `usize`.
     async fn cluster_id(&self) -> ID {
         ID(self
@@ -57,22 +59,22 @@ impl ExtraThreat {
             .map_or(String::new(), |id| id.to_string()))
     }
 
-    /// Attack Kind (공격 유형)
+    /// Attack Kind
     async fn attack_kind(&self) -> &str {
         &self.inner.attack_kind
     }
 
-    /// Confidence Score (신뢰도)
+    /// Confidence Score
     async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
-    /// Threat Category (위협 범주)
+    /// Threat Category
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
 
-    /// Triage Scores (분류 점수)
+    /// Triage Scores
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
         self.inner
             .triage_scores
@@ -80,12 +82,12 @@ impl ExtraThreat {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
-    /// Threat Level (위협 수준)
+    /// Threat Level
     async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
 
-    /// Learning Method (학습 방법)
+    /// Learning Method
     async fn learning_method(&self) -> LearningMethod {
         LearningMethod::Unsupervised
     }

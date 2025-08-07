@@ -11,134 +11,136 @@ pub(super) struct BlocklistSmtp {
 
 #[Object]
 impl BlocklistSmtp {
-    /// Timestamp (타임스탬프)
+    /// Timestamp
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
-    /// Sensor (센서)
+    /// Sensor
     async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
-    /// Source IP Address (출발지 IP 주소)
+    /// Source IP Address
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
 
-    /// Source Country (출발지 국가) - The two-letter country code of the source IP address. `"XX"` if the
+    /// Source Country
+    /// The two-letter country code of the source IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
     async fn src_country(&self, ctx: &Context<'_>) -> String {
         country_code(ctx, self.inner.src_addr)
     }
 
-    /// Source Customer (출발지 고객)
+    /// Source Customer
     async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.src_addr)
     }
 
-    /// Source Network (출발지 네트워크)
+    /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.src_addr)
     }
 
-    /// Source Port Number (출발지 포트 번호)
+    /// Source Port Number
     async fn src_port(&self) -> u16 {
         self.inner.src_port
     }
 
-    /// Destination IP Address (목적지 IP 주소)
+    /// Destination IP Address
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
 
-    /// Destination Country (목적지 국가) - The two-letter country code of the destination IP address. `"XX"` if the
+    /// Destination Country
+    /// The two-letter country code of the destination IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
     async fn dst_country(&self, ctx: &Context<'_>) -> String {
         country_code(ctx, self.inner.dst_addr)
     }
 
-    /// Destination Customer (목적지 고객)
+    /// Destination Customer
     async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.dst_addr)
     }
 
-    /// Destination Network (목적지 네트워크)
+    /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
     }
 
-    /// Destination Port Number (목적지 포트 번호)
+    /// Destination Port Number
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }
 
-    /// Protocol Number (프로토콜 번호)
+    /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
 
-    /// End Time (종료 시간)
+    /// End Time
     async fn end_time(&self) -> i64 {
         self.inner.end_time
     }
 
-    /// Mail From (발신 메일)
+    /// Mail From
     async fn mailfrom(&self) -> &str {
         &self.inner.mailfrom
     }
 
-    /// Date (날짜)
+    /// Date
     async fn date(&self) -> &str {
         &self.inner.date
     }
 
-    /// From (발신자)
+    /// From
     async fn from(&self) -> &str {
         &self.inner.from
     }
 
-    /// To (수신자)
+    /// To
     async fn to(&self) -> &str {
         &self.inner.to
     }
 
-    /// Subject (제목)
+    /// Subject
     async fn subject(&self) -> &str {
         &self.inner.subject
     }
 
-    /// Agent (에이전트)
+    /// Agent
     async fn agent(&self) -> &str {
         &self.inner.agent
     }
 
-    /// State (상태)
+    /// State
     async fn state(&self) -> &str {
         &self.inner.state
     }
 
-    /// Threat Category (위협 범주)
+    /// Threat Category
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
 
-    /// Confidence Score (신뢰도)
+    /// Confidence Score
     async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
-    /// Triage Scores (분류 점수)
+    /// Triage Scores
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
         self.inner
             .triage_scores
@@ -146,7 +148,7 @@ impl BlocklistSmtp {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
-    /// Threat Level (위협 수준)
+    /// Threat Level
     async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }

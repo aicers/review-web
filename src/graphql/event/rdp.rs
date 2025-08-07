@@ -12,22 +12,22 @@ pub(super) struct RdpBruteForce {
 
 #[Object]
 impl RdpBruteForce {
-    /// Timestamp (타임스탬프)
+    /// Timestamp
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
-    /// Source IP Address (출발지 IP 주소)
+    /// Source IP Address
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
 
-    /// Protocol Number (프로토콜 번호)
+    /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
 
-    /// Destination IP Addresses (목적지 IP 주소 목록)
+    /// Destination IP Addresses
     async fn dst_addrs(&self) -> Vec<String> {
         self.inner
             .dst_addrs
@@ -36,7 +36,8 @@ impl RdpBruteForce {
             .collect()
     }
 
-    /// Destination Countries (목적지 국가 목록) - The two-letter country code of the destination IP address. `"XX"` if the
+    /// Destination Countries
+    /// The two-letter country code of the destination IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
     async fn dst_countries(&self, ctx: &Context<'_>) -> Vec<String> {
@@ -47,7 +48,7 @@ impl RdpBruteForce {
             .collect()
     }
 
-    /// Destination Customers (목적지 고객 목록)
+    /// Destination Customers
     async fn dst_customers(&self, ctx: &Context<'_>) -> Result<Vec<Option<Customer>>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
@@ -58,43 +59,44 @@ impl RdpBruteForce {
         Ok(customers)
     }
 
-    /// Start Time (시작 시간)
+    /// Start Time
     async fn start_time(&self) -> DateTime<Utc> {
         self.inner.start_time
     }
 
-    /// End Time (종료 시간)
+    /// End Time
     async fn end_time(&self) -> DateTime<Utc> {
         self.inner.end_time
     }
 
-    /// Source Country (출발지 국가) - The two-letter country code of the source IP address. `"XX"` if the
+    /// Source Country
+    /// The two-letter country code of the source IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
     async fn src_country(&self, ctx: &Context<'_>) -> String {
         country_code(ctx, self.inner.src_addr)
     }
 
-    /// Source Customer (출발지 고객)
+    /// Source Customer
     async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.src_addr)
     }
 
-    /// Source Network (출발지 네트워크)
+    /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.src_addr)
     }
 
-    /// Threat Category (위협 범주)
+    /// Threat Category
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
 
-    /// Triage Scores (분류 점수)
+    /// Triage Scores
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
         self.inner
             .triage_scores
@@ -102,7 +104,7 @@ impl RdpBruteForce {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
-    /// Threat Level (위협 수준)
+    /// Threat Level
     async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
@@ -120,36 +122,37 @@ pub(super) struct BlocklistRdp {
 
 #[Object]
 impl BlocklistRdp {
-    /// Timestamp (타임스탬프)
+    /// Timestamp
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
-    /// Sensor (센서)
+    /// Sensor
     async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
-    /// Source IP Address (출발지 IP 주소)
+    /// Source IP Address
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
 
-    /// Source Country (출발지 국가) - The two-letter country code of the source IP address. `"XX"` if the
+    /// Source Country
+    /// The two-letter country code of the source IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
     async fn src_country(&self, ctx: &Context<'_>) -> String {
         country_code(ctx, self.inner.src_addr)
     }
 
-    /// Source Customer (출발지 고객)
+    /// Source Customer
     async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.src_addr)
     }
 
-    /// Source Network (출발지 네트워크)
+    /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
@@ -166,7 +169,8 @@ impl BlocklistRdp {
         self.inner.dst_addr.to_string()
     }
 
-    /// Destination Country (목적지 국가) - The two-letter country code of the destination IP address. `"XX"` if the
+    /// Destination Country
+    /// The two-letter country code of the destination IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
     async fn dst_country(&self, ctx: &Context<'_>) -> String {
@@ -192,12 +196,12 @@ impl BlocklistRdp {
         self.inner.dst_port
     }
 
-    /// Protocol Number (프로토콜 번호)
+    /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
 
-    /// End Time (종료 시간)
+    /// End Time
     async fn end_time(&self) -> i64 {
         self.inner.end_time
     }
@@ -207,7 +211,7 @@ impl BlocklistRdp {
         self.inner.cookie.to_string()
     }
 
-    /// Threat Category (위협 범주)
+    /// Threat Category
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
@@ -217,7 +221,7 @@ impl BlocklistRdp {
         self.inner.confidence
     }
 
-    /// Triage Scores (분류 점수)
+    /// Triage Scores
     async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
         self.inner
             .triage_scores
@@ -225,7 +229,7 @@ impl BlocklistRdp {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
-    /// Threat Level (위협 수준)
+    /// Threat Level
     async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
