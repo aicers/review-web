@@ -262,10 +262,12 @@ impl BlocklistFtp {
         self.inner.time
     }
 
+    /// Sensor (센서)
     async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
+    /// Source IP (Address) (출발지 IP (주소))
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
