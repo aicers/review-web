@@ -12,14 +12,17 @@ pub(super) struct LdapBruteForce {
 
 #[Object]
 impl LdapBruteForce {
+    /// Timestamp
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
+    /// Source IP (Address)
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
 
+    /// Source Country
     /// The two-letter country code of the source IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
@@ -27,22 +30,26 @@ impl LdapBruteForce {
         country_code(ctx, self.inner.src_addr)
     }
 
+    /// Source Customer
     async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.src_addr)
     }
 
+    /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.src_addr)
     }
 
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
 
+    /// Destination Country
     /// The two-letter country code of the destination IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
@@ -50,26 +57,32 @@ impl LdapBruteForce {
         country_code(ctx, self.inner.dst_addr)
     }
 
+    /// Destination Customer
     async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.dst_addr)
     }
 
+    /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
     }
 
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }
 
+    /// Protocol Number
+    /// TCP: 6, UDP: 17
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
 
+    /// User Password List
     async fn user_pw_list(&self) -> Vec<String> {
         self.inner
             .user_pw_list
@@ -78,18 +91,22 @@ impl LdapBruteForce {
             .collect()
     }
 
+    /// Start Time
     async fn start_time(&self) -> DateTime<Utc> {
         self.inner.start_time
     }
 
+    /// End Time
     async fn end_time(&self) -> DateTime<Utc> {
         self.inner.end_time
     }
 
+    /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
 
+    /// Triage Scores
     async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
@@ -97,6 +114,7 @@ impl LdapBruteForce {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
+    /// Threat Level
     async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
@@ -119,6 +137,7 @@ impl LdapPlainText {
         self.inner.time
     }
 
+    /// Sensor
     async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
@@ -127,6 +146,7 @@ impl LdapPlainText {
         self.inner.src_addr.to_string()
     }
 
+    /// Source Country
     /// The two-letter country code of the source IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
@@ -134,26 +154,31 @@ impl LdapPlainText {
         country_code(ctx, self.inner.src_addr)
     }
 
+    /// Source Customer
     async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.src_addr)
     }
 
+    /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.src_addr)
     }
 
+    /// Source Port (Number)
     async fn src_port(&self) -> u16 {
         self.inner.src_port
     }
 
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
 
+    /// Destination Country
     /// The two-letter country code of the destination IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
@@ -161,60 +186,74 @@ impl LdapPlainText {
         country_code(ctx, self.inner.dst_addr)
     }
 
+    /// Destination Customer
     async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.dst_addr)
     }
 
+    /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
     }
 
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }
 
+    /// Protocol Number
+    /// TCP: 6, UDP: 17
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
 
+    /// Message ID
     /// The message id of the event in string wthin the range representable
     /// by a `u32`.
     async fn message_id(&self) -> ID {
         ID(self.inner.message_id.to_string())
     }
 
+    /// LDAP Version
     async fn version(&self) -> u8 {
         self.inner.version
     }
 
+    /// Operation Code
     async fn opcode(&self) -> &[String] {
         &self.inner.opcode
     }
 
+    /// Result
     async fn result(&self) -> &[String] {
         &self.inner.result
     }
 
+    /// Diagnostic Message
     async fn diagnostic_message(&self) -> &[String] {
         &self.inner.diagnostic_message
     }
 
+    /// Object
     async fn object(&self) -> &[String] {
         &self.inner.object
     }
 
+    /// Argument
     async fn argument(&self) -> &[String] {
         &self.inner.argument
     }
 
+    /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
 
+    /// Triage Scores
     async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
@@ -222,6 +261,7 @@ impl LdapPlainText {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
+    /// Threat Level
     async fn level(&self) -> ThreatLevel {
         ThreatLevel::Low
     }
@@ -243,6 +283,7 @@ impl BlocklistLdap {
         self.inner.time
     }
 
+    /// Sensor
     async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
@@ -251,6 +292,7 @@ impl BlocklistLdap {
         self.inner.src_addr.to_string()
     }
 
+    /// Source Country
     /// The two-letter country code of the source IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
@@ -258,26 +300,31 @@ impl BlocklistLdap {
         country_code(ctx, self.inner.src_addr)
     }
 
+    /// Source Customer
     async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.src_addr)
     }
 
+    /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.src_addr)
     }
 
+    /// Source Port (Number)
     async fn src_port(&self) -> u16 {
         self.inner.src_port
     }
 
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
 
+    /// Destination Country
     /// The two-letter country code of the destination IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
@@ -285,66 +332,80 @@ impl BlocklistLdap {
         country_code(ctx, self.inner.dst_addr)
     }
 
+    /// Destination Customer
     async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.dst_addr)
     }
 
+    /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
     }
 
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }
 
+    /// Protocol Number
+    /// TCP: 6, UDP: 17
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
 
-    /// The end time the event was seen in string wthin the range representable
+    /// End Time - The end time the event was seen in string wthin the range representable
     /// by a `i64`.
     async fn end_time(&self) -> StringNumber<i64> {
         StringNumber(self.inner.end_time)
     }
 
+    /// Message ID
     /// The message id of the event in string wthin the range representable
     /// by a `u32`.
     async fn message_id(&self) -> ID {
         ID(self.inner.message_id.to_string())
     }
 
+    /// LDAP Version
     async fn version(&self) -> u8 {
         self.inner.version
     }
 
+    /// Operation Code
     async fn opcode(&self) -> &[String] {
         &self.inner.opcode
     }
 
+    /// Result
     async fn result(&self) -> &[String] {
         &self.inner.result
     }
 
+    /// Diagnostic Message
     async fn diagnostic_message(&self) -> &[String] {
         &self.inner.diagnostic_message
     }
 
+    /// Object
     async fn object(&self) -> &[String] {
         &self.inner.object
     }
 
+    /// Argument
     async fn argument(&self) -> &[String] {
         &self.inner.argument
     }
 
+    /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
 
+    /// Triage Scores
     async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
@@ -352,6 +413,7 @@ impl BlocklistLdap {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
+    /// Threat Level
     async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }

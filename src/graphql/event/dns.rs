@@ -469,10 +469,12 @@ impl BlocklistDns {
         self.inner.time
     }
 
+    /// Sensor
     async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
+    /// Source IP (Address)
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
