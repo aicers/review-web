@@ -85,11 +85,17 @@ impl ClusterQuery {
             .unwrap_or(DEFAULT_SIZE)
             .to_usize()
             .ok_or("invalid size")?;
-
         let db = ctx.data::<Database>()?;
-        let counts = db
-            .get_top_ip_addresses_of_cluster(model, &cluster_id, size)
-            .await?;
+        let cluster_ids = db
+            .load_cluster_ids(model, Some(cluster_id.as_str()))
+            .await?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.column_stats_map();
+        let counts = map.get_top_ip_addresses_of_cluster(model, &cluster_ids, size)?;
         Ok(counts.into_iter().map(Into::into).collect())
     }
 
