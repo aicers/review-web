@@ -191,7 +191,7 @@ impl Network {
         &self.inner.description
     }
 
-    async fn networks(&self) -> HostNetworkGroup {
+    async fn networks(&self) -> HostNetworkGroup<'_> {
         (&self.inner.networks).into()
     }
 

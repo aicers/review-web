@@ -502,7 +502,7 @@ impl TopElementCountsByColumn {
         StringNumber(self.inner.column_index)
     }
 
-    async fn counts(&self) -> Vec<ElementCount> {
+    async fn counts(&self) -> Vec<ElementCount<'_>> {
         self.inner.counts.iter().map(Into::into).collect()
     }
 }
@@ -525,7 +525,7 @@ impl TopMultimaps {
         StringNumber(self.inner.n_index)
     }
 
-    async fn selected(&self) -> Vec<TopColumnsOfCluster> {
+    async fn selected(&self) -> Vec<TopColumnsOfCluster<'_>> {
         self.inner.selected.iter().map(Into::into).collect()
     }
 }

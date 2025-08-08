@@ -362,7 +362,7 @@ impl NodeStatusTotalCount {
 }
 
 impl Indexable for NodeStatus {
-    fn key(&self) -> Cow<[u8]> {
+    fn key(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(self.name.as_bytes())
     }
 

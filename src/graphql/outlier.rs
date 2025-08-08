@@ -529,10 +529,10 @@ async fn load(
             break;
         }
         let key = entry.unique_key();
-        if let Some(to) = to {
-            if key == to {
-                break;
-            }
+        if let Some(to) = to
+            && key == to
+        {
+            break;
         }
 
         let batch = batches.entry(entry.timestamp).or_insert((
@@ -588,15 +588,15 @@ fn check_filter_to_ranked_outlier(
     if let Some(filter) = filter {
         if filter.remark.is_some() || tag_id_list.is_some() {
             if let Some(value) = remarks_map.get(&node.sensor, &Utc.timestamp_nanos(node.id))? {
-                if let Some(remark) = &filter.remark {
-                    if !value.remarks.contains(remark) {
-                        return Ok(false);
-                    }
+                if let Some(remark) = &filter.remark
+                    && !value.remarks.contains(remark)
+                {
+                    return Ok(false);
                 }
-                if let Some(tag_ids) = &tag_id_list {
-                    if !tag_ids.iter().any(|tag| value.tag_ids().contains(tag)) {
-                        return Ok(false);
-                    }
+                if let Some(tag_ids) = &tag_id_list
+                    && !tag_ids.iter().any(|tag| value.tag_ids().contains(tag))
+                {
+                    return Ok(false);
                 }
             } else {
                 return Ok(false);
@@ -613,22 +613,22 @@ fn check_filter_to_ranked_outlier(
                 } else if node.timestamp < start.timestamp_nanos_opt().unwrap_or_default() {
                     return Ok(false);
                 }
-            } else if let Some(end) = time.end {
-                if node.timestamp > end.timestamp_nanos_opt().unwrap_or_default() {
-                    return Ok(false);
-                }
+            } else if let Some(end) = time.end
+                && node.timestamp > end.timestamp_nanos_opt().unwrap_or_default()
+            {
+                return Ok(false);
             }
         }
 
-        if let Some(distance) = &filter.distance {
-            if let Some(start) = distance.start {
-                if let Some(end) = distance.end {
-                    if node.distance < start || node.distance > end {
-                        return Ok(false);
-                    }
-                } else if node.distance < start {
+        if let Some(distance) = &filter.distance
+            && let Some(start) = distance.start
+        {
+            if let Some(end) = distance.end {
+                if node.distance < start || node.distance > end {
                     return Ok(false);
                 }
+            } else if node.distance < start {
+                return Ok(false);
             }
         }
     }

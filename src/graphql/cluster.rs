@@ -264,7 +264,7 @@ impl TimeSeriesResult {
         self.inner.latest
     }
 
-    async fn series(&self) -> Vec<ColumnTimeSeries> {
+    async fn series(&self) -> Vec<ColumnTimeSeries<'_>> {
         self.inner
             .series
             .iter()

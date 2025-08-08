@@ -164,7 +164,7 @@ impl DataSource {
         &self.inner.name
     }
 
-    /// The server_name of the data source.
+    /// The `server_name` of the data source.
     async fn server_name(&self) -> &str {
         &self.inner.server_name
     }

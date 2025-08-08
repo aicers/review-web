@@ -1223,10 +1223,10 @@ fn convert_sensors(map: &database::NodeTable, sensors: &[ID]) -> anyhow::Result<
             bail!("no such sensor")
         };
 
-        if let Some(node_profile) = node.profile {
-            if !node_profile.hostname.is_empty() {
-                converted_sensors.push(node_profile.hostname.clone());
-            }
+        if let Some(node_profile) = node.profile
+            && !node_profile.hostname.is_empty()
+        {
+            converted_sensors.push(node_profile.hostname.clone());
         }
     }
     Ok(converted_sensors)
@@ -1959,7 +1959,7 @@ mod tests {
             .unwrap();
         let fields = BlocklistDhcpFields {
             sensor: "sensor1".to_string(),
-            src_addr: Ipv4Addr::new(127, 0, 0, 1).into(),
+            src_addr: Ipv4Addr::LOCALHOST.into(),
             src_port: 68,
             dst_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
             dst_port: 67,
@@ -1971,11 +1971,11 @@ mod tests {
             siaddr: Ipv4Addr::new(127, 0, 0, 7).into(),
             giaddr: Ipv4Addr::new(127, 0, 0, 8).into(),
             subnet_mask: Ipv4Addr::new(255, 255, 255, 0).into(),
-            router: vec![Ipv4Addr::new(127, 0, 0, 1).into()],
-            domain_name_server: vec![Ipv4Addr::new(127, 0, 0, 1).into()],
+            router: vec![Ipv4Addr::LOCALHOST.into()],
+            domain_name_server: vec![Ipv4Addr::LOCALHOST.into()],
             req_ip_addr: Ipv4Addr::new(127, 0, 0, 100).into(),
             lease_time: 100,
-            server_id: Ipv4Addr::new(127, 0, 0, 1).into(),
+            server_id: Ipv4Addr::LOCALHOST.into(),
             param_req_list: vec![1, 2, 3],
             message: "message".to_string(),
             renewal_time: 100,
@@ -2048,7 +2048,7 @@ mod tests {
             .unwrap();
         let fields = BlocklistBootpFields {
             sensor: "sensor1".to_string(),
-            src_addr: Ipv4Addr::new(127, 0, 0, 1).into(),
+            src_addr: Ipv4Addr::LOCALHOST.into(),
             src_port: 68,
             dst_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
             dst_port: 67,

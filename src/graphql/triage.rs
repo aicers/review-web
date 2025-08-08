@@ -36,19 +36,19 @@ impl TriagePolicy {
         &self.inner.name
     }
 
-    async fn ti_db(&self) -> Vec<Ti> {
+    async fn ti_db(&self) -> Vec<Ti<'_>> {
         self.inner.ti_db.iter().map(Into::into).collect()
     }
 
-    async fn packet_attr(&self) -> Vec<PacketAttr> {
+    async fn packet_attr(&self) -> Vec<PacketAttr<'_>> {
         self.inner.packet_attr.iter().map(Into::into).collect()
     }
 
-    async fn confidence(&self) -> Vec<Confidence> {
+    async fn confidence(&self) -> Vec<Confidence<'_>> {
         self.inner.confidence.iter().map(Into::into).collect()
     }
 
-    async fn response(&self) -> Vec<Response> {
+    async fn response(&self) -> Vec<Response<'_>> {
         self.inner.response.iter().map(Into::into).collect()
     }
 

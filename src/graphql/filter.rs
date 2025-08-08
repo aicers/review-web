@@ -235,7 +235,7 @@ impl Endpoint<'_> {
         self.inner.predefined.map(|id| ID(id.to_string()))
     }
 
-    async fn custom(&self) -> Option<HostNetworkGroup> {
+    async fn custom(&self) -> Option<HostNetworkGroup<'_>> {
         self.inner.custom.as_ref().map(Into::into)
     }
 }
@@ -305,7 +305,7 @@ impl Filter {
             .map(|customers| customers.iter().map(Into::into).collect::<Vec<_>>())
     }
 
-    async fn endpoints(&self) -> Option<Vec<Endpoint>> {
+    async fn endpoints(&self) -> Option<Vec<Endpoint<'_>>> {
         self.inner
             .endpoints
             .as_ref()
