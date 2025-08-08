@@ -250,11 +250,13 @@ pub struct TidbOutput {
     version: String,
 }
 
+#[allow(dead_code)]
 struct TidbTotalCount;
 
 #[Object]
 impl TidbTotalCount {
     /// The total number of edges.
+    #[allow(dead_code)]
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
         use database::Iterable;
 

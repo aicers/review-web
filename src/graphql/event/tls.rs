@@ -173,7 +173,7 @@ impl BlocklistTls {
         self.inner.confidence
     }
 
-    async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
+    async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
             .as_ref()
@@ -359,7 +359,7 @@ impl SuspiciousTlsTraffic {
         self.inner.category.into()
     }
 
-    async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
+    async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
             .as_ref()
