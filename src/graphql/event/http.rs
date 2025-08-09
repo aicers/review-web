@@ -24,7 +24,7 @@ impl HttpThreat {
         &self.inner.sensor
     }
 
-    /// Source IP Address
+    /// Source IP (Address)
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
@@ -51,12 +51,12 @@ impl HttpThreat {
         find_ip_network(&map, self.inner.src_addr)
     }
 
-    /// Source Port Number
+    /// Source Port (Number)
     async fn src_port(&self) -> u16 {
         self.inner.src_port
     }
 
-    /// Destination IP Address
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
@@ -83,7 +83,7 @@ impl HttpThreat {
         find_ip_network(&map, self.inner.dst_addr)
     }
 
-    /// Destination Port Number
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }
@@ -304,12 +304,12 @@ impl RepeatedHttpSessions {
         &self.inner.sensor
     }
 
-    /// Source IP Address
+    /// Source IP (Address)
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
 
-    /// Source Port Number
+    /// Source Port (Number)
     async fn src_port(&self) -> u16 {
         self.inner.src_port
     }
@@ -336,12 +336,12 @@ impl RepeatedHttpSessions {
         find_ip_network(&map, self.inner.src_addr)
     }
 
-    /// Destination IP Address
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
 
-    /// Destination Port Number
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }
@@ -425,12 +425,12 @@ impl TorConnection {
         self.inner.session_end_time
     }
 
-    /// Source IP Address
+    /// Source IP (Address)
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
 
-    /// Source Port Number
+    /// Source Port (Number)
     async fn src_port(&self) -> u16 {
         self.inner.src_port
     }
@@ -457,12 +457,12 @@ impl TorConnection {
         find_ip_network(&map, self.inner.src_addr)
     }
 
-    /// Destination IP Address
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
 
-    /// Destination Port Number
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }
@@ -633,7 +633,7 @@ impl DomainGenerationAlgorithm {
         &self.inner.sensor
     }
 
-    /// Source IP Address
+    /// Source IP (Address)
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
@@ -660,12 +660,12 @@ impl DomainGenerationAlgorithm {
         find_ip_network(&map, self.inner.src_addr)
     }
 
-    /// Source Port Number
+    /// Source Port (Number)
     async fn src_port(&self) -> u16 {
         self.inner.src_port
     }
 
-    /// Destination IP Address
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
@@ -692,7 +692,7 @@ impl DomainGenerationAlgorithm {
         find_ip_network(&map, self.inner.dst_addr)
     }
 
-    /// Destination Port Number
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }
@@ -840,7 +840,7 @@ impl NonBrowser {
         &self.inner.sensor
     }
 
-    /// Source IP Address
+    /// Source IP (Address)
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
@@ -867,12 +867,12 @@ impl NonBrowser {
         find_ip_network(&map, self.inner.src_addr)
     }
 
-    /// Source Port Number
+    /// Source Port (Number)
     async fn src_port(&self) -> u16 {
         self.inner.src_port
     }
 
-    /// Destination IP Address
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
@@ -899,7 +899,7 @@ impl NonBrowser {
         find_ip_network(&map, self.inner.dst_addr)
     }
 
-    /// Destination Port Number
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }
@@ -1043,7 +1043,7 @@ impl BlocklistHttp {
         &self.inner.sensor
     }
 
-    /// Source IP Address
+    /// Source IP (Address)
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
@@ -1070,12 +1070,12 @@ impl BlocklistHttp {
         find_ip_network(&map, self.inner.src_addr)
     }
 
-    /// Source Port Number
+    /// Source Port (Number)
     async fn src_port(&self) -> u16 {
         self.inner.src_port
     }
 
-    /// Destination IP Address
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
@@ -1102,7 +1102,7 @@ impl BlocklistHttp {
         find_ip_network(&map, self.inner.dst_addr)
     }
 
-    /// Destination Port Number
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }

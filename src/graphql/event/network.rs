@@ -24,12 +24,12 @@ impl NetworkThreat {
         &self.inner.sensor
     }
 
-    /// Source IP Address
+    /// Source IP (Address)
     async fn src_addr(&self) -> String {
         self.inner.orig_addr.to_string()
     }
 
-    /// Source Port Number
+    /// Source Port (Number)
     async fn src_port(&self) -> u16 {
         self.inner.orig_port
     }
@@ -56,12 +56,12 @@ impl NetworkThreat {
         find_ip_network(&map, self.inner.orig_addr)
     }
 
-    /// Destination IP Address
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.resp_addr.to_string()
     }
 
-    /// Destination Port Number
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.resp_port
     }

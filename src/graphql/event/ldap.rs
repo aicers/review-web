@@ -17,7 +17,7 @@ impl LdapBruteForce {
         self.inner.time
     }
 
-    /// Source IP Address
+    /// Source IP (Address)
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
@@ -44,7 +44,7 @@ impl LdapBruteForce {
         find_ip_network(&map, self.inner.src_addr)
     }
 
-    /// Destination IP Address
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
@@ -71,7 +71,7 @@ impl LdapBruteForce {
         find_ip_network(&map, self.inner.dst_addr)
     }
 
-    /// Destination Port Number
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }
@@ -168,12 +168,12 @@ impl LdapPlainText {
         find_ip_network(&map, self.inner.src_addr)
     }
 
-    /// Source Port Number
+    /// Source Port (Number)
     async fn src_port(&self) -> u16 {
         self.inner.src_port
     }
 
-    /// Destination IP Address
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
@@ -200,7 +200,7 @@ impl LdapPlainText {
         find_ip_network(&map, self.inner.dst_addr)
     }
 
-    /// Destination Port Number
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }
@@ -314,12 +314,12 @@ impl BlocklistLdap {
         find_ip_network(&map, self.inner.src_addr)
     }
 
-    /// Source Port Number
+    /// Source Port (Number)
     async fn src_port(&self) -> u16 {
         self.inner.src_port
     }
 
-    /// Destination IP Address
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
@@ -346,7 +346,7 @@ impl BlocklistLdap {
         find_ip_network(&map, self.inner.dst_addr)
     }
 
-    /// Destination Port Number
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }
