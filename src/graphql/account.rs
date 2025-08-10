@@ -705,14 +705,14 @@ impl AccountMutation {
         let user_sessions: Vec<_> = access_token_map
             .iter(Direction::Forward, Some(normalized_username.as_bytes()))
             .filter_map(|res| {
-                if let Ok(access_token) = res {
-                    if access_token.username == normalized_username {
-                        // Verify the token hasn't expired
-                        if let Ok(decoded_token) = decode_token(&access_token.token) {
-                            let exp_time = Utc.timestamp_nanos(decoded_token.exp * 1_000_000_000);
-                            if Utc::now() < exp_time {
-                                return Some(access_token.token);
-                            }
+                if let Ok(access_token) = res
+                    && access_token.username == normalized_username
+                {
+                    // Verify the token hasn't expired
+                    if let Ok(decoded_token) = decode_token(&access_token.token) {
+                        let exp_time = Utc.timestamp_nanos(decoded_token.exp * 1_000_000_000);
+                        if Utc::now() < exp_time {
+                            return Some(access_token.token);
                         }
                     }
                 }

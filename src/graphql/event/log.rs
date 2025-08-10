@@ -63,7 +63,7 @@ impl ExtraThreat {
         self.inner.category.into()
     }
 
-    async fn triage_scores(&self) -> Option<Vec<TriageScore>> {
+    async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
             .as_ref()

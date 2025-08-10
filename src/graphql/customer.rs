@@ -174,12 +174,11 @@ impl CustomerMutation {
             }
         }
 
-        if !removed_customer_networks.is_empty() {
-            if let Err(e) =
+        if !removed_customer_networks.is_empty()
+            && let Err(e) =
                 send_agent_specific_customer_networks(ctx, &removed_customer_networks).await
-            {
-                error_with_username!(ctx, "Failed to broadcast internal networks: {e:?}");
-            }
+        {
+            error_with_username!(ctx, "Failed to broadcast internal networks: {e:?}");
         }
 
         Ok(removed)
@@ -261,24 +260,24 @@ fn validate_customer_removal(store: &Store, customer_ids: &[u32]) -> Result<()> 
         let node = entry.map_err(|_| "failed to iterate nodes")?;
         for customer_id in customer_ids {
             // Check current profile
-            if let Some(profile) = &node.profile {
-                if profile.customer_id == *customer_id {
-                    return Err(format!(
-                        "Cannot remove customer {}: still referenced by node {}",
-                        customer_id, node.name
-                    )
-                    .into());
-                }
+            if let Some(profile) = &node.profile
+                && profile.customer_id == *customer_id
+            {
+                return Err(format!(
+                    "Cannot remove customer {}: still referenced by node {}",
+                    customer_id, node.name
+                )
+                .into());
             }
             // Check draft profile
-            if let Some(profile_draft) = &node.profile_draft {
-                if profile_draft.customer_id == *customer_id {
-                    return Err(format!(
-                        "Cannot remove customer {}: still referenced by node {} (draft profile)",
-                        customer_id, node.name
-                    )
-                    .into());
-                }
+            if let Some(profile_draft) = &node.profile_draft
+                && profile_draft.customer_id == *customer_id
+            {
+                return Err(format!(
+                    "Cannot remove customer {}: still referenced by node {} (draft profile)",
+                    customer_id, node.name
+                )
+                .into());
             }
         }
     }
@@ -308,7 +307,7 @@ impl Customer {
     }
 
     /// The networks this customer owns.
-    async fn networks(&self) -> Vec<CustomerNetwork> {
+    async fn networks(&self) -> Vec<CustomerNetwork<'_>> {
         self.inner.networks.iter().map(Into::into).collect()
     }
 
@@ -368,7 +367,7 @@ impl CustomerNetwork<'_> {
     }
 
     /// The network group of the network.
-    async fn network_group(&self) -> HostNetworkGroup {
+    async fn network_group(&self) -> HostNetworkGroup<'_> {
         (&self.inner.network_group).into()
     }
 }

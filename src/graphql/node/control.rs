@@ -180,7 +180,7 @@ struct NotificationTarget<'a> {
     pub disables: Vec<&'a str>,
 }
 
-fn node_apply_scope(node: &NodeInput) -> NodeApplyScope {
+fn node_apply_scope(node: &NodeInput) -> NodeApplyScope<'_> {
     let is_name_changed = node.name_draft.as_ref() != Some(&node.name);
     let is_profile_changed = node.profile_draft != node.profile;
     let is_any_agent_changed = node.agents.iter().any(|agent| agent.draft != agent.config);

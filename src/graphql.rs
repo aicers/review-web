@@ -702,7 +702,7 @@ impl TestSchema {
         }
     }
 
-    async fn store(&self) -> tokio::sync::RwLockReadGuard<Store> {
+    async fn store(&self) -> tokio::sync::RwLockReadGuard<'_, Store> {
         self.store.read().await
     }
 
