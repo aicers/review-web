@@ -250,23 +250,6 @@ pub struct TidbOutput {
     version: String,
 }
 
-#[allow(dead_code)]
-struct TidbTotalCount;
-
-#[Object]
-impl TidbTotalCount {
-    /// The total number of edges.
-    #[allow(dead_code)]
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        use database::Iterable;
-
-        let store = super::get_store(ctx).await?;
-        let table = store.tidb_map();
-
-        Ok(table.iter(database::Direction::Forward, None).count())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::graphql::TestSchema;
