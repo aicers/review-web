@@ -1,7 +1,9 @@
 use async_graphql::{Context, Enum, ID, Object, Result, SimpleObject};
 use review_database::{self as database, TidbRuleKind as DbTidbRuleKind};
+use tracing::info;
 
 use super::{Role, RoleGuard, triage::ThreatCategory};
+use crate::info_with_username;
 
 #[derive(Default)]
 pub(super) struct TidbQuery;
@@ -27,6 +29,7 @@ impl TidbQuery {
         let store = super::get_store(ctx).await?;
         let table = store.tidb_map();
 
+        info_with_username!(ctx, "TI list requested");
         Ok(table.get_list()?.into_iter().map(Into::into).collect())
     }
 
@@ -76,6 +79,7 @@ impl TidbMutation {
         let store = super::get_store(ctx).await?;
         let table = store.tidb_map();
         table.insert(tidb)?;
+        info_with_username!(ctx, "TI {} has been registered", output.name);
 
         Ok(output)
     }
@@ -99,6 +103,7 @@ impl TidbMutation {
                 Err(e) => return Err(format!("{e:?}").into()),
             }
         }
+        info_with_username!(ctx, "TI {:?} has been deleted", removed);
         Ok(removed)
     }
 
@@ -124,6 +129,8 @@ impl TidbMutation {
         let table = store.tidb_map();
 
         table.update(&name, tidb)?;
+        info_with_username!(ctx, "TI {name} has been updated to {}", output.name);
+
         Ok(output)
     }
 }

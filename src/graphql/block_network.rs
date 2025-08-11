@@ -9,12 +9,14 @@ use database::Direction;
 use review_database::{self as database, Store};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+use tracing::info;
 
 use super::{
     BoxedAgentManager, Role, RoleGuard,
     customer::{HostNetworkGroup, HostNetworkGroupInput},
 };
 use crate::graphql::query_with_constraints;
+use crate::info_with_username;
 
 #[derive(Default)]
 pub(super) struct BlockNetworkQuery;
@@ -67,11 +69,12 @@ impl BlockNetworkMutation {
             networks.try_into().map_err(|_| "invalid network")?;
         let value = review_database::BlockNetwork {
             id: u32::MAX,
-            name,
+            name: name.clone(),
             networks,
             description,
         };
         let id = map.put(value)?;
+        info_with_username!(ctx, "Blocklist {name} has been registered");
 
         apply_block_networks(&db, ctx).await?;
         Ok(ID(id.to_string()))
@@ -102,6 +105,7 @@ impl BlockNetworkMutation {
                         Ok(key) => key,
                         Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
                     };
+                    info_with_username!(ctx, "Blocklist {name} has been deleted");
                     removed.push(name);
                     Ok(removed)
                 } else {
@@ -140,6 +144,12 @@ impl BlockNetworkMutation {
         let old: review_database::BlockNetworkUpdate = old.try_into()?;
         let new: review_database::BlockNetworkUpdate = new.try_into()?;
         map.update(i, &old, &new)?;
+        info_with_username!(
+            ctx,
+            "Blocklist {:?} has been updated to {:?}",
+            old.name,
+            new.name
+        );
 
         apply_block_networks(&db, ctx).await?;
         Ok(id)

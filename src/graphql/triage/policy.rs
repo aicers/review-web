@@ -5,6 +5,7 @@ use async_graphql::{
 };
 use chrono::Utc;
 use review_database::{self as database};
+use tracing::info;
 
 use super::{
     ConfidenceInput, PacketAttrInput, ResponseInput, TiInput, TriagePolicy, TriagePolicyInput,
@@ -12,6 +13,7 @@ use super::{
 };
 use super::{Role, RoleGuard};
 use crate::graphql::query_with_constraints;
+use crate::info_with_username;
 
 struct TriagePolicyTotalCount;
 
@@ -108,7 +110,7 @@ impl TriagePolicyMutation {
         response.sort_unstable();
         let triage = database::TriagePolicy {
             id: u32::MAX,
-            name,
+            name: name.clone(),
             ti_db,
             packet_attr: packet_attr_convert,
             confidence,
@@ -119,6 +121,7 @@ impl TriagePolicyMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_policy_map();
         let id = map.put(triage)?;
+        info_with_username!(ctx, "Triage policy {name} has been registered");
 
         Ok(ID(id.to_string()))
     }
@@ -145,6 +148,7 @@ impl TriagePolicyMutation {
                 Ok(key) => key,
                 Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
             };
+            info_with_username!(ctx, "Triage policy {name} has been deleted");
             removed.push(name);
         }
 
@@ -168,6 +172,12 @@ impl TriagePolicyMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let mut map = store.triage_policy_map();
         map.update(i, &old, &new)?;
+        info_with_username!(
+            ctx,
+            "Triage policy {} has been updated to {}",
+            old.name,
+            new.name
+        );
 
         Ok(id)
     }
