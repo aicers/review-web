@@ -74,8 +74,9 @@ impl ModelQuery {
         ctx: &Context<'_>,
         model: i32,
     ) -> Result<Vec<StructuredColumnType>> {
-        let db = ctx.data::<Database>()?;
-        let types = db.get_column_types_of_model(model).await?;
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.column_stats_map();
+        let types = map.get_column_types_of_model(model)?;
         Ok(types.into_iter().map(Into::into).collect())
     }
 
@@ -175,9 +176,34 @@ impl ModelQuery {
             .to_usize()
             .ok_or("invalid size")?;
         let db = ctx.data::<Database>()?;
-        let counts = db
-            .get_top_columns_of_model(model, size, time, portion_of_clusters, portion_of_top_n)
-            .await?;
+        let cluster_ids = db
+            .load_cluster_ids_with_size_limit(model, portion_of_clusters)
+            .await?
+            .into_iter()
+            .filter_map(|id| id.to_u32())
+            .collect();
+
+        let store = crate::graphql::get_store(ctx).await?;
+        let csv_column_extra_map = store.csv_column_extra_map();
+        let Some(csv_extra) = csv_column_extra_map
+            .get_by_model(model)
+            .map_err(|e| format!("Failed to get csv column extra: {e}"))?
+        else {
+            return Ok(Vec::new());
+        };
+        let Some(top_n) = csv_extra.column_top_n else {
+            return Ok(Vec::new());
+        };
+
+        let column_stats_map = store.column_stats_map();
+        let counts = column_stats_map.get_top_columns_of_model(
+            model,
+            cluster_ids,
+            &top_n,
+            size,
+            time,
+            portion_of_top_n,
+        )?;
         Ok(counts.into_iter().map(Into::into).collect())
     }
 
@@ -201,15 +227,23 @@ impl ModelQuery {
             .ok_or("invalid size")?;
 
         let db = ctx.data::<Database>()?;
-        let counts = db
-            .get_top_ip_addresses_of_model(
-                model,
-                size,
-                time,
-                portion_of_clusters,
-                portion_of_top_elements,
-            )
-            .await?;
+
+        let cluster_ids: Vec<u32> = db
+            .load_cluster_ids_with_size_limit(model, portion_of_clusters)
+            .await?
+            .into_iter()
+            .filter_map(|id| id.to_u32())
+            .collect();
+
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.column_stats_map();
+        let counts = map.get_top_ip_addresses_of_model(
+            model,
+            &cluster_ids,
+            size,
+            time,
+            portion_of_top_elements,
+        )?;
         Ok(counts.into_iter().map(Into::into).collect())
     }
 
@@ -235,13 +269,35 @@ impl ModelQuery {
             .unwrap_or(DEFAULT_MIN_MAP_SIZE)
             .to_usize()
             .ok_or("invalid minMapSize")?;
-        let db = ctx.data::<Database>()?;
-        let types = db.get_column_types_of_model(model).await?;
 
         let db = ctx.data::<Database>()?;
-        let maps = db
-            .get_top_multimaps_of_model(model, size, min_map_size, time, types)
-            .await?;
+        let cluster_ids: Vec<(u32, String)> = db
+            .load_cluster_ids(model, None)
+            .await?
+            .into_iter()
+            .filter_map(|(id, name)| id.to_u32().map(|id| (id, name)))
+            .collect();
+
+        let store = crate::graphql::get_store(ctx).await?;
+        let csv_column_extra_map = store.csv_column_extra_map();
+        let csv_extra = csv_column_extra_map
+            .get_by_model(model)
+            .map_err(|e| format!("Failed to get csv column extra: {e}"))?;
+        let (column_1, column_n) = if let Some(csv_extra) = csv_extra {
+            (csv_extra.column_1, csv_extra.column_n)
+        } else {
+            (None, None)
+        };
+
+        let column_stats_map = store.column_stats_map();
+        let maps = column_stats_map.get_top_multimaps_of_model(
+            model,
+            cluster_ids,
+            (&column_1.unwrap_or_default(), &column_n.unwrap_or_default()),
+            size,
+            min_map_size,
+            time,
+        )?;
         Ok(maps.into_iter().map(Into::into).collect())
     }
 }

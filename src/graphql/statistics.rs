@@ -107,8 +107,9 @@ struct TotalCountByCluster {
 impl TotalCountByCluster {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<i64> {
-        let db = ctx.data::<Database>()?;
-        Ok(db.count_rounds_by_cluster(self.cluster).await?)
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.column_stats_map();
+        Ok(map.count_rounds_by_cluster(u32::try_from(self.cluster)?)?)
     }
 }
 
@@ -185,16 +186,15 @@ async fn load_rounds_by_cluster(
 > {
     let is_first = first.is_some();
     let limit = slicing::len(first, last)?;
-    let db = ctx.data::<Database>()?;
-    let (model, batches) = db
-        .load_rounds_by_cluster(
-            cluster,
-            &after.map(|k| i64_to_naive_date_time(k.0.1)),
-            &before.map(|k| i64_to_naive_date_time(k.0.1)),
-            is_first,
-            limit + 1,
-        )
-        .await?;
+    let store = crate::graphql::get_store(ctx).await?;
+    let map = store.column_stats_map();
+    let (model, batches) = map.load_rounds_by_cluster(
+        u32::try_from(cluster)?,
+        &after.map(|k| i64_to_naive_date_time(k.0.1)),
+        &before.map(|k| i64_to_naive_date_time(k.0.1)),
+        is_first,
+        limit + 1,
+    )?;
 
     let (batches, has_previous, has_next) = slicing::page_info(is_first, limit, batches);
     let batch_infos: Vec<_> = {
