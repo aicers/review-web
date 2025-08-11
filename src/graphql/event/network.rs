@@ -14,7 +14,7 @@ pub(super) struct NetworkThreat {
 
 #[Object]
 impl NetworkThreat {
-    /// Timestamp
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -99,8 +99,6 @@ impl NetworkThreat {
     }
 
     /// End Time
-    /// The timestamp that marks the end of the event, representing the last time it was seen,
-    /// in string within the representable range of `i64`.
     async fn end_time(&self) -> StringNumber<i64> {
         StringNumber(self.inner.end_time)
     }
@@ -115,9 +113,7 @@ impl NetworkThreat {
         &self.inner.db_name
     }
 
-    /// Rule ID
-    /// The rule ID of the event in string within the representable
-    /// range of `u32`.
+    /// Pattern ID
     async fn rule_id(&self) -> ID {
         ID(self.inner.rule_id.to_string())
     }
@@ -128,8 +124,6 @@ impl NetworkThreat {
     }
 
     /// Cluster ID
-    /// The cluster ID of the event in string within the representable
-    /// range of `usize`.
     async fn cluster_id(&self) -> ID {
         ID(self
             .inner
@@ -142,7 +136,7 @@ impl NetworkThreat {
         &self.inner.attack_kind
     }
 
-    /// Confidence Score
+    /// Confidence
     async fn confidence(&self) -> f32 {
         self.inner.confidence
     }

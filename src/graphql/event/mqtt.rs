@@ -11,7 +11,7 @@ pub(super) struct BlocklistMqtt {
 
 #[Object]
 impl BlocklistMqtt {
-    /// Timestamp
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -86,7 +86,6 @@ impl BlocklistMqtt {
     }
 
     /// Protocol Number
-    /// TCP: 6, UDP: 17
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
@@ -101,7 +100,7 @@ impl BlocklistMqtt {
         &self.inner.protocol
     }
 
-    /// MQTT Version
+    /// Version
     async fn version(&self) -> u8 {
         self.inner.version
     }
@@ -111,17 +110,17 @@ impl BlocklistMqtt {
         &self.inner.client_id
     }
 
-    /// Connection Acknowledge Reason
+    /// Connection Acknowledgement Response
     async fn connack_reason(&self) -> u8 {
         self.inner.connack_reason
     }
 
-    /// Subscribe Topics
+    /// Subscription Request
     async fn subscribe(&self) -> &[String] {
         &self.inner.subscribe
     }
 
-    /// Subscribe Acknowledge Reason
+    /// Subscribe Acknowledgement Response
     async fn suback_reason(&self) -> &[u8] {
         &self.inner.suback_reason
     }

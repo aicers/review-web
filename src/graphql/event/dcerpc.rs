@@ -11,6 +11,7 @@ pub(super) struct BlocklistDceRpc {
 
 #[Object]
 impl BlocklistDceRpc {
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -85,7 +86,6 @@ impl BlocklistDceRpc {
     }
 
     /// Protocol Number
-    /// TCP: 6, UDP: 17
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
@@ -95,7 +95,7 @@ impl BlocklistDceRpc {
         StringNumber(self.inner.end_time)
     }
 
-    /// Round Trip Time
+    /// Round-Trip Time
     async fn rtt(&self) -> StringNumber<i64> {
         StringNumber(self.inner.rtt)
     }

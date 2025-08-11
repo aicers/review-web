@@ -12,7 +12,7 @@ pub(super) struct RdpBruteForce {
 
 #[Object]
 impl RdpBruteForce {
-    /// Timestamp
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -27,7 +27,7 @@ impl RdpBruteForce {
         self.inner.proto
     }
 
-    /// Destination IP (Address)es
+    /// Destination IP (Address) List
     async fn dst_addrs(&self) -> Vec<String> {
         self.inner
             .dst_addrs
@@ -36,7 +36,7 @@ impl RdpBruteForce {
             .collect()
     }
 
-    /// Destination Countries
+    /// Destination Country List
     /// The two-letter country code of the destination IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
@@ -48,7 +48,7 @@ impl RdpBruteForce {
             .collect()
     }
 
-    /// Destination Customers
+    /// Destination Customer List
     async fn dst_customers(&self, ctx: &Context<'_>) -> Result<Vec<Option<Customer>>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
@@ -59,12 +59,12 @@ impl RdpBruteForce {
         Ok(customers)
     }
 
-    /// Start Time
+    /// Detection Start Time
     async fn start_time(&self) -> DateTime<Utc> {
         self.inner.start_time
     }
 
-    /// End Time
+    /// Detection End Time
     async fn end_time(&self) -> DateTime<Utc> {
         self.inner.end_time
     }
@@ -91,7 +91,7 @@ impl RdpBruteForce {
         find_ip_network(&map, self.inner.src_addr)
     }
 
-    /// Threat Category
+    /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
@@ -122,7 +122,7 @@ pub(super) struct BlocklistRdp {
 
 #[Object]
 impl BlocklistRdp {
-    /// Timestamp
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -159,12 +159,12 @@ impl BlocklistRdp {
         find_ip_network(&map, self.inner.src_addr)
     }
 
-    /// Source Port (Number) (출발지 포트 번호)
+    /// Source Port (Number)
     async fn src_port(&self) -> u16 {
         self.inner.src_port
     }
 
-    /// Destination IP (Address) (목적지 IP 주소)
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
@@ -177,21 +177,21 @@ impl BlocklistRdp {
         country_code(ctx, self.inner.dst_addr)
     }
 
-    /// Destination Customer (목적지 고객)
+    /// Destination Customer
     async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.dst_addr)
     }
 
-    /// Destination Network (목적지 네트워크)
+    /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
     }
 
-    /// Destination Port (Number) (목적지 포트 번호)
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }
@@ -206,17 +206,17 @@ impl BlocklistRdp {
         self.inner.end_time
     }
 
-    /// Cookie (쿠키)
+    /// Cookie
     async fn cookie(&self) -> String {
         self.inner.cookie.to_string()
     }
 
-    /// Threat Category
+    /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
 
-    /// Confidence Score (신뢰도)
+    /// Confidence
     async fn confidence(&self) -> f32 {
         self.inner.confidence
     }

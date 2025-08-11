@@ -11,7 +11,7 @@ pub(super) struct BlocklistNtlm {
 
 #[Object]
 impl BlocklistNtlm {
-    /// Timestamp
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -120,12 +120,12 @@ impl BlocklistNtlm {
         &self.inner.success
     }
 
-    /// Threat Category
+    /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
 
-    /// Confidence Score
+    /// Confidence
     async fn confidence(&self) -> f32 {
         self.inner.confidence
     }

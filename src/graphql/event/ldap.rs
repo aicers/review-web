@@ -12,7 +12,7 @@ pub(super) struct LdapBruteForce {
 
 #[Object]
 impl LdapBruteForce {
-    /// Timestamp
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -77,7 +77,6 @@ impl LdapBruteForce {
     }
 
     /// Protocol Number
-    /// TCP: 6, UDP: 17
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
@@ -91,12 +90,12 @@ impl LdapBruteForce {
             .collect()
     }
 
-    /// Start Time
+    /// Detection Start Time
     async fn start_time(&self) -> DateTime<Utc> {
         self.inner.start_time
     }
 
-    /// End Time
+    /// Detection End Time
     async fn end_time(&self) -> DateTime<Utc> {
         self.inner.end_time
     }
@@ -133,6 +132,7 @@ pub(super) struct LdapPlainText {
 
 #[Object]
 impl LdapPlainText {
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -142,6 +142,7 @@ impl LdapPlainText {
         &self.inner.sensor
     }
 
+    /// Source IP (Address)
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
@@ -206,19 +207,16 @@ impl LdapPlainText {
     }
 
     /// Protocol Number
-    /// TCP: 6, UDP: 17
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
 
     /// Message ID
-    /// The message id of the event in string wthin the range representable
-    /// by a `u32`.
     async fn message_id(&self) -> ID {
         ID(self.inner.message_id.to_string())
     }
 
-    /// LDAP Version
+    /// Version
     async fn version(&self) -> u8 {
         self.inner.version
     }
@@ -228,7 +226,7 @@ impl LdapPlainText {
         &self.inner.opcode
     }
 
-    /// Result
+    /// Result Code
     async fn result(&self) -> &[String] {
         &self.inner.result
     }
@@ -279,6 +277,7 @@ pub(super) struct BlocklistLdap {
 
 #[Object]
 impl BlocklistLdap {
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -288,6 +287,7 @@ impl BlocklistLdap {
         &self.inner.sensor
     }
 
+    /// Source IP (Address)
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
@@ -352,25 +352,21 @@ impl BlocklistLdap {
     }
 
     /// Protocol Number
-    /// TCP: 6, UDP: 17
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
 
-    /// End Time - The end time the event was seen in string wthin the range representable
-    /// by a `i64`.
+    /// End Time
     async fn end_time(&self) -> StringNumber<i64> {
         StringNumber(self.inner.end_time)
     }
 
     /// Message ID
-    /// The message id of the event in string wthin the range representable
-    /// by a `u32`.
     async fn message_id(&self) -> ID {
         ID(self.inner.message_id.to_string())
     }
 
-    /// LDAP Version
+    /// Version
     async fn version(&self) -> u8 {
         self.inner.version
     }
@@ -380,7 +376,7 @@ impl BlocklistLdap {
         &self.inner.opcode
     }
 
-    /// Result
+    /// Result Code
     async fn result(&self) -> &[String] {
         &self.inner.result
     }

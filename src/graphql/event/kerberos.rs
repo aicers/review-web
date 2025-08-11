@@ -11,7 +11,7 @@ pub(super) struct BlocklistKerberos {
 
 #[Object]
 impl BlocklistKerberos {
-    /// Timestamp
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -86,35 +86,26 @@ impl BlocklistKerberos {
     }
 
     /// Protocol Number
-    /// TCP: 6, UDP: 17
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
 
     /// End Time
-    /// The last time the event was seen in string wthin the range
-    /// representable by a `i64`.
     async fn end_time(&self) -> StringNumber<i64> {
         StringNumber(self.inner.end_time)
     }
 
     /// Client Time
-    /// The client time in string wthin the range representable
-    /// by a `i64`.
     async fn client_time(&self) -> StringNumber<i64> {
         StringNumber(self.inner.client_time)
     }
 
     /// Server Time
-    /// The server time in string wthin the range representable
-    /// by a `i64`.
     async fn server_time(&self) -> StringNumber<i64> {
         StringNumber(self.inner.server_time)
     }
 
     /// Error Code
-    /// The error code in string wthin the range representable
-    /// by a `u32`.
     async fn error_code(&self) -> StringNumber<u32> {
         StringNumber(self.inner.error_code)
     }
@@ -124,8 +115,7 @@ impl BlocklistKerberos {
         &self.inner.client_realm
     }
 
-    #[allow(clippy::doc_markdown)]
-    /// CName Type
+    /// Client Name Type
     async fn cname_type(&self) -> u8 {
         self.inner.cname_type
     }
@@ -140,8 +130,7 @@ impl BlocklistKerberos {
         &self.inner.realm
     }
 
-    #[allow(clippy::doc_markdown)]
-    /// SName Type
+    /// Service Name Type
     async fn sname_type(&self) -> u8 {
         self.inner.sname_type
     }

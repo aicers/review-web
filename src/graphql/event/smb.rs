@@ -11,7 +11,7 @@ pub(super) struct BlocklistSmb {
 
 #[Object]
 impl BlocklistSmb {
-    /// Timestamp
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -115,52 +115,52 @@ impl BlocklistSmb {
         &self.inner.file_name
     }
 
-    /// File Size (파일 크기)
+    /// File Size
     async fn file_size(&self) -> StringNumber<u64> {
         StringNumber(self.inner.file_size)
     }
 
-    /// Resource Type (리소스 유형)
+    /// Resource Type
     async fn resource_type(&self) -> u16 {
         self.inner.resource_type
     }
 
-    /// File ID (파일 ID)
+    /// File ID
     async fn fid(&self) -> u16 {
         self.inner.fid
     }
 
-    /// Create Time (생성 시간)
+    /// Create Time
     async fn create_time(&self) -> i64 {
         self.inner.create_time
     }
 
-    /// Access Time (접근 시간)
+    /// Access Time
     async fn access_time(&self) -> i64 {
         self.inner.access_time
     }
 
-    /// Write Time (쓰기 시간)
+    /// Write Time
     async fn write_time(&self) -> i64 {
         self.inner.write_time
     }
 
-    /// Change Time (변경 시간)
+    /// Change Time
     async fn change_time(&self) -> i64 {
         self.inner.change_time
     }
 
-    /// Threat Category (위협 범주)
+    /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
 
-    /// Confidence Score (신뢰도)
+    /// Confidence
     async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
-    /// Triage Scores (분류 점수)
+    /// Triage Scores
     async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
@@ -168,7 +168,7 @@ impl BlocklistSmb {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
-    /// Threat Level (위협 수준)
+    /// Threat Level
     async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }

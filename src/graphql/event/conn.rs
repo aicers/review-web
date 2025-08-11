@@ -14,6 +14,7 @@ pub(super) struct PortScan {
 
 #[Object]
 impl PortScan {
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -78,17 +79,16 @@ impl PortScan {
     }
 
     /// Protocol Number
-    /// TCP: 6, UDP: 17
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
 
-    /// Start Time
+    /// Detection Start Time
     async fn start_time(&self) -> DateTime<Utc> {
         self.inner.start_time
     }
 
-    /// End Time
+    /// Detection End Time
     async fn end_time(&self) -> DateTime<Utc> {
         self.inner.end_time
     }
@@ -124,6 +124,7 @@ pub(super) struct MultiHostPortScan {
 
 #[Object]
 impl MultiHostPortScan {
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -133,6 +134,7 @@ impl MultiHostPortScan {
         self.inner.src_addr.to_string()
     }
 
+    /// Source Country
     /// The two-letter country code of the source IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
@@ -140,19 +142,21 @@ impl MultiHostPortScan {
         country_code(ctx, self.inner.src_addr)
     }
 
+    /// Source Customer
     async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.src_addr)
     }
 
+    /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.src_addr)
     }
 
-    /// Destination IP Addresses
+    /// Destination IP (Address) List
     async fn dst_addrs(&self) -> Vec<String> {
         self.inner
             .dst_addrs
@@ -161,6 +165,7 @@ impl MultiHostPortScan {
             .collect()
     }
 
+    /// Destination Country List
     /// The two-letter country code of the destination IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
@@ -172,6 +177,7 @@ impl MultiHostPortScan {
             .collect()
     }
 
+    /// Destination Customer List
     async fn dst_customers(&self, ctx: &Context<'_>) -> Result<Vec<Option<Customer>>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
@@ -182,6 +188,7 @@ impl MultiHostPortScan {
         Ok(customers)
     }
 
+    /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
@@ -195,26 +202,32 @@ impl MultiHostPortScan {
         )
     }
 
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }
 
+    /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
 
+    /// Detection Start Time
     async fn start_time(&self) -> DateTime<Utc> {
         self.inner.start_time
     }
 
+    /// Detection End Time
     async fn end_time(&self) -> DateTime<Utc> {
         self.inner.end_time
     }
 
+    /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
 
+    /// Triage Scores
     async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
@@ -222,6 +235,7 @@ impl MultiHostPortScan {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
+    /// Threat Level
     async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
@@ -239,10 +253,12 @@ pub(super) struct ExternalDdos {
 
 #[Object]
 impl ExternalDdos {
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
+    /// Source IP (Address) List
     async fn src_addrs(&self) -> Vec<String> {
         self.inner
             .src_addrs
@@ -251,6 +267,7 @@ impl ExternalDdos {
             .collect()
     }
 
+    /// Source Country List
     /// The two-letter country code of the source IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
@@ -262,6 +279,7 @@ impl ExternalDdos {
             .collect()
     }
 
+    /// Source Customer List
     async fn src_customers(&self, ctx: &Context<'_>) -> Result<Vec<Option<Customer>>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
@@ -272,6 +290,7 @@ impl ExternalDdos {
         Ok(customers)
     }
 
+    /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
@@ -285,10 +304,12 @@ impl ExternalDdos {
         )
     }
 
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
 
+    /// Destination Country
     /// The two-letter country code of the destination IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
@@ -296,34 +317,41 @@ impl ExternalDdos {
         country_code(ctx, self.inner.dst_addr)
     }
 
+    /// Destination Customer
     async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.dst_addr)
     }
 
+    /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
     }
 
+    /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
 
+    /// Detection Start Time
     async fn start_time(&self) -> DateTime<Utc> {
         self.inner.start_time
     }
 
+    /// Detection End Time
     async fn end_time(&self) -> DateTime<Utc> {
         self.inner.end_time
     }
 
+    /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
 
+    /// Triage Scores
     async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
@@ -348,6 +376,7 @@ pub(super) struct BlocklistConn {
 
 #[Object]
 impl BlocklistConn {
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -362,6 +391,7 @@ impl BlocklistConn {
         self.inner.src_addr.to_string()
     }
 
+    /// Source Country
     /// The two-letter country code of the source IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
@@ -369,26 +399,31 @@ impl BlocklistConn {
         country_code(ctx, self.inner.src_addr)
     }
 
+    /// Source Customer
     async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.src_addr)
     }
 
+    /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.src_addr)
     }
 
+    /// Source Port (Number)
     async fn src_port(&self) -> u16 {
         self.inner.src_port
     }
 
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
 
+    /// Destination Country
     /// The two-letter country code of the destination IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
@@ -396,70 +431,86 @@ impl BlocklistConn {
         country_code(ctx, self.inner.dst_addr)
     }
 
+    /// Destination Customer
     async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.dst_addr)
     }
 
+    /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
     }
 
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }
 
+    /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
 
+    /// Connection State
     async fn conn_state(&self) -> String {
         self.inner.conn_state.clone()
     }
 
+    /// Duration
     async fn duration(&self) -> StringNumber<i64> {
         StringNumber(self.inner.duration)
     }
 
+    /// Service Name
     async fn service(&self) -> String {
         self.inner.service.clone()
     }
 
+    /// Bytes Sent (by Source)
     async fn orig_bytes(&self) -> StringNumber<u64> {
         StringNumber(self.inner.orig_bytes)
     }
 
+    /// Bytes Received (by Destination)
     async fn resp_bytes(&self) -> StringNumber<u64> {
         StringNumber(self.inner.resp_bytes)
     }
 
+    /// Packets Sent (by Source)
     async fn orig_pkts(&self) -> StringNumber<u64> {
         StringNumber(self.inner.orig_pkts)
     }
 
+    /// Packets Received (by Destination)
     async fn resp_pkts(&self) -> StringNumber<u64> {
         StringNumber(self.inner.resp_pkts)
     }
 
+    /// Layer 2 Bytes Sent (by Source)
     async fn orig_l2_bytes(&self) -> StringNumber<u64> {
         StringNumber(self.inner.orig_l2_bytes)
     }
 
+    /// Layer 2 Bytes Received (by Destination)
     async fn resp_l2_bytes(&self) -> StringNumber<u64> {
         StringNumber(self.inner.resp_l2_bytes)
     }
 
+    /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
 
+    /// Confidence
     async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
+    /// Triage Scores
     async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
@@ -467,6 +518,7 @@ impl BlocklistConn {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
+    /// Threat Level
     async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
@@ -484,18 +536,22 @@ pub(super) struct TorConnectionConn {
 
 #[Object]
 impl TorConnectionConn {
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
+    /// Sensor
     async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
+    /// Source IP (Address)
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
     }
 
+    /// Source Country
     /// The two-letter country code of the source IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
@@ -503,26 +559,31 @@ impl TorConnectionConn {
         country_code(ctx, self.inner.src_addr)
     }
 
+    /// Source Customer
     async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.src_addr)
     }
 
+    /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.src_addr)
     }
 
+    /// Source Port (Number)
     async fn src_port(&self) -> u16 {
         self.inner.src_port
     }
 
+    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
 
+    /// Destination Country
     /// The two-letter country code of the destination IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
@@ -530,70 +591,86 @@ impl TorConnectionConn {
         country_code(ctx, self.inner.dst_addr)
     }
 
+    /// Destination Customer
     async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.dst_addr)
     }
 
+    /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
     }
 
+    /// Destination Port (Number)
     async fn dst_port(&self) -> u16 {
         self.inner.dst_port
     }
 
+    /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
 
+    /// Connection State
     async fn conn_state(&self) -> String {
         self.inner.conn_state.clone()
     }
 
+    /// Duration
     async fn duration(&self) -> StringNumber<i64> {
         StringNumber(self.inner.duration)
     }
 
+    /// Service Name
     async fn service(&self) -> String {
         self.inner.service.clone()
     }
 
+    /// Bytes Sent (by Source)
     async fn orig_bytes(&self) -> StringNumber<u64> {
         StringNumber(self.inner.orig_bytes)
     }
 
+    /// Bytes Received (by Destination)
     async fn resp_bytes(&self) -> StringNumber<u64> {
         StringNumber(self.inner.resp_bytes)
     }
 
+    /// Packets Sent (by Source)
     async fn orig_pkts(&self) -> StringNumber<u64> {
         StringNumber(self.inner.orig_pkts)
     }
 
+    /// Packets Received (by Destination)
     async fn resp_pkts(&self) -> StringNumber<u64> {
         StringNumber(self.inner.resp_pkts)
     }
 
+    /// Layer 2 Bytes Sent (by Source)
     async fn orig_l2_bytes(&self) -> StringNumber<u64> {
         StringNumber(self.inner.orig_l2_bytes)
     }
 
+    /// Layer 2 Bytes Received (by Destination)
     async fn resp_l2_bytes(&self) -> StringNumber<u64> {
         StringNumber(self.inner.resp_l2_bytes)
     }
 
+    /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
 
+    /// Confidence
     async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
+    /// Triage Scores
     async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
@@ -601,10 +678,12 @@ impl TorConnectionConn {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
+    /// Threat Level
     async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
 
+    /// Learning Method
     async fn learning_method(&self) -> LearningMethod {
         LearningMethod::SemiSupervised
     }

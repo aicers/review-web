@@ -11,7 +11,7 @@ pub(super) struct BlocklistNfs {
 
 #[Object]
 impl BlocklistNfs {
-    /// Timestamp
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -85,22 +85,22 @@ impl BlocklistNfs {
         self.inner.dst_port
     }
 
-    /// Protocol Number - TCP: 6, UDP: 17
+    /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
 
-    /// End Time (종료 시간)
+    /// End Time
     async fn end_time(&self) -> i64 {
         self.inner.end_time
     }
 
-    /// Read Files (읽기 파일 목록)
+    /// Read Files
     async fn read_files(&self) -> &[String] {
         &self.inner.read_files
     }
 
-    /// Write Files (쓰기 파일 목록)
+    /// Write Files
     async fn write_files(&self) -> &[String] {
         &self.inner.write_files
     }

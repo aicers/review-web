@@ -12,7 +12,7 @@ pub(super) struct WindowsThreat {
 
 #[Object]
 impl WindowsThreat {
-    /// Timestamp
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -67,7 +67,7 @@ impl WindowsThreat {
         &self.inner.db_name
     }
 
-    /// Rule ID
+    /// Pattern ID
     async fn rule_id(&self) -> u32 {
         self.inner.rule_id
     }
@@ -90,12 +90,12 @@ impl WindowsThreat {
         &self.inner.attack_kind
     }
 
-    /// Confidence Score
+    /// Confidence
     async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
-    /// Threat Category
+    /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }

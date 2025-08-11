@@ -11,6 +11,7 @@ pub(super) struct BlocklistDhcp {
 
 #[Object]
 impl BlocklistDhcp {
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -85,7 +86,6 @@ impl BlocklistDhcp {
     }
 
     /// Protocol Number
-    /// TCP: 6, UDP: 17
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
@@ -96,7 +96,6 @@ impl BlocklistDhcp {
     }
 
     /// Message Type
-    /// DHCP message type
     async fn msg_type(&self) -> u8 {
         self.inner.msg_type
     }
@@ -126,7 +125,7 @@ impl BlocklistDhcp {
         self.inner.subnet_mask.to_string()
     }
 
-    /// Router
+    /// Routers
     async fn router(&self) -> String {
         self.inner
             .router
@@ -136,7 +135,7 @@ impl BlocklistDhcp {
             .join(", ")
     }
 
-    /// Domain Name Server
+    /// Domain Name Servers
     async fn domain_name_server(&self) -> String {
         self.inner
             .domain_name_server
@@ -186,7 +185,7 @@ impl BlocklistDhcp {
         StringNumber(self.inner.rebinding_time)
     }
 
-    /// Class ID
+    /// Class ID List
     async fn class_id(&self) -> String {
         self.inner
             .class_id
@@ -201,7 +200,7 @@ impl BlocklistDhcp {
         self.inner.client_id_type
     }
 
-    /// Client ID
+    /// Client ID List
     async fn client_id(&self) -> String {
         self.inner
             .client_id

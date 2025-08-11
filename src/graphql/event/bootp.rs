@@ -11,6 +11,7 @@ pub(super) struct BlocklistBootp {
 
 #[Object]
 impl BlocklistBootp {
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -85,7 +86,6 @@ impl BlocklistBootp {
     }
 
     /// Protocol Number
-    /// TCP: 6, UDP: 17
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
@@ -102,7 +102,6 @@ impl BlocklistBootp {
     }
 
     /// Hardware Type
-    /// 하단 참조
     async fn htype(&self) -> u8 {
         self.inner.htype
     }

@@ -85,7 +85,6 @@ impl BlocklistSsh {
     }
 
     /// Protocol Number
-    /// TCP: 6, UDP: 17
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
@@ -110,7 +109,7 @@ impl BlocklistSsh {
         &self.inner.cipher_alg
     }
 
-    /// MAC Algorithm
+    /// MAC Algorithms
     async fn mac_alg(&self) -> &str {
         &self.inner.mac_alg
     }
@@ -140,7 +139,7 @@ impl BlocklistSsh {
         &self.inner.hassh
     }
 
-    /// HASSH Server Algorithms
+    /// HASSH Server Algorithm
     async fn hassh_server_algorithms(&self) -> &str {
         &self.inner.hassh_server_algorithms
     }
@@ -150,12 +149,12 @@ impl BlocklistSsh {
         &self.inner.hassh_server
     }
 
-    /// Client Server Host Key Algorithms
+    /// Client Signed Host Key Algorithm
     async fn client_shka(&self) -> &str {
         &self.inner.client_shka
     }
 
-    /// Server Server Host Key Algorithms
+    /// Server Signed Host Key Algorithm
     async fn server_shka(&self) -> &str {
         &self.inner.server_shka
     }

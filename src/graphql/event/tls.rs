@@ -11,7 +11,7 @@ pub(super) struct BlocklistTls {
 
 #[Object]
 impl BlocklistTls {
-    /// Timestamp
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -54,7 +54,6 @@ impl BlocklistTls {
     }
 
     /// Destination IP (Address)
-    /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
     }
@@ -87,7 +86,6 @@ impl BlocklistTls {
     }
 
     /// Protocol Number
-    /// TCP: 6, UDP: 17
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
@@ -142,62 +140,62 @@ impl BlocklistTls {
         &self.inner.ja3s
     }
 
-    /// Certificate Serial
+    /// Certificate Serial Number
     async fn serial(&self) -> &str {
         &self.inner.serial
     }
 
-    /// Subject Country
+    /// (Certificate) Subject Country
     async fn subject_country(&self) -> &str {
         &self.inner.subject_country
     }
 
-    /// Subject Organization Name
+    /// (Certificate) Subject Organization Name
     async fn subject_org_name(&self) -> &str {
         &self.inner.subject_org_name
     }
 
-    /// Subject Common Name
+    /// (Certificate) Common Name
     async fn subject_common_name(&self) -> &str {
         &self.inner.subject_common_name
     }
 
-    /// Validity Not Before
+    /// (Certificate) Validity Start
     async fn validity_not_before(&self) -> StringNumber<i64> {
         StringNumber(self.inner.validity_not_before)
     }
 
-    /// Validity Not After
+    /// (Certificate) Validity End
     async fn validity_not_after(&self) -> StringNumber<i64> {
         StringNumber(self.inner.validity_not_after)
     }
 
-    /// Subject Alternative Name
+    /// (Certificate) Subject Alternative Name
     async fn subject_alt_name(&self) -> &str {
         &self.inner.subject_alt_name
     }
 
-    /// Issuer Country
+    /// (Certificate) Issuer Country
     async fn issuer_country(&self) -> &str {
         &self.inner.issuer_country
     }
 
-    /// Issuer Organization Name
+    /// (Certificate) Issuer Organization Name
     async fn issuer_org_name(&self) -> &str {
         &self.inner.issuer_org_name
     }
 
-    /// Issuer Organization Unit Name
+    /// (Certificate) Issuer Organization Unit Name
     async fn issuer_org_unit_name(&self) -> &str {
         &self.inner.issuer_org_unit_name
     }
 
-    /// Issuer Common Name
+    /// (Certificate) Issuer Common Name
     async fn issuer_common_name(&self) -> &str {
         &self.inner.issuer_common_name
     }
 
-    /// Last Alert
+    /// Last Alert Message
     async fn last_alert(&self) -> u8 {
         self.inner.last_alert
     }
@@ -238,7 +236,7 @@ pub(super) struct SuspiciousTlsTraffic {
 
 #[Object]
 impl SuspiciousTlsTraffic {
-    /// Timestamp
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -313,7 +311,6 @@ impl SuspiciousTlsTraffic {
     }
 
     /// Protocol Number
-    /// TCP: 6, UDP: 17
     async fn proto(&self) -> u8 {
         self.inner.proto
     }
@@ -368,62 +365,62 @@ impl SuspiciousTlsTraffic {
         &self.inner.ja3s
     }
 
-    /// Certificate Serial
+    /// Certificate Serial Number
     async fn serial(&self) -> &str {
         &self.inner.serial
     }
 
-    /// Subject Country
+    /// (Certificate) Subject Country
     async fn subject_country(&self) -> &str {
         &self.inner.subject_country
     }
 
-    /// Subject Organization Name
+    /// (Certificate) Subject Organization Name
     async fn subject_org_name(&self) -> &str {
         &self.inner.subject_org_name
     }
 
-    /// Subject Common Name
+    /// (Certificate) Common Name
     async fn subject_common_name(&self) -> &str {
         &self.inner.subject_common_name
     }
 
-    /// Validity Not Before
+    /// (Certificate) Validity Start
     async fn validity_not_before(&self) -> StringNumber<i64> {
         StringNumber(self.inner.validity_not_before)
     }
 
-    /// Validity Not After
+    /// (Certificate) Validity End
     async fn validity_not_after(&self) -> StringNumber<i64> {
         StringNumber(self.inner.validity_not_after)
     }
 
-    /// Subject Alternative Name
+    /// (Certificate) Subject Alternative Name
     async fn subject_alt_name(&self) -> &str {
         &self.inner.subject_alt_name
     }
 
-    /// Issuer Country
+    /// (Certificate) Issuer Country
     async fn issuer_country(&self) -> &str {
         &self.inner.issuer_country
     }
 
-    /// Issuer Organization Name
+    /// (Certificate) Issuer Organization Name
     async fn issuer_org_name(&self) -> &str {
         &self.inner.issuer_org_name
     }
 
-    /// Issuer Organization Unit Name
+    /// (Certificate) Issuer Organization Unit Name
     async fn issuer_org_unit_name(&self) -> &str {
         &self.inner.issuer_org_unit_name
     }
 
-    /// Issuer Common Name
+    /// (Certificate) Issuer Common Name
     async fn issuer_common_name(&self) -> &str {
         &self.inner.issuer_common_name
     }
 
-    /// Last Alert
+    /// Last Alert Message
     async fn last_alert(&self) -> u8 {
         self.inner.last_alert
     }

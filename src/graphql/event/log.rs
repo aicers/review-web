@@ -12,7 +12,7 @@ pub(super) struct ExtraThreat {
 
 #[Object]
 impl ExtraThreat {
-    /// Timestamp
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -37,9 +37,7 @@ impl ExtraThreat {
         &self.inner.db_name
     }
 
-    /// Rule ID
-    /// The rule id of the event in string wthin the range representable
-    /// by a `u32`.
+    /// Pattern ID
     async fn rule_id(&self) -> ID {
         ID(self.inner.rule_id.to_string())
     }
@@ -50,8 +48,6 @@ impl ExtraThreat {
     }
 
     /// Cluster ID
-    /// The cluster id of the event in string wthin the range representable
-    /// by a `usize`.
     async fn cluster_id(&self) -> ID {
         ID(self
             .inner
@@ -64,12 +60,12 @@ impl ExtraThreat {
         &self.inner.attack_kind
     }
 
-    /// Confidence Score
+    /// Confidence
     async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
-    /// Threat Category
+    /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
