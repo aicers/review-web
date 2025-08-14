@@ -73,7 +73,7 @@ impl PortScan {
         find_ip_network(&map, self.inner.dst_addr)
     }
 
-    /// Destination Ports
+    /// Destination Port (Number) List
     async fn dst_ports(&self) -> &[u16] {
         &self.inner.dst_ports
     }

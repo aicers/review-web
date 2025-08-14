@@ -34,11 +34,6 @@ impl DnsCovertChannel {
         self.inner.src_addr.to_string()
     }
 
-    /// Source Port (Number)
-    async fn src_port(&self) -> u16 {
-        self.inner.src_port
-    }
-
     /// Source Country
     /// The two-letter country code of the source IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
@@ -220,11 +215,6 @@ impl LockyRansomware {
         self.inner.src_addr.to_string()
     }
 
-    /// Source Port (Number)
-    async fn src_port(&self) -> u16 {
-        self.inner.src_port
-    }
-
     /// Source Country
     /// The two-letter country code of the source IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
@@ -247,14 +237,14 @@ impl LockyRansomware {
         find_ip_network(&map, self.inner.src_addr)
     }
 
+    /// Source Port (Number)
+    async fn src_port(&self) -> u16 {
+        self.inner.src_port
+    }
+
     /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
-    }
-
-    /// Destination Port (Number)
-    async fn dst_port(&self) -> u16 {
-        self.inner.dst_port
     }
 
     /// Destination Country
@@ -277,6 +267,11 @@ impl LockyRansomware {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
+    }
+
+    /// Destination Port (Number)
+    async fn dst_port(&self) -> u16 {
+        self.inner.dst_port
     }
 
     /// Protocol Number
@@ -499,7 +494,7 @@ impl CryptocurrencyMiningPool {
         self.inner.aa_flag
     }
 
-    /// Truncated Response Flag
+    /// Truncated Flag
     async fn tc_flag(&self) -> bool {
         self.inner.tc_flag
     }

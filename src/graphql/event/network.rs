@@ -141,7 +141,7 @@ impl NetworkThreat {
         self.inner.confidence
     }
 
-    /// Threat Category
+    /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }

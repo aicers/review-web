@@ -145,7 +145,7 @@ impl BlocklistDhcp {
             .join(", ")
     }
 
-    /// Requested IP (Address)
+    /// Request IP (Address)
     async fn req_ip_addr(&self) -> String {
         self.inner.req_ip_addr.to_string()
     }

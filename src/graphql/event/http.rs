@@ -420,11 +420,6 @@ impl TorConnection {
         self.inner.src_addr.to_string()
     }
 
-    /// Source Port (Number)
-    async fn src_port(&self) -> u16 {
-        self.inner.src_port
-    }
-
     /// Source Country
     /// The two-letter country code of the source IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
@@ -447,19 +442,14 @@ impl TorConnection {
         find_ip_network(&map, self.inner.src_addr)
     }
 
+    /// Source Port (Number)
+    async fn src_port(&self) -> u16 {
+        self.inner.src_port
+    }
+
     /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
-    }
-
-    /// Destination Port (Number)
-    async fn dst_port(&self) -> u16 {
-        self.inner.dst_port
-    }
-
-    /// Protocol Number
-    async fn proto(&self) -> u8 {
-        self.inner.proto
     }
 
     /// Destination Country
@@ -482,6 +472,16 @@ impl TorConnection {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
+    }
+
+    /// Destination Port (Number)
+    async fn dst_port(&self) -> u16 {
+        self.inner.dst_port
+    }
+
+    /// Protocol Number
+    async fn proto(&self) -> u8 {
+        self.inner.proto
     }
 
     /// Host

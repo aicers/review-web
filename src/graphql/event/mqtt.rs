@@ -115,7 +115,7 @@ impl BlocklistMqtt {
         self.inner.connack_reason
     }
 
-    /// Subscription Request
+    /// Subscription
     async fn subscribe(&self) -> &[String] {
         &self.inner.subscribe
     }
