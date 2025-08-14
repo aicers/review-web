@@ -12,38 +12,42 @@ pub(super) struct ExtraThreat {
 
 #[Object]
 impl ExtraThreat {
+    /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
+    /// Sensor
     async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
+    /// Service Name
     async fn service(&self) -> &str {
         &self.inner.service
     }
 
+    /// Event Content
     async fn content(&self) -> &str {
         &self.inner.content
     }
 
+    /// Database Name
     async fn db_name(&self) -> &str {
         &self.inner.db_name
     }
 
-    /// The rule id of the event in string wthin the range representable
-    /// by a `u32`.
+    /// Pattern ID
     async fn rule_id(&self) -> ID {
         ID(self.inner.rule_id.to_string())
     }
 
+    /// Referenced Label
     async fn matched_to(&self) -> &str {
         &self.inner.matched_to
     }
 
-    /// The cluster id of the event in string wthin the range representable
-    /// by a `usize`.
+    /// Cluster ID
     async fn cluster_id(&self) -> ID {
         ID(self
             .inner
@@ -51,18 +55,22 @@ impl ExtraThreat {
             .map_or(String::new(), |id| id.to_string()))
     }
 
+    /// Attack Kind
     async fn attack_kind(&self) -> &str {
         &self.inner.attack_kind
     }
 
+    /// Confidence
     async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
+    /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
     }
 
+    /// Triage Scores
     async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
@@ -70,10 +78,12 @@ impl ExtraThreat {
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
+    /// Threat Level
     async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
 
+    /// Learning Method
     async fn learning_method(&self) -> LearningMethod {
         LearningMethod::Unsupervised
     }
