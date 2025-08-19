@@ -8,6 +8,7 @@ use async_graphql::{
 };
 use chrono::{DateTime, Utc};
 use review_database::{self as database};
+use tracing::info;
 
 use super::{
     Role, RoleGuard,
@@ -15,6 +16,7 @@ use super::{
     customer::{Customer, HostNetworkGroup, HostNetworkGroupInput},
 };
 use crate::graphql::query_with_constraints;
+use crate::info_with_username;
 
 #[derive(Default)]
 pub(super) struct NetworkQuery;
@@ -34,6 +36,7 @@ impl NetworkQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Network, NetworkTotalCount, EmptyFields>> {
+        info_with_username!(ctx, "Network configuration list retrieved");
         query_with_constraints(
             after,
             before,
@@ -57,6 +60,7 @@ impl NetworkQuery {
         let Some(inner) = map.get_by_id(i)? else {
             return Err("no such network".into());
         };
+        info_with_username!(ctx, "Network configuration for {} retrieved", inner.name);
         Ok(Network { inner })
     }
 }
@@ -84,13 +88,14 @@ impl NetworkMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.network_map();
         let entry = review_database::Network::new(
-            name,
+            name.clone(),
             description,
             networks.try_into()?,
             customer_ids,
             tag_ids,
         );
         let id = map.insert(entry)?;
+        info_with_username!(ctx, "Network {name} has been registered");
         Ok(ID(id.to_string()))
     }
 
@@ -123,6 +128,7 @@ impl NetworkMutation {
             } else {
                 String::from_utf8_lossy(&key).into()
             };
+            info_with_username!(ctx, "Network {name} has been deleted");
             removed.push(name);
         }
         Ok(removed)
@@ -141,9 +147,17 @@ impl NetworkMutation {
     ) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
+        let old_name = old.name.clone();
+        let new_name = new.name.clone();
         let store = crate::graphql::get_store(ctx).await?;
         let mut map = store.network_map();
         map.update(i, &old.try_into()?, &new.try_into()?)?;
+        info_with_username!(
+            ctx,
+            "Network {:?} has been updated to {:?}",
+            old_name,
+            new_name
+        );
         Ok(id)
     }
 }

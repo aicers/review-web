@@ -6,9 +6,11 @@ use async_graphql::{
     connection::{Connection, EmptyFields},
 };
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use super::{ParseEnumError, Role, RoleGuard};
 use crate::graphql::query_with_constraints;
+use crate::info_with_username;
 
 #[derive(Default)]
 pub(super) struct TemplateQuery;
@@ -82,6 +84,7 @@ impl TemplateMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.template_map();
         map.insert(template)?;
+        info_with_username!(ctx, "Template {name} has been registered");
         Ok(name)
     }
 
@@ -93,6 +96,7 @@ impl TemplateMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.template_map();
         map.remove(&name)?;
+        info_with_username!(ctx, "Template {name} has been deleted");
         Ok(name)
     }
 
@@ -108,22 +112,26 @@ impl TemplateMutation {
         new_structured: Option<StructuredClusteringTemplateInput>,
         new_unstructured: Option<UnstructuredClusteringTemplateInput>,
     ) -> Result<bool> {
-        let (old, new) = match (
+        let (old, new, old_name, new_name) = match (
             old_structured,
             old_unstructured,
             new_structured,
             new_unstructured,
         ) {
             (Some(old_structured), None, Some(new_structured), None) => {
+                let old_name = old_structured.name.clone();
+                let new_name = new_structured.name.clone();
                 let old_template = old_structured
                     .try_into()
                     .map_err(|_| "invalid clustering algorithm")?;
                 let new_template = new_structured
                     .try_into()
                     .map_err(|_| "invalid clustering algorithm")?;
-                (old_template, new_template)
+                (old_template, new_template, old_name, new_name)
             }
             (None, Some(old_unstructured), None, Some(new_unstructured)) => {
+                let old_name = old_unstructured.name.clone();
+                let new_name = new_unstructured.name.clone();
                 let old_template = old_unstructured
                     .try_into()
                     .map_err(|_| "invalid clustering algorithm")?;
@@ -131,7 +139,7 @@ impl TemplateMutation {
                     .try_into()
                     .map_err(|_| "invalid clustering algorithm")?;
 
-                (old_template, new_template)
+                (old_template, new_template, old_name, new_name)
             }
             _ => {
                 return Err(
@@ -142,6 +150,7 @@ impl TemplateMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.template_map();
         map.update(old, new)?;
+        info_with_username!(ctx, "Template {old_name} has been updated to {new_name}");
         Ok(true)
     }
 }

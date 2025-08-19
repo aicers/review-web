@@ -141,7 +141,7 @@ where
 
             tokio::select! {
                 () = wait_shutdown => {
-                    info!("Shutting down Web server");
+                    info!("Manager GraphQL web server is stopping");
                     notify_shutdown.notify_one();
                     shutdown_completed.notified().await;
                     web_srv_shutdown_handle.notify_one();
@@ -156,7 +156,7 @@ where
         }
     });
 
-    info!("Starting Web Server");
+    info!("Manager GraphQL web server is starting");
     tokio::spawn(async {
         match server.await {
             Ok(Err(e)) => error!("Web server died: {:?}", e),

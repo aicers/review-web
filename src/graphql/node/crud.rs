@@ -9,13 +9,14 @@ use async_graphql::{
 };
 use chrono::Utc;
 use review_database::{Direction, Store};
+use tracing::info;
 
 use super::{
     super::{Role, RoleGuard},
     Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, gen_agent_key,
     input::{AgentDraftInput, ExternalServiceInput, NodeDraftInput},
 };
-use crate::graphql::query_with_constraints;
+use crate::{graphql::query_with_constraints, info_with_username};
 
 #[Object]
 impl NodeQuery {
@@ -30,6 +31,7 @@ impl NodeQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Node, NodeTotalCount, EmptyFields>> {
+        info_with_username!(ctx, "Node list requested");
         query_with_constraints(
             after,
             before,
@@ -141,6 +143,7 @@ impl NodeMutation {
             creation_time: Utc::now(),
         };
         let id = map.put(&value)?;
+        info_with_username!(ctx, "Node {} has been registered", value.name);
         Ok(ID(id.to_string()))
     }
 
@@ -166,6 +169,7 @@ impl NodeMutation {
                 Ok(key) => key,
                 Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
             };
+            info_with_username!(ctx, "Node {name} has been deleted");
             removed.push(name);
         }
         Ok(removed)
@@ -187,6 +191,7 @@ impl NodeMutation {
         let new = super::input::create_draft_update(&old, new)?;
         let old = old.try_into()?;
         map.update(i, &old, &new)?;
+        info_with_username!(ctx, "Node {:?} has been modified", old.name);
         Ok(id)
     }
 }
