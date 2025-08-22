@@ -60,8 +60,13 @@ pub(super) fn validate_and_normalize_username(
 
     // Check if it starts with a lowercase English letter
     let chars: Vec<char> = normalized.chars().collect();
-    if !chars.first().unwrap().is_ascii_lowercase() {
-        return Err(UsernameValidationError::InvalidStart);
+    if let Some(first_char) = chars.first() {
+        if !first_char.is_ascii_lowercase() {
+            return Err(UsernameValidationError::InvalidStart);
+        }
+    } else {
+        // This should never happen due to length check above, but handle gracefully
+        return Err(UsernameValidationError::InvalidLength);
     }
 
     // Special characters allowed
