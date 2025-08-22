@@ -65,7 +65,6 @@ pub(super) fn validate_and_normalize_username(
             return Err(UsernameValidationError::InvalidStart);
         }
     } else {
-        // This should never happen due to length check above, but handle gracefully
         return Err(UsernameValidationError::InvalidLength);
     }
 
