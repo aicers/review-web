@@ -1,3 +1,5 @@
+use std::fmt;
+
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
     Context, InputObject, Object, Result,
@@ -21,6 +23,24 @@ pub struct TriageResponse {
 impl From<review_database::TriageResponse> for TriageResponse {
     fn from(inner: review_database::TriageResponse) -> Self {
         Self { inner }
+    }
+}
+
+impl fmt::Display for TriageResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let tag_ids: Vec<String> = self
+            .inner
+            .tag_ids()
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
+        write!(
+            f,
+            "TriageResponse {{ id: {}, remarks: \"{}\", tag_ids: [{}] }}",
+            self.inner.id,
+            self.inner.remarks,
+            tag_ids.join(", ")
+        )
     }
 }
 
@@ -109,7 +129,18 @@ impl super::TriageResponseQuery {
     ) -> Result<Option<TriageResponse>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_response_map();
-        Ok(map.get(&sensor, &time)?.map(Into::into))
+        let response = map.get(&sensor, &time)?.map(Into::into);
+
+        if let Some(ref triage_response) = response {
+            info!("Retrieved TriageResponse: {}", triage_response);
+        } else {
+            info!(
+                "No TriageResponse found for sensor: \"{}\", time: {}",
+                sensor, time
+            );
+        }
+
+        Ok(response)
     }
 }
 
@@ -140,12 +171,30 @@ impl super::TriageResponseMutation {
         tag_ids: Vec<ID>,
         remarks: String,
     ) -> Result<ID> {
-        let tag_ids = id_args_into_uints(&tag_ids)?;
-        let pol = review_database::TriageResponse::new(sensor, time, tag_ids, remarks);
+        let tag_ids_converted = id_args_into_uints(&tag_ids)?;
+        let pol = review_database::TriageResponse::new(
+            sensor.clone(),
+            time,
+            tag_ids_converted.clone(),
+            remarks.clone(),
+        );
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_response_map();
         let id = map.put(pol)?;
         info_with_username!(ctx, "Triage response {id} has been registered");
+
+        info!(
+            "Inserted TriageResponse: id: {}, sensor: \"{}\", time: {}, tag_ids: [{}], remarks: \"{}\"",
+            id,
+            sensor,
+            time,
+            tag_ids_converted
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            remarks
+        );
 
         Ok(ID(id.to_string()))
     }
@@ -169,8 +218,15 @@ impl super::TriageResponseMutation {
             let _key = map.remove(i)?;
             info_with_username!(ctx, "Triage response {i} has been deleted");
 
+            info!("Removed TriageResponse: id: {}", i);
             removed.push(i.to_string());
         }
+
+        info!(
+            "Removed {} TriageResponse(s): ids: [{}]",
+            removed.len(),
+            removed.join(", ")
+        );
 
         Ok(removed)
     }
@@ -187,12 +243,38 @@ impl super::TriageResponseMutation {
     ) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
+        let old_tag_ids_str = old.tag_ids.as_ref().map_or_else(
+            || "None".to_string(),
+            |ids| {
+                ids.iter()
+                    .map(|id| id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+        );
+        let new_tag_ids_str = new.tag_ids.as_ref().map_or_else(
+            || "None".to_string(),
+            |ids| {
+                ids.iter()
+                    .map(|id| id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+        );
+        let old_remarks_str = old.remarks.clone().as_deref().unwrap_or("None").to_string();
+        let new_remarks_str = new.remarks.clone().as_deref().unwrap_or("None").to_string();
+
         let store = crate::graphql::get_store(ctx).await?;
         let mut map = store.triage_response_map();
-        let old: review_database::TriageResponseUpdate = old.try_into()?;
-        let new: review_database::TriageResponseUpdate = new.try_into()?;
-        map.update(i, &old, &new)?;
+        let old_update: review_database::TriageResponseUpdate = old.try_into()?;
+        let new_update: review_database::TriageResponseUpdate = new.try_into()?;
+        map.update(i, &old_update, &new_update)?;
         info_with_username!(ctx, "Triage response {i} has been modified");
+
+        info!(
+            "Updated TriageResponse: id: {}, old_tag_ids: [{}], new_tag_ids: [{}], old_remarks: \"{}\", new_remarks: \"{}\"",
+            i, old_tag_ids_str, new_tag_ids_str, old_remarks_str, new_remarks_str
+        );
 
         Ok(id)
     }

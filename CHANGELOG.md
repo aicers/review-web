@@ -24,6 +24,10 @@ this project adheres to
   brute force attacks.
 - Added `confidence` field to `tidbRule` GraphQL API.
 - Added `kind` field to `tidbRule` GraphQL API.
+- Implemented comprehensive logging for `TriageResponse` operations. Added
+  `Display` trait implementation for human-friendly logging output and detailed
+  audit logs for all insert, update, remove, and retrieve operations on triage
+  responses.
 
 ### Changed
 
