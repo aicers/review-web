@@ -63,6 +63,11 @@ this project adheres to
     `count_rounds_by_cluster`, `load_rounds_by_cluster`,
     `get_column_types_of_model`, `get_top_ip_addresses_of_cluster`,
     `get_top_ip_addresses_of_model`
+- Updated GraphQL APIs to reflect the addition of the `PeriodForSearch` field in
+  the `Filter` structure from review-database.
+  - Defined GraphQL input types `PeriodForSearchInput`, `PeriodInput` and output
+    types `PeriodForSearch`, `CustomPeriod`.
+  - Affected GraphQL APIs: `insertFilter`, `replaceFilter`, `filterList`, `filter`.
 
 ### Fixed
 

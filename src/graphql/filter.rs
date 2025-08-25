@@ -1,9 +1,32 @@
 use anyhow::{Context as AnyhowContext, anyhow};
 use async_graphql::{Context, Enum, ID, InputObject, Object, Result, SimpleObject};
+use chrono::{DateTime, Utc};
 use review_database::{self as database};
 use serde::{Deserialize, Serialize};
 
 use super::{Role, RoleGuard, customer::HostNetworkGroup, event::EndpointInput};
+
+#[derive(Clone, Eq, PartialEq, InputObject)]
+pub(super) struct PeriodForSearchInput {
+    recent: Option<String>,
+    custom: Option<PeriodInput>,
+}
+
+#[derive(Clone, Eq, PartialEq, InputObject)]
+pub(super) struct PeriodInput {
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+}
+
+impl From<PeriodForSearchInput> for database::PeriodForSearch {
+    fn from(input: PeriodForSearchInput) -> Self {
+        match (input.recent, input.custom) {
+            (None, Some(custom)) => database::PeriodForSearch::Custom(custom.start, custom.end),
+            (Some(recent), Some(_) | None) => database::PeriodForSearch::Recent(recent), // Prefer recent if both provided
+            (None, None) => database::PeriodForSearch::Recent("1 hour".to_string()), // Default to 1 hour
+        }
+    }
+}
 
 #[derive(Default)]
 pub(super) struct FilterQuery;
@@ -68,6 +91,7 @@ impl FilterMutation {
         kinds: Option<Vec<String>>,
         learning_methods: Option<Vec<LearningMethod>>,
         confidence: Option<f32>,
+        period: Option<PeriodForSearchInput>,
     ) -> Result<String> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.filter_map();
@@ -105,6 +129,10 @@ impl FilterMutation {
             kinds,
             learning_methods: learning_methods.map(|v| v.into_iter().map(Into::into).collect()),
             confidence,
+            period: period.map_or_else(
+                || database::PeriodForSearch::Recent("1 hour".to_string()),
+                Into::into,
+            ),
         };
 
         map.insert(filter)?;
@@ -267,6 +295,42 @@ impl PartialEq<NetworkInputPointInput> for NetworkInputPoint {
     }
 }
 
+struct PeriodForSearch<'a> {
+    inner: &'a database::PeriodForSearch,
+}
+
+#[derive(Clone, Eq, PartialEq, SimpleObject)]
+struct CustomPeriod {
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+}
+
+#[Object]
+impl PeriodForSearch<'_> {
+    async fn recent(&self) -> Option<String> {
+        match self.inner {
+            database::PeriodForSearch::Recent(recent) => Some(recent.clone()),
+            database::PeriodForSearch::Custom(..) => None,
+        }
+    }
+
+    async fn custom(&self) -> Option<CustomPeriod> {
+        match self.inner {
+            database::PeriodForSearch::Custom(start, end) => Some(CustomPeriod {
+                start: *start,
+                end: *end,
+            }),
+            database::PeriodForSearch::Recent(_) => None,
+        }
+    }
+}
+
+impl<'a> From<&'a database::PeriodForSearch> for PeriodForSearch<'a> {
+    fn from(inner: &'a database::PeriodForSearch) -> Self {
+        Self { inner }
+    }
+}
+
 struct Filter {
     inner: database::Filter,
 }
@@ -399,6 +463,10 @@ impl Filter {
     async fn confidence(&self) -> Option<f32> {
         self.inner.confidence
     }
+
+    async fn period_for_search(&self) -> PeriodForSearch<'_> {
+        (&self.inner.period).into()
+    }
 }
 
 impl From<database::Filter> for Filter {
@@ -455,6 +523,10 @@ impl TryFrom<FilterInput> for database::Filter {
                 .learning_methods
                 .map(|values| values.into_iter().map(Into::into).collect()),
             confidence: input.confidence,
+            period: input.period.map_or_else(
+                || database::PeriodForSearch::Recent("1 hour".to_string()),
+                Into::into,
+            ),
         })
     }
 }
@@ -465,6 +537,11 @@ impl PartialEq<FilterInput> for &database::Filter {
             (Some(lhs), Some(rhs)) => lhs.iter().zip(rhs.iter()).all(|(lhs, rhs)| *lhs == *rhs),
             (None, None) => true,
             _ => false,
+        };
+        let period: database::PeriodForSearch = if let Some(rhs) = &rhs.period {
+            rhs.clone().into()
+        } else {
+            database::PeriodForSearch::Recent("1 hour".to_string())
         };
         self.name == rhs.name
             && match (&self.directions, &rhs.directions) {
@@ -490,6 +567,7 @@ impl PartialEq<FilterInput> for &database::Filter {
             && self.categories == rhs.categories
             && self.levels == rhs.levels
             && self.kinds == rhs.kinds
+            && self.period == period
     }
 }
 
@@ -537,6 +615,7 @@ struct FilterInput {
     kinds: Option<Vec<String>>,
     learning_methods: Option<Vec<LearningMethod>>,
     confidence: Option<f32>,
+    period: Option<PeriodForSearchInput>,
 }
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
