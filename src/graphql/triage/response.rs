@@ -1,5 +1,3 @@
-use std::fmt;
-
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
     Context, InputObject, Object, Result,
@@ -23,24 +21,6 @@ pub struct TriageResponse {
 impl From<review_database::TriageResponse> for TriageResponse {
     fn from(inner: review_database::TriageResponse) -> Self {
         Self { inner }
-    }
-}
-
-impl fmt::Display for TriageResponse {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let tag_ids: Vec<String> = self
-            .inner
-            .tag_ids()
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect();
-        write!(
-            f,
-            "TriageResponse {{ id: {}, remarks: \"{}\", tag_ids: [{}] }}",
-            self.inner.id,
-            self.inner.remarks,
-            tag_ids.join(", ")
-        )
     }
 }
 
@@ -129,10 +109,23 @@ impl super::TriageResponseQuery {
     ) -> Result<Option<TriageResponse>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_response_map();
-        let response = map.get(&sensor, &time)?.map(Into::into);
+        let response: Option<TriageResponse> = map.get(&sensor, &time)?.map(Into::into);
 
         if let Some(ref triage_response) = response {
-            info!("Retrieved TriageResponse: {}", triage_response);
+            let tag_ids: Vec<String> = triage_response
+                .inner
+                .tag_ids()
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect();
+            info!(
+                "Retrieved TriageResponse: id: {}, sensor: \"{}\", time: {}, tag_ids: [{}], remarks: \"{}\"",
+                triage_response.inner.id,
+                sensor,
+                time,
+                tag_ids.join(", "),
+                triage_response.inner.remarks
+            );
         } else {
             info!(
                 "No TriageResponse found for sensor: \"{}\", time: {}",
