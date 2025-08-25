@@ -53,6 +53,16 @@ this project adheres to
     previously blocked by the `jsonwebtoken` crate’s default expiration
     check—and ensures that `validate_max_parallel_sessions` accurately counts
     only valid, unexpired tokens.
+- Migrated from PostgreSQL-based `Database` API to RocksDB-based `Table` API.
+  The review-database crate has been updated to fetch `ColumnStats` and
+  `CsvColumnExtra` from RocksDB instead of PostgreSQL. With the corresponding
+  RocksDB-based methods now available, existing APIs that previously relied on
+  PostgreSQL have been modified to use the RocksDB-based implementations instead.
+  The following methods were replaced with their RocksDB-based equivalents:
+  - `get_top_columns_of_model`, `get_top_multimaps_of_model`,
+    `count_rounds_by_cluster`, `load_rounds_by_cluster`,
+    `get_column_types_of_model`, `get_top_ip_addresses_of_cluster`,
+    `get_top_ip_addresses_of_model`
 
 ### Fixed
 
