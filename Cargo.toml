@@ -58,3 +58,4 @@ name = "minireview"
 
 [lints.clippy]
 pedantic = "warn"
+unwrap_used = "warn"
