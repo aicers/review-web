@@ -12,7 +12,8 @@ use async_graphql::{
 };
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use review_database::{
-    self as database, Direction, Iterable, Store, Table,
+    self as database, Iterable, Store, Table,
+    event::Direction,
     types::{self},
 };
 use serde::Serialize;

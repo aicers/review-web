@@ -198,10 +198,10 @@ enum EndpointKind {
 }
 
 struct Endpoint<'a> {
-    inner: &'a database::FilterEndpoint,
+    inner: &'a database::event::FilterEndpoint,
 }
 
-impl PartialEq<EndpointInput> for database::FilterEndpoint {
+impl PartialEq<EndpointInput> for database::event::FilterEndpoint {
     fn eq(&self, other: &EndpointInput) -> bool {
         let other_predefined = if let Some(id) = &other.predefined {
             if let Ok(id) = id.parse() {
@@ -227,7 +227,7 @@ impl PartialEq<EndpointInput> for database::FilterEndpoint {
     }
 }
 
-impl TryFrom<EndpointInput> for database::FilterEndpoint {
+impl TryFrom<EndpointInput> for database::event::FilterEndpoint {
     type Error = anyhow::Error;
 
     fn try_from(input: EndpointInput) -> anyhow::Result<Self> {
@@ -268,8 +268,8 @@ impl Endpoint<'_> {
     }
 }
 
-impl<'a> From<&'a database::FilterEndpoint> for Endpoint<'a> {
-    fn from(inner: &'a database::FilterEndpoint) -> Self {
+impl<'a> From<&'a database::event::FilterEndpoint> for Endpoint<'a> {
+    fn from(inner: &'a database::event::FilterEndpoint) -> Self {
         Self { inner }
     }
 }
@@ -573,7 +573,7 @@ impl PartialEq<FilterInput> for &database::Filter {
 
 /// Traffic flow direction.
 #[derive(Clone, Copy, Enum, Eq, PartialEq)]
-#[graphql(remote = "database::FlowKind")]
+#[graphql(remote = "database::event::FlowKind")]
 pub(super) enum FlowKind {
     Inbound,
     Outbound,
@@ -582,7 +582,7 @@ pub(super) enum FlowKind {
 
 /// Learning method.
 #[derive(Clone, Copy, Enum, Eq, PartialEq)]
-#[graphql(remote = "database::LearningMethod")]
+#[graphql(remote = "database::event::LearningMethod")]
 pub(super) enum LearningMethod {
     Unsupervised,
     SemiSupervised,
@@ -619,7 +619,7 @@ struct FilterInput {
 }
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
-#[graphql(remote = "database::TrafficDirection")]
+#[graphql(remote = "database::event::TrafficDirection")]
 pub(super) enum TrafficDirection {
     From,
     To,

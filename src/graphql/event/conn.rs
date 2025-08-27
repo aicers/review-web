@@ -1,6 +1,6 @@
 use async_graphql::{Context, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
-use review_database::{self as database, event::TorConnectionConn as DatabaseTorConnectionConn};
+use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
 use crate::graphql::{
@@ -475,9 +475,9 @@ impl BlocklistConn {
         self.inner.conn_state.clone()
     }
 
-    /// Duration
-    async fn duration(&self) -> StringNumber<i64> {
-        StringNumber(self.inner.duration)
+    /// End Time
+    async fn end_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.end_time)
     }
 
     /// Service Name
@@ -546,7 +546,7 @@ impl From<database::BlocklistConn> for BlocklistConn {
 }
 
 pub(super) struct TorConnectionConn {
-    inner: DatabaseTorConnectionConn,
+    inner: database::TorConnectionConn,
 }
 
 #[Object]
@@ -635,9 +635,9 @@ impl TorConnectionConn {
         self.inner.conn_state.clone()
     }
 
-    /// Duration
-    async fn duration(&self) -> StringNumber<i64> {
-        StringNumber(self.inner.duration)
+    /// End Time
+    async fn end_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.end_time)
     }
 
     /// Service Name
@@ -704,8 +704,8 @@ impl TorConnectionConn {
     }
 }
 
-impl From<DatabaseTorConnectionConn> for TorConnectionConn {
-    fn from(inner: DatabaseTorConnectionConn) -> Self {
+impl From<database::TorConnectionConn> for TorConnectionConn {
+    fn from(inner: database::TorConnectionConn) -> Self {
         Self { inner }
     }
 }

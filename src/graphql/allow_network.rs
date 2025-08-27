@@ -3,7 +3,7 @@ use async_graphql::{
     Context, ID, InputObject, Object, Result,
     connection::{Connection, EmptyFields},
 };
-use database::Direction;
+use database::event::Direction;
 use review_database::{self as database, Store};
 use serde::{Deserialize, Serialize};
 use tracing::info;

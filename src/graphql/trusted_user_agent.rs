@@ -4,7 +4,7 @@ use async_graphql::{
     connection::{Connection, EmptyFields},
 };
 use chrono::{DateTime, Utc};
-use database::{Direction, Iterable};
+use database::{Iterable, event::Direction};
 use review_database::{self as database, Store};
 
 use super::{BoxedAgentManager, Role, RoleGuard};
@@ -62,7 +62,7 @@ impl UserAgentMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.trusted_user_agent_map();
         for user_agent in user_agents {
-            let entry = review_database::TrustedUserAgent {
+            let entry = database::TrustedUserAgent {
                 user_agent,
                 updated_at: Utc::now(),
             };
@@ -121,7 +121,7 @@ impl UserAgentMutation {
     ) -> Result<bool> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.trusted_user_agent_map();
-        let new = review_database::TrustedUserAgent {
+        let new = database::TrustedUserAgent {
             user_agent: new,
             updated_at: Utc::now(),
         };
@@ -138,8 +138,8 @@ struct TrustedUserAgent {
     updated_at: DateTime<Utc>,
 }
 
-impl From<review_database::TrustedUserAgent> for TrustedUserAgent {
-    fn from(input: review_database::TrustedUserAgent) -> Self {
+impl From<database::TrustedUserAgent> for TrustedUserAgent {
+    fn from(input: database::TrustedUserAgent) -> Self {
         Self {
             user_agent: input.user_agent,
             updated_at: input.updated_at,

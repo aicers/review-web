@@ -4,7 +4,7 @@ use async_graphql::{
     connection::{Connection, EmptyFields},
 };
 use chrono::{DateTime, Utc};
-use review_database::{Direction, Iterable};
+use review_database::{Iterable, event::Direction};
 
 use super::{Role, RoleGuard};
 use crate::graphql::query_with_constraints;

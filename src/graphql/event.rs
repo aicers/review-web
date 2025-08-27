@@ -32,9 +32,8 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
 use num_traits::FromPrimitive;
 use review_database::{
-    self as database, AgentKind, Direction, EventFilter, EventIterator, EventKind, IndexedTable,
-    Iterable, Store,
-    event::RecordType,
+    self as database, AgentKind, EventKind, IndexedTable, Iterable, Store,
+    event::{Direction, EventFilter, EventIterator, RecordType},
     find_ip_country,
     types::{Endpoint, EventCategory, HostNetworkGroup},
 };
@@ -872,7 +871,7 @@ struct EventListFilterInput {
 }
 
 struct TriageScore<'a> {
-    inner: &'a database::TriageScore,
+    inner: &'a database::event::TriageScore,
 }
 
 #[Object]
@@ -886,8 +885,8 @@ impl TriageScore<'_> {
     }
 }
 
-impl<'a> From<&'a database::TriageScore> for TriageScore<'a> {
-    fn from(inner: &'a database::TriageScore) -> Self {
+impl<'a> From<&'a database::event::TriageScore> for TriageScore<'a> {
+    fn from(inner: &'a database::event::TriageScore) -> Self {
         Self { inner }
     }
 }
@@ -898,7 +897,7 @@ fn country_code(ctx: &Context<'_>, addr: IpAddr) -> String {
 }
 
 fn find_ip_customer(
-    map: &IndexedTable<review_database::Customer>,
+    map: &IndexedTable<database::Customer>,
     addr: IpAddr,
 ) -> Result<Option<Customer>> {
     for entry in map.iter(Direction::Forward, None) {
@@ -910,10 +909,7 @@ fn find_ip_customer(
     Ok(None)
 }
 
-fn find_ip_network(
-    map: &IndexedTable<review_database::Network>,
-    addr: IpAddr,
-) -> Result<Option<Network>> {
+fn find_ip_network(map: &IndexedTable<database::Network>, addr: IpAddr) -> Result<Option<Network>> {
     for entry in map.iter(Direction::Forward, None) {
         let network = entry?;
         if network.networks.contains(addr) {
@@ -1162,7 +1158,7 @@ fn convert_customer_input(
 }
 
 fn convert_endpoint_input(
-    network_map: &IndexedTable<review_database::Network>,
+    network_map: &IndexedTable<database::Network>,
     endpoints: &[EndpointInput],
 ) -> anyhow::Result<Vec<Endpoint>> {
     let mut networks = Vec::with_capacity(endpoints.len());
@@ -1202,8 +1198,8 @@ fn internal_customer_networks(
     for entry in map.iter(Direction::Forward, None) {
         let customer: database::Customer = entry?;
         for network in customer.networks {
-            if network.network_type == database::NetworkType::Intranet
-                || network.network_type == database::NetworkType::Gateway
+            if network.network_type == database::event::NetworkType::Intranet
+                || network.network_type == database::event::NetworkType::Gateway
             {
                 customer_networks.push(network.network_group);
             }
@@ -1411,8 +1407,8 @@ mod tests {
     use chrono::{DateTime, NaiveDate, Utc};
     use futures_util::StreamExt;
     use review_database::{
-        BlocklistBootpFields, BlocklistDhcpFields, BlocklistTlsFields, DnsEventFields,
         EventCategory, EventKind, EventMessage,
+        event::{BlocklistBootpFields, BlocklistDhcpFields, BlocklistTlsFields, DnsEventFields},
     };
 
     use crate::graphql::TestSchema;
@@ -1422,7 +1418,7 @@ mod tests {
     fn event_message_at(timestamp: DateTime<Utc>, src: u32, dst: u32) -> EventMessage {
         let fields = DnsEventFields {
             sensor: "sensor1".to_string(),
-            session_end_time: timestamp,
+            end_time: timestamp,
             src_addr: Ipv4Addr::from(src).into(),
             src_port: 10000,
             dst_addr: Ipv4Addr::from(dst).into(),
@@ -2130,7 +2126,7 @@ mod tests {
             .unwrap();
         let fields = DnsEventFields {
             sensor: "sensor1".to_string(),
-            session_end_time: timestamp,
+            end_time: timestamp,
             src_addr: Ipv4Addr::from(1).into(),
             src_port: 10000,
             dst_addr: Ipv4Addr::from(2).into(),

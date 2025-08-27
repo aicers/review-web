@@ -71,6 +71,10 @@ this project adheres to
 - Updated GraphQL APIs to reflect the addition of the `confidence` field in
   the semi-supervised generated event structure from review-database.
   - Affected GraphQL APIs: `eventList`, `eventStream`.
+- Renamed a time-related GraphQL field from `session_end_time`, `duration` to
+  `end_time` to reflect a database update.
+  - Affected event kinds: `BlocklistConn`, `TorConnectionConn`,`LockyRansomware`,
+  `DnsCovertChannel`, `TorConnection`
 
 ### Fixed
 
