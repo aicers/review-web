@@ -118,7 +118,8 @@ impl super::TriageResponseQuery {
                 .iter()
                 .map(std::string::ToString::to_string)
                 .collect();
-            info!(
+            info_with_username!(
+                ctx,
                 "Retrieved TriageResponse: id: {}, sensor: \"{}\", time: {}, tag_ids: [{}], remarks: \"{}\"",
                 triage_response.inner.id,
                 sensor,
@@ -127,9 +128,11 @@ impl super::TriageResponseQuery {
                 triage_response.inner.remarks
             );
         } else {
-            info!(
+            info_with_username!(
+                ctx,
                 "No TriageResponse found for sensor: \"{}\", time: {}",
-                sensor, time
+                sensor,
+                time
             );
         }
 
@@ -174,10 +177,9 @@ impl super::TriageResponseMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_response_map();
         let id = map.put(pol)?;
-        info_with_username!(ctx, "Triage response {id} has been registered");
-
-        info!(
-            "Inserted TriageResponse: id: {}, sensor: \"{}\", time: {}, tag_ids: [{}], remarks: \"{}\"",
+        info_with_username!(
+            ctx,
+            "Triage response has been registered: id: {}, sensor: \"{}\", time: {}, tag_ids: [{}], remarks: \"{}\"",
             id,
             sensor,
             time,
@@ -188,7 +190,6 @@ impl super::TriageResponseMutation {
                 .join(", "),
             remarks
         );
-
         Ok(ID(id.to_string()))
     }
 
@@ -211,15 +212,8 @@ impl super::TriageResponseMutation {
             let _key = map.remove(i)?;
             info_with_username!(ctx, "Triage response {i} has been deleted");
 
-            info!("Removed TriageResponse: id: {}", i);
             removed.push(i.to_string());
         }
-
-        info!(
-            "Removed {} TriageResponse(s): ids: [{}]",
-            removed.len(),
-            removed.join(", ")
-        );
 
         Ok(removed)
     }
@@ -262,11 +256,14 @@ impl super::TriageResponseMutation {
         let old_update: review_database::TriageResponseUpdate = old.try_into()?;
         let new_update: review_database::TriageResponseUpdate = new.try_into()?;
         map.update(i, &old_update, &new_update)?;
-        info_with_username!(ctx, "Triage response {i} has been modified");
-
-        info!(
+        info_with_username!(
+            ctx,
             "Updated TriageResponse: id: {}, old_tag_ids: [{}], new_tag_ids: [{}], old_remarks: \"{}\", new_remarks: \"{}\"",
-            i, old_tag_ids_str, new_tag_ids_str, old_remarks_str, new_remarks_str
+            i,
+            old_tag_ids_str,
+            new_tag_ids_str,
+            old_remarks_str,
+            new_remarks_str
         );
 
         Ok(id)
