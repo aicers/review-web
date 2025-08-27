@@ -56,6 +56,11 @@ impl DnsCovertChannel {
         find_ip_network(&map, self.inner.src_addr)
     }
 
+    /// Source Port (Number)
+    async fn src_port(&self) -> u16 {
+        self.inner.src_port
+    }
+
     /// Destination IP (Address)
     async fn dst_addr(&self) -> String {
         self.inner.dst_addr.to_string()
