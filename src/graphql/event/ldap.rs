@@ -100,6 +100,11 @@ impl LdapBruteForce {
         self.inner.end_time
     }
 
+    /// Confidence
+    async fn confidence(&self) -> f32 {
+        self.inner.confidence
+    }
+
     /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
@@ -244,6 +249,11 @@ impl LdapPlainText {
     /// Argument
     async fn argument(&self) -> &[String] {
         &self.inner.argument
+    }
+
+    /// Confidence
+    async fn confidence(&self) -> f32 {
+        self.inner.confidence
     }
 
     /// MITRE Tactic

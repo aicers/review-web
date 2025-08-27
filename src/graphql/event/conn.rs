@@ -93,6 +93,11 @@ impl PortScan {
         self.inner.end_time
     }
 
+    /// Confidence
+    async fn confidence(&self) -> f32 {
+        self.inner.confidence
+    }
+
     /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
@@ -222,6 +227,11 @@ impl MultiHostPortScan {
         self.inner.end_time
     }
 
+    /// Confidence
+    async fn confidence(&self) -> f32 {
+        self.inner.confidence
+    }
+
     /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
@@ -344,6 +354,11 @@ impl ExternalDdos {
     /// Detection End Time
     async fn end_time(&self) -> DateTime<Utc> {
         self.inner.end_time
+    }
+
+    /// Confidence
+    async fn confidence(&self) -> f32 {
+        self.inner.confidence
     }
 
     /// MITRE Tactic

@@ -68,6 +68,9 @@ this project adheres to
   - Defined GraphQL input types `PeriodForSearchInput`, `PeriodInput` and output
     types `PeriodForSearch`, `CustomPeriod`.
   - Affected GraphQL APIs: `insertFilter`, `replaceFilter`, `filterList`, `filter`.
+- Updated GraphQL APIs to reflect the addition of the `confidence` field in
+  the semi-supervised generated event structure from review-database.
+  - Affected GraphQL APIs: `eventList`, `eventStream`.
 
 ### Fixed
 

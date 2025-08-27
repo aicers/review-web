@@ -519,6 +519,11 @@ impl CryptocurrencyMiningPool {
         &self.inner.coins
     }
 
+    /// Confidence
+    async fn confidence(&self) -> f32 {
+        self.inner.confidence
+    }
+
     /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()

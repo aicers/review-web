@@ -91,6 +91,11 @@ impl RdpBruteForce {
         self.inner.end_time
     }
 
+    /// Confidence
+    async fn confidence(&self) -> f32 {
+        self.inner.confidence
+    }
+
     /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()

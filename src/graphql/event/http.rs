@@ -364,6 +364,11 @@ impl RepeatedHttpSessions {
         find_ip_network(&map, self.inner.dst_addr)
     }
 
+    /// Confidence
+    async fn confidence(&self) -> f32 {
+        self.inner.confidence
+    }
+
     /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
@@ -592,6 +597,11 @@ impl TorConnection {
     /// Last State
     async fn state(&self) -> &str {
         &self.inner.state
+    }
+
+    /// Confidence
+    async fn confidence(&self) -> f32 {
+        self.inner.confidence
     }
 
     /// MITRE Tactic
@@ -1047,6 +1057,11 @@ impl NonBrowser {
     /// Last State
     async fn state(&self) -> &str {
         &self.inner.state
+    }
+
+    /// Confidence
+    async fn confidence(&self) -> f32 {
+        self.inner.confidence
     }
 
     /// MITRE Tactic
