@@ -101,6 +101,11 @@ impl FtpBruteForce {
         self.inner.is_internal
     }
 
+    /// Confidence
+    async fn confidence(&self) -> f32 {
+        self.inner.confidence
+    }
+
     /// MITRE Tactic
     async fn category(&self) -> ThreatCategory {
         self.inner.category.into()
@@ -270,6 +275,11 @@ impl FtpPlainText {
     /// File ID
     async fn file_id(&self) -> &str {
         &self.inner.file_id
+    }
+
+    /// Confidence
+    async fn confidence(&self) -> f32 {
+        self.inner.confidence
     }
 
     /// MITRE Tactic
