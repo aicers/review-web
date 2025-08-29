@@ -27,6 +27,10 @@ this project adheres to
 
 ### Changed
 
+- Bumped Roxy version to 0.5.0 with updated `ResourceUsage` struct field names.
+  The `total_disk_space` field is now calculated as `disk_used_bytes` +
+  `disk_available_bytes`, and `used_disk_space` is now accessed as
+  `disk_used_bytes`.
 - Added safeguards to the `updateAccount` GraphQL mutation to prevent system administrators
   from demoting themselves and to block other roles from promoting themselves to
   system administrator.
