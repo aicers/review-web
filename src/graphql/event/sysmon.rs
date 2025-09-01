@@ -1,6 +1,6 @@
 use async_graphql::{ID, Object};
 use chrono::{DateTime, Utc};
-use review_database as database;
+use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore};
 use crate::graphql::{filter::LearningMethod, triage::ThreatCategory};

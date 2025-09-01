@@ -30,7 +30,7 @@ impl IndicatorQuery {
 
         let store = super::get_store(ctx).await?;
         let map = store.model_indicator_map();
-        map.iter(database::Direction::Forward, None)
+        map.iter(database::event::Direction::Forward, None)
             .map(|res| res.map(Into::into).map_err(Into::into))
             .collect()
     }

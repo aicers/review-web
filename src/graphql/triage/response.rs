@@ -49,7 +49,7 @@ struct TriageResponseTotalCount;
 impl TriageResponseTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        use review_database::{Direction, Iterable};
+        use review_database::{Iterable, event::Direction};
 
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_response_map();

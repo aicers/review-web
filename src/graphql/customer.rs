@@ -8,7 +8,7 @@ use async_graphql::{
     types::ID,
 };
 use chrono::{DateTime, Utc};
-use review_database::{self as database, Direction, Iterable, Store};
+use review_database::{self as database, Iterable, Store, event::Direction};
 use serde::{Deserialize, Serialize};
 use tracing::error;
 use tracing::info;
@@ -546,7 +546,7 @@ struct IpRange {
 }
 
 #[derive(Clone, Copy, Enum, Eq, PartialEq)]
-#[graphql(remote = "database::NetworkType")]
+#[graphql(remote = "database::event::NetworkType")]
 enum NetworkType {
     Intranet,
     Extranet,

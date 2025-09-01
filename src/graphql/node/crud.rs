@@ -8,7 +8,7 @@ use async_graphql::{
     types::ID,
 };
 use chrono::Utc;
-use review_database::{Direction, Store};
+use review_database::{Store, event::Direction};
 use tracing::info;
 
 use super::{

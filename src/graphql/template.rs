@@ -347,7 +347,7 @@ struct TemplateTotalCount;
 impl TemplateTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        use review_database::{Direction, Iterable};
+        use review_database::{Iterable, event::Direction};
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.template_map();
         let count = map.iter(Direction::Forward, None).count();

@@ -52,7 +52,7 @@ use chrono::TimeDelta;
 use num_traits::ToPrimitive;
 #[cfg(test)]
 use review_database::HostNetworkGroup;
-use review_database::{self as database, Database, Direction, Role, Store};
+use review_database::{self as database, Database, Role, Store, event::Direction};
 pub use roxy::{Process, ResourceUsage};
 use tokio::sync::{Notify, RwLock};
 use tracing::warn;

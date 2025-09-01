@@ -13,7 +13,7 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
 use num_traits::ToPrimitive;
 use review_database::{
-    Database, Direction, IndexedTable, OutlierInfo, Store, TriageResponse, UniqueKey,
+    Database, IndexedTable, OutlierInfo, Store, TriageResponse, UniqueKey, event::Direction,
 };
 use serde::Deserialize;
 use serde::Serialize;

@@ -1,9 +1,9 @@
 use std::{collections::HashMap, num::NonZeroU8};
 
 use async_graphql::{Context, Object, OutputType, Result, SimpleObject};
-use database::{IndexedTable, Iterable};
 use num_traits::ToPrimitive;
-use review_database::{self as database, Direction, Event, EventFilter};
+use review_database::event::{Direction, EventFilter};
+use review_database::{Event, IndexedTable, Iterable};
 use tracing::warn;
 
 use super::{EventListFilterInput, from_filter_input};
@@ -427,7 +427,7 @@ mod tests {
     fn event_message_at(timestamp: DateTime<Utc>, src: u32, dst: u32) -> EventMessage {
         let fields = DnsEventFields {
             sensor: "sensor1".to_string(),
-            session_end_time: timestamp,
+            end_time: timestamp,
             src_addr: Ipv4Addr::from(src).into(),
             src_port: 10000,
             dst_addr: Ipv4Addr::from(dst).into(),

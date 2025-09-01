@@ -1,6 +1,6 @@
 use async_graphql::{Context, Object, Result};
 use chrono::{DateTime, Utc};
-use review_database as database;
+use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
 use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};

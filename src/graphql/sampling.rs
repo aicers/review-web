@@ -7,7 +7,7 @@ use async_graphql::{
     types::ID,
 };
 use chrono::{DateTime, Utc};
-use review_database::{Direction, Iterable};
+use review_database::{Iterable, event::Direction};
 use serde::{Deserialize, Serialize};
 
 use super::{BoxedAgentManager, IpAddress, Role, RoleGuard};
