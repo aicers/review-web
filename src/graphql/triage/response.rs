@@ -5,13 +5,14 @@ use async_graphql::{
     types::ID,
 };
 use chrono::{DateTime, Utc};
+use itertools::Itertools;
 use tracing::info;
 
 use super::{Role, RoleGuard};
 use crate::graphql::{
     cluster::try_id_args_into_ints, network::id_args_into_uints, query_with_constraints,
 };
-use crate::{info_with_username, map_join};
+use crate::info_with_username;
 
 #[allow(clippy::module_name_repetitions)]
 pub struct TriageResponse {
@@ -112,7 +113,7 @@ impl super::TriageResponseQuery {
         let response: Option<TriageResponse> = map.get(&sensor, &time)?.map(Into::into);
 
         if let Some(ref triage_response) = response {
-            let tag_ids_str = map_join!(triage_response.inner.tag_ids().iter(), ", ", |x| "{x}");
+            let tag_ids_str = triage_response.inner.tag_ids().iter().join(", ");
             info_with_username!(
                 ctx,
                 "Retrieved TriageResponse: id: {}, sensor: \"{}\", time: {}, tag_ids: [{}], remarks: \"{}\"",
@@ -163,7 +164,7 @@ impl super::TriageResponseMutation {
         remarks: String,
     ) -> Result<ID> {
         let tag_ids_converted = id_args_into_uints(&tag_ids)?;
-        let tag_ids_str = map_join!(tag_ids_converted.iter(), ", ", |x| "{x}");
+        let tag_ids_str = tag_ids_converted.iter().join(", ");
         let pol = review_database::TriageResponse::new(
             sensor.clone(),
             time,
@@ -224,11 +225,11 @@ impl super::TriageResponseMutation {
 
         let old_tag_ids_str = old.tag_ids.as_ref().map_or_else(
             || "None".to_string(),
-            |ids| map_join!(ids.iter().map(|id| id.as_str()), ", ", |x| "{x}"),
+            |ids| ids.iter().map(|id| id.as_str()).join(", "),
         );
         let new_tag_ids_str = new.tag_ids.as_ref().map_or_else(
             || "None".to_string(),
-            |ids| map_join!(ids.iter().map(|id| id.as_str()), ", ", |x| "{x}"),
+            |ids| ids.iter().map(|id| id.as_str()).join(", "),
         );
         let old_remarks_str = old.remarks.as_deref().unwrap_or("None").to_string();
         let new_remarks_str = new.remarks.as_deref().unwrap_or("None").to_string();
