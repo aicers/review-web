@@ -163,16 +163,16 @@ impl super::TriageResponseMutation {
         remarks: String,
     ) -> Result<ID> {
         let tag_ids_converted = id_args_into_uints(&tag_ids)?;
+        let tag_ids_str = map_join!(tag_ids_converted.iter(), ", ", |x| "{x}");
         let pol = review_database::TriageResponse::new(
             sensor.clone(),
             time,
-            tag_ids_converted.clone(),
+            tag_ids_converted,
             remarks.clone(),
         );
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_response_map();
         let id = map.put(pol)?;
-        let tag_ids_str = map_join!(tag_ids_converted.iter(), ", ", |x| "{x}");
         info_with_username!(
             ctx,
             "Triage response has been registered: id: {}, sensor: \"{}\", time: {}, tag_ids: [{}], remarks: \"{}\"",
@@ -230,8 +230,8 @@ impl super::TriageResponseMutation {
             || "None".to_string(),
             |ids| map_join!(ids.iter().map(|id| id.as_str()), ", ", |x| "{x}"),
         );
-        let old_remarks_str = old.remarks.clone().as_deref().unwrap_or("None").to_string();
-        let new_remarks_str = new.remarks.clone().as_deref().unwrap_or("None").to_string();
+        let old_remarks_str = old.remarks.as_deref().unwrap_or("None").to_string();
+        let new_remarks_str = new.remarks.as_deref().unwrap_or("None").to_string();
 
         let store = crate::graphql::get_store(ctx).await?;
         let mut map = store.triage_response_map();
