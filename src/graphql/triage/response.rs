@@ -1,5 +1,3 @@
-use std::fmt::Write;
-
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
     Context, InputObject, Object, Result,
@@ -13,7 +11,7 @@ use super::{Role, RoleGuard};
 use crate::graphql::{
     cluster::try_id_args_into_ints, network::id_args_into_uints, query_with_constraints,
 };
-use crate::info_with_username;
+use crate::{info_with_username, map_join};
 
 #[allow(clippy::module_name_repetitions)]
 pub struct TriageResponse {
@@ -114,17 +112,7 @@ impl super::TriageResponseQuery {
         let response: Option<TriageResponse> = map.get(&sensor, &time)?.map(Into::into);
 
         if let Some(ref triage_response) = response {
-            let tag_ids_str = triage_response.inner.tag_ids().iter().enumerate().fold(
-                String::new(),
-                |mut acc, (i, tag_id)| {
-                    if i == 0 {
-                        write!(acc, "{tag_id}").expect("Writing to String should never fail");
-                    } else {
-                        write!(acc, ", {tag_id}").expect("Writing to String should never fail");
-                    }
-                    acc
-                },
-            );
+            let tag_ids_str = map_join!(triage_response.inner.tag_ids().iter(), ", ", |x| "{x}");
             info_with_username!(
                 ctx,
                 "Retrieved TriageResponse: id: {}, sensor: \"{}\", time: {}, tag_ids: [{}], remarks: \"{}\"",
@@ -184,18 +172,7 @@ impl super::TriageResponseMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.triage_response_map();
         let id = map.put(pol)?;
-        let tag_ids_str =
-            tag_ids_converted
-                .iter()
-                .enumerate()
-                .fold(String::new(), |mut acc, (i, tag_id)| {
-                    if i == 0 {
-                        write!(acc, "{tag_id}").expect("Writing to String should never fail");
-                    } else {
-                        write!(acc, ", {tag_id}").expect("Writing to String should never fail");
-                    }
-                    acc
-                });
+        let tag_ids_str = map_join!(tag_ids_converted.iter(), ", ", |x| "{x}");
         info_with_username!(
             ctx,
             "Triage response has been registered: id: {}, sensor: \"{}\", time: {}, tag_ids: [{}], remarks: \"{}\"",
@@ -247,37 +224,11 @@ impl super::TriageResponseMutation {
 
         let old_tag_ids_str = old.tag_ids.as_ref().map_or_else(
             || "None".to_string(),
-            |ids| {
-                ids.iter()
-                    .enumerate()
-                    .fold(String::new(), |mut acc, (i, id)| {
-                        if i == 0 {
-                            write!(acc, "{}", id.as_str())
-                                .expect("Writing to String should never fail");
-                        } else {
-                            write!(acc, ", {}", id.as_str())
-                                .expect("Writing to String should never fail");
-                        }
-                        acc
-                    })
-            },
+            |ids| map_join!(ids.iter().map(|id| id.as_str()), ", ", |x| "{x}"),
         );
         let new_tag_ids_str = new.tag_ids.as_ref().map_or_else(
             || "None".to_string(),
-            |ids| {
-                ids.iter()
-                    .enumerate()
-                    .fold(String::new(), |mut acc, (i, id)| {
-                        if i == 0 {
-                            write!(acc, "{}", id.as_str())
-                                .expect("Writing to String should never fail");
-                        } else {
-                            write!(acc, ", {}", id.as_str())
-                                .expect("Writing to String should never fail");
-                        }
-                        acc
-                    })
-            },
+            |ids| map_join!(ids.iter().map(|id| id.as_str()), ", ", |x| "{x}"),
         );
         let old_remarks_str = old.remarks.clone().as_deref().unwrap_or("None").to_string();
         let new_remarks_str = new.remarks.clone().as_deref().unwrap_or("None").to_string();
