@@ -173,8 +173,8 @@ mod tests {
                 cpu_usage: 20.0,
                 total_memory: 1000,
                 used_memory: 100,
-                total_disk_space: 1000,
-                used_disk_space: 100,
+                disk_used_bytes: 100,
+                disk_available_bytes: 900,
             })
         }
 

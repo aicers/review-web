@@ -340,8 +340,10 @@ impl NodeStatus {
             cpu_usage: resource_usage.as_ref().map(|x| x.cpu_usage),
             total_memory: resource_usage.as_ref().map(|x| x.total_memory),
             used_memory: resource_usage.as_ref().map(|x| x.used_memory),
-            total_disk_space: resource_usage.as_ref().map(|x| x.total_disk_space),
-            used_disk_space: resource_usage.as_ref().map(|x| x.used_disk_space),
+            total_disk_space: resource_usage
+                .as_ref()
+                .map(|x| x.disk_used_bytes + x.disk_available_bytes),
+            used_disk_space: resource_usage.as_ref().map(|x| x.disk_used_bytes),
             ping,
             manager,
             agents,
