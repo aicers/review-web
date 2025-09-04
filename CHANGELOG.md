@@ -27,6 +27,9 @@ this project adheres to
 - Implemented comprehensive logging for `TriageResponse` operations with detailed
   audit logs for all insert, update, remove, and retrieve operations on triage
   responses.
+- Added `sensor` field to GraphQL objects for detection events based on
+  multiple raw events (`PortScan`, `MultiHostPortScan`, `ExternalDdos`,
+  `RdpBruteForce`, `FtpBruteForce`, `LdapBruteForce`).
 
 ### Changed
 

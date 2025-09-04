@@ -19,6 +19,11 @@ impl PortScan {
         self.inner.time
     }
 
+    /// Sensor
+    async fn sensor(&self) -> &str {
+        &self.inner.sensor
+    }
+
     /// Source IP (Address)
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
@@ -132,6 +137,11 @@ impl MultiHostPortScan {
     /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
+    }
+
+    /// Sensor
+    async fn sensor(&self) -> &str {
+        &self.inner.sensor
     }
 
     /// Source IP (Address)
@@ -266,6 +276,11 @@ impl ExternalDdos {
     /// Start Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
+    }
+
+    /// Sensor
+    async fn sensor(&self) -> &str {
+        &self.inner.sensor
     }
 
     /// Source IP (Address) List
