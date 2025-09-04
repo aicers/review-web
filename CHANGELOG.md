@@ -33,6 +33,12 @@ this project adheres to
 
 ### Changed
 
+- Restricted account creation and deletion permissions to System Administrators
+  only. The `insertAccount`, `removeAccounts`, and `removeAccountsExact`
+  GraphQL mutations now require the `SystemAdministrator` role instead of
+  allowing both `SystemAdministrator` and `SecurityAdministrator` roles. This
+  enhances system security by enforcing stricter role-based access control
+  for sensitive account management operations.
 - Bumped Roxy version to 0.5.0 with updated `ResourceUsage` struct field names.
   The `total_disk_space` field is now calculated as `disk_used_bytes` +
   `disk_available_bytes`, and `used_disk_space` is now accessed as
