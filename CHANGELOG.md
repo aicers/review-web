@@ -30,6 +30,8 @@ this project adheres to
 - Added `sensor` field to GraphQL objects for detection events based on
   multiple raw events (`PortScan`, `MultiHostPortScan`, `ExternalDdos`,
   `RdpBruteForce`, `FtpBruteForce`, `LdapBruteForce`).
+- Added `start_time` and `end_time` fields to GraphQL objects for
+  `RepeatedHttpSessions`.
 
 ### Changed
 
