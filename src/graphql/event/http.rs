@@ -342,6 +342,16 @@ impl RepeatedHttpSessions {
         self.inner.proto
     }
 
+    /// Detection Start Time
+    async fn start_time(&self) -> DateTime<Utc> {
+        self.inner.start_time
+    }
+
+    /// Detection End Time
+    async fn end_time(&self) -> DateTime<Utc> {
+        self.inner.end_time
+    }
+
     /// Destination Country
     /// The two-letter country code of the destination IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
