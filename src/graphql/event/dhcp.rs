@@ -1,5 +1,6 @@
 use async_graphql::{Context, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
+use itertools::Itertools;
 use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
@@ -127,22 +128,12 @@ impl BlocklistDhcp {
 
     /// Routers
     async fn router(&self) -> String {
-        self.inner
-            .router
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<String>>()
-            .join(", ")
+        self.inner.router.iter().join(", ")
     }
 
     /// Domain Name Servers
     async fn domain_name_server(&self) -> String {
-        self.inner
-            .domain_name_server
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<String>>()
-            .join(", ")
+        self.inner.domain_name_server.iter().join(", ")
     }
 
     /// Request IP (Address)
@@ -162,12 +153,7 @@ impl BlocklistDhcp {
 
     /// Parameter Request List
     async fn param_req_list(&self) -> String {
-        self.inner
-            .param_req_list
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<String>>()
-            .join(", ")
+        self.inner.param_req_list.iter().join(", ")
     }
 
     /// Message
@@ -187,12 +173,7 @@ impl BlocklistDhcp {
 
     /// Class ID List
     async fn class_id(&self) -> String {
-        self.inner
-            .class_id
-            .iter()
-            .map(|x| format!("{x:02x}"))
-            .collect::<Vec<String>>()
-            .join(":")
+        format!("{:02x}", self.inner.class_id.iter().format(":"))
     }
 
     /// Client ID Type
@@ -202,12 +183,7 @@ impl BlocklistDhcp {
 
     /// Client ID List
     async fn client_id(&self) -> String {
-        self.inner
-            .client_id
-            .iter()
-            .map(|x| format!("{x:02x}"))
-            .collect::<Vec<String>>()
-            .join(":")
+        format!("{:02x}", self.inner.client_id.iter().format(":"))
     }
 
     /// MITRE Tactic

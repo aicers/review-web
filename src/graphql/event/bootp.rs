@@ -1,5 +1,6 @@
 use async_graphql::{Context, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
+use itertools::Itertools;
 use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
@@ -138,12 +139,7 @@ impl BlocklistBootp {
 
     /// Client Hardware IP (Address)
     async fn chaddr(&self) -> String {
-        self.inner
-            .chaddr
-            .iter()
-            .map(|x| format!("{x:02x}"))
-            .collect::<Vec<String>>()
-            .join(":")
+        format!("{:02x}", self.inner.chaddr.iter().format(":"))
     }
 
     /// Server Hostname

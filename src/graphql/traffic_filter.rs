@@ -3,6 +3,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use async_graphql::{Context, Object, Result};
 use chrono::{DateTime, Utc};
 use ipnet::IpNet;
+use itertools::Itertools;
 use review_database::{self as database};
 use tracing::info;
 
@@ -173,20 +174,8 @@ impl TrafficFilter {
         rules
             .into_iter()
             .map(|(net, tcp_ports, udp_ports)| {
-                let tcp_ports = tcp_ports.map_or("-".to_string(), |ports| {
-                    ports
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(",")
-                });
-                let udp_ports = udp_ports.map_or("-".to_string(), |ports| {
-                    ports
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(",")
-                });
+                let tcp_ports = tcp_ports.map_or("-".to_string(), |ports| ports.iter().join(","));
+                let udp_ports = udp_ports.map_or("-".to_string(), |ports| ports.iter().join(","));
                 format!("{net}\t{tcp_ports}\t{udp_ports}")
             })
             .collect()
