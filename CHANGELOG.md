@@ -9,6 +9,10 @@ this project adheres to
 
 ### Added
 
+- Implemented agent disable functionality in `applyNode` GraphQL API. When an
+  agent is set to be disabled (draft is set to null), the system now sends
+  disable commands to the agent to properly shut it down before removing it
+  from the database.
 - Added `TorConnectionConn` event detection for connection-level Tor network
   monitoring. This extends existing Tor detection capabilities beyond HTTP
   connections to include all connection types.

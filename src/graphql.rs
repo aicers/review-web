@@ -654,6 +654,10 @@ impl AgentManager for MockAgentManager {
     async fn update_config(&self, _agent_key: &str) -> Result<(), anyhow::Error> {
         unimplemented!()
     }
+
+    async fn disable_agent(&self, _agent_key: &str) -> Result<(), anyhow::Error> {
+        unimplemented!()
+    }
 }
 
 #[cfg(test)]

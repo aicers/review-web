@@ -69,6 +69,9 @@ pub trait AgentManager: Send + Sync {
     /// Notifies agents to update their configuration.
     async fn update_config(&self, _agent_key: &str) -> Result<(), anyhow::Error>;
 
+    /// Notifies an agent to disable itself.
+    async fn disable_agent(&self, _agent_key: &str) -> Result<(), anyhow::Error>;
+
     /// Updates the traffic filter rules for the given host.
     async fn update_traffic_filter_rules(
         &self,

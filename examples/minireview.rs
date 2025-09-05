@@ -138,6 +138,10 @@ impl AgentManager for Manager {
         bail!("Agent {agent_key} is unreachable")
     }
 
+    async fn disable_agent(&self, agent_key: &str) -> Result<(), Error> {
+        bail!("Agent {agent_key} is unreachable")
+    }
+
     async fn update_traffic_filter_rules(
         &self,
         _key: &str,

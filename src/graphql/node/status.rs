@@ -193,6 +193,10 @@ mod tests {
         async fn update_config(&self, _agent_key: &str) -> Result<(), anyhow::Error> {
             Ok(())
         }
+
+        async fn disable_agent(&self, _agent_key: &str) -> Result<(), anyhow::Error> {
+            Ok(())
+        }
     }
 
     fn insert_apps(host: &str, apps: &[&str], map: &mut HashMap<String, Vec<(String, String)>>) {
