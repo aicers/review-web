@@ -160,13 +160,24 @@ async fn notify_agents(
             })
     });
 
-    // TODO: #281
-    info!("Agents {disable_agent_ids:?} need to be notified to be disabled");
+    let disable_futures = disable_agent_ids.iter().map(|agent_id| async move {
+        let agent_key = format!("{agent_id}@{hostname}");
+        agent_manager
+            .disable_agent(agent_key.as_str())
+            .await
+            .map_err(|e| {
+                async_graphql::Error::new(format!(
+                    "Failed to notify agent for disable {agent_key}: {e}"
+                ))
+            })
+    });
 
-    let notification_results: Vec<Result<_>> = join_all(update_futures).await;
+    let update_results: Vec<Result<_>> = join_all(update_futures).await;
+    let disable_results: Vec<Result<_>> = join_all(disable_futures).await;
 
-    let errors: Vec<String> = notification_results
+    let errors: Vec<String> = update_results
         .into_iter()
+        .chain(disable_results.into_iter())
         .filter_map(|result| result.err().map(|e| e.message))
         .collect();
 
@@ -2500,6 +2511,14 @@ mod tests {
             }
         }
 
+        async fn disable_agent(&self, agent_key: &str) -> Result<(), anyhow::Error> {
+            if self.available_agents.contains(&agent_key) {
+                Ok(())
+            } else {
+                anyhow::bail!("Notifying agent {agent_key} to disable failed")
+            }
+        }
+
         async fn update_traffic_filter_rules(
             &self,
             _key: &str,
@@ -2596,6 +2615,10 @@ mod tests {
             anyhow::bail!("Notifying agent {agent_key} to update config failed")
         }
 
+        async fn disable_agent(&self, agent_key: &str) -> Result<(), anyhow::Error> {
+            anyhow::bail!("Notifying agent {agent_key} to disable failed")
+        }
+
         async fn update_traffic_filter_rules(
             &self,
             _key: &str,
@@ -2603,6 +2626,212 @@ mod tests {
         ) -> Result<(), anyhow::Error> {
             anyhow::bail!("not expected to be called")
         }
+    }
+
+    struct DisableTrackingMockAgentManager {
+        pub online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,
+        pub disabled_agents: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl AgentManager for DisableTrackingMockAgentManager {
+        async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
+            anyhow::bail!("not expected to be called")
+        }
+        async fn broadcast_trusted_user_agent_list(
+            &self,
+            _list: &[String],
+        ) -> Result<(), anyhow::Error> {
+            anyhow::bail!("not expected to be called")
+        }
+        async fn send_agent_specific_internal_networks(
+            &self,
+            _networks: &[NetworksTargetAgentKeysPair],
+        ) -> Result<Vec<String>, anyhow::Error> {
+            Ok(vec!["semi-supervised@hostA".to_string()])
+        }
+
+        async fn broadcast_allow_networks(
+            &self,
+            _networks: &HostNetworkGroup,
+        ) -> Result<Vec<String>, anyhow::Error> {
+            Ok(vec![])
+        }
+
+        async fn broadcast_block_networks(
+            &self,
+            _networks: &HostNetworkGroup,
+        ) -> Result<Vec<String>, anyhow::Error> {
+            Ok(vec![])
+        }
+
+        async fn online_apps_by_host_id(
+            &self,
+        ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error> {
+            Ok(self.online_apps_by_host_id.clone())
+        }
+
+        async fn broadcast_crusher_sampling_policy(
+            &self,
+            _sampling_policies: &[SamplingPolicy],
+        ) -> Result<(), anyhow::Error> {
+            Ok(())
+        }
+
+        async fn get_process_list(
+            &self,
+            hostname: &str,
+        ) -> Result<Vec<roxy::Process>, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn get_resource_usage(
+            &self,
+            hostname: &str,
+        ) -> Result<roxy::ResourceUsage, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn halt(&self, _hostname: &str) -> Result<(), anyhow::Error> {
+            Ok(())
+        }
+
+        async fn ping(&self, hostname: &str) -> Result<Duration, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn reboot(&self, hostname: &str) -> Result<(), anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn update_config(&self, _agent_key: &str) -> Result<(), anyhow::Error> {
+            Ok(())
+        }
+
+        async fn disable_agent(&self, agent_key: &str) -> Result<(), anyhow::Error> {
+            self.disabled_agents
+                .lock()
+                .unwrap()
+                .push(agent_key.to_string());
+            Ok(())
+        }
+
+        async fn update_traffic_filter_rules(
+            &self,
+            _key: &str,
+            _rules: &[(ipnet::IpNet, Option<Vec<u16>>, Option<Vec<u16>>)],
+        ) -> Result<(), anyhow::Error> {
+            anyhow::bail!("not expected to be called")
+        }
+    }
+
+    async fn insert_test_node(schema: &TestSchema) {
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertNode(
+                        name: "test node",
+                        customerId: 0,
+                        description: "Test node for disable functionality",
+                        hostname: "test-host",
+                        agents: [{
+                            key: "sensor"
+                            kind: SENSOR
+                            status: ENABLED
+                            draft: "test = 'toml'"
+                        }]
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+    }
+
+    async fn apply_initial_node_state(schema: &TestSchema) {
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "test node",
+                            nameDraft: "test node",
+                            profile: null,
+                            profileDraft: {
+                                customerId: "0",
+                                description: "Test node for disable functionality",
+                                hostname: "test-host"
+                            },
+                            agents: [{
+                                key: "sensor",
+                                kind: SENSOR,
+                                status: ENABLED,
+                                config: null,
+                                draft: "test = 'toml'"
+                            }],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+    }
+
+    async fn apply_node_with_disabled_agent(schema: &TestSchema) {
+        let res = schema
+            .execute(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "test node",
+                            nameDraft: "test node",
+                            profile: {
+                                customerId: "0",
+                                description: "Test node for disable functionality",
+                                hostname: "test-host"
+                            },
+                            profileDraft: {
+                                customerId: "0",
+                                description: "Test node for disable functionality",
+                                hostname: "test-host"
+                            },
+                            agents: [{
+                                key: "sensor",
+                                kind: SENSOR,
+                                status: ENABLED,
+                                config: "test = 'toml'",
+                                draft: null
+                            }],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+    }
+
+    #[tokio::test]
+    async fn test_agent_disable_notification() {
+        let disabled_agents = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let agent_manager: BoxedAgentManager = Box::new(DisableTrackingMockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            disabled_agents: disabled_agents.clone(),
+        });
+
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        insert_test_node(&schema).await;
+        apply_initial_node_state(&schema).await;
+        apply_node_with_disabled_agent(&schema).await;
+
+        // verify that disable_agent was called with the correct agent key
+        let disabled = disabled_agents.lock().unwrap();
+        assert_eq!(disabled.len(), 1);
+        assert_eq!(disabled[0], "sensor@test-host");
     }
 
     #[tokio::test]
