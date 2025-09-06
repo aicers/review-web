@@ -299,8 +299,7 @@ pub(super) struct AccountMutation;
 impl AccountMutation {
     /// Creates a new account
     #[allow(clippy::too_many_arguments)]
-    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
-        .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)")]
     async fn insert_account(
         &self,
         ctx: &Context<'_>,
@@ -315,10 +314,6 @@ impl AccountMutation {
         max_parallel_sessions: Option<u8>,
         customer_ids: Option<Vec<ID>>,
     ) -> Result<String> {
-        if role == Role::SystemAdministrator {
-            return Err("Role not allowed.".into());
-        }
-
         // Validate and normalize the username
         let normalized_username = validate_and_normalize_username(&username)
             .map_err(|e| format!("Invalid username: {e}"))?;
@@ -416,8 +411,7 @@ impl AccountMutation {
     /// # Errors
     ///
     /// Returns an error if a user attempts to delete themselves.
-    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
-        .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)")]
     async fn remove_accounts(
         &self,
         ctx: &Context<'_>,
@@ -459,8 +453,7 @@ impl AccountMutation {
     /// This is a secondary API for backward compatibility with accounts created before strict validation.
     ///
     /// On error, some usernames may have been removed.
-    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
-        .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)")]
     async fn remove_accounts_exact(
         &self,
         ctx: &Context<'_>,
@@ -2222,7 +2215,7 @@ mod tests {
             )
             .await;
 
-        assert_eq!(res.errors.first().unwrap().message, "Role not allowed.");
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "sysadmin2"}"#);
         let res = schema
             .execute(
                 r#"mutation {
@@ -3791,5 +3784,156 @@ mod tests {
                 assert!(user_obj.contains_key("creationTime"));
             }
         }
+    }
+
+    #[tokio::test]
+    async fn insert_account_requires_system_administrator() {
+        let schema = TestSchema::new().await;
+
+        // Test that SecurityAdministrator can no longer create accounts
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertAccount(
+                        username: "testuser",
+                        password: "password123",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Test User",
+                        department: "Test"
+                        customerIds: [0]
+                    )
+                }"#,
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert_eq!(res.errors[0].message, "Forbidden");
+
+        // Test that SystemAdministrator can create accounts
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertAccount(
+                        username: "testuser",
+                        password: "password123",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Test User",
+                        department: "Test"
+                        customerIds: [0]
+                    )
+                }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "testuser"}"#);
+    }
+
+    #[tokio::test]
+    async fn insert_account_can_create_system_administrator() {
+        let schema = TestSchema::new().await;
+
+        // Test that SystemAdministrator can now create SystemAdministrator accounts
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertAccount(
+                        username: "newsysadmin",
+                        password: "password123",
+                        role: "SYSTEM_ADMINISTRATOR",
+                        name: "New System Admin",
+                        department: "IT"
+                    )
+                }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "newsysadmin"}"#);
+    }
+
+    #[tokio::test]
+    async fn remove_accounts_requires_system_administrator() {
+        let schema = TestSchema::new().await;
+
+        // First create a test account to remove
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertAccount(
+                        username: "toremove",
+                        password: "password123",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "To Remove",
+                        department: "Test"
+                        customerIds: [0]
+                    )
+                }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "toremove"}"#);
+
+        // Test that SecurityAdministrator can no longer remove accounts
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { removeAccounts(usernames: ["toremove"]) }"#,
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert_eq!(res.errors[0].message, "Forbidden");
+
+        // Test that SystemAdministrator can remove accounts
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { removeAccounts(usernames: ["toremove"]) }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{removeAccounts: ["toremove"]}"#);
+    }
+
+    #[tokio::test]
+    async fn remove_accounts_exact_requires_system_administrator() {
+        let schema = TestSchema::new().await;
+
+        // First create a test account to remove
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertAccount(
+                        username: "exactremove",
+                        password: "password123",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Exact Remove",
+                        department: "Test"
+                        customerIds: [0]
+                    )
+                }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "exactremove"}"#);
+
+        // Test that SecurityAdministrator can no longer use removeAccountsExact
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { removeAccountsExact(usernames: ["exactremove"]) }"#,
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert_eq!(res.errors[0].message, "Forbidden");
+
+        // Test that SystemAdministrator can use removeAccountsExact
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { removeAccountsExact(usernames: ["exactremove"]) }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{removeAccountsExact: ["exactremove"]}"#
+        );
     }
 }
