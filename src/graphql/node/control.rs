@@ -1,5 +1,6 @@
 use async_graphql::{Context, ID, Object, Result};
 use futures::future::join_all;
+use itertools::Itertools;
 use tracing::{error, info, warn};
 
 use super::{
@@ -165,15 +166,15 @@ async fn notify_agents(
 
     let notification_results: Vec<Result<_>> = join_all(update_futures).await;
 
-    let errors: Vec<String> = notification_results
+    let error_msg = notification_results
         .into_iter()
         .filter_map(|result| result.err().map(|e| e.message))
-        .collect();
+        .join("\n");
 
-    if errors.is_empty() {
+    if error_msg.is_empty() {
         Ok(())
     } else {
-        Err(async_graphql::Error::new(errors.join("\n")))
+        Err(async_graphql::Error::new(error_msg))
     }
 }
 
