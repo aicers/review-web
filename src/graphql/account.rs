@@ -23,7 +23,11 @@ use self::username_validation::validate_and_normalize_username;
 use super::{IpAddress, RoleGuard, cluster::try_id_args_into_ints};
 use crate::graphql::query_with_constraints;
 use crate::{
-    auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in},
+    auth::{
+        create_token, decode_token, get_lockout_duration_minutes, get_lockout_threshold,
+        get_suspension_threshold, insert_token, revoke_token, update_jwt_expires_in,
+        update_lockout_duration_minutes, update_lockout_threshold, update_suspension_threshold,
+    },
     info_with_username,
 };
 
@@ -74,10 +78,6 @@ pub struct ComprehensiveUserAccount {
 }
 
 const REVIEW_ADMIN: &str = "REVIEW_ADMIN";
-
-// Account lockout constants
-const MAX_FAILED_LOGIN_ATTEMPTS_BEFORE_LOCKOUT: u8 = 5;
-const ACCOUNT_LOCKOUT_DURATION: chrono::Duration = chrono::Duration::minutes(30);
 
 #[derive(Default)]
 pub(super) struct AccountQuery;
@@ -289,6 +289,27 @@ impl AccountQuery {
 
         info_with_username!(ctx, "Account session expiration settings retrieved");
         expiration_time(&store)
+    }
+
+    /// Returns the current global lockout threshold
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
+        .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
+    async fn lockout_threshold(&self, _ctx: &Context<'_>) -> Result<u8> {
+        Ok(get_lockout_threshold().unwrap_or(5))
+    }
+
+    /// Returns the current global lockout duration in minutes
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
+        .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
+    async fn lockout_duration_minutes(&self, _ctx: &Context<'_>) -> Result<u32> {
+        Ok(get_lockout_duration_minutes().unwrap_or(30))
+    }
+
+    /// Returns the current global suspension threshold
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
+        .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
+    async fn suspension_threshold(&self, _ctx: &Context<'_>) -> Result<u8> {
+        Ok(get_suspension_threshold().unwrap_or(10))
     }
 }
 
@@ -619,6 +640,7 @@ impl AccountMutation {
         let client_ip = get_client_ip(ctx);
 
         if let Some(mut account) = account_map.get(&normalized_username)? {
+            check_account_suspension_status(&account, &normalized_username)?;
             check_account_lockout_status(&mut account, &account_map, &normalized_username)?;
             validate_password(&mut account, &account_map, &normalized_username, &password)?;
             validate_last_signin_time(&account, &normalized_username)?;
@@ -660,6 +682,7 @@ impl AccountMutation {
         let client_ip = get_client_ip(ctx);
 
         if let Some(mut account) = account_map.get(&normalized_username)? {
+            check_account_suspension_status(&account, &normalized_username)?;
             check_account_lockout_status(&mut account, &account_map, &normalized_username)?;
             validate_password(&mut account, &account_map, &normalized_username, &password)?;
             validate_allow_access_from(&account, client_ip, &normalized_username)?;
@@ -957,6 +980,77 @@ impl AccountMutation {
         )?;
         Ok(username.clone())
     }
+
+    /// Updates the global lockout threshold setting.
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)")]
+    async fn update_lockout_threshold(&self, ctx: &Context<'_>, threshold: u8) -> Result<u8> {
+        if threshold == 0 {
+            return Err("Lockout threshold must be greater than 0".into());
+        }
+
+        info_with_username!(ctx, "Lockout threshold updated to {}", threshold);
+
+        update_lockout_threshold(threshold)?;
+        Ok(threshold)
+    }
+
+    /// Updates the global lockout duration setting in minutes.
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)")]
+    async fn update_lockout_duration_minutes(
+        &self,
+        ctx: &Context<'_>,
+        duration_minutes: u32,
+    ) -> Result<u32> {
+        if duration_minutes == 0 {
+            return Err("Lockout duration must be greater than 0 minutes".into());
+        }
+
+        info_with_username!(
+            ctx,
+            "Lockout duration updated to {} minutes",
+            duration_minutes
+        );
+
+        update_lockout_duration_minutes(duration_minutes)?;
+        Ok(duration_minutes)
+    }
+
+    /// Updates the global suspension threshold setting.
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)")]
+    async fn update_suspension_threshold(&self, ctx: &Context<'_>, threshold: u8) -> Result<u8> {
+        if threshold == 0 {
+            return Err("Suspension threshold must be greater than 0".into());
+        }
+
+        info_with_username!(ctx, "Suspension threshold updated to {}", threshold);
+
+        update_suspension_threshold(threshold)?;
+        Ok(threshold)
+    }
+
+    /// Manually unsuspends a user account (admin only).
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)")]
+    async fn unsuspend_account(&self, ctx: &Context<'_>, username: String) -> Result<bool> {
+        let normalized_username = username.to_lowercase();
+        let store = crate::graphql::get_store(ctx).await?;
+        let account_map = store.account_map();
+
+        if let Some(mut account) = account_map.get(&normalized_username)? {
+            if account.is_suspended {
+                account.is_suspended = false;
+                account.failed_login_attempts = 0; // Reset failed attempts when unsuspending
+                account_map.put(&account)?;
+
+                info_with_username!(ctx, "Account {} has been unsuspended", normalized_username);
+
+                Ok(true)
+            } else {
+                Ok(false) // Account was not suspended
+            }
+        } else {
+            Err("User not found".into())
+        }
+    }
 }
 
 fn validate_password(
@@ -971,16 +1065,47 @@ fn validate_password(
         // Increment failed login attempts
         account.failed_login_attempts += 1;
 
+        // Get current global settings
+        let lockout_threshold = get_lockout_threshold().unwrap_or(5);
+        let lockout_duration_minutes = get_lockout_duration_minutes().unwrap_or(30);
+        let suspension_threshold = get_suspension_threshold().unwrap_or(10);
+
+        // Check if we've reached the suspension threshold first
+        if account.failed_login_attempts >= suspension_threshold {
+            // Check if this is an admin account - admins are exempt from suspension
+            let user_role = account.role;
+            let is_admin = matches!(
+                user_role,
+                database::Role::SystemAdministrator | database::Role::SecurityAdministrator
+            );
+
+            if !is_admin {
+                account.is_suspended = true;
+                account_map.put(account)?;
+
+                info!(
+                    "{username} has been suspended due to {} failed login attempts (threshold: {})",
+                    account.failed_login_attempts, suspension_threshold
+                );
+                return Err(format!(
+                    "{username} has been suspended due to multiple failed login attempts. Administrator intervention is required."
+                ).into());
+            }
+        }
+
         // Check if we've reached the lockout threshold
-        if account.failed_login_attempts >= MAX_FAILED_LOGIN_ATTEMPTS_BEFORE_LOCKOUT {
-            let lockout_until = Utc::now() + ACCOUNT_LOCKOUT_DURATION;
+        if account.failed_login_attempts >= lockout_threshold {
+            let lockout_duration = chrono::Duration::try_minutes(lockout_duration_minutes.into())
+                .unwrap_or(chrono::Duration::minutes(30));
+            let lockout_until = Utc::now() + lockout_duration;
             account.locked_out_until = Some(lockout_until);
 
             // Persist changes to database
             account_map.put(account)?;
 
             info!(
-                "{username} has been locked until {lockout_until} due to multiple failed login attempts"
+                "{username} has been locked until {lockout_until} due to {} failed login attempts (threshold: {})",
+                account.failed_login_attempts, lockout_threshold
             );
             return Err(format!(
                 "{username} has been locked due to multiple failed login attempts. It will remain locked until {lockout_until}"
@@ -1002,6 +1127,16 @@ fn validate_last_signin_time(account: &types::Account, username: &str) -> Result
     if account.last_signin_time().is_none() {
         info!("Password change is required to proceed for {username}");
         return Err("a password change is required to proceed".into());
+    }
+    Ok(())
+}
+
+fn check_account_suspension_status(account: &types::Account, username: &str) -> Result<()> {
+    if account.is_suspended {
+        info!("{username} is suspended and requires administrator intervention");
+        return Err(
+            format!("{username} is suspended. Administrator intervention is required.").into(),
+        );
     }
     Ok(())
 }
