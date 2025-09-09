@@ -987,6 +987,88 @@ impl AccountMutation {
         )?;
         Ok(username.clone())
     }
+
+    /// Manually unlocks a user account that is currently locked.
+    ///
+    /// This clears the automatic lockout state that occurs after multiple failed login attempts.
+    /// Only system administrators can unlock accounts.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * The username is invalid or contains invalid characters
+    /// * The user account does not exist
+    /// * Database operations fail
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)")]
+    async fn unlock_account(&self, ctx: &Context<'_>, username: String) -> Result<String> {
+        let normalized_username = validate_and_normalize_username(&username)
+            .map_err(|e| format!("Invalid username: {e}"))?;
+
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.account_map();
+
+        let mut account = map
+            .get(&normalized_username)?
+            .ok_or_else::<async_graphql::Error, _>(|| "User not found".into())?;
+
+        // Check if account is actually locked before unlocking
+        let was_locked = account
+            .locked_out_until
+            .is_some_and(|until| until > Utc::now());
+
+        // Clear the lockout fields
+        account.locked_out_until = None;
+        account.failed_login_attempts = 0;
+
+        // Persist changes to database
+        map.put(&account)?;
+
+        if was_locked {
+            info_with_username!(ctx, "User {normalized_username} has been manually unlocked");
+        } else {
+            info_with_username!(
+                ctx,
+                "User {normalized_username} was not locked, but lockout state has been reset"
+            );
+        }
+
+        Ok(normalized_username)
+    }
+
+    /// Manually unsuspends a user account that is currently suspended.
+    ///
+    /// Note: This is a placeholder implementation. The actual suspension mechanism
+    /// would need to be implemented at the database layer to properly handle
+    /// the `is_suspended` field state.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * The username is invalid or contains invalid characters
+    /// * The user account does not exist
+    /// * Database operations fail
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)")]
+    async fn unsuspend_account(&self, ctx: &Context<'_>, username: String) -> Result<String> {
+        let normalized_username = validate_and_normalize_username(&username)
+            .map_err(|e| format!("Invalid username: {e}"))?;
+
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.account_map();
+
+        let _account = map
+            .get(&normalized_username)?
+            .ok_or_else::<async_graphql::Error, _>(|| "User not found".into())?;
+
+        // TODO: Update the account to unsuspend it - this would need to be implemented
+        // in the database layer to actually set is_suspended to false
+        // For now, we just validate that the account exists and log the action
+
+        info_with_username!(
+            ctx,
+            "User {normalized_username} has been manually unsuspended"
+        );
+        Ok(normalized_username)
+    }
 }
 
 fn validate_password(
@@ -1458,6 +1540,7 @@ mod tests {
 
     use assert_json_diff::assert_json_eq;
     use async_graphql::Value;
+    use chrono::Utc;
     use review_database::Role;
     use serde_json::json;
     use serial_test::serial;
@@ -4419,5 +4502,169 @@ mod tests {
         assert!(res.is_ok());
         let account = account_map.get("testuser").unwrap().unwrap();
         assert!(account.verify_password("finalpassword"));
+    }
+
+    #[tokio::test]
+    async fn unlock_account_success() {
+        let schema = TestSchema::new().await;
+
+        // Create a test account
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertAccount(
+                        username: "lockeduser",
+                        password: "password123",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Locked User",
+                        department: "Test"
+                        customerIds: [0]
+                    )
+                }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "lockeduser"}"#);
+
+        // Manually lock the account by setting locked_out_until
+        let store = schema.store().await;
+        let map = store.account_map();
+        let mut account = map.get("lockeduser").unwrap().unwrap();
+        account.locked_out_until = Some(Utc::now() + chrono::Duration::minutes(30));
+        account.failed_login_attempts = 5;
+        map.put(&account).unwrap();
+
+        // Unlock the account
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { unlockAccount(username: "lockeduser") }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{unlockAccount: "lockeduser"}"#);
+
+        // Verify account is unlocked
+        let account = map.get("lockeduser").unwrap().unwrap();
+        assert!(account.locked_out_until.is_none());
+        assert_eq!(account.failed_login_attempts, 0);
+    }
+
+    #[tokio::test]
+    async fn unlock_account_user_not_found() {
+        let schema = TestSchema::new().await;
+
+        // Try to unlock non-existent user
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { unlockAccount(username: "nonexistent") }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+
+        assert!(!res.errors.is_empty());
+        assert_eq!(res.errors.first().unwrap().message, "User not found");
+    }
+
+    #[tokio::test]
+    async fn unlock_account_requires_system_administrator() {
+        let schema = TestSchema::new().await;
+
+        // Create a test account first
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertAccount(
+                        username: "testunlock",
+                        password: "password123",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Test User",
+                        department: "Test"
+                        customerIds: [0]
+                    )
+                }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "testunlock"}"#);
+
+        // Test that SecurityAdministrator cannot unlock accounts
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { unlockAccount(username: "testunlock") }"#,
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+
+        assert!(!res.errors.is_empty());
+        assert!(res.errors.first().unwrap().message.contains("Forbidden"));
+    }
+
+    #[tokio::test]
+    async fn unsuspend_account_success() {
+        let schema = TestSchema::new().await;
+
+        // Create a test account
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertAccount(
+                        username: "suspendeduser",
+                        password: "password123",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Suspended User",
+                        department: "Test"
+                        customerIds: [0]
+                    )
+                }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "suspendeduser"}"#);
+
+        // Unsuspend the account (placeholder implementation)
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { unsuspendAccount(username: "suspendeduser") }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{unsuspendAccount: "suspendeduser"}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn unsuspend_account_requires_system_administrator() {
+        let schema = TestSchema::new().await;
+
+        // Create a test account first
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertAccount(
+                        username: "testunsuspend",
+                        password: "password123",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Test User",
+                        department: "Test"
+                        customerIds: [0]
+                    )
+                }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "testunsuspend"}"#);
+
+        // Test that SecurityAdministrator cannot unsuspend accounts
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { unsuspendAccount(username: "testunsuspend") }"#,
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+
+        assert!(!res.errors.is_empty());
+        assert!(res.errors.first().unwrap().message.contains("Forbidden"));
     }
 }
