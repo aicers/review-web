@@ -16,6 +16,11 @@ use crate::Store;
 static JWT_EXPIRES_IN: LazyLock<RwLock<u32>> = LazyLock::new(|| RwLock::new(3600));
 static JWT_SECRET: LazyLock<RwLock<Vec<u8>>> = LazyLock::new(|| RwLock::new(vec![]));
 
+// Account lockout and suspension global settings
+static LOCKOUT_THRESHOLD: LazyLock<RwLock<u8>> = LazyLock::new(|| RwLock::new(5));
+static LOCKOUT_DURATION_MINUTES: LazyLock<RwLock<u32>> = LazyLock::new(|| RwLock::new(30));
+static SUSPENSION_THRESHOLD: LazyLock<RwLock<u8>> = LazyLock::new(|| RwLock::new(10));
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Claims {
     pub sub: String,
@@ -126,4 +131,82 @@ pub fn validate_token(store: &Store, token: &str) -> Result<(String, database::R
             "Token not found in the database".into(),
         ))
     }
+}
+
+/// Gets the current lockout threshold.
+///
+/// # Errors
+///
+/// Returns an error if the lockout threshold lock is poisoned.
+pub fn get_lockout_threshold() -> anyhow::Result<u8> {
+    LOCKOUT_THRESHOLD
+        .read()
+        .map(|threshold| *threshold)
+        .map_err(|e| anyhow!("lockout_threshold: {}", e))
+}
+
+/// Updates the lockout threshold.
+///
+/// # Errors
+///
+/// Returns an error if the lockout threshold lock is poisoned.
+pub fn update_lockout_threshold(new_threshold: u8) -> anyhow::Result<()> {
+    LOCKOUT_THRESHOLD
+        .write()
+        .map(|mut threshold| {
+            *threshold = new_threshold;
+        })
+        .map_err(|e| anyhow!("lockout_threshold: {}", e))
+}
+
+/// Gets the current lockout duration in minutes.
+///
+/// # Errors
+///
+/// Returns an error if the lockout duration lock is poisoned.
+pub fn get_lockout_duration_minutes() -> anyhow::Result<u32> {
+    LOCKOUT_DURATION_MINUTES
+        .read()
+        .map(|duration| *duration)
+        .map_err(|e| anyhow!("lockout_duration_minutes: {}", e))
+}
+
+/// Updates the lockout duration in minutes.
+///
+/// # Errors
+///
+/// Returns an error if the lockout duration lock is poisoned.
+pub fn update_lockout_duration_minutes(new_duration: u32) -> anyhow::Result<()> {
+    LOCKOUT_DURATION_MINUTES
+        .write()
+        .map(|mut duration| {
+            *duration = new_duration;
+        })
+        .map_err(|e| anyhow!("lockout_duration_minutes: {}", e))
+}
+
+/// Gets the current suspension threshold.
+///
+/// # Errors
+///
+/// Returns an error if the suspension threshold lock is poisoned.
+pub fn get_suspension_threshold() -> anyhow::Result<u8> {
+    SUSPENSION_THRESHOLD
+        .read()
+        .map(|threshold| *threshold)
+        .map_err(|e| anyhow!("suspension_threshold: {}", e))
+}
+
+/// Updates the suspension threshold.
+///
+/// # Errors
+///
+/// Returns an error if the suspension threshold lock is poisoned.
+pub fn update_suspension_threshold(new_threshold: u8) -> anyhow::Result<()> {
+    SUSPENSION_THRESHOLD
+        .write()
+        .map(|mut threshold| {
+            *threshold = new_threshold;
+        })
+        .map_err(|e| anyhow!("suspension_threshold: {}", e))
 }
