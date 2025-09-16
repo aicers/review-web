@@ -2,7 +2,9 @@ use async_graphql::{Context, ID, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::event as database;
 
-use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
+use super::{
+    EventTrait, ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network,
+};
 use crate::graphql::{
     customer::Customer, filter::LearningMethod, network::Network, triage::ThreatCategory,
 };
@@ -276,6 +278,44 @@ impl HttpThreat {
 impl From<database::HttpThreat> for HttpThreat {
     fn from(inner: database::HttpThreat) -> Self {
         Self { inner }
+    }
+}
+
+impl EventTrait for HttpThreat {
+    fn time(&self) -> DateTime<Utc> {
+        self.inner.time
+    }
+
+    fn sensor(&self) -> &str {
+        &self.inner.sensor
+    }
+
+    fn start_time(&self) -> Option<DateTime<Utc>> {
+        None
+    }
+
+    fn end_time(&self) -> Option<DateTime<Utc>> {
+        None
+    }
+
+    fn learning_method(&self) -> LearningMethod {
+        LearningMethod::Unsupervised
+    }
+
+    fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
+    }
+
+    fn level(&self) -> ThreatLevel {
+        ThreatLevel::Low
+    }
+
+    fn confidence(&self) -> f32 {
+        self.inner.confidence
+    }
+
+    fn triage_scores(&self) -> Option<Vec<database::TriageScore>> {
+        self.inner.triage_scores.clone()
     }
 }
 

@@ -71,12 +71,44 @@ use super::{
     customer::{Customer, HostNetworkGroupInput},
     filter::{FlowKind, LearningMethod, TrafficDirection},
     network::Network,
+    triage::ThreatCategory,
 };
 use crate::{error_with_username, graphql::query, warn_with_username};
 
 const DEFAULT_CONNECTION_SIZE: usize = 100;
 const DEFAULT_EVENT_FETCH_TIME: u64 = 20;
 const ADD_TIME_FOR_NEXT_COMPARE: i64 = 1;
+
+/// Base trait for all event types containing common fields and methods.
+#[allow(dead_code)]
+pub(super) trait EventTrait {
+    /// Returns the timestamp when the event was detected.
+    fn time(&self) -> DateTime<Utc>;
+
+    /// Returns the sensor that detected the event.
+    fn sensor(&self) -> &str;
+
+    /// Returns the optional start time of the event.
+    fn start_time(&self) -> Option<DateTime<Utc>>;
+
+    /// Returns the optional end time of the event.
+    fn end_time(&self) -> Option<DateTime<Utc>>;
+
+    /// Returns the learning method used to detect the event.
+    fn learning_method(&self) -> LearningMethod;
+
+    /// Returns the event category (MITRE tactic).
+    fn category(&self) -> ThreatCategory;
+
+    /// Returns the threat level of the event.
+    fn level(&self) -> ThreatLevel;
+
+    /// Returns the confidence score of the detection.
+    fn confidence(&self) -> f32;
+
+    /// Returns the triage scores for the event.
+    fn triage_scores(&self) -> Option<Vec<database::event::TriageScore>>;
+}
 
 /// Threat level.
 #[derive(Clone, Copy, Enum, Eq, PartialEq)]

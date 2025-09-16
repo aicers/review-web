@@ -2,7 +2,9 @@ use async_graphql::{Context, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::event as database;
 
-use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
+use super::{
+    EventTrait, ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network,
+};
 use crate::graphql::{
     customer::Customer, filter::LearningMethod, network::Network, triage::ThreatCategory,
 };
@@ -190,6 +192,44 @@ impl DnsCovertChannel {
 impl From<database::DnsCovertChannel> for DnsCovertChannel {
     fn from(inner: database::DnsCovertChannel) -> Self {
         Self { inner }
+    }
+}
+
+impl EventTrait for DnsCovertChannel {
+    fn time(&self) -> DateTime<Utc> {
+        self.inner.time
+    }
+
+    fn sensor(&self) -> &str {
+        &self.inner.sensor
+    }
+
+    fn start_time(&self) -> Option<DateTime<Utc>> {
+        None
+    }
+
+    fn end_time(&self) -> Option<DateTime<Utc>> {
+        Some(self.inner.end_time)
+    }
+
+    fn learning_method(&self) -> LearningMethod {
+        LearningMethod::SemiSupervised
+    }
+
+    fn category(&self) -> ThreatCategory {
+        self.inner.category.into()
+    }
+
+    fn level(&self) -> ThreatLevel {
+        ThreatLevel::Medium
+    }
+
+    fn confidence(&self) -> f32 {
+        self.inner.confidence
+    }
+
+    fn triage_scores(&self) -> Option<Vec<database::TriageScore>> {
+        self.inner.triage_scores.clone()
     }
 }
 
