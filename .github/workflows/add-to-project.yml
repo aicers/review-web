@@ -1,4 +1,4 @@
-name: Add newly opened issues/PRs to the aicers project board
+name: Add newly opened issues/PRs to the aicers project board test
 
 on:
   issues:
