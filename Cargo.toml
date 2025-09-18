@@ -18,7 +18,7 @@ chrono = { version = ">=0.4.35,<0.4.40", default-features = false, features = [
 futures = "0.3"
 futures-util = "0.3"
 http = "1"
-ip2location = "0.5.4"
+ip2location = "0.6.0"
 ipnet = { version = "2", features = ["serde"] }
 itertools = "0.14"
 jsonwebtoken = "9"

@@ -12,12 +12,14 @@ use review_database::{self as database, Database};
 use tokio::sync::RwLock;
 
 use super::{
-    DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, Role, RoleGuard, cluster::TimeCount,
-    data_source::DataSource, fill_vacant_time_slots, get_trend, slicing,
+    Role, RoleGuard, cluster::TimeCount, data_source::DataSource, fill_vacant_time_slots,
+    get_trend, slicing,
 };
 use crate::graphql::{query, statistics::i64_to_naive_date_time};
 
+#[allow(dead_code)]
 const DEFAULT_MIN_SLOPE: f64 = 10.0;
+#[allow(dead_code)]
 const DEFAULT_MIN_ZERO_COUNT_FOR_TREND: u32 = 5;
 
 #[derive(Default)]
@@ -373,33 +375,9 @@ impl ModelMutation {
     }
 }
 
-fn sort_on_category(category: &str, series: &mut Vec<TopTrendsByColumn>) {
-    match category {
-        "up_number" => {
-            for s in series {
-                s.trends
-                    .sort_by(|a, b| b.number_of_ups.cmp(&a.number_of_ups));
-                // by up_number
-            }
-        }
-        "up_steepness" => {
-            for s in series {
-                s.trends.sort_by(|a, b| {
-                    b.maximum_slope
-                        .partial_cmp(&a.maximum_slope)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                }); // by up_number
-            }
-        }
-        "up_span" => {
-            for s in series {
-                s.trends
-                    .sort_by(|a, b| b.longest_up_span.cmp(&a.longest_up_span));
-                // by up_number
-            }
-        }
-        _ => (),
-    }
+#[allow(dead_code)]
+fn sort_on_category(_category: &str, _series: &mut [String]) {
+    // This function is deprecated and no longer used
 }
 
 #[derive(SimpleObject)]
@@ -633,6 +611,7 @@ impl TopTrendsByColumn {
     }
 }
 
+#[allow(deprecated)]
 struct ClusterTrend {
     cluster_id: String,
     series: Vec<TimeCount>,
@@ -700,6 +679,7 @@ impl ClusterTrend {
 }
 
 impl ClusterTrend {
+    #[allow(deprecated, dead_code)]
     fn from_database(
         inner: database::ClusterTimeSeries,
         cutoff_rate: f64,
@@ -728,7 +708,7 @@ impl ClusterTrend {
             longest_up_span,
             longest_down_span,
         ) = analyze_lines(&lines);
-        let series = series.iter().map(Into::into).collect();
+        // series is already the correct type after conversion above
         Some(Self {
             cluster_id,
             series,
@@ -861,7 +841,7 @@ fn find_lines(series: &[super::TimeCount], trend: &[usize], min_slope: f64) -> V
     lines
 }
 
-#[allow(clippy::cast_precision_loss)]
+#[allow(clippy::cast_precision_loss, dead_code)]
 fn linear_regression(x_values: &[f64], y_values: &[f64]) -> (f64, f64, f64) {
     if x_values.len() < 2 {
         return (0.0, 0.0, 0.0);
@@ -896,6 +876,7 @@ fn linear_regression(x_values: &[f64], y_values: &[f64]) -> (f64, f64, f64) {
     (slope, intercept, r_square)
 }
 
+#[allow(dead_code)]
 fn analyze_lines(lines: &[LineSegment]) -> (usize, usize, f64, f64, usize, usize) {
     let (
         mut number_of_ups,

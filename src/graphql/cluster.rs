@@ -107,12 +107,12 @@ impl ClusterQuery {
     async fn top_time_series_of_cluster(
         &self,
         ctx: &Context<'_>,
-        model: i32,
-        cluster_id: String,
+        #[allow(unused_variables)] model: i32,
+        #[allow(unused_variables)] cluster_id: String,
         cutoff_rate: Option<f64>,
         trendi_order: Option<i32>,
-        start: Option<i64>,
-        end: Option<i64>,
+        #[allow(unused_variables)] start: Option<i64>,
+        #[allow(unused_variables)] end: Option<i64>,
     ) -> Result<TimeSeriesResult> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.time_series_map();
@@ -348,7 +348,7 @@ impl<'a> ColumnTimeSeries<'a> {
     }
 }
 
-#[derive(SimpleObject)]
+#[derive(SimpleObject, Clone)]
 pub(super) struct TimeCount {
     pub(super) time: NaiveDateTime,
     pub(super) count: usize,
