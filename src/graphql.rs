@@ -526,8 +526,11 @@ impl ScalarType for IpAddress {
     }
 }
 
-fn fill_vacant_time_slots(series: &[database::TimeCount]) -> Vec<database::TimeCount> {
-    let mut filled_series: Vec<database::TimeCount> = Vec::new();
+#[allow(dead_code)]
+fn fill_vacant_time_slots(
+    series: &[crate::graphql::cluster::TimeCount],
+) -> Vec<crate::graphql::cluster::TimeCount> {
+    let mut filled_series: Vec<crate::graphql::cluster::TimeCount> = Vec::new();
 
     if series.len() <= 2 {
         return series.to_vec();
@@ -553,7 +556,7 @@ fn fill_vacant_time_slots(series: &[database::TimeCount]) -> Vec<database::TimeC
                 let Some(min_diff) = TimeDelta::try_seconds(d * min_diff.num_seconds()) else {
                     return Vec::new();
                 };
-                filled_series.push(database::TimeCount {
+                filled_series.push(crate::graphql::cluster::TimeCount {
                     time: series[index - 1].time + min_diff,
                     count: 0,
                 });
@@ -565,7 +568,7 @@ fn fill_vacant_time_slots(series: &[database::TimeCount]) -> Vec<database::TimeC
 }
 
 fn get_trend(
-    series: &[database::TimeCount],
+    series: &[crate::graphql::cluster::TimeCount],
     cutoff_rate: f64,
     trendi_order: i32,
 ) -> Result<Vec<f64>, vinum::InvalidInput> {

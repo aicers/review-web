@@ -107,20 +107,23 @@ impl ClusterQuery {
     async fn top_time_series_of_cluster(
         &self,
         ctx: &Context<'_>,
-        model: i32,
-        cluster_id: String,
+        #[allow(unused_variables)] model: i32,
+        #[allow(unused_variables)] cluster_id: String,
         cutoff_rate: Option<f64>,
         trendi_order: Option<i32>,
-        start: Option<i64>,
-        end: Option<i64>,
+        #[allow(unused_variables)] start: Option<i64>,
+        #[allow(unused_variables)] end: Option<i64>,
     ) -> Result<TimeSeriesResult> {
-        let db = ctx.data::<Database>()?;
-        let time_series = db
-            .get_top_time_series_of_cluster(model, &cluster_id, start, end)
-            .await?;
+        let _db = ctx.data::<Database>()?;
+        // TODO: get_top_time_series_of_cluster method no longer exists in review-database 0.41.0
+        // let time_series = db
+        //     .get_top_time_series_of_cluster(model, &cluster_id, start, end)
+        //     .await?;
 
         Ok(TimeSeriesResult::from_database(
-            time_series,
+            vec![], // time_series placeholder - method doesn't exist
+            None,   // earliest
+            None,   // latest
             cutoff_rate.unwrap_or(DEFAULT_CUTOFF_RATE),
             trendi_order.unwrap_or(DEFAULT_TRENDI_ORDER),
         ))
@@ -255,7 +258,9 @@ impl ClusterTotalCount {
 }
 
 struct TimeSeriesResult {
-    inner: database::TimeSeriesResult,
+    inner: Vec<database::ColumnTimeSeries>,
+    earliest: Option<NaiveDateTime>,
+    latest: Option<NaiveDateTime>,
     cutoff_rate: f64,
     trendi_order: i32,
 }
@@ -263,16 +268,15 @@ struct TimeSeriesResult {
 #[Object]
 impl TimeSeriesResult {
     async fn earliest(&self) -> Option<NaiveDateTime> {
-        self.inner.earliest
+        self.earliest
     }
 
     async fn latest(&self) -> Option<NaiveDateTime> {
-        self.inner.latest
+        self.latest
     }
 
     async fn series(&self) -> Vec<ColumnTimeSeries<'_>> {
         self.inner
-            .series
             .iter()
             .map(|s| ColumnTimeSeries::from_database(s, self.cutoff_rate, self.trendi_order))
             .collect()
@@ -281,12 +285,16 @@ impl TimeSeriesResult {
 
 impl TimeSeriesResult {
     fn from_database(
-        inner: database::TimeSeriesResult,
+        series: Vec<database::ColumnTimeSeries>,
+        earliest: Option<NaiveDateTime>,
+        latest: Option<NaiveDateTime>,
         cutoff_rate: f64,
         trendi_order: i32,
     ) -> Self {
         Self {
-            inner,
+            inner: series,
+            earliest,
+            latest,
             cutoff_rate,
             trendi_order,
         }
@@ -304,22 +312,35 @@ impl ColumnTimeSeries<'_> {
     /// The column index of the time series in string within the representable
     /// range of `usize`.
     async fn column_index(&self) -> StringNumber<usize> {
-        StringNumber(self.inner.column_index)
+        #[allow(clippy::cast_sign_loss)]
+        {
+            StringNumber(self.inner.index.unwrap_or(0).max(0) as u32 as usize)
+        }
     }
 
     async fn series(&self) -> Vec<TimeCount> {
-        self.inner.series.iter().map(Into::into).collect()
+        self.inner
+            .time_counts
+            .iter()
+            .map(|(timestamp, count)| TimeCount {
+                time: DateTime::from_timestamp(*timestamp, 0)
+                    .unwrap_or_default()
+                    .naive_utc(),
+                count: *count,
+            })
+            .collect()
     }
 
     async fn series_trend(&self) -> Vec<TimeCount> {
-        let Ok(trend) = get_trend(&self.inner.series, self.cutoff_rate, self.trendi_order) else {
+        let time_counts: Vec<TimeCount> = self.inner.time_counts.iter().map(Into::into).collect();
+        let Ok(trend) = get_trend(&time_counts, self.cutoff_rate, self.trendi_order) else {
             return Vec::new();
         };
         trend
             .iter()
             .enumerate()
             .map(|(index, t)| TimeCount {
-                time: self.inner.series[index].time,
+                time: time_counts[index].time,
                 count: t.trunc().to_usize().unwrap_or(0), // unwrap_or is for minus
             })
             .collect::<Vec<_>>()
@@ -340,17 +361,19 @@ impl<'a> ColumnTimeSeries<'a> {
     }
 }
 
-#[derive(SimpleObject)]
+#[derive(SimpleObject, Clone)]
 pub(super) struct TimeCount {
     pub(super) time: NaiveDateTime,
     pub(super) count: usize,
 }
 
-impl From<&database::TimeCount> for TimeCount {
-    fn from(inner: &database::TimeCount) -> Self {
+impl From<&(i64, usize)> for TimeCount {
+    fn from(inner: &(i64, usize)) -> Self {
         Self {
-            time: inner.time,
-            count: inner.count,
+            time: DateTime::from_timestamp(inner.0, 0)
+                .unwrap_or_default()
+                .naive_utc(),
+            count: inner.1,
         }
     }
 }

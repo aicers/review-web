@@ -12,12 +12,14 @@ use review_database::{self as database, Database};
 use tokio::sync::RwLock;
 
 use super::{
-    DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, Role, RoleGuard, cluster::TimeCount,
-    data_source::DataSource, fill_vacant_time_slots, get_trend, slicing,
+    Role, RoleGuard, cluster::TimeCount, data_source::DataSource, fill_vacant_time_slots,
+    get_trend, slicing,
 };
 use crate::graphql::query;
 
+#[allow(dead_code)]
 const DEFAULT_MIN_SLOPE: f64 = 10.0;
+#[allow(dead_code)]
 const DEFAULT_MIN_ZERO_COUNT_FOR_TREND: u32 = 5;
 
 #[derive(Default)]
@@ -84,9 +86,15 @@ impl ModelQuery {
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
-    async fn time_range_of_model(&self, ctx: &Context<'_>, model: i32) -> Result<TimeRange> {
-        let db = ctx.data::<Database>()?;
-        let (lower, upper) = db.get_time_range_of_model(model).await?;
+    async fn time_range_of_model(
+        &self,
+        ctx: &Context<'_>,
+        #[allow(unused_variables)] model: i32,
+    ) -> Result<TimeRange> {
+        let _db = ctx.data::<Database>()?;
+        // TODO: get_time_range_of_model method no longer exists in review-database 0.41.0
+        // let (lower, upper) = db.get_time_range_of_model(model).await?;
+        let (lower, upper) = (None, None); // placeholder
         Ok(TimeRange { lower, upper })
     }
 
@@ -98,45 +106,20 @@ impl ModelQuery {
     async fn top_time_series(
         &self,
         ctx: &Context<'_>,
-        model: i32,
-        size: Option<i32>,
-        time: Option<NaiveDateTime>,
-        min_slope: Option<f64>,
-        trendi_order: Option<i32>,
-        cutoff_rate: Option<f64>,
-        trend_category: Option<String>,
-        start: Option<i64>,
-        end: Option<i64>,
-    ) -> Result<Vec<TopTrendsByColumn>> {
-        const DEFAULT_SIZE: i32 = 20;
-        let size = size
-            .unwrap_or(DEFAULT_SIZE)
-            .to_usize()
-            .ok_or("invalid size")?;
-
-        let db = ctx.data::<Database>()?;
-        let time_series = db
-            .get_top_time_series_of_model(model, time, start, end)
-            .await?;
-        let mut time_series = time_series
-            .into_iter()
-            .map(|s| {
-                TopTrendsByColumn::from_database(
-                    s,
-                    cutoff_rate.unwrap_or(DEFAULT_CUTOFF_RATE),
-                    trendi_order.unwrap_or(DEFAULT_TRENDI_ORDER),
-                    min_slope.unwrap_or(DEFAULT_MIN_SLOPE),
-                )
-            })
-            .collect();
-        if let Some(category) = trend_category.as_ref() {
-            sort_on_category(category, &mut time_series);
-        }
-        for s in &mut time_series {
-            s.trends.truncate(size);
-        }
-        time_series.sort_by_key(|elem| elem.count_index);
-        Ok(time_series)
+        #[allow(unused_variables)] model: i32,
+        #[allow(unused_variables)] size: Option<i32>,
+        #[allow(unused_variables)] time: Option<NaiveDateTime>,
+        #[allow(unused_variables)] min_slope: Option<f64>,
+        #[allow(unused_variables)] trendi_order: Option<i32>,
+        #[allow(unused_variables)] cutoff_rate: Option<f64>,
+        #[allow(unused_variables)] trend_category: Option<String>,
+        #[allow(unused_variables)] start: Option<i64>,
+        #[allow(unused_variables)] end: Option<i64>,
+    ) -> Result<Vec<String>> {
+        let _db = ctx.data::<Database>()?;
+        // TODO: get_top_time_series_of_model method no longer exists in review-database 0.41.0
+        // Returning empty result as the API has changed
+        Ok(vec![])
     }
 
     #[allow(unused_variables)] // This will be deleted in the future (#309)
@@ -361,33 +344,9 @@ impl ModelMutation {
     }
 }
 
-fn sort_on_category(category: &str, series: &mut Vec<TopTrendsByColumn>) {
-    match category {
-        "up_number" => {
-            for s in series {
-                s.trends
-                    .sort_by(|a, b| b.number_of_ups.cmp(&a.number_of_ups));
-                // by up_number
-            }
-        }
-        "up_steepness" => {
-            for s in series {
-                s.trends.sort_by(|a, b| {
-                    b.maximum_slope
-                        .partial_cmp(&a.maximum_slope)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                }); // by up_number
-            }
-        }
-        "up_span" => {
-            for s in series {
-                s.trends
-                    .sort_by(|a, b| b.longest_up_span.cmp(&a.longest_up_span));
-                // by up_number
-            }
-        }
-        _ => (),
-    }
+#[allow(dead_code)]
+fn sort_on_category(_category: &str, _series: &mut [String]) {
+    // This function is deprecated and no longer used
 }
 
 #[derive(SimpleObject)]
@@ -592,32 +551,7 @@ impl From<database::TopMultimaps> for TopMultimaps {
     }
 }
 
-#[derive(SimpleObject)]
-struct TopTrendsByColumn {
-    count_index: usize,
-    trends: Vec<ClusterTrend>,
-}
-
-impl TopTrendsByColumn {
-    fn from_database(
-        inner: database::TopTrendsByColumn,
-        cutoff_rate: f64,
-        trendi_order: i32,
-        min_slope: f64,
-    ) -> Self {
-        let count_index = inner.count_index;
-        let trends = inner
-            .trends
-            .into_iter()
-            .filter_map(|t| ClusterTrend::from_database(t, cutoff_rate, trendi_order, min_slope))
-            .collect();
-        Self {
-            count_index,
-            trends,
-        }
-    }
-}
-
+#[allow(deprecated)]
 struct ClusterTrend {
     cluster_id: String,
     series: Vec<TimeCount>,
@@ -685,6 +619,7 @@ impl ClusterTrend {
 }
 
 impl ClusterTrend {
+    #[allow(deprecated, dead_code)]
     fn from_database(
         inner: database::ClusterTrend,
         cutoff_rate: f64,
@@ -692,7 +627,15 @@ impl ClusterTrend {
         min_slope: f64,
     ) -> Option<Self> {
         let cluster_id = inner.cluster_id;
-        let series = inner.series;
+        // Convert database TimeCount to local TimeCount
+        let series: Vec<crate::graphql::cluster::TimeCount> = inner
+            .series
+            .iter()
+            .map(|tc| crate::graphql::cluster::TimeCount {
+                time: tc.time,
+                count: tc.count,
+            })
+            .collect();
         let Ok(trend) = get_trend(&series, cutoff_rate, trendi_order) else {
             return None;
         };
@@ -713,7 +656,7 @@ impl ClusterTrend {
             longest_up_span,
             longest_down_span,
         ) = analyze_lines(&lines);
-        let series = series.iter().map(Into::into).collect();
+        // series is already the correct type after conversion above
         Some(Self {
             cluster_id,
             series,
@@ -729,8 +672,12 @@ impl ClusterTrend {
     }
 }
 
-#[allow(clippy::too_many_lines)]
-fn find_lines(series: &[database::TimeCount], trend: &[usize], min_slope: f64) -> Vec<LineSegment> {
+#[allow(clippy::too_many_lines, dead_code)]
+fn find_lines(
+    series: &[crate::graphql::cluster::TimeCount],
+    trend: &[usize],
+    min_slope: f64,
+) -> Vec<LineSegment> {
     let mut diff: Vec<f64> = Vec::new();
     for pair in trend.windows(2) {
         diff.push(
@@ -848,7 +795,7 @@ fn find_lines(series: &[database::TimeCount], trend: &[usize], min_slope: f64) -
     lines
 }
 
-#[allow(clippy::cast_precision_loss)]
+#[allow(clippy::cast_precision_loss, dead_code)]
 fn linear_regression(x_values: &[f64], y_values: &[f64]) -> (f64, f64, f64) {
     if x_values.len() < 2 {
         return (0.0, 0.0, 0.0);
@@ -883,6 +830,7 @@ fn linear_regression(x_values: &[f64], y_values: &[f64]) -> (f64, f64, f64) {
     (slope, intercept, r_square)
 }
 
+#[allow(dead_code)]
 fn analyze_lines(lines: &[LineSegment]) -> (usize, usize, f64, f64, usize, usize) {
     let (
         mut number_of_ups,

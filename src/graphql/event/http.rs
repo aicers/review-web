@@ -186,29 +186,19 @@ impl HttpThreat {
         &self.inner.cache_control
     }
 
-    /// Request Filenames
-    async fn orig_filenames(&self) -> &[String] {
-        &self.inner.orig_filenames
+    /// Filenames
+    async fn filenames(&self) -> &[String] {
+        &self.inner.filenames
     }
 
-    /// Request MIME Types
-    async fn orig_mime_types(&self) -> &[String] {
-        &self.inner.orig_mime_types
+    /// MIME Types
+    async fn mime_types(&self) -> &[String] {
+        &self.inner.mime_types
     }
 
-    /// Response Filenames
-    async fn resp_filenames(&self) -> &[String] {
-        &self.inner.resp_filenames
-    }
-
-    /// Response MIME Types
-    async fn resp_mime_types(&self) -> &[String] {
-        &self.inner.resp_mime_types
-    }
-
-    /// POST Body
-    async fn post_body(&self) -> &[u8] {
-        &self.inner.post_body
+    /// Body
+    async fn body(&self) -> &[u8] {
+        &self.inner.body
     }
 
     /// Last State
@@ -579,29 +569,19 @@ impl TorConnection {
         &self.inner.cache_control
     }
 
-    /// Request Filenames
-    async fn orig_filenames(&self) -> &[String] {
-        &self.inner.orig_filenames
+    /// Filenames
+    async fn filenames(&self) -> &[String] {
+        &self.inner.filenames
     }
 
-    /// Request MIME Types
-    async fn orig_mime_types(&self) -> &[String] {
-        &self.inner.orig_mime_types
+    /// MIME Types
+    async fn mime_types(&self) -> &[String] {
+        &self.inner.mime_types
     }
 
-    /// Response Filenames
-    async fn resp_filenames(&self) -> &[String] {
-        &self.inner.resp_filenames
-    }
-
-    /// Response MIME Types
-    async fn resp_mime_types(&self) -> &[String] {
-        &self.inner.resp_mime_types
-    }
-
-    /// POST Body
-    async fn post_body(&self) -> &[u8] {
-        &self.inner.post_body
+    /// Body
+    async fn body(&self) -> &[u8] {
+        &self.inner.body
     }
 
     /// Last State
@@ -809,29 +789,19 @@ impl DomainGenerationAlgorithm {
         &self.inner.cache_control
     }
 
-    /// Request Filenames
-    async fn orig_filenames(&self) -> &[String] {
-        &self.inner.orig_filenames
+    /// Filenames
+    async fn filenames(&self) -> &[String] {
+        &self.inner.filenames
     }
 
-    /// Request MIME Types
-    async fn orig_mime_types(&self) -> &[String] {
-        &self.inner.orig_mime_types
+    /// MIME Types
+    async fn mime_types(&self) -> &[String] {
+        &self.inner.mime_types
     }
 
-    /// Response Filenames
-    async fn resp_filenames(&self) -> &[String] {
-        &self.inner.resp_filenames
-    }
-
-    /// Response MIME Types
-    async fn resp_mime_types(&self) -> &[String] {
-        &self.inner.resp_mime_types
-    }
-
-    /// POST Body
-    async fn post_body(&self) -> &[u8] {
-        &self.inner.post_body
+    /// Body
+    async fn body(&self) -> &[u8] {
+        &self.inner.body
     }
 
     /// Last State
@@ -1039,29 +1009,19 @@ impl NonBrowser {
         &self.inner.cache_control
     }
 
-    /// Request Filenames
-    async fn orig_filenames(&self) -> &[String] {
-        &self.inner.orig_filenames
+    /// Filenames
+    async fn filenames(&self) -> &[String] {
+        &self.inner.filenames
     }
 
-    /// Request MIME Types
-    async fn orig_mime_types(&self) -> &[String] {
-        &self.inner.orig_mime_types
+    /// MIME Types
+    async fn mime_types(&self) -> &[String] {
+        &self.inner.mime_types
     }
 
-    /// Response Filenames
-    async fn resp_filenames(&self) -> &[String] {
-        &self.inner.resp_filenames
-    }
-
-    /// Response MIME Types
-    async fn resp_mime_types(&self) -> &[String] {
-        &self.inner.resp_mime_types
-    }
-
-    /// POST Body
-    async fn post_body(&self) -> &[u8] {
-        &self.inner.post_body
+    /// Body
+    async fn body(&self) -> &[u8] {
+        &self.inner.body
     }
 
     /// Last State
@@ -1274,29 +1234,19 @@ impl BlocklistHttp {
         &self.inner.cache_control
     }
 
-    /// Request Filenames
-    async fn orig_filenames(&self) -> &[String] {
-        &self.inner.orig_filenames
+    /// Filenames
+    async fn filenames(&self) -> &[String] {
+        &self.inner.filenames
     }
 
-    /// Request MIME Types
-    async fn orig_mime_types(&self) -> &[String] {
-        &self.inner.orig_mime_types
+    /// MIME Types
+    async fn mime_types(&self) -> &[String] {
+        &self.inner.mime_types
     }
 
-    /// Response Filenames
-    async fn resp_filenames(&self) -> &[String] {
-        &self.inner.resp_filenames
-    }
-
-    /// Response MIME Types
-    async fn resp_mime_types(&self) -> &[String] {
-        &self.inner.resp_mime_types
-    }
-
-    /// POST Body
-    async fn post_body(&self) -> &[u8] {
-        &self.inner.post_body
+    /// Body
+    async fn body(&self) -> &[u8] {
+        &self.inner.body
     }
 
     /// Last State
