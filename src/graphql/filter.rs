@@ -274,27 +274,6 @@ impl<'a> From<&'a database::event::FilterEndpoint> for Endpoint<'a> {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize, SimpleObject)]
-struct NetworkInputPoint {
-    network: String,
-    endpoint_kind: EndpointKind,
-}
-
-impl From<NetworkInputPointInput> for NetworkInputPoint {
-    fn from(input: NetworkInputPointInput) -> Self {
-        Self {
-            network: input.network,
-            endpoint_kind: input.endpoint_kind,
-        }
-    }
-}
-
-impl PartialEq<NetworkInputPointInput> for NetworkInputPoint {
-    fn eq(&self, other: &NetworkInputPointInput) -> bool {
-        self.network == other.network && self.endpoint_kind == other.endpoint_kind
-    }
-}
-
 struct PeriodForSearch<'a> {
     inner: &'a database::PeriodForSearch,
 }
@@ -586,12 +565,6 @@ pub(super) enum FlowKind {
 pub(super) enum LearningMethod {
     Unsupervised,
     SemiSupervised,
-}
-
-#[derive(InputObject)]
-struct NetworkInputPointInput {
-    network: String,
-    endpoint_kind: EndpointKind,
 }
 
 #[derive(InputObject)]
