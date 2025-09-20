@@ -84,7 +84,7 @@ pub fn update_jwt_expires_in(new_expires_in: u32) -> anyhow::Result<()> {
         .map(|mut expires_in| {
             *expires_in = new_expires_in;
         })
-        .map_err(|e| anyhow!("jwt_expires_in: {}", e))
+        .map_err(|e| anyhow!("jwt_expires_in: {e}"))
 }
 
 /// Updates the JWT secret.
@@ -98,7 +98,7 @@ pub fn update_jwt_secret(new_secret: Vec<u8>) -> anyhow::Result<()> {
         .map(|mut secret| {
             *secret = new_secret;
         })
-        .map_err(|e| anyhow!("jwt_secret: {}", e))
+        .map_err(|e| anyhow!("jwt_secret: {e}"))
 }
 
 /// Validates a JWT token and returns the username and role.
