@@ -328,7 +328,7 @@ async fn run(config: Config) -> Result<Arc<Notify>> {
     let ip_locator = if let Some(path) = config.ip2location() {
         Some(
             ip2location::DB::from_file(path)
-                .map_err(|e| anyhow!("cannot read IP location database: {:#?}", e))?,
+                .map_err(|e| anyhow!("cannot read IP location database: {e:#?}"))?,
         )
     } else {
         None
@@ -422,7 +422,7 @@ async fn shutdown() -> Result<()> {
 fn init_tracing(path: &Path) -> Result<WorkerGuard> {
     if !path.exists() {
         tracing_subscriber::fmt::init();
-        bail!("Path not found {path:?}");
+        bail!("Path not found {:?}", path.display());
     }
     let file_name = format!("{}.log", env!("CARGO_PKG_NAME"));
     if fs::File::create(path.join(&file_name)).is_err() {
