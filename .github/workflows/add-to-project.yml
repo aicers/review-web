@@ -1,16 +1,17 @@
-name: Add newly opened issues/PRs to the aicers project board
+# Adds new issues and internal PRs to the 'to-do list' project.
+name: Auto-add
 
 on:
   issues:
     types:
       - opened
-  pull_request_target:
+  pull_request:
     types:
       - opened
 
 jobs:
   add-to-project:
-    name: Add issue/PR to the aicers project board
+    name: Add to to-do list
     runs-on: ubuntu-latest
     steps:
       - uses: actions/add-to-project@v1.0.2
