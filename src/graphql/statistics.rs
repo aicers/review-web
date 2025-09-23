@@ -246,7 +246,7 @@ async fn load_rounds_by_model(
     )
 }
 
-fn i64_to_naive_date_time(t: i64) -> NaiveDateTime {
+pub(super) fn i64_to_naive_date_time(t: i64) -> NaiveDateTime {
     const A_BILLION: i64 = 1_000_000_000;
     DateTime::from_timestamp(t / A_BILLION, (t % A_BILLION).to_u32().unwrap_or_default())
         .unwrap_or_default()

@@ -48,7 +48,6 @@ use async_graphql::{
     Context, Guard, InputValueError, InputValueResult, MergedObject, MergedSubscription,
     ObjectType, OutputType, Result, Scalar, ScalarType, Value,
 };
-use chrono::TimeDelta;
 use num_traits::ToPrimitive;
 #[cfg(test)]
 use review_database::HostNetworkGroup;
@@ -526,16 +525,18 @@ impl ScalarType for IpAddress {
     }
 }
 
-fn fill_vacant_time_slots(series: &[database::TimeCount]) -> Vec<database::TimeCount> {
-    let mut filled_series: Vec<database::TimeCount> = Vec::new();
+const A_BILLION: i64 = 1_000_000_000;
+type TimeCount = (i64, usize); // (utc_timestamp_nano, count)
+
+fn fill_vacant_time_slots(series: &[TimeCount]) -> Vec<TimeCount> {
+    let mut filled_series: Vec<TimeCount> = Vec::new();
 
     if series.len() <= 2 {
         return series.to_vec();
     }
-
-    let mut min_diff = series[1].time - series[0].time;
+    let mut min_diff = series[1].0 - series[0].0;
     for index in 2..series.len() {
-        let diff = series[index].time - series[index - 1].time;
+        let diff = series[index].0 - series[index - 1].0;
         if diff < min_diff {
             min_diff = diff;
         }
@@ -543,35 +544,29 @@ fn fill_vacant_time_slots(series: &[database::TimeCount]) -> Vec<database::TimeC
 
     for (index, element) in series.iter().enumerate() {
         if index == 0 {
-            filled_series.push(element.clone());
+            filled_series.push(*element);
             continue;
         }
-        let time_diff =
-            (element.time - series[index - 1].time).num_seconds() / min_diff.num_seconds();
+        let min_diff_seconds = min_diff / A_BILLION;
+        let time_diff = ((element.0 - series[index - 1].0) / A_BILLION) / min_diff_seconds;
         if time_diff > 1 {
             for d in 1..time_diff {
-                let Some(min_diff) = TimeDelta::try_seconds(d * min_diff.num_seconds()) else {
-                    return Vec::new();
-                };
-                filled_series.push(database::TimeCount {
-                    time: series[index - 1].time + min_diff,
-                    count: 0,
-                });
+                filled_series.push((series[index - 1].0 + d * min_diff_seconds, 0));
             }
         }
-        filled_series.push(element.clone());
+        filled_series.push(*element);
     }
     filled_series
 }
 
 fn get_trend(
-    series: &[database::TimeCount],
+    series: &[TimeCount],
     cutoff_rate: f64,
     trendi_order: i32,
 ) -> Result<Vec<f64>, vinum::InvalidInput> {
     let original: Vec<f64> = series
         .iter()
-        .map(|s| s.count.to_f64().expect("safe: usize -> f64"))
+        .map(|s| s.1.to_f64().expect("safe: usize -> f64"))
         .collect();
     let cutoff_len = cutoff_rate * original.len().to_f64().expect("safe: usize -> f64");
     let cutoff_frequency = if cutoff_len < 1.0 {

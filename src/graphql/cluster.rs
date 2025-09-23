@@ -21,7 +21,7 @@ use super::{
     slicing,
     status::Status,
 };
-use crate::graphql::query;
+use crate::graphql::{query, statistics::i64_to_naive_date_time};
 
 #[derive(Default)]
 pub(super) struct ClusterQuery;
@@ -114,10 +114,12 @@ impl ClusterQuery {
         start: Option<i64>,
         end: Option<i64>,
     ) -> Result<TimeSeriesResult> {
-        let db = ctx.data::<Database>()?;
-        let time_series = db
-            .get_top_time_series_of_cluster(model, &cluster_id, start, end)
-            .await?;
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.time_series_map();
+        let id = cluster_id
+            .parse::<i32>()
+            .map_err(|_| "invalid cluster id")?;
+        let time_series = map.get_top_time_series_of_cluster(model, id, start, end)?;
 
         Ok(TimeSeriesResult::from_database(
             time_series,
@@ -255,7 +257,7 @@ impl ClusterTotalCount {
 }
 
 struct TimeSeriesResult {
-    inner: database::TimeSeriesResult,
+    inner: (Option<i64>, Option<i64>, Vec<database::ColumnTimeSeries>), //earliest, latest, series
     cutoff_rate: f64,
     trendi_order: i32,
 }
@@ -263,16 +265,16 @@ struct TimeSeriesResult {
 #[Object]
 impl TimeSeriesResult {
     async fn earliest(&self) -> Option<NaiveDateTime> {
-        self.inner.earliest
+        self.inner.0.map(i64_to_naive_date_time)
     }
 
     async fn latest(&self) -> Option<NaiveDateTime> {
-        self.inner.latest
+        self.inner.1.map(i64_to_naive_date_time)
     }
 
     async fn series(&self) -> Vec<ColumnTimeSeries<'_>> {
         self.inner
-            .series
+            .2
             .iter()
             .map(|s| ColumnTimeSeries::from_database(s, self.cutoff_rate, self.trendi_order))
             .collect()
@@ -281,7 +283,7 @@ impl TimeSeriesResult {
 
 impl TimeSeriesResult {
     fn from_database(
-        inner: database::TimeSeriesResult,
+        inner: (Option<i64>, Option<i64>, Vec<database::ColumnTimeSeries>),
         cutoff_rate: f64,
         trendi_order: i32,
     ) -> Self {
@@ -304,22 +306,28 @@ impl ColumnTimeSeries<'_> {
     /// The column index of the time series in string within the representable
     /// range of `usize`.
     async fn column_index(&self) -> StringNumber<usize> {
-        StringNumber(self.inner.column_index)
+        // 100_000 means counting events themselves, not any other column values.
+        StringNumber(
+            self.inner
+                .index
+                .map_or(100_000, |i| i.to_usize().expect("safe: positive")),
+        )
     }
 
     async fn series(&self) -> Vec<TimeCount> {
-        self.inner.series.iter().map(Into::into).collect()
+        self.inner.time_counts.iter().map(Into::into).collect()
     }
 
     async fn series_trend(&self) -> Vec<TimeCount> {
-        let Ok(trend) = get_trend(&self.inner.series, self.cutoff_rate, self.trendi_order) else {
+        let Ok(trend) = get_trend(&self.inner.time_counts, self.cutoff_rate, self.trendi_order)
+        else {
             return Vec::new();
         };
         trend
             .iter()
             .enumerate()
             .map(|(index, t)| TimeCount {
-                time: self.inner.series[index].time,
+                time: i64_to_naive_date_time(self.inner.time_counts[index].0),
                 count: t.trunc().to_usize().unwrap_or(0), // unwrap_or is for minus
             })
             .collect::<Vec<_>>()
@@ -346,11 +354,11 @@ pub(super) struct TimeCount {
     pub(super) count: usize,
 }
 
-impl From<&database::TimeCount> for TimeCount {
-    fn from(inner: &database::TimeCount) -> Self {
+impl From<&super::TimeCount> for TimeCount {
+    fn from(inner: &super::TimeCount) -> Self {
         Self {
-            time: inner.time,
-            count: inner.count,
+            time: i64_to_naive_date_time(inner.0),
+            count: inner.1,
         }
     }
 }
