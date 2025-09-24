@@ -93,6 +93,12 @@ this project adheres to
   `end_time` to reflect a database update.
   - Affected event kinds: `BlocklistConn`, `TorConnectionConn`,`LockyRansomware`,
   `DnsCovertChannel`, `TorConnection`
+- Migrated from PostgreSQL-based `Database` API to RocksDB-based `Table` API.
+  The review-database crate has been updated to fetch `TimeSeries`from RocksDB
+  instead of PostgreSQL. The following methods were replaced with their
+  RocksDB-based equivalents:
+  - `get_time_range_of_model`, `get_top_time_series_of_model`,
+    `get_top_time_series_of_cluster`.
 
 ### Fixed
 

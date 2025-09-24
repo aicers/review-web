@@ -15,7 +15,7 @@ use super::{
     DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, Role, RoleGuard, cluster::TimeCount,
     data_source::DataSource, fill_vacant_time_slots, get_trend, slicing,
 };
-use crate::graphql::query;
+use crate::graphql::{query, statistics::i64_to_naive_date_time};
 
 const DEFAULT_MIN_SLOPE: f64 = 10.0;
 const DEFAULT_MIN_ZERO_COUNT_FOR_TREND: u32 = 5;
@@ -85,8 +85,15 @@ impl ModelQuery {
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
     async fn time_range_of_model(&self, ctx: &Context<'_>, model: i32) -> Result<TimeRange> {
-        let db = ctx.data::<Database>()?;
-        let (lower, upper) = db.get_time_range_of_model(model).await?;
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.time_series_map();
+        let time_range = map.get_time_range_of_model(model)?;
+        let (lower, upper) = time_range.map_or((None, None), |(l, u)| {
+            (
+                Some(i64_to_naive_date_time(l)),
+                Some(i64_to_naive_date_time(u)),
+            )
+        });
         Ok(TimeRange { lower, upper })
     }
 
@@ -114,10 +121,15 @@ impl ModelQuery {
             .to_usize()
             .ok_or("invalid size")?;
 
-        let db = ctx.data::<Database>()?;
-        let time_series = db
-            .get_top_time_series_of_model(model, time, start, end)
-            .await?;
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.time_series_map();
+        let time_series = map.get_top_time_series_of_model(
+            model,
+            time.map(|t| t.and_utc().timestamp_nanos_opt().unwrap_or_default()),
+            start,
+            end,
+        )?;
+
         let mut time_series = time_series
             .into_iter()
             .map(|s| {
@@ -600,14 +612,17 @@ struct TopTrendsByColumn {
 
 impl TopTrendsByColumn {
     fn from_database(
-        inner: database::TopTrendsByColumn,
+        inner: (Option<i32>, Vec<database::ClusterTimeSeries>),
         cutoff_rate: f64,
         trendi_order: i32,
         min_slope: f64,
     ) -> Self {
-        let count_index = inner.count_index;
+        // 100_000 means counting events themselves, not any other column values.
+        let count_index = inner
+            .0
+            .map_or(100_000, |i| i.to_usize().expect("safe: positive"));
         let trends = inner
-            .trends
+            .1
             .into_iter()
             .filter_map(|t| ClusterTrend::from_database(t, cutoff_rate, trendi_order, min_slope))
             .collect();
@@ -686,13 +701,13 @@ impl ClusterTrend {
 
 impl ClusterTrend {
     fn from_database(
-        inner: database::ClusterTrend,
+        inner: database::ClusterTimeSeries,
         cutoff_rate: f64,
         trendi_order: i32,
         min_slope: f64,
     ) -> Option<Self> {
-        let cluster_id = inner.cluster_id;
-        let series = inner.series;
+        let cluster_id = inner.id.to_string();
+        let series = inner.time_counts;
         let Ok(trend) = get_trend(&series, cutoff_rate, trendi_order) else {
             return None;
         };
@@ -730,7 +745,7 @@ impl ClusterTrend {
 }
 
 #[allow(clippy::too_many_lines)]
-fn find_lines(series: &[database::TimeCount], trend: &[usize], min_slope: f64) -> Vec<LineSegment> {
+fn find_lines(series: &[super::TimeCount], trend: &[usize], min_slope: f64) -> Vec<LineSegment> {
     let mut diff: Vec<f64> = Vec::new();
     for pair in trend.windows(2) {
         diff.push(
@@ -804,9 +819,7 @@ fn find_lines(series: &[database::TimeCount], trend: &[usize], min_slope: f64) -
         let x_values: Vec<f64> = (first_index..=last_index)
             .map(|x| x.to_f64().expect("safe: usize -> f64"))
             .collect();
-        let y_values: Vec<usize> = (first_index..=last_index)
-            .map(|i| series[i].count)
-            .collect();
+        let y_values: Vec<usize> = (first_index..=last_index).map(|i| series[i].1).collect();
         let y_values: Vec<f64> = y_values
             .iter()
             .map(|y| y.to_f64().expect("safe: usize -> f64"))
