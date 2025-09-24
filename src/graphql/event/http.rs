@@ -187,18 +187,26 @@ impl HttpThreat {
     }
 
     /// Filenames
-    async fn filenames(&self) -> &[String] {
-        &self.inner.filenames
+    async fn orig_filenames(&self) -> &[String] {
+        &self.inner.orig_filenames
+    }
+
+    async fn resp_filenames(&self) -> &[String] {
+        &self.inner.resp_filenames
     }
 
     /// MIME Types
-    async fn mime_types(&self) -> &[String] {
-        &self.inner.mime_types
+    async fn orig_mime_types(&self) -> &[String] {
+        &self.inner.orig_mime_types
+    }
+
+    async fn resp_mime_types(&self) -> &[String] {
+        &self.inner.resp_mime_types
     }
 
     /// Body
-    async fn body(&self) -> &[u8] {
-        &self.inner.body
+    async fn post_body(&self) -> &[u8] {
+        &self.inner.post_body
     }
 
     /// Last State
@@ -570,18 +578,26 @@ impl TorConnection {
     }
 
     /// Filenames
-    async fn filenames(&self) -> &[String] {
-        &self.inner.filenames
+    async fn orig_filenames(&self) -> &[String] {
+        &self.inner.orig_filenames
+    }
+
+    async fn resp_filenames(&self) -> &[String] {
+        &self.inner.resp_filenames
     }
 
     /// MIME Types
-    async fn mime_types(&self) -> &[String] {
-        &self.inner.mime_types
+    async fn orig_mime_types(&self) -> &[String] {
+        &self.inner.orig_mime_types
+    }
+
+    async fn resp_mime_types(&self) -> &[String] {
+        &self.inner.resp_mime_types
     }
 
     /// Body
-    async fn body(&self) -> &[u8] {
-        &self.inner.body
+    async fn post_body(&self) -> &[u8] {
+        &self.inner.post_body
     }
 
     /// Last State
@@ -790,18 +806,26 @@ impl DomainGenerationAlgorithm {
     }
 
     /// Filenames
-    async fn filenames(&self) -> &[String] {
-        &self.inner.filenames
+    async fn orig_filenames(&self) -> &[String] {
+        &self.inner.orig_filenames
+    }
+
+    async fn resp_filenames(&self) -> &[String] {
+        &self.inner.resp_filenames
     }
 
     /// MIME Types
-    async fn mime_types(&self) -> &[String] {
-        &self.inner.mime_types
+    async fn orig_mime_types(&self) -> &[String] {
+        &self.inner.orig_mime_types
+    }
+
+    async fn resp_mime_types(&self) -> &[String] {
+        &self.inner.resp_mime_types
     }
 
     /// Body
-    async fn body(&self) -> &[u8] {
-        &self.inner.body
+    async fn post_body(&self) -> &[u8] {
+        &self.inner.post_body
     }
 
     /// Last State
@@ -1010,18 +1034,26 @@ impl NonBrowser {
     }
 
     /// Filenames
-    async fn filenames(&self) -> &[String] {
-        &self.inner.filenames
+    async fn orig_filenames(&self) -> &[String] {
+        &self.inner.orig_filenames
+    }
+
+    async fn resp_filenames(&self) -> &[String] {
+        &self.inner.resp_filenames
     }
 
     /// MIME Types
-    async fn mime_types(&self) -> &[String] {
-        &self.inner.mime_types
+    async fn orig_mime_types(&self) -> &[String] {
+        &self.inner.orig_mime_types
+    }
+
+    async fn resp_mime_types(&self) -> &[String] {
+        &self.inner.resp_mime_types
     }
 
     /// Body
-    async fn body(&self) -> &[u8] {
-        &self.inner.body
+    async fn post_body(&self) -> &[u8] {
+        &self.inner.post_body
     }
 
     /// Last State
@@ -1235,18 +1267,26 @@ impl BlocklistHttp {
     }
 
     /// Filenames
-    async fn filenames(&self) -> &[String] {
-        &self.inner.filenames
+    async fn orig_filenames(&self) -> &[String] {
+        &self.inner.orig_filenames
+    }
+
+    async fn resp_filenames(&self) -> &[String] {
+        &self.inner.resp_filenames
     }
 
     /// MIME Types
-    async fn mime_types(&self) -> &[String] {
-        &self.inner.mime_types
+    async fn orig_mime_types(&self) -> &[String] {
+        &self.inner.orig_mime_types
+    }
+
+    async fn resp_mime_types(&self) -> &[String] {
+        &self.inner.resp_mime_types
     }
 
     /// Body
-    async fn body(&self) -> &[u8] {
-        &self.inner.body
+    async fn post_body(&self) -> &[u8] {
+        &self.inner.post_body
     }
 
     /// Last State

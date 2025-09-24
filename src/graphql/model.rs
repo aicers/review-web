@@ -12,8 +12,8 @@ use review_database::{self as database, Database};
 use tokio::sync::RwLock;
 
 use super::{
-    Role, RoleGuard, cluster::TimeCount, data_source::DataSource, fill_vacant_time_slots,
-    get_trend, slicing,
+    DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, Role, RoleGuard, data_source::DataSource,
+    fill_vacant_time_slots, get_trend, slicing,
 };
 use crate::graphql::{query, statistics::i64_to_naive_date_time};
 
@@ -132,7 +132,7 @@ impl ModelQuery {
             end,
         )?;
 
-        let mut time_series = time_series
+        let mut time_series: Vec<TopTrendsByColumn> = time_series
             .into_iter()
             .map(|s| {
                 TopTrendsByColumn::from_database(
@@ -376,7 +376,7 @@ impl ModelMutation {
 }
 
 #[allow(dead_code)]
-fn sort_on_category(_category: &str, _series: &mut [String]) {
+fn sort_on_category(_category: &str, _series: &mut [TopTrendsByColumn]) {
     // This function is deprecated and no longer used
 }
 
@@ -582,6 +582,23 @@ impl From<database::TopMultimaps> for TopMultimaps {
     }
 }
 
+#[derive(SimpleObject, Clone)]
+#[graphql(name = "ModelTimeCount")]
+pub(crate) struct TimeCount {
+    pub(crate) time: NaiveDateTime,
+    pub(crate) count: usize,
+}
+
+impl From<&(i64, usize)> for TimeCount {
+    fn from(inner: &(i64, usize)) -> Self {
+        use crate::graphql::statistics::i64_to_naive_date_time;
+        Self {
+            time: i64_to_naive_date_time(inner.0),
+            count: inner.1,
+        }
+    }
+}
+
 #[derive(SimpleObject)]
 struct TopTrendsByColumn {
     count_index: usize,
@@ -696,7 +713,9 @@ impl ClusterTrend {
             .map(|t| t.trunc().to_usize().unwrap_or(0)) // unwrap_or is for minus
             .collect::<Vec<_>>();
         let series = fill_vacant_time_slots(&series);
-        let lines = find_lines(&series, &trend, min_slope);
+        // Convert series to the local TimeCount type first
+        let series_converted: Vec<TimeCount> = series.iter().map(Into::into).collect();
+        let lines = find_lines(&series_converted, &trend, min_slope);
         if lines.is_empty() {
             return None;
         }
@@ -708,10 +727,9 @@ impl ClusterTrend {
             longest_up_span,
             longest_down_span,
         ) = analyze_lines(&lines);
-        // series is already the correct type after conversion above
         Some(Self {
             cluster_id,
-            series,
+            series: series_converted,
             trend,
             lines,
             number_of_ups,
@@ -725,7 +743,7 @@ impl ClusterTrend {
 }
 
 #[allow(clippy::too_many_lines)]
-fn find_lines(series: &[super::TimeCount], trend: &[usize], min_slope: f64) -> Vec<LineSegment> {
+fn find_lines(series: &[TimeCount], trend: &[usize], min_slope: f64) -> Vec<LineSegment> {
     let mut diff: Vec<f64> = Vec::new();
     for pair in trend.windows(2) {
         diff.push(
@@ -799,7 +817,9 @@ fn find_lines(series: &[super::TimeCount], trend: &[usize], min_slope: f64) -> V
         let x_values: Vec<f64> = (first_index..=last_index)
             .map(|x| x.to_f64().expect("safe: usize -> f64"))
             .collect();
-        let y_values: Vec<usize> = (first_index..=last_index).map(|i| series[i].1).collect();
+        let y_values: Vec<usize> = (first_index..=last_index)
+            .map(|i| series[i].count)
+            .collect();
         let y_values: Vec<f64> = y_values
             .iter()
             .map(|y| y.to_f64().expect("safe: usize -> f64"))

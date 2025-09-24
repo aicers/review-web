@@ -35,17 +35,8 @@ this project adheres to
 
 ### Changed
 
-- Updated HTTP event GraphQL API field structure to consolidate and simplify
-  field names. This change affects all HTTP-related event types (`HttpThreat`,
-  `TorConnection`, `DomainGenerationAlgorithm`, `NonBrowser`, `BlocklistHttp`):
-  - Consolidated `orig_filenames` and `resp_filenames` into a single
-    `filenames` field
-  - Consolidated `orig_mime_types` and `resp_mime_types` into a single
-    `mime_types` field
-  - Renamed `post_body` field to `body`
-  - **Breaking Change**: Clients using these GraphQL APIs must update their
-    queries to use the new field names
-- Updated review-database dependency to version 0.41.0
+- Updated review-database dependency to commit 2ac4429 to support compatibility
+  with ongoing database migration work (issue #637)
 - Restricted account creation and deletion permissions to System Administrators
   only. The `insertAccount`, `removeAccounts`, and `removeAccountsExact`
   GraphQL mutations now require the `SystemAdministrator` role instead of
