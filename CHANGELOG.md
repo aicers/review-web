@@ -35,6 +35,10 @@ this project adheres to
 
 ### Changed
 
+- Consolidated HTTP event fields for better consistency. The `orig_mime_types`
+  and `resp_mime_types` fields are now unified into a single `mime_types` field.
+  The `orig_filenames` and `resp_filenames` fields are consolidated into
+  `filenames`. The `post_body` field is renamed to `body`.
 - Restricted account creation and deletion permissions to System Administrators
   only. The `insertAccount`, `removeAccounts`, and `removeAccountsExact`
   GraphQL mutations now require the `SystemAdministrator` role instead of
