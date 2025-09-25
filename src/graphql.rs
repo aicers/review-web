@@ -118,6 +118,7 @@ struct SubQueryOne(
     cluster::ClusterQuery,
     customer::CustomerQuery,
     data_source::DataSourceQuery,
+    db_management::DbManagementQuery,
     event::EventQuery,
     event::EventGroupQuery,
     filter::FilterQuery,
