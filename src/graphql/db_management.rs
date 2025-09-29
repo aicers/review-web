@@ -25,6 +25,7 @@ impl DbManagementQuery {
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn backups(&self, ctx: &Context<'_>) -> Result<Vec<BackupInfo>> {
         let store = ctx.data::<Arc<RwLock<Store>>>()?;
+        info_with_username!(ctx, "Database backup list is being fetched");
         let backup_infos = backup::list(store).await?;
 
         // Convert from review_database::backup::BackupInfo to our GraphQL BackupInfo
