@@ -19,9 +19,12 @@ this project adheres to
 - Added `removeAccountsExact` GraphQL mutation for removing accounts using exact
   username matching without normalization. This provides backward compatibility
   for accounts created before strict username validation was enforced.
-- Implemented account lockout functionality for failed login attempts. Accounts
-  are locked for 30 minutes after 5 consecutive failed login attempts to prevent
-  brute force attacks.
+- Implemented configurable account lockout and suspension policies for failed login
+  attempts. System administrators can configure global settings for lockout
+  threshold, lockout duration, and suspension threshold through GraphQL mutations.
+  Accounts are temporarily locked after reaching the lockout threshold, and can be
+  suspended (requiring admin intervention) after reaching the suspension threshold.
+  Admin accounts are exempt from suspension but still subject to temporary lockouts.
 - Added `confidence` field to `tidbRule` GraphQL API.
 - Added `kind` field to `tidbRule` GraphQL API.
 - Implemented comprehensive logging for `TriageResponse` operations with detailed
