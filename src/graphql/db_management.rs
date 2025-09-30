@@ -68,6 +68,23 @@ impl DbManagementMutation {
         backup::restore(store, None).await?;
         Ok(true)
     }
+
+    /// Restores the database from a specific backup by ID.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * The backup ID does not exist
+    /// * The restore operation fails (e.g., corrupted backup, I/O errors)
+    /// * Database is locked by another operation
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    async fn restore_rocksdb_backup(&self, ctx: &Context<'_>, id: u32) -> Result<bool> {
+        let store = ctx.data::<Arc<RwLock<Store>>>()?;
+        info_with_username!(ctx, "Database is being restored from backup {}", id);
+        backup::restore(store, Some(id)).await?;
+        Ok(true)
+    }
 }
 
 #[cfg(test)]
