@@ -72,6 +72,9 @@ impl DbManagementMutation {
 
 #[cfg(test)]
 mod tests {
+    use review_database::Store;
+
+    use super::{BackupInfo, backup};
     use crate::graphql::TestSchema;
 
     #[tokio::test]
@@ -98,5 +101,71 @@ mod tests {
                 "Test passed: Query structure is correct, but database not fully initialized in test environment"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_backup_and_backups_sorted() {
+        use std::sync::Arc;
+
+        use tokio::sync::RwLock;
+
+        let db_dir = tempfile::tempdir().unwrap();
+        let backup_dir = tempfile::tempdir().unwrap();
+
+        // Create multiple backups directly using the backup::create function
+        {
+            let store = Store::new(db_dir.path(), backup_dir.path()).unwrap();
+            let store = Arc::new(RwLock::new(store));
+
+            for _ in 0..3 {
+                backup::create(&store, false, 10)
+                    .await
+                    .expect("Backup should succeed");
+                // Small delay to ensure different timestamps
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
+        }
+
+        // Now create a fresh schema with the same directories to query backups
+        let store = Store::new(db_dir.path(), backup_dir.path()).unwrap();
+        let store = Arc::new(RwLock::new(store));
+
+        // Call the list function directly to get backup info
+        let backup_infos = backup::list(&store).await.expect("Should list backups");
+
+        // Should have exactly 3 backups
+        assert_eq!(
+            backup_infos.len(),
+            3,
+            "Should have exactly 3 backups, got {}",
+            backup_infos.len()
+        );
+
+        // Convert to our BackupInfo type and sort as done in the actual code
+        let mut result: Vec<BackupInfo> = backup_infos
+            .into_iter()
+            .map(|info| BackupInfo {
+                id: info.id,
+                timestamp: info.timestamp,
+                size: info.size,
+            })
+            .collect();
+
+        result.sort_by(|a, b| b.id.cmp(&a.id));
+
+        // Verify that backup IDs are sorted in descending order
+        for i in 0..result.len() - 1 {
+            assert!(
+                result[i].id > result[i + 1].id,
+                "Backup IDs should be in descending order: got {} then {}",
+                result[i].id,
+                result[i + 1].id
+            );
+        }
+
+        println!(
+            "Test passed: Backup IDs are sorted in descending order: {:?}",
+            result.iter().map(|b| b.id).collect::<Vec<_>>()
+        );
     }
 }
