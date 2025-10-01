@@ -654,7 +654,8 @@ impl AgentManager for MockAgentManager {
 
 #[cfg(test)]
 struct TestSchema {
-    _dir: tempfile::TempDir, // to delete the data directory when dropped
+    _dir: tempfile::TempDir,        // to delete the data directory when dropped
+    _backup_dir: tempfile::TempDir, // to delete the backup directory when dropped
     store: Arc<RwLock<Store>>,
     schema: Schema,
     test_addr: Option<SocketAddr>, // to simulate the client address
@@ -779,6 +780,7 @@ impl TestSchema {
 
         Self {
             _dir: db_dir,
+            _backup_dir: backup_dir,
             store,
             schema,
             test_addr,
