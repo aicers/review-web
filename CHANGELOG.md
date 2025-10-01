@@ -9,7 +9,7 @@ this project adheres to
 
 ### Added
 
-- Added `restoreRocksdbBackup` GraphQL mutation to restore RocksDB from a
+- Added `restoreFromBackup` GraphQL mutation to restore RocksDB from a
   specific backup ID. This enables point-in-time recovery and operational
   workflows for database restoration.
 - Added `TorConnectionConn` event detection for connection-level Tor network
