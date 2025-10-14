@@ -83,6 +83,7 @@ impl DbManagementMutation {
         let store = ctx.data::<Arc<RwLock<Store>>>()?;
         info_with_username!(ctx, "Database is being restored from backup {}", id);
         backup::restore(store, Some(id)).await?;
+        info_with_username!(ctx, "Database successfully restored from backup {}", id);
         Ok(true)
     }
 }
