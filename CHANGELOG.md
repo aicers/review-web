@@ -2,10 +2,9 @@
 
 This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
-this project adheres to
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.28.0] - 2025-09-30
 
 ### Added
 
@@ -14,24 +13,20 @@ this project adheres to
   connections to include all connection types.
 - Added `comprehensiveUserList` GraphQL query for system administrators to
   fetch all user accounts with security status information including account
-  lock/suspension status, creation time, last signin time, and access
-  restrictions.
+  lock/suspension status, creation time, last signin time, and access restrictions.
 - Added `removeAccountsExact` GraphQL mutation for removing accounts using exact
   username matching without normalization. This provides backward compatibility
   for accounts created before strict username validation was enforced.
 - Implemented account lockout functionality for failed login attempts. Accounts
   are locked for 30 minutes after 5 consecutive failed login attempts to prevent
   brute force attacks.
-- Added `confidence` field to `tidbRule` GraphQL API.
-- Added `kind` field to `tidbRule` GraphQL API.
+- Added `confidence` and `kind` field to `tidbRule` GraphQL API.
 - Implemented comprehensive logging for `TriageResponse` operations with detailed
-  audit logs for all insert, update, remove, and retrieve operations on triage
-  responses.
+  audit logs for all insert, update, remove, and retrieve operations on triage responses.
 - Added `sensor` field to GraphQL objects for detection events based on
   multiple raw events (`PortScan`, `MultiHostPortScan`, `ExternalDdos`,
   `RdpBruteForce`, `FtpBruteForce`, `LdapBruteForce`).
-- Added `start_time` and `end_time` fields to GraphQL objects for
-  `RepeatedHttpSessions`.
+- Added `start_time` and `end_time` fields to GraphQL objects for `RepeatedHttpSessions`.
 
 ### Changed
 
@@ -1104,7 +1099,7 @@ this project adheres to
 
 - An initial version.
 
-[Unreleased]: https://github.com/aicers/review-web/compare/0.27.0...main
+[0.28.0]: https://github.com/aicers/review-web/compare/0.27.0...0.28.0
 [0.27.0]: https://github.com/aicers/review-web/compare/0.26.0...0.27.0
 [0.26.0]: https://github.com/aicers/review-web/compare/0.25.0...0.26.0
 [0.25.0]: https://github.com/aicers/review-web/compare/0.24.0...0.25.0
