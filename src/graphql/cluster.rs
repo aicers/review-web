@@ -86,8 +86,11 @@ impl ClusterQuery {
             .to_usize()
             .ok_or("invalid size")?;
         let db = ctx.data::<Database>()?;
+        let cluster_id_to_i32 = cluster_id
+            .parse::<i32>()
+            .map_err(|_| "invalid cluster id")?;
         let cluster_ids = db
-            .load_cluster_ids(model, Some(cluster_id.as_str()))
+            .load_cluster_ids(model, Some(&cluster_id_to_i32))
             .await?
             .into_iter()
             .map(|(id, _)| id)
@@ -140,22 +143,24 @@ impl ClusterMutation {
     async fn update_cluster(
         &self,
         ctx: &Context<'_>,
+        model: i32,
         id: ID,
         category: Option<ID>,
         qualifier: Option<ID>,
         status: Option<ID>,
     ) -> Result<ID> {
-        let db = ctx.data::<Database>()?;
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.cluster_map();
         let id_to_i32 = |v: ID| v.as_str().parse().ok();
 
         let status = status.and_then(id_to_i32);
-        db.update_cluster(
+        map.update_cluster(
+            model,
             id.as_str().parse()?,
             category.and_then(id_to_i32),
             qualifier.and_then(id_to_i32),
             status,
-        )
-        .await?;
+        )?;
         Ok(id)
     }
 }
@@ -165,7 +170,6 @@ impl ClusterMutation {
 struct Cluster {
     #[graphql(skip)]
     id: i32,
-    name: String,
     #[graphql(skip)]
     category: i32,
     detector: i32,
@@ -209,6 +213,8 @@ impl Cluster {
 
     async fn model(&self, ctx: &Context<'_>) -> Result<ModelDigest> {
         let db = ctx.data::<Database>()?;
+        // TODO: Migration to the RocksDB model table will be handled in #654.
+        #[allow(deprecated)]
         Ok(db.load_model(self.model_id).await?.into())
     }
 
@@ -242,17 +248,16 @@ struct ClusterTotalCount {
 #[Object]
 impl ClusterTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<i64> {
-        let db = ctx.data::<Database>()?;
-        Ok(db
-            .count_clusters(
-                self.model_id,
-                self.categories.as_deref(),
-                self.detectors.as_deref(),
-                self.qualifiers.as_deref(),
-                self.statuses.as_deref(),
-            )
-            .await?)
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.cluster_map();
+        Ok(map.count_clusters(
+            self.model_id,
+            self.categories.as_deref(),
+            self.detectors.as_deref(),
+            self.qualifiers.as_deref(),
+            self.statuses.as_deref(),
+        )?)
     }
 }
 
@@ -378,20 +383,19 @@ async fn load(
 ) -> Result<Connection<OpaqueCursor<(i32, i64)>, Cluster, ClusterTotalCount, EmptyFields>> {
     let is_first = first.is_some();
     let limit = slicing::len(first, last)?;
-    let db = ctx.data::<Database>()?;
-    let rows = db
-        .load_clusters(
-            model,
-            categories.as_deref(),
-            detectors.as_deref(),
-            qualifiers.as_deref(),
-            statuses.as_deref(),
-            &after.map(|c| c.0),
-            &before.map(|c| c.0),
-            is_first,
-            limit,
-        )
-        .await?;
+    let store = crate::graphql::get_store(ctx).await?;
+    let map = store.cluster_map();
+    let rows = map.load_clusters(
+        model,
+        categories.as_deref(),
+        detectors.as_deref(),
+        qualifiers.as_deref(),
+        statuses.as_deref(),
+        &after.map(|c| c.0),
+        &before.map(|c| c.0),
+        is_first,
+        limit,
+    )?;
 
     let (rows, has_previous, has_next) = slicing::page_info(is_first, limit, rows);
     let mut connection = Connection::with_additional_fields(
@@ -410,7 +414,6 @@ async fn load(
             OpaqueCursor((c.id, c.size)),
             Cluster {
                 id: c.id,
-                name: c.cluster_id,
                 category: c.category_id,
                 detector: c.detector_id,
                 events: c.event_ids,
