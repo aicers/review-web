@@ -29,6 +29,14 @@ impl Claims {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct AimerClaims {
+    sub: String,
+    iss: String,
+    iat: i64,
+    exp: i64,
+}
+
 /// Creates a JWT token with the given username and role.
 ///
 /// # Errors
@@ -56,6 +64,42 @@ pub fn create_token(username: String, role: String) -> Result<(String, NaiveDate
     let expiration_time = NaiveDateTime::new(exp.date_naive(), exp.time());
 
     Ok((token, expiration_time))
+}
+
+/// Creates an Aimer-compatible JWT token with RS256 signing.
+///
+/// # Errors
+///
+/// Returns an error if the JWT locks are poisoned, if the JWT secret cannot be read,
+/// or if the hostname cannot be determined.
+pub fn create_aimer_token(exp: i64) -> Result<String, AuthError> {
+    let jwt_secret = JWT_SECRET
+        .read()
+        .map_err(|e| AuthError::ReadJwtSecret(e.to_string()))?;
+
+    let hostname = roxy::hostname();
+    if hostname.is_empty() {
+        return Err(AuthError::Other(
+            "Failed to obtain hostname for Aimer token".to_string(),
+        ));
+    }
+
+    let iat = chrono::Utc::now().timestamp();
+    let iss = format!("https://{hostname}");
+
+    let claims = AimerClaims {
+        sub: "aice-web".to_string(),
+        iss,
+        iat,
+        exp,
+    };
+
+    let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
+    header.kid = Some(hostname);
+
+    let token = encode(&header, &claims, &EncodingKey::from_rsa_pem(&jwt_secret)?)?;
+
+    Ok(token)
 }
 
 /// Decodes a JWT token and returns the claims.

@@ -2,7 +2,10 @@ mod jwt;
 mod store;
 
 pub use {
-    jwt::{create_token, decode_token, update_jwt_expires_in, update_jwt_secret, validate_token},
+    jwt::{
+        create_aimer_token, create_token, decode_token, update_jwt_expires_in, update_jwt_secret,
+        validate_token,
+    },
     store::{insert_token, revoke_token},
 };
 

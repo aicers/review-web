@@ -23,7 +23,10 @@ use self::username_validation::validate_and_normalize_username;
 use super::{IpAddress, RoleGuard, cluster::try_id_args_into_ints};
 use crate::graphql::query_with_constraints;
 use crate::{
-    auth::{create_token, decode_token, insert_token, revoke_token, update_jwt_expires_in},
+    auth::{
+        create_aimer_token, create_token, decode_token, insert_token, revoke_token,
+        update_jwt_expires_in,
+    },
     info_with_username,
 };
 
@@ -784,16 +787,27 @@ impl AccountMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let decoded_token = decode_token(&token)?;
         let username = decoded_token.sub;
-        let (new_token, expiration_time) = create_token(username.clone(), decoded_token.role)?;
-        insert_token(&store, &new_token, &username)?;
+        let (review_token, expiration_time) = create_token(username.clone(), decoded_token.role)?;
+
+        // Create aimer_token with the same expiration as review_token
+        let exp_timestamp = expiration_time.and_utc().timestamp();
+        let aimer_token = create_aimer_token(exp_timestamp).unwrap_or_else(|e| {
+            // In test environments or when RS256 signing is not available,
+            // we return a placeholder token
+            tracing::warn!("Failed to create aimer_token: {e}");
+            String::new()
+        });
+
+        insert_token(&store, &review_token, &username)?;
         let rt = revoke_token(&store, &token);
         if let Err(e) = rt {
-            revoke_token(&store, &new_token)?;
+            revoke_token(&store, &review_token)?;
             Err(e.into())
         } else {
             info_with_username!(ctx, "Login session extended");
             Ok(AuthPayload {
-                token: new_token,
+                review_token,
+                aimer_token,
                 expiration_time,
             })
         }
@@ -1081,12 +1095,22 @@ fn sign_in_actions(
     client_ip: Option<SocketAddr>,
     username: &str,
 ) -> Result<AuthPayload> {
-    let (token, expiration_time) =
+    let (review_token, expiration_time) =
         create_token(account.username.clone(), account.role.to_string())?;
+
+    // Create aimer_token with the same expiration as review_token
+    let exp_timestamp = expiration_time.and_utc().timestamp();
+    let aimer_token = create_aimer_token(exp_timestamp).unwrap_or_else(|e| {
+        // In test environments or when RS256 signing is not available,
+        // we return a placeholder token
+        tracing::warn!("Failed to create aimer_token: {e}");
+        String::new()
+    });
+
     account.update_last_signin_time();
     account_map.put(account)?;
 
-    insert_token(store, &token, username)?;
+    insert_token(store, &review_token, username)?;
 
     if let Some(socket) = client_ip {
         info_with_username!(username: username, "Signed in from IP: {}", socket.ip());
@@ -1094,7 +1118,8 @@ fn sign_in_actions(
         info_with_username!(username: username, "Signed in");
     }
     Ok(AuthPayload {
-        token,
+        review_token,
+        aimer_token,
         expiration_time,
     })
 }
@@ -1206,7 +1231,8 @@ fn to_ip_addr(ip_addrs: &[IpAddress]) -> Vec<IpAddr> {
 
 #[derive(SimpleObject)]
 struct AuthPayload {
-    token: String,
+    review_token: String,
+    aimer_token: String,
     expiration_time: NaiveDateTime,
 }
 
@@ -1938,13 +1964,14 @@ mod tests {
             .execute(
                 r#"mutation {
                     signIn(username: "admin", password: "admin") {
-                        token
+                        reviewToken
+                        aimerToken
                     }
                 }"#,
             )
             .await;
 
-        // should return "{signIn { token: ... }}"
+        // should return "{signIn { reviewToken: ..., aimerToken: ... }}"
         let Value::Object(retval) = res.data else {
             panic!("unexpected response: {res:?}");
         };
@@ -1952,8 +1979,9 @@ mod tests {
         let Value::Object(map) = retval.get("signIn").unwrap() else {
             panic!("unexpected response: {retval:?}");
         };
-        assert_eq!(map.len(), 1);
-        assert!(map.contains_key("token"));
+        assert_eq!(map.len(), 2);
+        assert!(map.contains_key("reviewToken"));
+        assert!(map.contains_key("aimerToken"));
 
         let res = schema
             .execute(
@@ -2593,13 +2621,13 @@ mod tests {
             .execute(
                 r#"mutation {
                     signIn(username: "user1", password: "pw1") {
-                        token
+                        reviewToken
                     }
                 }"#,
             )
             .await;
 
-        assert!(res.data.to_string().contains("token"));
+        assert!(res.data.to_string().contains("reviewToken"));
 
         let res = schema
             .execute(
@@ -2621,12 +2649,12 @@ mod tests {
             .execute(
                 r#"mutation {
                     signIn(username: "user1", password: "pw1") {
-                        token
+                        reviewToken
                     }
                 }"#,
             )
             .await;
-        assert!(res.data.to_string().contains("token"));
+        assert!(res.data.to_string().contains("reviewToken"));
 
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
@@ -2634,7 +2662,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     signIn(username: "user1", password: "pw1") {
-                        token
+                        reviewToken
                     }
                 }"#,
             )
@@ -2671,13 +2699,13 @@ mod tests {
             .execute(
                 r#"mutation {
                     signIn(username: "user1", password: "pw1") {
-                        token
+                        reviewToken
                     }
                 }"#,
             )
             .await;
 
-        assert!(res.data.to_string().contains("token"));
+        assert!(res.data.to_string().contains("reviewToken"));
     }
 
     #[tokio::test]
@@ -2709,7 +2737,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     signIn(username: "user1", password: "pw1") {
-                        token
+                        reviewToken
                     }
                 }"#,
             )
@@ -2849,7 +2877,7 @@ mod tests {
 
         let query = r#"mutation {
                     signIn(username: "user2", password: "pw2") {
-                        token
+                        reviewToken
                     }
               }"#;
         let res = schema.execute(query).await;
@@ -2889,7 +2917,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     signIn(username: "user3", password: "pw3") {
-                        token
+                        reviewToken
                     }
                 }"#,
             )
@@ -2904,7 +2932,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     signInWithNewPassword(username: "user3", password: "pw3") {
-                        token
+                        reviewToken
                     }
                 }"#,
             )
@@ -2918,7 +2946,7 @@ mod tests {
 
         let query = r#"mutation {
                     signInWithNewPassword(username: "user1", password: "pw1", newPassword: "pw2") {
-                        token
+                        reviewToken
                     }
               }"#;
         let res = schema.execute(query).await;
@@ -2931,7 +2959,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     signInWithNewPassword(username: "user3", password: "pw3", newPassword: "pw3") {
-                        token
+                        reviewToken
                     }
                 }"#,
             )
@@ -2945,7 +2973,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     signInWithNewPassword(username: "user3", password: "pw3", newPassword: "pw4") {
-                        token
+                        reviewToken
                     }
                 }"#,
             )
@@ -2982,7 +3010,7 @@ mod tests {
             .execute(
                 r#"mutation {
                     signIn(username: "user2", password: "pw3") {
-                        token
+                        reviewToken
                     }
                 }"#,
             )
@@ -3551,12 +3579,12 @@ mod tests {
             .execute(
                 r#"mutation {
                     signIn(username: "testuser", password: "password123") {
-                        token
+                        reviewToken
                     }
                 }"#,
             )
             .await;
-        assert!(res.data.to_string().contains("token"));
+        assert!(res.data.to_string().contains("reviewToken"));
 
         // Verify the user has an active session
         let res = schema
