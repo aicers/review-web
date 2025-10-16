@@ -287,7 +287,7 @@ impl ModelQuery {
             .load_cluster_ids(model, None)
             .await?
             .into_iter()
-            .filter_map(|(id, name)| id.to_u32().map(|id| (id, name)))
+            .filter_map(|(id, name)| id.to_u32().map(|id| (id, name.to_string())))
             .collect();
 
         let store = crate::graphql::get_store(ctx).await?;
@@ -963,6 +963,8 @@ impl ModelTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<i64> {
         let db = ctx.data::<Database>()?;
+        // TODO: Migration to the RocksDB model table will be handled in #654.
+        #[allow(deprecated)]
         Ok(db.count_models().await?)
     }
 }
@@ -977,6 +979,8 @@ async fn load(
     let is_first = first.is_some();
     let limit = slicing::len(first, last)?;
     let db = ctx.data::<Database>()?;
+    // TODO: Migration to the RocksDB model table will be handled in #654.
+    #[allow(deprecated)]
     let rows = db
         .load_models(&after.map(|c| c.0), &before.map(|c| c.0), is_first, limit)
         .await?;

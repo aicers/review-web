@@ -82,6 +82,8 @@ async fn fetch_ranked_outliers(
         itv.tick().await;
 
         // Read current model's ids
+        // TODO: Migration to the RocksDB model table will be handled in #654.
+        #[allow(deprecated)]
         let rows = db
             .load_models(&None, &None, true, MAX_MODEL_LIST_SIZE)
             .await?;
@@ -462,6 +464,8 @@ impl Outlier {
 
     async fn model(&self, ctx: &Context<'_>) -> Result<ModelDigest> {
         let db = ctx.data::<Database>()?;
+        // TODO: Migration to the RocksDB model table will be handled in #654.
+        #[allow(deprecated)]
         Ok(db.load_model(self.model_id).await?.into())
     }
 }
