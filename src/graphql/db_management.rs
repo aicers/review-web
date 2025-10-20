@@ -29,7 +29,7 @@ impl DbManagementQuery {
         let backup_infos = backup::list(store).await?;
 
         // Convert from review_database::backup::BackupInfo to our GraphQL BackupInfo
-        // Sort by id in descending order (latest first)
+        // Sort by timestamp in descending order (latest first)
         let mut result: Vec<BackupInfo> = backup_infos
             .into_iter()
             .map(|info| BackupInfo {
@@ -39,7 +39,7 @@ impl DbManagementQuery {
             })
             .collect();
 
-        result.sort_by(|a, b| b.id.cmp(&a.id));
+        result.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
         Ok(result)
     }
@@ -101,11 +101,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_backups_query_sorted_by_id_desc() {
+    async fn test_backups_query_sorted_by_timestamp_desc() {
         let schema = TestSchema::new().await;
 
         // Ensure initially empty
-        let res = schema.execute(r"{ backups { id } }").await;
+        let res = schema.execute(r"{ backups { id timestamp } }").await;
         assert!(res.errors.is_empty(), "GraphQL errors: {:?}", res.errors);
         assert_eq!(res.data.to_string(), r"{backups: []}");
 
@@ -123,7 +123,7 @@ mod tests {
         }
 
         // Fetch and verify order strictly
-        let res = schema.execute(r"{ backups { id } }").await;
+        let res = schema.execute(r"{ backups { id timestamp } }").await;
         assert!(
             res.errors.is_empty(),
             "Backups query failed unexpectedly: {:?}",
@@ -131,22 +131,25 @@ mod tests {
         );
 
         let json = res.data.into_json().unwrap();
-        let ids = json["backups"]
+        let timestamps = json["backups"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|v| u32::try_from(v["id"].as_u64().unwrap()).unwrap())
+            .map(|v| v["timestamp"].as_str().unwrap().to_string())
             .collect::<Vec<_>>();
 
         assert!(
-            ids.len() >= 3,
-            "At least three backups are expected: {ids:?}"
+            timestamps.len() >= 3,
+            "At least three backups are expected: {timestamps:?}"
         );
 
-        // Build explicit expected descending sequence from observed range
-        // e.g., if ids are [5,4,3,...] we assert exact monotonic decrease
-        for w in ids.windows(2) {
-            assert!(w[0] > w[1], "IDs must be strictly descending: {ids:?}");
+        // Verify timestamps are in descending order (latest first)
+        // Use >= to allow for equal timestamps when backups are created rapidly
+        for w in timestamps.windows(2) {
+            assert!(
+                w[0] >= w[1],
+                "Timestamps must be in descending order: {timestamps:?}"
+            );
         }
     }
 }

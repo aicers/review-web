@@ -56,9 +56,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Added
 
 - Added `backups` GraphQL query for listing RocksDB backups. Returns backup
-  information including id, timestamp, and size, sorted by latest first
-  without pagination. Available to System and Security Administrators for
-  backup management and restore point selection.
+  information including id, timestamp, and size, sorted by timestamp in
+  descending order (latest first) without pagination. Available to System and
+  Security Administrators for backup management and restore point selection.
 - Added `TorConnectionConn` event detection for connection-level Tor network
   monitoring. This extends existing Tor detection capabilities beyond HTTP
   connections to include all connection types.
