@@ -451,7 +451,7 @@ mod tests {
         EventMessage {
             time: timestamp,
             kind: EventKind::DnsCovertChannel,
-            fields: bincode::serialize(&fields).expect("serializable"),
+            fields: crate::bincode_utils::encode_legacy(&fields).expect("serializable"),
         }
     }
 

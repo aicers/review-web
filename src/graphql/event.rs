@@ -1442,7 +1442,7 @@ mod tests {
         EventMessage {
             time: timestamp,
             kind: EventKind::DnsCovertChannel,
-            fields: bincode::serialize(&fields).expect("serializable"),
+            fields: crate::bincode_utils::encode_legacy(&fields).expect("serializable"),
         }
     }
 
@@ -1986,7 +1986,7 @@ mod tests {
         let message = EventMessage {
             time: timestamp,
             kind: EventKind::BlocklistDhcp,
-            fields: bincode::serialize(&fields).expect("serializable"),
+            fields: crate::bincode_utils::encode_legacy(&fields).expect("serializable"),
         };
         db.put(&message).unwrap();
 
@@ -2068,7 +2068,7 @@ mod tests {
         let message = EventMessage {
             time: timestamp,
             kind: EventKind::BlocklistBootp,
-            fields: bincode::serialize(&fields).expect("serializable"),
+            fields: crate::bincode_utils::encode_legacy(&fields).expect("serializable"),
         };
         db.put(&message).unwrap();
 
@@ -2150,7 +2150,7 @@ mod tests {
         let message = EventMessage {
             time: timestamp,
             kind: EventKind::LockyRansomware,
-            fields: bincode::serialize(&fields).expect("serializable"),
+            fields: crate::bincode_utils::encode_legacy(&fields).expect("serializable"),
         };
         db.put(&message).unwrap();
         let query = format!(
@@ -2216,7 +2216,7 @@ mod tests {
         let message = EventMessage {
             time: timestamp,
             kind: EventKind::SuspiciousTlsTraffic,
-            fields: bincode::serialize(&fields).expect("serializable"),
+            fields: crate::bincode_utils::encode_legacy(&fields).expect("serializable"),
         };
         db.put(&message).unwrap();
         let query = format!(

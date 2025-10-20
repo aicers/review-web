@@ -7,7 +7,6 @@ use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
     types::ID,
 };
-use bincode::Options;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc, offset::LocalResult};
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
@@ -502,14 +501,14 @@ async fn load(
 
     let decoded_after = after
         .as_deref()
-        .map(|input| bincode::DefaultOptions::new().deserialize(input))
+        .map(crate::bincode_utils::decode_legacy_variant::<(Vec<u8>, Vec<u8>)>)
         .transpose()?
-        .map(|(_, from): (&[u8], &[u8])| from);
+        .map(|(_, from)| from);
     let decoded_before = before
         .as_deref()
-        .map(|input| bincode::DefaultOptions::new().deserialize(input))
+        .map(crate::bincode_utils::decode_legacy_variant::<(Vec<u8>, Vec<u8>)>)
         .transpose()?
-        .map(|(from, _): (&[u8], &[u8])| from);
+        .map(|(from, _)| from);
     let (direction, count, from, to) = if let Some(first) = first {
         (Direction::Forward, first, decoded_after, decoded_before)
     } else if let Some(last) = last {
@@ -518,7 +517,7 @@ async fn load(
         unreachable!();
     };
 
-    let iter = table.get(model_id, None, direction, from);
+    let iter = table.get(model_id, None, direction, from.as_deref());
 
     let mut batches = HashMap::new();
     let mut has_more = false;
@@ -529,7 +528,7 @@ async fn load(
             break;
         }
         let key = entry.unique_key();
-        if let Some(to) = to
+        if let Some(to) = to.as_deref()
             && key == to
         {
             break;
@@ -558,7 +557,7 @@ async fn load(
         (has_more, false)
     };
     let edges = batches.into_values().filter_map(|(from, to, mut ev)| {
-        let cursor = bincode::DefaultOptions::new().serialize(&(from, to)).ok()?;
+        let cursor = crate::bincode_utils::encode_legacy_variant(&(from, to)).ok()?;
         let cursor = OpaqueCursor(cursor);
         ev.events.sort_unstable();
         Some(Edge::new(cursor, ev))

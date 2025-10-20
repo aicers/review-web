@@ -9,7 +9,6 @@ use std::{borrow::Cow, time::Duration};
 use async_graphql::{
     ComplexObject, Context, Enum, Object, Result, SimpleObject, StringNumber, types::ID,
 };
-use bincode::Options;
 use chrono::{DateTime, TimeZone, Utc};
 #[allow(clippy::module_name_repetitions)]
 pub use crud::agent_keys_by_customer_id;
@@ -377,9 +376,7 @@ impl Indexable for NodeStatus {
     }
 
     fn value(&self) -> Vec<u8> {
-        bincode::DefaultOptions::new()
-            .serialize(self)
-            .expect("serializable")
+        crate::bincode_utils::encode_legacy_variant(self).expect("serializable")
     }
 
     fn set_index(&mut self, index: u32) {
