@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use async_graphql::{Context, Object, Result, SimpleObject};
+use async_graphql::{Context, ID, Object, Result, SimpleObject};
 use chrono::{DateTime, Utc};
 use review_database::{Store, backup};
 use tokio::sync::RwLock;
@@ -11,9 +11,9 @@ use crate::info_with_username;
 
 #[derive(SimpleObject)]
 pub struct BackupInfo {
-    pub id: u32,
+    pub id: ID,
     pub timestamp: DateTime<Utc>,
-    pub size: u64,
+    pub size: String,
 }
 
 #[derive(Default)]
@@ -33,9 +33,9 @@ impl DbManagementQuery {
         let mut result: Vec<BackupInfo> = backup_infos
             .into_iter()
             .map(|info| BackupInfo {
-                id: info.id,
+                id: ID::from(info.id),
                 timestamp: info.timestamp,
-                size: info.size,
+                size: info.size.to_string(),
             })
             .collect();
 
@@ -110,6 +110,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r"{backups: []}");
 
         // Create 3 backups to avoid accidental pass with 2 items
+        // Add a delay between backups to ensure distinct timestamps
         for _ in 0..3 {
             let res = schema
                 .execute(r"mutation { backup(numOfBackupsToKeep: 5) }")
@@ -120,6 +121,7 @@ mod tests {
                 res.errors
             );
             assert_eq!(res.data.to_string(), r"{backup: true}");
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
 
         // Fetch and verify order strictly
