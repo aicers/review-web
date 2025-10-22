@@ -77,10 +77,9 @@ pub struct ComprehensiveUserAccount {
 }
 
 const REVIEW_ADMIN: &str = "REVIEW_ADMIN";
-
-// Account lockout constants
-const MAX_FAILED_LOGIN_ATTEMPTS_BEFORE_LOCKOUT: u8 = 5;
+const MAX_FAILED_LOGIN_ATTEMPTS_BEFORE_LOCKOUT: u8 = 5; // Account lockout constants
 const ACCOUNT_LOCKOUT_DURATION: chrono::Duration = chrono::Duration::minutes(30);
+const AIMER_TOKEN_ERROR_MESSAGE: &str = "Failed to issue aimer token";
 
 #[derive(Default)]
 pub(super) struct AccountQuery;
@@ -1114,8 +1113,6 @@ fn validate_update_new_password(password: &str, new_password: &str, username: &s
     }
     Ok(())
 }
-
-const AIMER_TOKEN_ERROR_MESSAGE: &str = "Failed to issue aimer token";
 
 fn generate_aimer_token(ctx: &Context<'_>, exp_timestamp: i64) -> Option<String> {
     match create_aimer_token(exp_timestamp) {
