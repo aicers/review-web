@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::anyhow;
 use async_graphql::{
-    Context, Enum, ID, InputObject, Object, Result, SimpleObject,
+    Context, Enum, ID, InputObject, Object, Result, ServerError, SimpleObject,
     connection::{Connection, EmptyFields, OpaqueCursor},
 };
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
@@ -25,7 +25,7 @@ use crate::graphql::query_with_constraints;
 use crate::{
     auth::{
         create_aimer_token, create_token, decode_token, insert_token, revoke_token,
-        update_jwt_expires_in,
+        update_jwt_expires_in, validate_token,
     },
     info_with_username,
 };
@@ -622,6 +622,7 @@ impl AccountMutation {
             validate_max_parallel_sessions(&account, &store, &normalized_username)?;
 
             sign_in_actions(
+                ctx,
                 &mut account,
                 &store,
                 &account_map,
@@ -665,6 +666,7 @@ impl AccountMutation {
             account.update_password(&new_password)?;
 
             sign_in_actions(
+                ctx,
                 &mut account,
                 &store,
                 &account_map,
@@ -789,14 +791,8 @@ impl AccountMutation {
         let username = decoded_token.sub;
         let (review_token, expiration_time) = create_token(username.clone(), decoded_token.role)?;
 
-        // Create aimer_token with the same expiration as review_token
         let exp_timestamp = expiration_time.and_utc().timestamp();
-        let aimer_token = create_aimer_token(exp_timestamp).unwrap_or_else(|e| {
-            // In test environments or when RS256 signing is not available,
-            // we return a placeholder token
-            tracing::warn!("Failed to create aimer_token: {e}");
-            String::new()
-        });
+        let aimer_token = generate_aimer_token(ctx, exp_timestamp);
 
         insert_token(&store, &review_token, &username)?;
         let rt = revoke_token(&store, &token);
@@ -811,6 +807,37 @@ impl AccountMutation {
                 expiration_time,
             })
         }
+    }
+
+    /// Issues a new Aimer token for an existing session represented by a review token.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the provided review token is invalid or if an Aimer token cannot be generated.
+    async fn issue_aimer_token(
+        &self,
+        ctx: &Context<'_>,
+        review_token: String,
+    ) -> Result<AimerTokenPayload> {
+        let store = crate::graphql::get_store(ctx).await?;
+        validate_token(&store, &review_token)
+            .map_err(|err| async_graphql::Error::new(err.to_string()))?;
+
+        let claims = decode_token(&review_token)?;
+        let exp_timestamp = claims.exp;
+        let expiration_time = DateTime::<Utc>::from_timestamp(exp_timestamp, 0)
+            .ok_or_else(|| async_graphql::Error::new("invalid expiration timestamp"))?
+            .naive_utc();
+
+        let aimer_token = create_aimer_token(exp_timestamp).map_err(|err| {
+            tracing::error!(error = %err, "Failed to create aimer_token");
+            async_graphql::Error::new(format!("{AIMER_TOKEN_ERROR_MESSAGE}: {err}"))
+        })?;
+
+        Ok(AimerTokenPayload {
+            aimer_token,
+            expiration_time,
+        })
     }
 
     /// Updates the expiration time for signing in, specifying the duration in
@@ -1088,7 +1115,25 @@ fn validate_update_new_password(password: &str, new_password: &str, username: &s
     Ok(())
 }
 
+const AIMER_TOKEN_ERROR_MESSAGE: &str = "Failed to issue aimer token";
+
+fn generate_aimer_token(ctx: &Context<'_>, exp_timestamp: i64) -> Option<String> {
+    match create_aimer_token(exp_timestamp) {
+        Ok(token) => Some(token),
+        Err(err) => {
+            tracing::error!(error = %err, "Failed to create aimer_token");
+            let server_error = ctx.set_error_path(ServerError::new(
+                format!("{AIMER_TOKEN_ERROR_MESSAGE}: {err}"),
+                None,
+            ));
+            ctx.add_error(server_error);
+            None
+        }
+    }
+}
+
 fn sign_in_actions(
+    ctx: &Context<'_>,
     account: &mut types::Account,
     store: &Store,
     account_map: &Table<types::Account>,
@@ -1098,14 +1143,8 @@ fn sign_in_actions(
     let (review_token, expiration_time) =
         create_token(account.username.clone(), account.role.to_string())?;
 
-    // Create aimer_token with the same expiration as review_token
     let exp_timestamp = expiration_time.and_utc().timestamp();
-    let aimer_token = create_aimer_token(exp_timestamp).unwrap_or_else(|e| {
-        // In test environments or when RS256 signing is not available,
-        // we return a placeholder token
-        tracing::warn!("Failed to create aimer_token: {e}");
-        String::new()
-    });
+    let aimer_token = generate_aimer_token(ctx, exp_timestamp);
 
     account.update_last_signin_time();
     account_map.put(account)?;
@@ -1232,6 +1271,12 @@ fn to_ip_addr(ip_addrs: &[IpAddress]) -> Vec<IpAddr> {
 #[derive(SimpleObject)]
 struct AuthPayload {
     review_token: String,
+    aimer_token: Option<String>,
+    expiration_time: NaiveDateTime,
+}
+
+#[derive(SimpleObject)]
+struct AimerTokenPayload {
     aimer_token: String,
     expiration_time: NaiveDateTime,
 }
@@ -2034,6 +2079,227 @@ mod tests {
             account.get("role").unwrap(),
             &Value::Enum(async_graphql::Name::new("SYSTEM_ADMINISTRATOR"))
         );
+
+        restore_review_admin(original_review_admin);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn refresh_token_returns_dual_tokens() {
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        super::init_expiration_time(&store, 3600).unwrap();
+        drop(store);
+        update_account_last_signin_time(&schema, "admin").await;
+
+        let sign_in_res = schema
+            .execute(
+                r#"mutation {
+                    signIn(username: "admin", password: "admin") {
+                        reviewToken
+                        aimerToken
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            sign_in_res.errors.is_empty(),
+            "errors: {:?}",
+            sign_in_res.errors
+        );
+        let Value::Object(sign_in_root) = sign_in_res.data else {
+            panic!("unexpected response: {sign_in_res:?}");
+        };
+        let Some(Value::Object(sign_in_payload)) = sign_in_root.get("signIn") else {
+            panic!("unexpected response: {sign_in_root:?}");
+        };
+        let Some(Value::String(review_token)) = sign_in_payload.get("reviewToken") else {
+            panic!("missing reviewToken: {sign_in_payload:?}");
+        };
+        assert!(!review_token.is_empty());
+        let Some(Value::String(aimer_token)) = sign_in_payload.get("aimerToken") else {
+            panic!("missing aimerToken: {sign_in_payload:?}");
+        };
+        assert!(!aimer_token.is_empty());
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+        let refresh_query = format!(
+            r#"mutation {{
+                refreshToken(token: "{review_token}") {{
+                    reviewToken
+                    aimerToken
+                    expirationTime
+                }}
+            }}"#
+        );
+        let refresh_res = schema.execute(&refresh_query).await;
+        assert!(
+            refresh_res.errors.is_empty(),
+            "errors: {:?}",
+            refresh_res.errors
+        );
+        let Value::Object(refresh_root) = refresh_res.data else {
+            panic!("unexpected response: {refresh_res:?}");
+        };
+        let Some(Value::Object(refresh_payload)) = refresh_root.get("refreshToken") else {
+            panic!("unexpected response: {refresh_root:?}");
+        };
+        let Some(Value::String(new_review_token)) = refresh_payload.get("reviewToken") else {
+            panic!("missing reviewToken: {refresh_payload:?}");
+        };
+        assert!(!new_review_token.is_empty());
+        let Some(Value::String(new_aimer_token)) = refresh_payload.get("aimerToken") else {
+            panic!("missing aimerToken: {refresh_payload:?}");
+        };
+        assert!(!new_aimer_token.is_empty());
+        assert!(refresh_payload.contains_key("expirationTime"));
+
+        restore_review_admin(original_review_admin);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn issue_aimer_token_success() {
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        super::init_expiration_time(&store, 3600).unwrap();
+        drop(store);
+        update_account_last_signin_time(&schema, "admin").await;
+
+        let sign_in_res = schema
+            .execute(
+                r#"mutation {
+                    signIn(username: "admin", password: "admin") {
+                        reviewToken
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            sign_in_res.errors.is_empty(),
+            "errors: {:?}",
+            sign_in_res.errors
+        );
+        let Value::Object(sign_in_root) = sign_in_res.data else {
+            panic!("unexpected response: {sign_in_res:?}");
+        };
+        let Some(Value::Object(sign_in_payload)) = sign_in_root.get("signIn") else {
+            panic!("unexpected response: {sign_in_root:?}");
+        };
+        let Some(Value::String(review_token)) = sign_in_payload.get("reviewToken") else {
+            panic!("missing reviewToken: {sign_in_payload:?}");
+        };
+
+        let mutation = format!(
+            r#"mutation {{
+                issueAimerToken(reviewToken: "{review_token}") {{
+                    aimerToken
+                    expirationTime
+                }}
+            }}"#
+        );
+        let res = schema.execute(&mutation).await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let Value::Object(root) = res.data else {
+            panic!("unexpected response: {res:?}");
+        };
+        let Some(Value::Object(payload)) = root.get("issueAimerToken") else {
+            panic!("unexpected response: {root:?}");
+        };
+        let Some(Value::String(aimer_token)) = payload.get("aimerToken") else {
+            panic!("missing aimerToken: {payload:?}");
+        };
+        assert!(!aimer_token.is_empty());
+        assert!(payload.contains_key("expirationTime"));
+
+        restore_review_admin(original_review_admin);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn sign_in_reports_aimer_token_signing_failure() {
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        super::init_expiration_time(&store, 3600).unwrap();
+        drop(store);
+
+        update_account_last_signin_time(&schema, "admin").await;
+        crate::auth::update_jwt_secret(b"bad-key".to_vec()).unwrap();
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signIn(username: "admin", password: "admin") {
+                        reviewToken
+                        aimerToken
+                    }
+                }"#,
+            )
+            .await;
+
+        assert!(
+            res.errors
+                .iter()
+                .any(|err| err.message.contains("Failed to issue aimer token")),
+            "expected aimer token failure, got {:?}",
+            res.errors
+        );
+
+        let Value::Object(root) = res.data else {
+            panic!("unexpected response: {res:?}");
+        };
+        let Some(Value::Object(payload)) = root.get("signIn") else {
+            panic!("unexpected response: {root:?}");
+        };
+        let Some(Value::String(review_token)) = payload.get("reviewToken") else {
+            panic!("missing reviewToken: {payload:?}");
+        };
+        assert!(!review_token.is_empty());
+        assert!(matches!(payload.get("aimerToken"), Some(Value::Null)));
+
+        crate::auth::update_jwt_secret(crate::graphql::test_jwt_secret_der().to_vec()).unwrap();
+        restore_review_admin(original_review_admin);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn issue_aimer_token_invalid_review_token_fails() {
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        super::init_expiration_time(&store, 3600).unwrap();
+        drop(store);
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    issueAimerToken(reviewToken: "not-a-valid-token") {
+                        aimerToken
+                        expirationTime
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors
+                .iter()
+                .any(|err| err.message.contains("InvalidToken")),
+            "expected invalid token error, got {:?}",
+            res.errors
+        );
+        assert!(matches!(res.data, Value::Null));
 
         restore_review_admin(original_review_admin);
     }
