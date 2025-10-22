@@ -1,6 +1,8 @@
 mod jwt;
 mod store;
 
+#[cfg(test)]
+pub(crate) use jwt::ForceAimerTokenFailureGuard;
 pub use {
     jwt::{
         create_aimer_token, create_token, decode_token, update_jwt_expires_in, update_jwt_secret,

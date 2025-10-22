@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     str::FromStr,
     sync::{LazyLock, RwLock},
@@ -18,6 +20,9 @@ const AIMER_SUBJECT: &str = "aice-web";
 
 static JWT_EXPIRES_IN: LazyLock<RwLock<u32>> = LazyLock::new(|| RwLock::new(3600));
 static JWT_SECRET: LazyLock<RwLock<Vec<u8>>> = LazyLock::new(|| RwLock::new(vec![]));
+
+#[cfg(test)]
+static FORCE_AIMER_TOKEN_FAILURE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Claims {
@@ -68,6 +73,29 @@ fn normalize_rsa_der(secret: &[u8]) -> Vec<u8> {
     secret.to_vec()
 }
 
+#[cfg(test)]
+pub(crate) fn set_force_aimer_token_failure(enabled: bool) {
+    FORCE_AIMER_TOKEN_FAILURE.store(enabled, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) struct ForceAimerTokenFailureGuard;
+
+#[cfg(test)]
+impl ForceAimerTokenFailureGuard {
+    pub(crate) fn new() -> Self {
+        set_force_aimer_token_failure(true);
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for ForceAimerTokenFailureGuard {
+    fn drop(&mut self) {
+        set_force_aimer_token_failure(false);
+    }
+}
+
 /// Creates a JWT token with the given username and role.
 ///
 /// # Errors
@@ -107,6 +135,13 @@ pub fn create_aimer_token(exp: i64) -> Result<String, AuthError> {
     let jwt_secret = JWT_SECRET
         .read()
         .map_err(|e| AuthError::ReadJwtSecret(e.to_string()))?;
+
+    #[cfg(test)]
+    if FORCE_AIMER_TOKEN_FAILURE.load(Ordering::SeqCst) {
+        return Err(AuthError::Other(
+            "Forced Aimer token failure (test)".to_string(),
+        ));
+    }
 
     let hostname = roxy::hostname();
     if hostname.is_empty() {
