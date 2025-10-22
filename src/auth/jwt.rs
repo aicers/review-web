@@ -39,13 +39,13 @@ struct AimerClaims {
 }
 
 fn normalize_rsa_der(secret: &[u8]) -> Vec<u8> {
-    fn extract_inner_key(blocks: &[ASN1Block]) -> Option<Vec<u8>> {
-        for block in blocks {
+    let extract_inner_key = |blocks: &[ASN1Block]| -> Option<Vec<u8>> {
+        let mut stack: Vec<&ASN1Block> = blocks.iter().rev().collect();
+
+        while let Some(block) = stack.pop() {
             match block {
                 ASN1Block::Sequence(_, entries) => {
-                    if let Some(value) = extract_inner_key(entries) {
-                        return Some(value);
-                    }
+                    stack.extend(entries.iter().rev());
                 }
                 ASN1Block::BitString(_, _, value) | ASN1Block::OctetString(_, value) => {
                     return Some(value.clone());
@@ -53,8 +53,9 @@ fn normalize_rsa_der(secret: &[u8]) -> Vec<u8> {
                 _ => {}
             }
         }
+
         None
-    }
+    };
 
     if let Ok(blocks) = from_der(secret)
         && let Some(inner) = extract_inner_key(&blocks)
