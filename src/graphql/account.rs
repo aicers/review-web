@@ -2231,7 +2231,8 @@ mod tests {
         drop(store);
 
         update_account_last_signin_time(&schema, "admin").await;
-        crate::auth::update_jwt_secret(b"bad-key".to_vec()).unwrap();
+
+        let _force_failure = crate::auth::ForceAimerTokenFailureGuard::new();
 
         let res = schema
             .execute(
@@ -2263,8 +2264,6 @@ mod tests {
         };
         assert!(!review_token.is_empty());
         assert!(matches!(payload.get("aimerToken"), Some(Value::Null)));
-
-        crate::auth::update_jwt_secret(crate::graphql::test_jwt_secret_der().to_vec()).unwrap();
         restore_review_admin(original_review_admin);
     }
 
