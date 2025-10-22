@@ -14,6 +14,8 @@ use simple_asn1::{ASN1Block, from_der};
 use super::{AuthError, store::token_exists_in_store};
 use crate::Store;
 
+const AIMER_SUBJECT: &str = "aice-web";
+
 static JWT_EXPIRES_IN: LazyLock<RwLock<u32>> = LazyLock::new(|| RwLock::new(3600));
 static JWT_SECRET: LazyLock<RwLock<Vec<u8>>> = LazyLock::new(|| RwLock::new(vec![]));
 
@@ -117,7 +119,7 @@ pub fn create_aimer_token(exp: i64) -> Result<String, AuthError> {
     let iss = format!("https://{hostname}");
 
     let claims = AimerClaims {
-        sub: "aice-web".to_string(),
+        sub: AIMER_SUBJECT.to_string(),
         iss,
         iat,
         exp,
