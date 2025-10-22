@@ -43,6 +43,7 @@ tokio = "1"
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 tracing = "0.1"
 vinum = { git = "https://github.com/vinesystems/vinum.git", tag = "1.0.3" }
+simple_asn1 = "0.6"
 
 [dev-dependencies]
 assert-json-diff = "2"

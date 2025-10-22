@@ -9,6 +9,7 @@ use chrono::{NaiveDateTime, TimeDelta};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use review_database as database;
 use serde::{Deserialize, Serialize};
+use simple_asn1::{ASN1Block, from_der};
 
 use super::{AuthError, store::token_exists_in_store};
 use crate::Store;
@@ -35,6 +36,33 @@ struct AimerClaims {
     iss: String,
     iat: i64,
     exp: i64,
+}
+
+fn normalize_rsa_der(secret: &[u8]) -> Vec<u8> {
+    fn extract_inner_key(blocks: &[ASN1Block]) -> Option<Vec<u8>> {
+        for block in blocks {
+            match block {
+                ASN1Block::Sequence(_, entries) => {
+                    if let Some(value) = extract_inner_key(entries) {
+                        return Some(value);
+                    }
+                }
+                ASN1Block::BitString(_, _, value) | ASN1Block::OctetString(_, value) => {
+                    return Some(value.clone());
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    if let Ok(blocks) = from_der(secret)
+        && let Some(inner) = extract_inner_key(&blocks)
+    {
+        return inner;
+    }
+
+    secret.to_vec()
 }
 
 /// Creates a JWT token with the given username and role.
@@ -97,7 +125,8 @@ pub fn create_aimer_token(exp: i64) -> Result<String, AuthError> {
     let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
     header.kid = Some(hostname);
 
-    let token = encode(&header, &claims, &EncodingKey::from_rsa_pem(&jwt_secret)?)?;
+    let rsa_der = normalize_rsa_der(&jwt_secret);
+    let token = encode(&header, &claims, &EncodingKey::from_rsa_der(&rsa_der))?;
 
     Ok(token)
 }
