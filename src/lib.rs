@@ -1,6 +1,7 @@
 pub mod archive;
 pub mod auth;
 pub mod backend;
+mod bincode_utils;
 pub mod graphql;
 
 use std::{
