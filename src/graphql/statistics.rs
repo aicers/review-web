@@ -24,16 +24,19 @@ impl StatisticsQuery {
     async fn column_statistics(
         &self,
         ctx: &Context<'_>,
+        model: ID,
         cluster: ID,
         time: Vec<NaiveDateTime>,
     ) -> Result<JsonValue> {
         let cluster = cluster.as_str().parse()?;
+        let model = model.as_str().parse()?;
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.column_stats_map();
-        let result = map.get_column_statistics(cluster, time)?;
+        let result = map.get_column_statistics(model, cluster, time)?;
         Ok(serde_json::to_value(result)?)
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -41,6 +44,7 @@ impl StatisticsQuery {
     async fn rounds_by_cluster(
         &self,
         ctx: &Context<'_>,
+        model: ID,
         cluster: ID,
         after: Option<String>,
         before: Option<String>,
@@ -48,7 +52,7 @@ impl StatisticsQuery {
         last: Option<i32>,
     ) -> Result<
         Connection<
-            OpaqueCursor<(i32, i64)>,
+            OpaqueCursor<(u32, i64)>,
             Round,
             TotalCountByCluster,
             EmptyFields,
@@ -57,6 +61,7 @@ impl StatisticsQuery {
         >,
     > {
         let cluster = cluster.as_str().parse()?;
+        let model = model.as_str().parse()?;
 
         query(
             after,
@@ -64,7 +69,7 @@ impl StatisticsQuery {
             first,
             last,
             |after, before, first, last| async move {
-                load_rounds_by_cluster(ctx, cluster, after, before, first, last).await
+                load_rounds_by_cluster(ctx, model, cluster, after, before, first, last).await
             },
         )
         .await
@@ -101,7 +106,8 @@ impl StatisticsQuery {
 }
 
 struct TotalCountByCluster {
-    cluster: i32,
+    model: u32,
+    cluster: u32,
 }
 
 #[Object]
@@ -110,12 +116,12 @@ impl TotalCountByCluster {
     async fn total_count(&self, ctx: &Context<'_>) -> Result<i64> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.column_stats_map();
-        Ok(map.count_rounds_by_cluster(u32::try_from(self.cluster)?)?)
+        Ok(map.count_rounds_by_cluster(i32::try_from(self.model)?, self.cluster)?)
     }
 }
 
 struct TotalCountByModel {
-    model: i32,
+    model: u32,
 }
 
 #[Object]
@@ -170,14 +176,15 @@ impl EdgeNameType for RoundByClusterEdge {
 
 async fn load_rounds_by_cluster(
     ctx: &Context<'_>,
-    cluster: i32,
-    after: Option<OpaqueCursor<(i32, i64)>>,
-    before: Option<OpaqueCursor<(i32, i64)>>,
+    model: u32,
+    cluster: u32,
+    after: Option<OpaqueCursor<(u32, i64)>>,
+    before: Option<OpaqueCursor<(u32, i64)>>,
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<
     Connection<
-        OpaqueCursor<(i32, i64)>,
+        OpaqueCursor<(u32, i64)>,
         Round,
         TotalCountByCluster,
         EmptyFields,
@@ -189,8 +196,9 @@ async fn load_rounds_by_cluster(
     let limit = slicing::len(first, last)?;
     let store = crate::graphql::get_store(ctx).await?;
     let map = store.column_stats_map();
-    let (model, batches) = map.load_rounds_by_cluster(
-        u32::try_from(cluster)?,
+    let (_, batches) = map.load_rounds_by_cluster(
+        model,
+        cluster,
         &after.map(|k| i64_to_naive_date_time(k.0.1)),
         &before.map(|k| i64_to_naive_date_time(k.0.1)),
         is_first,
@@ -215,8 +223,11 @@ async fn load_rounds_by_cluster(
             .collect()
     };
 
-    let mut connection =
-        Connection::with_additional_fields(has_previous, has_next, TotalCountByCluster { cluster });
+    let mut connection = Connection::with_additional_fields(
+        has_previous,
+        has_next,
+        TotalCountByCluster { model, cluster },
+    );
     connection.edges.extend(
         batch_infos
             .into_iter()
@@ -227,7 +238,7 @@ async fn load_rounds_by_cluster(
 
 async fn load_rounds_by_model(
     ctx: &Context<'_>,
-    model: i32,
+    model: u32,
     after: Option<OpaqueCursor<Vec<u8>>>,
     before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
