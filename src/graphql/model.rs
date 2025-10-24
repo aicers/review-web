@@ -283,11 +283,11 @@ impl ModelQuery {
             .ok_or("invalid minMapSize")?;
 
         let db = ctx.data::<Database>()?;
-        let cluster_ids: Vec<(u32, String)> = db
+        let cluster_ids: Vec<(u32, i32)> = db
             .load_cluster_ids(model, None)
             .await?
             .into_iter()
-            .filter_map(|(id, name)| id.to_u32().map(|id| (id, name.to_string())))
+            .filter_map(|(id, name)| id.to_u32().map(|id| (id, name)))
             .collect();
 
         let store = crate::graphql::get_store(ctx).await?;
@@ -539,8 +539,8 @@ struct TopColumnsOfCluster<'a> {
 
 #[Object]
 impl TopColumnsOfCluster<'_> {
-    async fn cluster_id(&self) -> &str {
-        &self.inner.cluster_id
+    async fn cluster_id(&self) -> ID {
+        ID(self.inner.cluster_id.to_string())
     }
 
     async fn columns(&self) -> Vec<TopElementCountsByColumn> {
