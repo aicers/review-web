@@ -35,6 +35,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   the updated database schema for handling threat intelligence exclusions.
 - Updated chrono to 0.4.42 to match the version used in review-database and fix
   build errors caused by version mismatch.
+- Updated method calls to use `u32` for `model_id` and `cluster_id`, following
+  their type change from `i32` to `u32` in the RocksDB storage layer.
 
 ## [0.28.0] - 2025-09-30
 

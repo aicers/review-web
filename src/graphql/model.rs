@@ -72,10 +72,14 @@ impl ModelQuery {
     async fn structured_column_types(
         &self,
         ctx: &Context<'_>,
-        model: i32,
+        model: ID,
     ) -> Result<Vec<StructuredColumnType>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.column_stats_map();
+        let model = model
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid model id")?;
         let types = map.get_column_types_of_model(model)?;
         Ok(types.into_iter().map(Into::into).collect())
     }
@@ -84,9 +88,13 @@ impl ModelQuery {
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
-    async fn time_range_of_model(&self, ctx: &Context<'_>, model: i32) -> Result<TimeRange> {
+    async fn time_range_of_model(&self, ctx: &Context<'_>, model: ID) -> Result<TimeRange> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.time_series_map();
+        let model = model
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid model id")?;
         let time_range = map.get_time_range_of_model(model)?;
         let (lower, upper) = time_range.map_or((None, None), |(l, u)| {
             (
@@ -105,7 +113,7 @@ impl ModelQuery {
     async fn top_time_series(
         &self,
         ctx: &Context<'_>,
-        model: i32,
+        model: ID,
         size: Option<i32>,
         time: Option<NaiveDateTime>,
         min_slope: Option<f64>,
@@ -123,6 +131,10 @@ impl ModelQuery {
 
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.time_series_map();
+        let model = model
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid model id")?;
         let time_series = map.get_top_time_series_of_model(
             model,
             time.map(|t| t.and_utc().timestamp_nanos_opt().unwrap_or_default()),
@@ -176,7 +188,7 @@ impl ModelQuery {
     async fn top_columns(
         &self,
         ctx: &Context<'_>,
-        model: i32,
+        model: ID,
         size: Option<i32>,
         time: Option<NaiveDateTime>,
         portion_of_clusters: Option<f64>,
@@ -187,9 +199,17 @@ impl ModelQuery {
             .unwrap_or(DEFAULT_SIZE)
             .to_usize()
             .ok_or("invalid size")?;
+        let model_id_to_i32 = model
+            .as_str()
+            .parse::<i32>()
+            .map_err(|_| "invalid model id(i32)")?;
+        let model_id = model
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid model id(u32)")?;
         let db = ctx.data::<Database>()?;
         let cluster_ids = db
-            .load_cluster_ids_with_size_limit(model, portion_of_clusters)
+            .load_cluster_ids_with_size_limit(model_id, portion_of_clusters)
             .await?
             .into_iter()
             .filter_map(|id| id.to_u32())
@@ -198,7 +218,7 @@ impl ModelQuery {
         let store = crate::graphql::get_store(ctx).await?;
         let csv_column_extra_map = store.csv_column_extra_map();
         let Some(csv_extra) = csv_column_extra_map
-            .get_by_model(model)
+            .get_by_model(model_id_to_i32)
             .map_err(|e| format!("Failed to get csv column extra: {e}"))?
         else {
             return Ok(Vec::new());
@@ -209,7 +229,7 @@ impl ModelQuery {
 
         let column_stats_map = store.column_stats_map();
         let counts = column_stats_map.get_top_columns_of_model(
-            model,
+            model_id,
             cluster_ids,
             &top_n,
             size,
@@ -226,7 +246,7 @@ impl ModelQuery {
     async fn top_ip_addresses(
         &self,
         ctx: &Context<'_>,
-        model: i32,
+        model: ID,
         size: Option<i32>,
         time: Option<NaiveDateTime>,
         portion_of_clusters: Option<f64>,
@@ -237,11 +257,14 @@ impl ModelQuery {
             .unwrap_or(DEFAULT_SIZE)
             .to_usize()
             .ok_or("invalid size")?;
-
+        let model_id = model
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid model id(u32)")?;
         let db = ctx.data::<Database>()?;
 
         let cluster_ids: Vec<u32> = db
-            .load_cluster_ids_with_size_limit(model, portion_of_clusters)
+            .load_cluster_ids_with_size_limit(model_id, portion_of_clusters)
             .await?
             .into_iter()
             .filter_map(|id| id.to_u32())
@@ -250,7 +273,7 @@ impl ModelQuery {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.column_stats_map();
         let counts = map.get_top_ip_addresses_of_model(
-            model,
+            model_id,
             &cluster_ids,
             size,
             time,
@@ -266,7 +289,7 @@ impl ModelQuery {
     async fn top_multimaps(
         &self,
         ctx: &Context<'_>,
-        model: i32,
+        model: ID,
         size: Option<i32>,
         min_map_size: Option<i32>,
         time: Option<NaiveDateTime>,
@@ -281,19 +304,26 @@ impl ModelQuery {
             .unwrap_or(DEFAULT_MIN_MAP_SIZE)
             .to_usize()
             .ok_or("invalid minMapSize")?;
-
+        let model_id_to_i32 = model
+            .as_str()
+            .parse::<i32>()
+            .map_err(|_| "invalid model id(i32)")?;
+        let model_id = model
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid model id(u32)")?;
         let db = ctx.data::<Database>()?;
-        let cluster_ids: Vec<(u32, i32)> = db
-            .load_cluster_ids(model, None)
+        let cluster_ids: Vec<u32> = db
+            .load_cluster_ids(model_id_to_i32, None)
             .await?
             .into_iter()
-            .filter_map(|(id, name)| id.to_u32().map(|id| (id, name)))
+            .filter_map(|(_, cluster_id)| u32::try_from(cluster_id).ok())
             .collect();
 
         let store = crate::graphql::get_store(ctx).await?;
         let csv_column_extra_map = store.csv_column_extra_map();
         let csv_extra = csv_column_extra_map
-            .get_by_model(model)
+            .get_by_model(model_id_to_i32)
             .map_err(|e| format!("Failed to get csv column extra: {e}"))?;
         let (column_1, column_n) = if let Some(csv_extra) = csv_extra {
             (csv_extra.column_1, csv_extra.column_n)
@@ -303,7 +333,7 @@ impl ModelQuery {
 
         let column_stats_map = store.column_stats_map();
         let maps = column_stats_map.get_top_multimaps_of_model(
-            model,
+            model_id,
             cluster_ids,
             (&column_1.unwrap_or_default(), &column_n.unwrap_or_default()),
             size,
@@ -425,8 +455,8 @@ impl CsvColumnExtraConfig {
         ID(self.inner.id.to_string())
     }
 
-    async fn model_id(&self) -> i32 {
-        self.inner.model_id
+    async fn model_id(&self) -> ID {
+        ID(self.inner.model_id.to_string())
     }
 
     async fn column_alias(&self) -> &Option<Vec<String>> {

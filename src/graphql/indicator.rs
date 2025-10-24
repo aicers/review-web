@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result, StringNumber};
+use async_graphql::{Context, ID, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::{self as database};
 
@@ -109,8 +109,8 @@ impl ModelIndicator {
     }
 
     /// The model ID of the model indicator.
-    async fn model_id(&self) -> i32 {
-        self.inner.model_id
+    async fn model_id(&self) -> ID {
+        ID(self.inner.model_id.to_string())
     }
 
     /// The size of the model indicator in string within the representable

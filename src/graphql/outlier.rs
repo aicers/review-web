@@ -76,7 +76,7 @@ async fn fetch_ranked_outliers(
     fetch_time: u64,
 ) -> Result<()> {
     let mut itv = time::interval(time::Duration::from_secs(fetch_time));
-    let mut latest_fetched_key: HashMap<i32, Vec<u8>> = HashMap::new();
+    let mut latest_fetched_key: HashMap<u32, Vec<u8>> = HashMap::new();
 
     loop {
         itv.tick().await;
@@ -87,7 +87,10 @@ async fn fetch_ranked_outliers(
         let rows = db
             .load_models(&None, &None, true, MAX_MODEL_LIST_SIZE)
             .await?;
-        let model_ids: Vec<i32> = rows.iter().map(|row| row.id).collect();
+        let model_ids: Vec<u32> = rows
+            .iter()
+            .filter_map(|row| u32::try_from(row.id).ok())
+            .collect();
 
         // Search for ranked outliers by model.
         for model_id in model_ids {
@@ -280,7 +283,7 @@ async fn load_outliers(
     filter: fn(RankedOutlier) -> Option<RankedOutlier>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, RankedOutlier, RankedOutlierTotalCount, EmptyFields>>
 {
-    let model_id: i32 = model_id.as_str().parse()?;
+    let model_id: u32 = model_id.as_str().parse()?;
     let timestamp = time.map(|t| t.and_utc().timestamp_nanos_opt().unwrap_or_default());
 
     let prefix = {
@@ -319,7 +322,7 @@ async fn load_outliers(
 pub(super) struct RankedOutlier {
     #[graphql(skip)]
     id: i64,
-    model_id: i32,
+    model_id: u32,
     timestamp: i64,
     rank: i64,
     sensor: String,
@@ -351,7 +354,7 @@ impl RankedOutlier {
 #[derive(Debug, Clone, InputObject)]
 struct PreserveOutliersInput {
     id: i64,
-    model_id: i32,
+    model_id: u32,
     timestamp: i64,
     rank: i64,
     sensor: String,
@@ -372,7 +375,7 @@ impl From<PreserveOutliersInput> for review_database::OutlierInfoKey {
 #[derive(Debug, Clone, Serialize)]
 pub struct PreserveOutliersOutput {
     id: i64,
-    model_id: i32,
+    model_id: u32,
     timestamp: i64,
     sensor: String,
 }
@@ -394,8 +397,8 @@ impl PreserveOutliersOutput {
         ID(self.id.to_string())
     }
 
-    async fn model_id(&self) -> i32 {
-        self.model_id
+    async fn model_id(&self) -> ID {
+        ID(self.model_id.to_string())
     }
 
     async fn timestamp(&self) -> StringNumber<i64> {
@@ -408,7 +411,7 @@ impl PreserveOutliersOutput {
 }
 
 struct RankedOutlierTotalCount {
-    model_id: i32,
+    model_id: u32,
     timestamp: Option<i64>,
     check_saved: bool,
 }
@@ -445,7 +448,7 @@ pub(super) struct Outlier {
     #[graphql(skip)]
     pub(super) events: Vec<i64>,
     pub(super) size: i64,
-    pub(super) model_id: i32,
+    pub(super) model_id: u32,
 }
 
 #[ComplexObject]
@@ -464,14 +467,18 @@ impl Outlier {
 
     async fn model(&self, ctx: &Context<'_>) -> Result<ModelDigest> {
         let db = ctx.data::<Database>()?;
+        let model_id_to_i32 = self
+            .model_id
+            .try_into()
+            .map_err(|_| "invalid model id(i32)")?;
         // TODO: Migration to the RocksDB model table will be handled in #654.
         #[allow(deprecated)]
-        Ok(db.load_model(self.model_id).await?.into())
+        Ok(db.load_model(model_id_to_i32).await?.into())
     }
 }
 
 struct OutlierTotalCount {
-    model_id: i32,
+    model_id: u32,
 }
 
 #[Object]
@@ -492,7 +499,7 @@ impl OutlierTotalCount {
 
 async fn load(
     ctx: &Context<'_>,
-    model_id: i32,
+    model_id: u32,
     after: Option<OpaqueCursor<Vec<u8>>>,
     before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
@@ -651,7 +658,7 @@ async fn load_ranked_outliers_with_filter(
     filter: Option<SearchFilterInput>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, RankedOutlier, RankedOutlierTotalCount, EmptyFields>>
 {
-    let model_id: i32 = model_id.as_str().parse()?;
+    let model_id: u32 = model_id.as_str().parse()?;
     let timestamp = time.map(|t| t.and_utc().timestamp_nanos_opt().unwrap_or_default());
     let after = after.map(|cursor| cursor.0);
     let before = before.map(|cursor| cursor.0);
@@ -767,7 +774,7 @@ mod tests {
         t.format("%FT%T%.9f").to_string()
     }
 
-    fn samples(model_id: i32, timestamp: i64, start: i64, total: i64) -> Vec<OutlierInfo> {
+    fn samples(model_id: u32, timestamp: i64, start: i64, total: i64) -> Vec<OutlierInfo> {
         (start..start + total)
             .map(|id| {
                 let rank = id;
@@ -1086,7 +1093,7 @@ mod tests {
             ))
             .await;
         let expect = format!(
-            "{{preserveOutliers: [{{id: \"{saved}\", modelId: {model}, timestamp: \"{}\", sensor: \"test\"}}]}}",
+            "{{preserveOutliers: [{{id: \"{saved}\", modelId: \"{model}\", timestamp: \"{}\", sensor: \"test\"}}]}}",
             t.timestamp_nanos_opt().unwrap()
         );
         assert_eq!(res.data.to_string(), expect);

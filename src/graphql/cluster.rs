@@ -76,7 +76,7 @@ impl ClusterQuery {
     async fn top_ip_addresses_of_cluster(
         &self,
         ctx: &Context<'_>,
-        model: i32,
+        model: ID,
         cluster_id: String,
         size: Option<i32>,
     ) -> Result<Vec<TopElementCountsByColumn>> {
@@ -90,7 +90,13 @@ impl ClusterQuery {
             .parse::<i32>()
             .map_err(|_| "invalid cluster id")?;
         let cluster_ids = db
-            .load_cluster_ids(model, Some(&cluster_id_to_i32))
+            .load_cluster_ids(
+                model
+                    .as_str()
+                    .parse::<i32>()
+                    .map_err(|_| "invalid model id(i32)")?,
+                Some(&cluster_id_to_i32),
+            )
             .await?
             .into_iter()
             .map(|(id, _)| id)
@@ -98,7 +104,14 @@ impl ClusterQuery {
 
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.column_stats_map();
-        let counts = map.get_top_ip_addresses_of_cluster(model, &cluster_ids, size)?;
+        let counts = map.get_top_ip_addresses_of_cluster(
+            model
+                .as_str()
+                .parse::<u32>()
+                .map_err(|_| "invalid model id(u32)")?,
+            &cluster_ids,
+            size,
+        )?;
         Ok(counts.into_iter().map(Into::into).collect())
     }
 
@@ -110,7 +123,7 @@ impl ClusterQuery {
     async fn top_time_series_of_cluster(
         &self,
         ctx: &Context<'_>,
-        model: i32,
+        model: ID,
         cluster_id: String,
         cutoff_rate: Option<f64>,
         trendi_order: Option<i32>,
@@ -122,6 +135,10 @@ impl ClusterQuery {
         let id = cluster_id
             .parse::<i32>()
             .map_err(|_| "invalid cluster id")?;
+        let model = model
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid model id")?;
         let time_series = map.get_top_time_series_of_cluster(model, id, start, end)?;
 
         Ok(TimeSeriesResult::from_database(
@@ -143,7 +160,7 @@ impl ClusterMutation {
     async fn update_cluster(
         &self,
         ctx: &Context<'_>,
-        model: i32,
+        model: ID,
         id: ID,
         category: Option<ID>,
         qualifier: Option<ID>,
@@ -154,6 +171,10 @@ impl ClusterMutation {
         let id_to_i32 = |v: ID| v.as_str().parse().ok();
 
         let status = status.and_then(id_to_i32);
+        let model = model
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid model id")?;
         map.update_cluster(
             model,
             id.as_str().parse()?,
@@ -184,7 +205,7 @@ struct Cluster {
     size: i64,
     score: Option<f64>,
     #[graphql(skip)]
-    model_id: i32,
+    model_id: u32,
     last_modification_time: Option<NaiveDateTime>,
 }
 
@@ -213,9 +234,13 @@ impl Cluster {
 
     async fn model(&self, ctx: &Context<'_>) -> Result<ModelDigest> {
         let db = ctx.data::<Database>()?;
+        let model_id_to_i32 = self
+            .model_id
+            .try_into()
+            .map_err(|_| "invalid model id(i32)")?;
         // TODO: Migration to the RocksDB model table will be handled in #654.
         #[allow(deprecated)]
-        Ok(db.load_model(self.model_id).await?.into())
+        Ok(db.load_model(model_id_to_i32).await?.into())
     }
 
     async fn qualifier(&self, ctx: &Context<'_>) -> Result<Qualifier> {
@@ -238,7 +263,7 @@ impl Cluster {
 }
 
 struct ClusterTotalCount {
-    model_id: i32,
+    model_id: u32,
     categories: Option<Vec<i32>>,
     detectors: Option<Vec<i32>>,
     qualifiers: Option<Vec<i32>>,
@@ -371,7 +396,7 @@ impl From<&super::TimeCount> for TimeCount {
 #[allow(clippy::too_many_arguments)]
 async fn load(
     ctx: &Context<'_>,
-    model: i32,
+    model: u32,
     categories: Option<Vec<i32>>,
     detectors: Option<Vec<i32>>,
     qualifiers: Option<Vec<i32>>,
