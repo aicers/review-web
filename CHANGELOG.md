@@ -33,6 +33,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   with the `TriageExclusionReason` enum, affecting the `tiDb` field in
   `triagePolicy` and related mutations. This change ensures compatibility with
   the updated database schema for handling threat intelligence exclusions.
+- Updated chrono to 0.4.42 to match the version used in review-database and fix
+  build errors caused by version mismatch.
 
 ## [0.28.0] - 2025-09-30
 

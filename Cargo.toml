@@ -12,9 +12,9 @@ axum = { version = "0.8", features = ["macros", "tokio", "ws"] }
 axum-server = { version = "0.7", features = ["tls-rustls-no-provider"] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
 bincode = "1"
-chrono = { version = ">=0.4.35,<0.4.40", default-features = false, features = [
+chrono = { version = "0.4.42", default-features = false, features = [
   "serde",
-] }
+] } # NOTE: match with review-database
 futures = "0.3"
 futures-util = "0.3"
 http = "1"
@@ -26,7 +26,7 @@ num-traits = "0.2"
 reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls-native-roots",
 ] }
-review-database = { git = "https://github.com/sophie-cluml/review-database/", rev = "a9fc047" }
+review-database = { git = "https://github.com/sophie-cluml/review-database/", rev = "d9f5d53" }
 roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.5.0" }
 rustls = { version = "0.23", default-features = false, features = [
   "ring",
