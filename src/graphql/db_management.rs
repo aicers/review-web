@@ -79,7 +79,8 @@ impl DbManagementMutation {
     /// * Database is locked by another operation
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
-    async fn restore_from_backup(&self, ctx: &Context<'_>, id: u32) -> Result<bool> {
+    async fn restore_from_backup(&self, ctx: &Context<'_>, id: ID) -> Result<bool> {
+        let id = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
         let store = ctx.data::<Arc<RwLock<Store>>>()?;
         info_with_username!(ctx, "Database is being restored from backup {}", id);
         backup::restore(store, Some(id)).await?;
