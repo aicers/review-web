@@ -853,6 +853,8 @@ impl AccountMutation {
             unreachable!("`time` is a positive integer")
         };
         let store = crate::graphql::get_store(ctx).await?;
+        // TODO: The deprecated `account_policy_map` will be replaced with `config_map` in #675.
+        #[allow(deprecated)]
         let map = store.account_policy_map();
         map.update_expiry_period(expires_in)?;
         info_with_username!(
@@ -1167,6 +1169,8 @@ fn sign_in_actions(
 /// Returns an error if the account policy is not found or the value is
 /// corrupted.
 pub fn expiration_time(store: &Store) -> Result<i64> {
+    // TODO: The deprecated `account_policy_map` will be replaced with `config_map` in #675.
+    #[allow(deprecated)]
     let map = store.account_policy_map();
 
     map.current_expiry_period()?
@@ -1181,6 +1185,8 @@ pub fn expiration_time(store: &Store) -> Result<i64> {
 /// Returns an error if the value cannot be serialized or the underlying store
 /// fails to put the value.
 pub fn init_expiration_time(store: &Store, time: u32) -> anyhow::Result<()> {
+    // TODO: The deprecated `account_policy_map` will be replaced with `config_map` in #675.
+    #[allow(deprecated)]
     let map = store.account_policy_map();
     map.init_expiry_period(time)?;
     Ok(())
