@@ -118,8 +118,10 @@ async fn process_request(
     let config = state.config;
 
     let url = match tail {
-        Some(Path(tail)) => format!("{}/{tail}", config.uri()),
-        None => config.uri().into(),
+        Some(Path(tail)) if !config.uri().ends_with("/graphql") => {
+            format!("{}/{tail}", config.uri())
+        }
+        _ => config.uri().into(),
     };
 
     let (parts, body) = req.into_parts();
@@ -177,5 +179,120 @@ where
     type Rejection = (StatusCode, &'static str);
     async fn from_request_parts(_parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         Ok(ArchiveState::from_ref(state))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_url_construction_without_graphql_suffix() {
+        let config = Config {
+            base: "archive".to_string(),
+            uri: "http://example.com".to_string(),
+            roles: None,
+        };
+
+        // Test with tail
+        let tail = Some("graphql");
+        let url = match tail {
+            Some(tail) if !config.uri().ends_with("/graphql") => {
+                format!("{}/{tail}", config.uri())
+            }
+            _ => config.uri().into(),
+        };
+        assert_eq!(url, "http://example.com/graphql");
+
+        // Test without tail
+        let tail: Option<&str> = None;
+        let url = match tail {
+            Some(tail) if !config.uri().ends_with("/graphql") => {
+                format!("{}/{tail}", config.uri())
+            }
+            _ => config.uri().into(),
+        };
+        assert_eq!(url, "http://example.com");
+    }
+
+    #[test]
+    fn test_url_construction_with_graphql_suffix() {
+        let config = Config {
+            base: "archive".to_string(),
+            uri: "http://example.com/graphql".to_string(),
+            roles: None,
+        };
+
+        // Test with tail that would duplicate /graphql
+        let tail = Some("graphql");
+        let url = match tail {
+            Some(tail) if !config.uri().ends_with("/graphql") => {
+                format!("{}/{tail}", config.uri())
+            }
+            _ => config.uri().into(),
+        };
+        assert_eq!(url, "http://example.com/graphql");
+
+        // Test without tail
+        let tail: Option<&str> = None;
+        let url = match tail {
+            Some(tail) if !config.uri().ends_with("/graphql") => {
+                format!("{}/{tail}", config.uri())
+            }
+            _ => config.uri().into(),
+        };
+        assert_eq!(url, "http://example.com/graphql");
+    }
+
+    #[test]
+    fn test_url_construction_with_other_tail() {
+        let config = Config {
+            base: "archive".to_string(),
+            uri: "http://example.com".to_string(),
+            roles: None,
+        };
+
+        // Test with a different tail
+        let tail = Some("api/v1");
+        let url = match tail {
+            Some(tail) if !config.uri().ends_with("/graphql") => {
+                format!("{}/{tail}", config.uri())
+            }
+            _ => config.uri().into(),
+        };
+        assert_eq!(url, "http://example.com/api/v1");
+    }
+
+    #[test]
+    fn test_config_base() {
+        let config = Config {
+            base: "archive".to_string(),
+            uri: "http://example.com".to_string(),
+            roles: None,
+        };
+        assert_eq!(config.base(), "/archive");
+    }
+
+    #[test]
+    fn test_config_roles_default() {
+        let config = Config {
+            base: "archive".to_string(),
+            uri: "http://example.com".to_string(),
+            roles: None,
+        };
+        assert_eq!(
+            config.roles(),
+            vec![Role::SecurityAdministrator, Role::SystemAdministrator]
+        );
+    }
+
+    #[test]
+    fn test_config_roles_custom() {
+        let config = Config {
+            base: "archive".to_string(),
+            uri: "http://example.com".to_string(),
+            roles: Some(vec![Role::SecurityAdministrator]),
+        };
+        assert_eq!(config.roles(), vec![Role::SecurityAdministrator]);
     }
 }
