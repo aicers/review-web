@@ -3,12 +3,15 @@
 mod policy;
 pub(super) mod response;
 
-use async_graphql::{Enum, ID, InputObject, Object};
+use async_graphql::{Enum, ID, InputObject, Object, Union};
 use chrono::{DateTime, Utc};
 use review_database as database;
 use serde::Deserialize;
 
-use super::{Role, RoleGuard};
+use super::{
+    Role, RoleGuard,
+    customer::{HostNetworkGroup, HostNetworkGroupInput},
+};
 
 #[derive(Default)]
 pub(super) struct TriagePolicyQuery;
@@ -36,7 +39,7 @@ impl TriagePolicy {
         &self.inner.name
     }
 
-    async fn ti_db(&self) -> Vec<Ti<'_>> {
+    async fn ti_db(&self) -> Vec<TriageExclusionReason> {
         self.inner.ti_db.iter().map(Into::into).collect()
     }
 
@@ -61,15 +64,6 @@ impl From<database::TriagePolicy> for TriagePolicy {
     fn from(inner: database::TriagePolicy) -> Self {
         Self { inner }
     }
-}
-
-#[derive(Clone, Copy, Enum, Eq, PartialEq, Deserialize)]
-#[graphql(remote = "database::TiCmpKind")]
-enum TiCmpKind {
-    IpAddress,
-    Domain,
-    Hostname,
-    Uri,
 }
 
 #[derive(Clone, Copy, Enum, Eq, PartialEq, Deserialize)]
@@ -157,28 +151,62 @@ pub enum ThreatCategory {
     ResourceDevelopment, // 2nd
 }
 
-struct Ti<'a> {
-    inner: &'a database::Ti,
+#[derive(Union)]
+enum TriageExclusionReason {
+    IpAddress(IpAddressTriageExclusion),
+    Domain(DomainTriageExclusion),
+    Hostname(HostnameTriageExclusion),
+    Uri(UriTriageExclusion),
 }
+
+impl From<&database::TriageExclusionReason> for TriageExclusionReason {
+    fn from(value: &database::TriageExclusionReason) -> Self {
+        match value {
+            database::TriageExclusionReason::IpAddress(g) => {
+                IpAddressTriageExclusion(g.clone()).into()
+            }
+            database::TriageExclusionReason::Domain(d) => DomainTriageExclusion(d.clone()).into(),
+            database::TriageExclusionReason::Hostname(h) => {
+                HostnameTriageExclusion(h.clone()).into()
+            }
+            database::TriageExclusionReason::Uri(u) => UriTriageExclusion(u.clone()).into(),
+        }
+    }
+}
+
+struct IpAddressTriageExclusion(database::HostNetworkGroup);
 
 #[Object]
-impl Ti<'_> {
-    async fn ti_name(&self) -> &str {
-        &self.inner.ti_name
-    }
-
-    async fn kind(&self) -> TiCmpKind {
-        self.inner.kind.into()
-    }
-
-    async fn weight(&self) -> Option<f64> {
-        self.inner.weight
+impl IpAddressTriageExclusion {
+    async fn ip_address(&self) -> HostNetworkGroup<'_> {
+        (&self.0).into()
     }
 }
 
-impl<'a> From<&'a database::Ti> for Ti<'a> {
-    fn from(inner: &'a database::Ti) -> Self {
-        Self { inner }
+struct DomainTriageExclusion(Vec<String>);
+
+#[Object]
+impl DomainTriageExclusion {
+    async fn domain(&self) -> &[String] {
+        &self.0
+    }
+}
+
+struct UriTriageExclusion(Vec<String>);
+
+#[Object]
+impl UriTriageExclusion {
+    async fn uri(&self) -> &[String] {
+        &self.0
+    }
+}
+
+struct HostnameTriageExclusion(Vec<String>);
+
+#[Object]
+impl HostnameTriageExclusion {
+    async fn hostname(&self) -> &[String] {
+        &self.0
     }
 }
 
@@ -274,18 +302,29 @@ impl<'a> From<&'a database::Response> for Response<'a> {
 }
 
 #[derive(Clone, InputObject)]
-pub(super) struct TiInput {
-    ti_name: String,
-    kind: TiCmpKind,
-    weight: Option<f64>,
+pub(super) struct TriageExclusionReasonInput {
+    ip_address: Option<HostNetworkGroupInput>,
+    domain: Option<Vec<String>>,
+    hostname: Option<Vec<String>>,
+    uri: Option<Vec<String>>,
 }
 
-impl From<&TiInput> for database::Ti {
-    fn from(input: &TiInput) -> Self {
-        Self {
-            ti_name: input.ti_name.clone(),
-            kind: input.kind.into(),
-            weight: input.weight,
+impl TryFrom<TriageExclusionReasonInput> for database::TriageExclusionReason {
+    type Error = anyhow::Error;
+
+    fn try_from(value: TriageExclusionReasonInput) -> Result<Self, Self::Error> {
+        if let Some(ip_address) = value.ip_address {
+            Ok(database::TriageExclusionReason::IpAddress(
+                ip_address.try_into()?,
+            ))
+        } else if let Some(domain) = value.domain {
+            Ok(database::TriageExclusionReason::Domain(domain))
+        } else if let Some(hostname) = value.hostname {
+            Ok(database::TriageExclusionReason::Hostname(hostname))
+        } else if let Some(uri) = value.uri {
+            Ok(database::TriageExclusionReason::Uri(uri))
+        } else {
+            Err(anyhow::anyhow!("invalid input"))
         }
     }
 }
@@ -338,21 +377,28 @@ impl From<&ResponseInput> for database::Response {
 #[derive(Clone, InputObject)]
 pub(super) struct TriagePolicyInput {
     pub name: String,
-    pub ti_db: Vec<TiInput>,
+    pub ti_db: Vec<TriageExclusionReasonInput>,
     pub packet_attr: Vec<PacketAttrInput>,
     pub confidence: Vec<ConfidenceInput>,
     pub response: Vec<ResponseInput>,
 }
 
-impl From<TriagePolicyInput> for database::TriagePolicyUpdate {
-    fn from(input: TriagePolicyInput) -> Self {
-        Self {
+impl TryFrom<TriagePolicyInput> for database::TriagePolicyUpdate {
+    type Error = anyhow::Error;
+
+    fn try_from(input: TriagePolicyInput) -> Result<Self, Self::Error> {
+        let ti_db = input
+            .ti_db
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
             name: input.name,
-            ti_db: input.ti_db.iter().map(Into::into).collect(),
+            ti_db,
             packet_attr: input.packet_attr.iter().map(Into::into).collect(),
             confidence: input.confidence.iter().map(Into::into).collect(),
             response: input.response.iter().map(Into::into).collect(),
-        }
+        })
     }
 }
 
@@ -389,13 +435,13 @@ mod tests {
                     insertTriagePolicy(
                         name: "Triage 1"
                         tiDb: [{
-                            tiName: "Type A DB"
-                            kind: IP_ADDRESS
-                            weight: 0.5
+                            ipAddress: {
+                                hosts: ["1.2.3.4"],
+                                networks: [],
+                                ranges: []
+                            }
                         }, {
-                            tiName: "Type C DB"
-                            kind: IP_ADDRESS
-                            weight: 0.5
+                            domain: ["*.example.com"]
                         }]
                         packetAttr: [{
                             rawEventKind: CONN
@@ -443,13 +489,13 @@ mod tests {
                         old: {
                             name: "Triage 1"
                             tiDb: [{
-                                tiName: "Type A DB"
-                                kind: IP_ADDRESS
-                                weight: 0.5
+                                ipAddress: {
+                                    hosts: ["1.2.3.4"],
+                                    networks: [],
+                                    ranges: []
+                                }
                             }, {
-                                tiName: "Type C DB"
-                                kind: IP_ADDRESS
-                                weight: 0.5
+                                domain: ["*.example.com"]
                             }]
                             packetAttr: [{
                                 rawEventKind: CONN
@@ -486,13 +532,13 @@ mod tests {
                         new: {
                             name: "Triage 2"
                             tiDb: [{
-                                tiName: "Type A DB"
-                                kind: IP_ADDRESS
-                                weight: 0.5
+                                ipAddress: {
+                                    hosts: ["1.2.3.4"],
+                                    networks: [],
+                                    ranges: []
+                                }
                             }, {
-                                tiName: "Type B DB"
-                                kind: IP_ADDRESS
-                                weight: 0.5
+                                domain: ["*.example.com"]
                             }]
                             packetAttr: [{
                                 rawEventKind: CONN

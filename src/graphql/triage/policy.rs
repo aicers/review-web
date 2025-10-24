@@ -8,8 +8,8 @@ use review_database::{self as database};
 use tracing::info;
 
 use super::{
-    ConfidenceInput, PacketAttrInput, ResponseInput, TiInput, TriagePolicy, TriagePolicyInput,
-    TriagePolicyMutation, TriagePolicyQuery,
+    ConfidenceInput, PacketAttrInput, ResponseInput, TriageExclusionReasonInput, TriagePolicy,
+    TriagePolicyInput, TriagePolicyMutation, TriagePolicyQuery,
 };
 use super::{Role, RoleGuard};
 use crate::graphql::query_with_constraints;
@@ -86,7 +86,7 @@ impl TriagePolicyMutation {
         &self,
         ctx: &Context<'_>,
         name: String,
-        ti_db: Vec<TiInput>,
+        ti_db: Vec<TriageExclusionReasonInput>,
         packet_attr: Vec<PacketAttrInput>,
         confidence: Vec<ConfidenceInput>,
         response: Vec<ResponseInput>,
@@ -96,7 +96,10 @@ impl TriagePolicyMutation {
             packet_attr_convert.push(p.into());
         }
         packet_attr_convert.sort_unstable();
-        let mut ti_db = ti_db.iter().map(Into::into).collect::<Vec<database::Ti>>();
+        let mut ti_db = ti_db
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
         ti_db.sort_unstable();
         let mut confidence = confidence
             .iter()
@@ -166,8 +169,8 @@ impl TriagePolicyMutation {
         new: TriagePolicyInput,
     ) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-        let old = old.into();
-        let new = new.into();
+        let old = old.try_into()?;
+        let new = new.try_into()?;
 
         let store = crate::graphql::get_store(ctx).await?;
         let mut map = store.triage_policy_map();

@@ -28,6 +28,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `BlocklistFtp`) to reflect changes in review-database. These now expose a
   `commands: Vec<FtpCommand>` field containing full session command and response
    details.
+- Updated the triage policy-related GraphQL APIs to align with breaking changes
+  in the `review-database`. The previously used `Ti` struct has been replaced
+  with the `TriageExclusionReason` enum, affecting the `tiDb` field in
+  `triagePolicy` and related mutations. This change ensures compatibility with
+  the updated database schema for handling threat intelligence exclusions.
 
 ## [0.28.0] - 2025-09-30
 
