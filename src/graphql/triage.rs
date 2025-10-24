@@ -141,7 +141,6 @@ pub enum ResponseKind {
 #[graphql(remote = "database::EventCategory")]
 #[repr(u8)]
 pub enum ThreatCategory {
-    Unknown = 0,
     Reconnaissance = 1,  // 1st (the first in the kill chain)
     InitialAccess,       // 3rd
     Execution,           // 4th

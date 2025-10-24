@@ -19,6 +19,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - Breaking changes to GraphQL APIs: `clusters`, `update_cluster`.
 - The String type for `cluster_id` is no longer used as the cluster key. it is
   now identified by a numeric cluster ID combined with the model ID.
+- Removed the `Unknown` variant from the `ThreatCategory` enum. This change
+  reflects the removal of the `Unknown` variant from `review_database::EventCategory`.
+  As a result, event-related GraphQL APIs that expose the `category` field using
+  `ThreatCategory` now return `Option<ThreatCategory>`. Events with an unspecified
+  category will return None, while known categories will be wrapped in Some.
 
 ## [0.28.0] - 2025-09-30
 
