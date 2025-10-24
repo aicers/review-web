@@ -18,6 +18,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   information including id, timestamp, and size, sorted by timestamp in
   descending order (latest first) without pagination. Available to System and
   Security Administrators for backup management and restore point selection.
+- Added `restoreFromBackup` GraphQL mutation to restore RocksDB from a
+  specific backup ID. This enables point-in-time recovery and operational
+  workflows for database restoration.
 
 ### Changed
 
@@ -65,9 +68,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
-- Added `restoreFromBackup` GraphQL mutation to restore RocksDB from a
-  specific backup ID. This enables point-in-time recovery and operational
-  workflows for database restoration.
 - Added `TorConnectionConn` event detection for connection-level Tor network
   monitoring. This extends existing Tor detection capabilities beyond HTTP
   connections to include all connection types.
