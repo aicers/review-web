@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use async_graphql::{Context, ID, Object, Result, SimpleObject};
+use async_graphql::{Context, ID, Object, Result, SimpleObject, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::{Store, backup};
 use tokio::sync::RwLock;
@@ -13,7 +13,7 @@ use crate::info_with_username;
 pub struct BackupInfo {
     pub id: ID,
     pub timestamp: DateTime<Utc>,
-    pub size: String,
+    pub size: StringNumber<u64>,
 }
 
 #[derive(Default)]
@@ -35,11 +35,11 @@ impl DbManagementQuery {
             .map(|info| BackupInfo {
                 id: ID::from(info.id),
                 timestamp: info.timestamp,
-                size: info.size.to_string(),
+                size: StringNumber(info.size),
             })
             .collect();
 
-        result.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        result.sort_unstable_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
         Ok(result)
     }
