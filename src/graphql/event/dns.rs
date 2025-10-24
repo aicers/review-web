@@ -164,8 +164,8 @@ impl DnsCovertChannel {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
@@ -350,8 +350,8 @@ impl LockyRansomware {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
@@ -530,8 +530,8 @@ impl CryptocurrencyMiningPool {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
@@ -705,8 +705,8 @@ impl BlocklistDns {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Confidence

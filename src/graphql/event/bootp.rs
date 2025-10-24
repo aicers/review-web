@@ -153,8 +153,8 @@ impl BlocklistBootp {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Confidence

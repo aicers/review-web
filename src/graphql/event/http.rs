@@ -240,8 +240,8 @@ impl HttpThreat {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
@@ -370,8 +370,8 @@ impl RepeatedHttpSessions {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
@@ -595,8 +595,8 @@ impl TorConnection {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
@@ -815,8 +815,8 @@ impl DomainGenerationAlgorithm {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
@@ -1035,8 +1035,8 @@ impl NonBrowser {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
@@ -1255,8 +1255,8 @@ impl BlocklistHttp {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Confidence

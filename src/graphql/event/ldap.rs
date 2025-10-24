@@ -111,8 +111,8 @@ impl LdapBruteForce {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
@@ -262,8 +262,8 @@ impl LdapPlainText {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
@@ -412,8 +412,8 @@ impl BlocklistLdap {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Triage Scores

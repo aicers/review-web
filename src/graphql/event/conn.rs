@@ -104,8 +104,8 @@ impl PortScan {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
@@ -243,8 +243,8 @@ impl MultiHostPortScan {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
@@ -377,8 +377,8 @@ impl ExternalDdos {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
@@ -531,8 +531,8 @@ impl BlocklistConn {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Confidence
@@ -691,8 +691,8 @@ impl TorConnectionConn {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> ThreatCategory {
-        self.inner.category.into()
+    async fn category(&self) -> Option<ThreatCategory> {
+        self.inner.category.map(Into::into)
     }
 
     /// Confidence

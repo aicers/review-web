@@ -1437,7 +1437,7 @@ mod tests {
             ra_flag: false,
             ttl: Vec::new(),
             confidence: 0.8,
-            category: EventCategory::CommandAndControl,
+            category: Some(EventCategory::CommandAndControl),
         };
         EventMessage {
             time: timestamp,
@@ -1979,7 +1979,7 @@ mod tests {
             class_id: vec![4, 5, 6],
             client_id_type: 1,
             client_id: vec![7, 8, 9],
-            category: EventCategory::InitialAccess,
+            category: Some(EventCategory::InitialAccess),
             confidence: 0.8,
         };
 
@@ -2061,7 +2061,7 @@ mod tests {
             chaddr: vec![1, 2, 3, 4, 5, 6],
             sname: "server_name".to_string(),
             file: "boot_file_name".to_string(),
-            category: EventCategory::InitialAccess,
+            category: Some(EventCategory::InitialAccess),
             confidence: 0.8,
         };
 
@@ -2145,7 +2145,7 @@ mod tests {
             ra_flag: false,
             ttl: Vec::new(),
             confidence: 0.8,
-            category: EventCategory::CommandAndControl,
+            category: Some(EventCategory::CommandAndControl),
         };
         let message = EventMessage {
             time: timestamp,
@@ -2210,7 +2210,7 @@ mod tests {
             issuer_common_name: "common".into(),
             last_alert: 3,
             confidence: 0.8,
-            category: EventCategory::CommandAndControl,
+            category: Some(EventCategory::CommandAndControl),
         };
 
         let message = EventMessage {
