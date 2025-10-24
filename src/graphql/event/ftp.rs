@@ -5,6 +5,70 @@ use review_database::event as database;
 use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
 use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
+#[derive(Clone)]
+pub(super) struct FtpCommand {
+    inner: database::FtpCommand,
+}
+
+#[Object]
+impl FtpCommand {
+    /// Command
+    async fn command(&self) -> &str {
+        &self.inner.command
+    }
+
+    /// Reply Code
+    async fn reply_code(&self) -> &str {
+        &self.inner.reply_code
+    }
+
+    /// Reply Message
+    async fn reply_msg(&self) -> &str {
+        &self.inner.reply_msg
+    }
+
+    /// Passive Mode Flag
+    async fn data_passive(&self) -> bool {
+        self.inner.data_passive
+    }
+
+    /// Data Channel Source IP (Address)
+    async fn data_orig_addr(&self) -> String {
+        self.inner.data_orig_addr.to_string()
+    }
+
+    /// Data Channel Destination IP (Address)
+    async fn data_resp_addr(&self) -> String {
+        self.inner.data_resp_addr.to_string()
+    }
+
+    /// Data Channel Destination Port (Number)
+    async fn data_resp_port(&self) -> u16 {
+        self.inner.data_resp_port
+    }
+
+    /// Filename
+    async fn file(&self) -> &str {
+        &self.inner.file
+    }
+
+    /// File Size
+    async fn file_size(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.file_size)
+    }
+
+    /// File ID
+    async fn file_id(&self) -> &str {
+        &self.inner.file_id
+    }
+}
+
+impl From<database::FtpCommand> for FtpCommand {
+    fn from(inner: database::FtpCommand) -> Self {
+        Self { inner }
+    }
+}
+
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct FtpBruteForce {
     inner: database::FtpBruteForce,
@@ -232,54 +296,14 @@ impl FtpPlainText {
         &self.inner.password
     }
 
-    /// Command
-    async fn command(&self) -> &str {
-        &self.inner.command
-    }
-
-    /// Reply Code
-    async fn reply_code(&self) -> &str {
-        &self.inner.reply_code
-    }
-
-    /// Reply Message
-    async fn reply_msg(&self) -> &str {
-        &self.inner.reply_msg
-    }
-
-    /// Passive Mode Flag
-    async fn data_passive(&self) -> bool {
-        self.inner.data_passive
-    }
-
-    /// Data Channel Source IP (Address)
-    async fn data_orig_addr(&self) -> String {
-        self.inner.data_orig_addr.to_string()
-    }
-
-    /// Data Channel Destination IP (Address)
-    async fn data_resp_addr(&self) -> String {
-        self.inner.data_resp_addr.to_string()
-    }
-
-    /// Data Channel Destination Port (Number)
-    async fn data_resp_port(&self) -> u16 {
-        self.inner.data_resp_port
-    }
-
-    /// Filename
-    async fn file(&self) -> &str {
-        &self.inner.file
-    }
-
-    /// File Size
-    async fn file_size(&self) -> StringNumber<u64> {
-        StringNumber(self.inner.file_size)
-    }
-
-    /// File ID
-    async fn file_id(&self) -> &str {
-        &self.inner.file_id
+    /// Commands
+    async fn commands(&self) -> Vec<FtpCommand> {
+        self.inner
+            .commands
+            .iter()
+            .cloned()
+            .map(Into::into)
+            .collect()
     }
 
     /// Confidence
@@ -413,54 +437,14 @@ impl BlocklistFtp {
         &self.inner.password
     }
 
-    /// Command
-    async fn command(&self) -> &str {
-        &self.inner.command
-    }
-
-    /// Reply Code
-    async fn reply_code(&self) -> &str {
-        &self.inner.reply_code
-    }
-
-    /// Reply Message
-    async fn reply_msg(&self) -> &str {
-        &self.inner.reply_msg
-    }
-
-    /// Passive Mode Flag
-    async fn data_passive(&self) -> bool {
-        self.inner.data_passive
-    }
-
-    /// Data Channel Source IP (Address)
-    async fn data_orig_addr(&self) -> String {
-        self.inner.data_orig_addr.to_string()
-    }
-
-    /// Data Channel Destination IP (Address)
-    async fn data_resp_addr(&self) -> String {
-        self.inner.data_resp_addr.to_string()
-    }
-
-    /// Data Channel Destination Port (Number)
-    async fn data_resp_port(&self) -> u16 {
-        self.inner.data_resp_port
-    }
-
-    /// Filename
-    async fn file(&self) -> &str {
-        &self.inner.file
-    }
-
-    /// File Size
-    async fn file_size(&self) -> StringNumber<u64> {
-        StringNumber(self.inner.file_size)
-    }
-
-    /// File ID
-    async fn file_id(&self) -> &str {
-        &self.inner.file_id
+    /// Commands
+    async fn commands(&self) -> Vec<FtpCommand> {
+        self.inner
+            .commands
+            .iter()
+            .cloned()
+            .map(Into::into)
+            .collect()
     }
 
     /// MITRE Tactic
