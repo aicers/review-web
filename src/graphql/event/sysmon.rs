@@ -12,7 +12,7 @@ pub(super) struct WindowsThreat {
 
 #[Object]
 impl WindowsThreat {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }

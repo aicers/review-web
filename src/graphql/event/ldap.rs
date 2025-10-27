@@ -12,7 +12,7 @@ pub(super) struct LdapBruteForce {
 
 #[Object]
 impl LdapBruteForce {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -142,7 +142,7 @@ pub(super) struct LdapPlainText {
 
 #[Object]
 impl LdapPlainText {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -219,6 +219,16 @@ impl LdapPlainText {
     /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
+    }
+
+    /// Start Time
+    async fn start_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.start_time)
+    }
+
+    /// End Time
+    async fn end_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.end_time)
     }
 
     /// Message ID
@@ -292,7 +302,7 @@ pub(super) struct BlocklistLdap {
 
 #[Object]
 impl BlocklistLdap {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -369,6 +379,11 @@ impl BlocklistLdap {
     /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
+    }
+
+    /// Start Time
+    async fn start_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.start_time)
     }
 
     /// End Time

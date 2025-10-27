@@ -11,7 +11,7 @@ pub(super) struct BlocklistTls {
 
 #[Object]
 impl BlocklistTls {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -88,6 +88,11 @@ impl BlocklistTls {
     /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
+    }
+
+    /// Start Time
+    async fn start_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.start_time)
     }
 
     /// End Time
@@ -236,7 +241,7 @@ pub(super) struct SuspiciousTlsTraffic {
 
 #[Object]
 impl SuspiciousTlsTraffic {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -313,6 +318,11 @@ impl SuspiciousTlsTraffic {
     /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
+    }
+
+    /// Start Time
+    async fn start_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.start_time)
     }
 
     /// End Time

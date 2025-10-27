@@ -12,7 +12,7 @@ pub(super) struct ExtraThreat {
 
 #[Object]
 impl ExtraThreat {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }

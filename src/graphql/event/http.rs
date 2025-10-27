@@ -14,7 +14,7 @@ pub(super) struct HttpThreat {
 
 #[Object]
 impl HttpThreat {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -275,7 +275,7 @@ pub(super) struct RepeatedHttpSessions {
 
 #[Object]
 impl RepeatedHttpSessions {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -405,7 +405,7 @@ pub(super) struct TorConnection {
 
 #[Object]
 impl TorConnection {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -630,7 +630,7 @@ pub(super) struct DomainGenerationAlgorithm {
 
 #[Object]
 impl DomainGenerationAlgorithm {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -850,7 +850,7 @@ pub(super) struct NonBrowser {
 
 #[Object]
 impl NonBrowser {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -1070,7 +1070,7 @@ pub(super) struct BlocklistHttp {
 
 #[Object]
 impl BlocklistHttp {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
