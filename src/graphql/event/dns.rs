@@ -14,7 +14,7 @@ pub(super) struct DnsCovertChannel {
 
 #[Object]
 impl DnsCovertChannel {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -22,11 +22,6 @@ impl DnsCovertChannel {
     /// Sensor
     async fn sensor(&self) -> &str {
         &self.inner.sensor
-    }
-
-    /// End Time
-    async fn end_time(&self) -> DateTime<Utc> {
-        self.inner.end_time
     }
 
     /// Source IP (Address)
@@ -96,6 +91,16 @@ impl DnsCovertChannel {
     /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
+    }
+
+    /// Start Time
+    async fn start_time(&self) -> DateTime<Utc> {
+        self.inner.start_time
+    }
+
+    /// End Time
+    async fn end_time(&self) -> DateTime<Utc> {
+        self.inner.end_time
     }
 
     /// Query
@@ -200,7 +205,7 @@ pub(super) struct LockyRansomware {
 
 #[Object]
 impl LockyRansomware {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -208,11 +213,6 @@ impl LockyRansomware {
     /// Sensor
     async fn sensor(&self) -> &str {
         &self.inner.sensor
-    }
-
-    /// End Time
-    async fn end_time(&self) -> DateTime<Utc> {
-        self.inner.end_time
     }
 
     /// Source IP (Address)
@@ -282,6 +282,16 @@ impl LockyRansomware {
     /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
+    }
+
+    /// Start Time
+    async fn start_time(&self) -> DateTime<Utc> {
+        self.inner.start_time
+    }
+
+    /// End Time
+    async fn end_time(&self) -> DateTime<Utc> {
+        self.inner.end_time
     }
 
     /// Query
@@ -380,7 +390,7 @@ pub(super) struct CryptocurrencyMiningPool {
 
 #[Object]
 impl CryptocurrencyMiningPool {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -457,6 +467,16 @@ impl CryptocurrencyMiningPool {
     /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
+    }
+
+    /// Start Time
+    async fn start_time(&self) -> DateTime<Utc> {
+        self.inner.start_time
+    }
+
+    /// End Time
+    async fn end_time(&self) -> DateTime<Utc> {
+        self.inner.end_time
     }
 
     /// Query
@@ -560,7 +580,7 @@ pub(super) struct BlocklistDns {
 
 #[Object]
 impl BlocklistDns {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -637,6 +657,11 @@ impl BlocklistDns {
     /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
+    }
+
+    /// Start Time
+    async fn start_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.start_time)
     }
 
     /// End Time

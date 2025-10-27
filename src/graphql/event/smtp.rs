@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result};
+use async_graphql::{Context, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::event as database;
 
@@ -11,7 +11,7 @@ pub(super) struct BlocklistSmtp {
 
 #[Object]
 impl BlocklistSmtp {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -90,9 +90,14 @@ impl BlocklistSmtp {
         self.inner.proto
     }
 
+    /// Start Time
+    async fn start_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.start_time)
+    }
+
     /// End Time
-    async fn end_time(&self) -> i64 {
-        self.inner.end_time
+    async fn end_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.end_time)
     }
 
     /// Mail From

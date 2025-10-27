@@ -427,6 +427,7 @@ mod tests {
     fn event_message_at(timestamp: DateTime<Utc>, src: u32, dst: u32) -> EventMessage {
         let fields = DnsEventFields {
             sensor: "sensor1".to_string(),
+            start_time: timestamp,
             end_time: timestamp,
             src_addr: Ipv4Addr::from(src).into(),
             src_port: 10000,

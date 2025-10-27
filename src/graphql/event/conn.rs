@@ -14,7 +14,7 @@ pub(super) struct PortScan {
 
 #[Object]
 impl PortScan {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -134,7 +134,7 @@ pub(super) struct MultiHostPortScan {
 
 #[Object]
 impl MultiHostPortScan {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -273,7 +273,7 @@ pub(super) struct ExternalDdos {
 
 #[Object]
 impl ExternalDdos {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -406,7 +406,7 @@ pub(super) struct BlocklistConn {
 
 #[Object]
 impl BlocklistConn {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -488,6 +488,11 @@ impl BlocklistConn {
     /// Connection State
     async fn conn_state(&self) -> String {
         self.inner.conn_state.clone()
+    }
+
+    /// Start Time
+    async fn start_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.start_time)
     }
 
     /// End Time
@@ -566,7 +571,7 @@ pub(super) struct TorConnectionConn {
 
 #[Object]
 impl TorConnectionConn {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -648,6 +653,11 @@ impl TorConnectionConn {
     /// Connection State
     async fn conn_state(&self) -> String {
         self.inner.conn_state.clone()
+    }
+
+    /// Start Time
+    async fn start_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.start_time)
     }
 
     /// End Time

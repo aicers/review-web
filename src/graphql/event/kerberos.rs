@@ -11,7 +11,7 @@ pub(super) struct BlocklistKerberos {
 
 #[Object]
 impl BlocklistKerberos {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -88,6 +88,11 @@ impl BlocklistKerberos {
     /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
+    }
+
+    /// Start Time
+    async fn start_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.start_time)
     }
 
     /// End Time

@@ -11,7 +11,7 @@ pub(super) struct BlocklistSmb {
 
 #[Object]
 impl BlocklistSmb {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -90,9 +90,14 @@ impl BlocklistSmb {
         self.inner.proto
     }
 
+    /// Start Time
+    async fn start_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.start_time)
+    }
+
     /// End Time
-    async fn end_time(&self) -> i64 {
-        self.inner.end_time
+    async fn end_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.end_time)
     }
 
     /// Command

@@ -14,7 +14,7 @@ pub(super) struct NetworkThreat {
 
 #[Object]
 impl NetworkThreat {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -96,6 +96,11 @@ impl NetworkThreat {
     /// Service Name
     async fn service(&self) -> &str {
         &self.inner.service
+    }
+
+    /// Start Time
+    async fn start_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.start_time)
     }
 
     /// End Time

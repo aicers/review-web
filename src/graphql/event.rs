@@ -1418,6 +1418,7 @@ mod tests {
     fn event_message_at(timestamp: DateTime<Utc>, src: u32, dst: u32) -> EventMessage {
         let fields = DnsEventFields {
             sensor: "sensor1".to_string(),
+            start_time: timestamp,
             end_time: timestamp,
             src_addr: Ipv4Addr::from(src).into(),
             src_port: 10000,
@@ -1960,6 +1961,7 @@ mod tests {
             dst_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
             dst_port: 67,
             proto: 17,
+            start_time: 10,
             end_time: 100,
             msg_type: 1,
             ciaddr: Ipv4Addr::new(127, 0, 0, 5).into(),
@@ -2049,6 +2051,7 @@ mod tests {
             dst_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
             dst_port: 67,
             proto: 17,
+            start_time: 10,
             end_time: 100,
             op: 1,
             htype: 2,
@@ -2126,6 +2129,7 @@ mod tests {
             .unwrap();
         let fields = DnsEventFields {
             sensor: "sensor1".to_string(),
+            start_time: timestamp,
             end_time: timestamp,
             src_addr: Ipv4Addr::from(1).into(),
             src_port: 10000,
@@ -2187,6 +2191,7 @@ mod tests {
             dst_addr: Ipv4Addr::from(2).into(),
             dst_port: 443,
             proto: 6,
+            start_time: timestamp.timestamp_nanos_opt().unwrap(),
             end_time: timestamp.timestamp_nanos_opt().unwrap(),
             server_name: "example.com".into(),
             alpn_protocol: "h2".into(),

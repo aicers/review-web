@@ -76,7 +76,7 @@ pub(super) struct FtpBruteForce {
 
 #[Object]
 impl FtpBruteForce {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -207,7 +207,7 @@ pub(super) struct FtpPlainText {
 
 #[Object]
 impl FtpPlainText {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -284,6 +284,16 @@ impl FtpPlainText {
     /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
+    }
+
+    /// Start Time
+    async fn start_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.start_time)
+    }
+
+    /// End Time
+    async fn end_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.end_time)
     }
 
     /// Username
@@ -343,7 +353,7 @@ pub(super) struct BlocklistFtp {
 
 #[Object]
 impl BlocklistFtp {
-    /// Start Time
+    /// Event Generation Time
     async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
@@ -420,6 +430,11 @@ impl BlocklistFtp {
     /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
+    }
+
+    /// Start Time
+    async fn start_time(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.start_time)
     }
 
     /// End Time
