@@ -47,6 +47,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Updated method calls to use `u32` for `model_id` and `cluster_id`, following
   their type change from `i32` to `u32` in the RocksDB storage layer.
 
+### Fixed
+
+- Fixed `FtpPlainText` threat level to Medium to match `review-database`.
+
 ## [0.28.0] - 2025-09-30
 
 ### Added
