@@ -21,19 +21,16 @@ pub(super) struct SamplingPolicyMutation;
 
 #[derive(Clone, Copy, Eq, PartialEq, Enum, Deserialize, Serialize)]
 #[repr(u32)]
+#[derive(Default)]
 pub enum Interval {
     FiveMinutes = 0,
     TenMinutes = 1,
+    #[default]
     FifteenMinutes = 2,
     ThirtyMinutes = 3,
     OneHour = 4,
 }
 
-impl Default for Interval {
-    fn default() -> Self {
-        Self::FifteenMinutes
-    }
-}
 impl From<review_database::SamplingInterval> for Interval {
     fn from(input: review_database::SamplingInterval) -> Self {
         match input {
@@ -59,16 +56,12 @@ impl From<Interval> for review_database::SamplingInterval {
 
 #[derive(Clone, Copy, Eq, PartialEq, Enum, Deserialize, Serialize)]
 #[repr(u32)]
+#[derive(Default)]
 pub enum Period {
     SixHours = 0,
     TwelveHours = 1,
+    #[default]
     OneDay = 2,
-}
-
-impl Default for Period {
-    fn default() -> Self {
-        Self::OneDay
-    }
 }
 
 impl From<review_database::SamplingPeriod> for Period {
@@ -93,18 +86,15 @@ impl From<Period> for review_database::SamplingPeriod {
 
 #[derive(Clone, Copy, Eq, PartialEq, Enum, Deserialize, Serialize)]
 #[repr(u32)]
+#[derive(Default)]
 pub enum Kind {
+    #[default]
     Conn = 0,
     Dns = 1,
     Http = 2,
     Rdp = 3,
 }
 
-impl Default for Kind {
-    fn default() -> Self {
-        Self::Conn
-    }
-}
 impl From<review_database::SamplingKind> for Kind {
     fn from(input: review_database::SamplingKind) -> Self {
         match input {
@@ -499,7 +489,7 @@ mod tests {
             )
             .await;
         assert_eq!(
-            res.errors.first().unwrap().message.to_string(),
+            res.errors.first().unwrap().message.clone(),
             "Failed to parse \"IpAddress\": Invalid IP address: 127.0.0.x".to_string()
         );
 
@@ -611,7 +601,7 @@ mod tests {
             )
             .await;
         assert_eq!(
-            res.errors.first().unwrap().message.to_string(),
+            res.errors.first().unwrap().message.clone(),
             "Failed to parse \"IpAddress\": Invalid IP address: 127.0.0.x \
             (occurred while parsing \"SamplingPolicyInput\")"
                 .to_string()
