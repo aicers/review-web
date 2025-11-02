@@ -218,7 +218,7 @@ impl BlocklistRdp {
 
     /// Cookie
     async fn cookie(&self) -> String {
-        self.inner.cookie.to_string()
+        self.inner.cookie.clone()
     }
 
     /// MITRE Tactic

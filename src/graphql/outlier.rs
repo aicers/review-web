@@ -401,7 +401,7 @@ impl PreserveOutliersOutput {
     }
 
     async fn sensor(&self) -> String {
-        self.sensor.to_string()
+        self.sensor.clone()
     }
 }
 

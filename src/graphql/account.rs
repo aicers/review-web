@@ -2774,7 +2774,7 @@ mod tests {
             .await;
 
         assert_eq!(
-            res.errors.first().unwrap().message.to_string(),
+            res.errors.first().unwrap().message.clone(),
             "Failed to parse \"IpAddress\": Invalid IP address: 127.0.0.x (occurred while \
             parsing \"[IpAddress!]\") (occurred while parsing \"UpdateAllowAccessFrom\")"
                 .to_string()
@@ -3030,7 +3030,7 @@ mod tests {
             )
             .await;
         assert_eq!(
-            res.errors.first().unwrap().message.to_string(),
+            res.errors.first().unwrap().message.clone(),
             "Failed to parse \"IpAddress\": Invalid IP address: 127.0.0.x (occurred while \
             parsing \"[IpAddress!]\")"
                 .to_string()
@@ -3145,7 +3145,7 @@ mod tests {
         let res = schema.execute(query).await;
 
         assert_eq!(
-            res.errors.first().unwrap().message.to_string(),
+            res.errors.first().unwrap().message.clone(),
             "a password change is required to proceed".to_string()
         );
 
@@ -3186,7 +3186,7 @@ mod tests {
             .await;
 
         assert_eq!(
-            res.errors.first().unwrap().message.to_string(),
+            res.errors.first().unwrap().message.clone(),
             "a password change is required to proceed".to_string()
         );
 
@@ -3200,7 +3200,7 @@ mod tests {
             )
             .await;
         assert_eq!(
-            res.errors.first().unwrap().message.to_string(),
+            res.errors.first().unwrap().message.clone(),
             "Field \"signInWithNewPassword\" argument \"newPassword\" of type \"Mutation\" is \
             required but not provided"
                 .to_string()
@@ -3213,7 +3213,7 @@ mod tests {
               }"#;
         let res = schema.execute(query).await;
         assert_eq!(
-            res.errors.first().unwrap().message.to_string(),
+            res.errors.first().unwrap().message.clone(),
             "incorrect username or password".to_string()
         );
 
@@ -3227,7 +3227,7 @@ mod tests {
             )
             .await;
         assert_eq!(
-            res.errors.first().unwrap().message.to_string(),
+            res.errors.first().unwrap().message.clone(),
             "password is the same as the previous one".to_string()
         );
 
@@ -3279,7 +3279,7 @@ mod tests {
             .await;
 
         assert_eq!(
-            res.errors.first().unwrap().message.to_string(),
+            res.errors.first().unwrap().message.clone(),
             "incorrect username or password".to_string()
         );
     }

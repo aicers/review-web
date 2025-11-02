@@ -107,7 +107,7 @@ impl FilterMutation {
             None
         };
         let filter = database::Filter {
-            username: username.to_string(),
+            username: username.clone(),
             name: name.clone(),
             directions: directions.map(|v| v.into_iter().map(Into::into).collect()),
             keywords,
@@ -173,7 +173,7 @@ impl FilterMutation {
         let username = ctx.data::<String>()?;
 
         let mut new = database::Filter::try_from(new)?;
-        new.username = username.to_string();
+        new.username.clone_from(username);
 
         let Some(old_filter) = table.get(username, &old.name)? else {
             return Err("no such filter".into());
