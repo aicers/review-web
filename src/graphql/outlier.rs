@@ -13,7 +13,7 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
 use num_traits::ToPrimitive;
 use review_database::{
-    Database, IndexedTable, OutlierInfo, Store, TriageResponse, UniqueKey, event::Direction,
+    IndexedTable, OutlierInfo, Store, TriageResponse, UniqueKey, event::Direction,
 };
 use serde::Deserialize;
 use serde::Serialize;
@@ -43,7 +43,6 @@ impl OutlierStream {
         fetch_interval: Option<u64>,
     ) -> Result<impl Stream<Item = RankedOutlier> + use<>> {
         let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
-        let db = ctx.data::<Database>()?.clone();
         let fetch_time = fetch_interval.unwrap_or(DEFAULT_RANKED_OUTLIER_FETCH_TIME);
         let username = ctx
             .data::<String>()
@@ -52,7 +51,6 @@ impl OutlierStream {
         let (tx, rx) = unbounded();
         tokio::spawn(async move {
             if let Err(e) = fetch_ranked_outliers(
-                db,
                 store,
                 start.timestamp_nanos_opt().unwrap_or_default(),
                 tx,
@@ -69,7 +67,6 @@ impl OutlierStream {
 
 #[allow(clippy::too_many_lines)]
 async fn fetch_ranked_outliers(
-    db: Database,
     store: Arc<RwLock<Store>>,
     start_time: i64,
     tx: UnboundedSender<RankedOutlier>,
@@ -77,20 +74,16 @@ async fn fetch_ranked_outliers(
 ) -> Result<()> {
     let mut itv = time::interval(time::Duration::from_secs(fetch_time));
     let mut latest_fetched_key: HashMap<u32, Vec<u8>> = HashMap::new();
-
     loop {
         itv.tick().await;
 
         // Read current model's ids
-        // TODO: Migration to the RocksDB model table will be handled in #654.
-        #[allow(deprecated)]
-        let rows = db
-            .load_models(&None, &None, true, MAX_MODEL_LIST_SIZE)
-            .await?;
-        let model_ids: Vec<u32> = rows
-            .iter()
-            .filter_map(|row| u32::try_from(row.id).ok())
-            .collect();
+        let rows = {
+            let store = store.read().await;
+            let map = store.model_map();
+            map.load_models(&None, &None, true, MAX_MODEL_LIST_SIZE)?
+        };
+        let model_ids: Vec<u32> = rows.iter().map(|row| row.id).collect();
 
         // Search for ranked outliers by model.
         for model_id in model_ids {
@@ -466,14 +459,9 @@ impl Outlier {
     }
 
     async fn model(&self, ctx: &Context<'_>) -> Result<ModelDigest> {
-        let db = ctx.data::<Database>()?;
-        let model_id_to_i32 = self
-            .model_id
-            .try_into()
-            .map_err(|_| "invalid model id(i32)")?;
-        // TODO: Migration to the RocksDB model table will be handled in #654.
-        #[allow(deprecated)]
-        Ok(db.load_model(model_id_to_i32).await?.into())
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.model_map();
+        Ok(map.load_model(self.model_id)?.into())
     }
 }
 

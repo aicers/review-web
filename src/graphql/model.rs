@@ -37,7 +37,7 @@ impl ModelQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<OpaqueCursor<(i32, String)>, ModelDigest, ModelTotalCount, EmptyFields>>
+    ) -> Result<Connection<OpaqueCursor<(u32, String)>, ModelDigest, ModelTotalCount, EmptyFields>>
     {
         query(
             after,
@@ -991,29 +991,26 @@ struct ModelTotalCount;
 #[Object]
 impl ModelTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<i64> {
-        let db = ctx.data::<Database>()?;
-        // TODO: Migration to the RocksDB model table will be handled in #654.
-        #[allow(deprecated)]
-        Ok(db.count_models().await?)
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.model_map();
+        Ok(map.count_models()?)
     }
 }
 
 async fn load(
     ctx: &Context<'_>,
-    after: Option<OpaqueCursor<(i32, String)>>,
-    before: Option<OpaqueCursor<(i32, String)>>,
+    after: Option<OpaqueCursor<(u32, String)>>,
+    before: Option<OpaqueCursor<(u32, String)>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<OpaqueCursor<(i32, String)>, ModelDigest, ModelTotalCount, EmptyFields>> {
+) -> Result<Connection<OpaqueCursor<(u32, String)>, ModelDigest, ModelTotalCount, EmptyFields>> {
     let is_first = first.is_some();
     let limit = slicing::len(first, last)?;
-    let db = ctx.data::<Database>()?;
-    // TODO: Migration to the RocksDB model table will be handled in #654.
-    #[allow(deprecated)]
-    let rows = db
-        .load_models(&after.map(|c| c.0), &before.map(|c| c.0), is_first, limit)
-        .await?;
+
+    let store = crate::graphql::get_store(ctx).await?;
+    let map = store.model_map();
+    let rows = map.load_models(&after.map(|c| c.0), &before.map(|c| c.0), is_first, limit)?;
 
     let (rows, has_previous, has_next) = slicing::page_info(is_first, limit, rows);
     let mut connection =
