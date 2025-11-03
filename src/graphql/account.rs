@@ -80,6 +80,7 @@ const REVIEW_ADMIN: &str = "REVIEW_ADMIN";
 const MAX_FAILED_LOGIN_ATTEMPTS_BEFORE_LOCKOUT: u8 = 5; // Account lockout constants
 const ACCOUNT_LOCKOUT_DURATION: chrono::Duration = chrono::Duration::minutes(30);
 const AIMER_TOKEN_ERROR_MESSAGE: &str = "Failed to issue aimer token";
+const ACCOUNT_EXPIRY_CONFIG_KEY: &str = "account expiry period in seconds";
 
 #[derive(Default)]
 pub(super) struct AccountQuery;
@@ -853,10 +854,8 @@ impl AccountMutation {
             unreachable!("`time` is a positive integer")
         };
         let store = crate::graphql::get_store(ctx).await?;
-        // TODO: The deprecated `account_policy_map` will be replaced with `config_map` in #675.
-        #[allow(deprecated)]
-        let map = store.account_policy_map();
-        map.update_expiry_period(expires_in)?;
+        let map = store.config_map();
+        map.update(ACCOUNT_EXPIRY_CONFIG_KEY, &expires_in.to_string())?;
         info_with_username!(
             ctx,
             "Account session expiration settings have been modified"
@@ -1169,13 +1168,16 @@ fn sign_in_actions(
 /// Returns an error if the account policy is not found or the value is
 /// corrupted.
 pub fn expiration_time(store: &Store) -> Result<i64> {
-    // TODO: The deprecated `account_policy_map` will be replaced with `config_map` in #675.
-    #[allow(deprecated)]
-    let map = store.account_policy_map();
+    let map = store.config_map();
 
-    map.current_expiry_period()?
+    let value = map
+        .current(ACCOUNT_EXPIRY_CONFIG_KEY)?
+        .ok_or("expiration time uninitialized")?;
+
+    value
+        .parse::<u32>()
         .map(i64::from)
-        .ok_or("expiration time uninitialized".into())
+        .map_err(|e| format!("failed to parse expiration time: {e}").into())
 }
 
 /// Initializes the account policy with the given expiration time.
@@ -1185,10 +1187,8 @@ pub fn expiration_time(store: &Store) -> Result<i64> {
 /// Returns an error if the value cannot be serialized or the underlying store
 /// fails to put the value.
 pub fn init_expiration_time(store: &Store, time: u32) -> anyhow::Result<()> {
-    // TODO: The deprecated `account_policy_map` will be replaced with `config_map` in #675.
-    #[allow(deprecated)]
-    let map = store.account_policy_map();
-    map.init_expiry_period(time)?;
+    let map = store.config_map();
+    map.init(ACCOUNT_EXPIRY_CONFIG_KEY, &time.to_string())?;
     Ok(())
 }
 
