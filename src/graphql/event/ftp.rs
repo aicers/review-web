@@ -336,7 +336,7 @@ impl FtpPlainText {
 
     /// Threat Level
     async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Low
+        ThreatLevel::Medium
     }
 }
 
