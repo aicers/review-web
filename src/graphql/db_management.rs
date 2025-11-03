@@ -89,7 +89,7 @@ mod tests {
             println!("Test passed: Query returned empty backup list as expected");
         } else {
             // Check if it's a database-related error (not a GraphQL schema error)
-            let error_msg = res.errors[0].message.to_string();
+            let error_msg = res.errors[0].message.clone();
             assert!(
                 error_msg.contains("IO error") || error_msg.contains("states.db"),
                 "Expected database IO error but got: {error_msg}"
