@@ -12,12 +12,12 @@ pub(super) struct BlocklistSmb {
 #[Object]
 impl BlocklistSmb {
     /// Event Generation Time
-    async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
     /// Sensor
-    async fn sensor(&self) -> &str {
+    pub async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
@@ -156,17 +156,17 @@ impl BlocklistSmb {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> Option<ThreatCategory> {
+    pub async fn category(&self) -> Option<ThreatCategory> {
         self.inner.category.map(Into::into)
     }
 
     /// Confidence
-    async fn confidence(&self) -> f32 {
+    pub async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
     /// Triage Scores
-    async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
+    pub async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
             .as_ref()
@@ -174,7 +174,7 @@ impl BlocklistSmb {
     }
 
     /// Threat Level
-    async fn level(&self) -> ThreatLevel {
+    pub async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
 }
