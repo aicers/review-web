@@ -22,7 +22,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   authentication and `aimerToken` for Aimer integration. The `aimerToken` uses
   RS256 signing with REview's private key and includes the hostname as the
   `kid` header claim for certificate-based validation.
-- Migrated cluster data storage from PostgreSQL-based `Database` to
+- Migrated cluster and model data storage from PostgreSQL-based `Database` to
   RocksDB-based `Table`.
   - Updated `Cluster` struct: removed the `name` field
   - Breaking changes to GraphQL APIs: `clusters`, `update_cluster`.

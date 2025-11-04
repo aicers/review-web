@@ -233,14 +233,9 @@ impl Cluster {
     }
 
     async fn model(&self, ctx: &Context<'_>) -> Result<ModelDigest> {
-        let db = ctx.data::<Database>()?;
-        let model_id_to_i32 = self
-            .model_id
-            .try_into()
-            .map_err(|_| "invalid model id(i32)")?;
-        // TODO: Migration to the RocksDB model table will be handled in #654.
-        #[allow(deprecated)]
-        Ok(db.load_model(model_id_to_i32).await?.into())
+        let store = crate::graphql::get_store(ctx).await?;
+        let map = store.model_map();
+        Ok(map.load_model(self.model_id)?.into())
     }
 
     async fn qualifier(&self, ctx: &Context<'_>) -> Result<Qualifier> {
