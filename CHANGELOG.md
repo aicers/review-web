@@ -56,6 +56,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   build errors caused by version mismatch.
 - Updated method calls to use `u32` for `model_id` and `cluster_id`, following
   their type change from `i32` to `u32` in the RocksDB storage layer.
+- Changed the return type of `graphql::account::expiration_time` from `Result<i64>`
+  to `Result<u32>` to accurately reflect the underlying data type of the account
+  expiry period.
 
 ### Fixed
 
