@@ -190,7 +190,7 @@ impl AccountQuery {
         let account_map = store.account_map();
 
         // Get the current expiration time for calculating session durations
-        let jwt_expires_in = expiration_time(&store)? as i64;
+        let jwt_expires_in = i64::from(expiration_time(&store)?);
 
         let signed = access_token_map
             .iter(Direction::Forward, None)
@@ -291,7 +291,7 @@ impl AccountQuery {
         let store = crate::graphql::get_store(ctx).await?;
 
         info_with_username!(ctx, "Account session expiration settings retrieved");
-        expiration_time(&store)
+        expiration_time(&store).map(i64::from)
     }
 }
 
@@ -1167,7 +1167,7 @@ fn sign_in_actions(
 ///
 /// Returns an error if the account policy is not found or the value is
 /// corrupted.
-pub fn expiration_time(store: &Store) -> Result<i64> {
+pub fn expiration_time(store: &Store) -> Result<u32> {
     let map = store.config_map();
 
     let value = map
@@ -1176,7 +1176,6 @@ pub fn expiration_time(store: &Store) -> Result<i64> {
 
     value
         .parse::<u32>()
-        .map(i64::from)
         .map_err(|e| format!("failed to parse expiration time: {e}").into())
 }
 
