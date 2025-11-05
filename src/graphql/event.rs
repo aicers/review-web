@@ -13,7 +13,6 @@ mod mqtt;
 mod network;
 mod nfs;
 mod ntlm;
-mod radius;
 mod rdp;
 mod smb;
 mod smtp;
@@ -60,7 +59,6 @@ use self::{
     network::NetworkThreat,
     nfs::BlocklistNfs,
     ntlm::BlocklistNtlm,
-    radius::BlocklistRadius,
     rdp::{BlocklistRdp, RdpBruteForce},
     smb::BlocklistSmb,
     smtp::BlocklistSmtp,
@@ -178,7 +176,6 @@ async fn fetch_events(
     let mut blocklist_mqtt_time = start_time;
     let mut blocklist_nfs_time = start_time;
     let mut blocklist_ntlm_time = start_time;
-    let mut blocklist_radius_time = start_time;
     let mut blocklist_rdp_time = start_time;
     let mut blocklist_smb_time = start_time;
     let mut blocklist_smtp_time = start_time;
@@ -225,7 +222,6 @@ async fn fetch_events(
                 blocklist_mqtt_time,
                 blocklist_nfs_time,
                 blocklist_ntlm_time,
-                blocklist_radius_time,
                 blocklist_rdp_time,
                 blocklist_smb_time,
                 blocklist_smtp_time,
@@ -330,9 +326,6 @@ async fn fetch_events(
                 if blocklist_ntlm_time == iter_time_key {
                     blocklist_ntlm_time = min_time_key;
                 }
-                if blocklist_radius_time == iter_time_key {
-                    blocklist_radius_time = min_time_key;
-                }
                 if blocklist_rdp_time == iter_time_key {
                     blocklist_rdp_time = min_time_key;
                 }
@@ -400,7 +393,6 @@ async fn fetch_events(
             .min(blocklist_mqtt_time)
             .min(blocklist_nfs_time)
             .min(blocklist_ntlm_time)
-            .min(blocklist_radius_time)
             .min(blocklist_rdp_time)
             .min(blocklist_smb_time)
             .min(blocklist_smtp_time)
@@ -593,12 +585,6 @@ async fn fetch_events(
                     if event_time >= blocklist_ntlm_time {
                         tx.unbounded_send(value.into())?;
                         blocklist_ntlm_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
-                }
-                EventKind::BlocklistRadius => {
-                    if event_time >= blocklist_radius_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_radius_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
                 EventKind::BlocklistRdp => {
@@ -808,8 +794,6 @@ enum Event {
 
     BlocklistDhcp(BlocklistDhcp),
 
-    BlocklistRadius(BlocklistRadius),
-
     SuspiciousTlsTraffic(SuspiciousTlsTraffic),
 }
 
@@ -851,7 +835,6 @@ impl From<database::Event> for Event {
                 RecordType::Mqtt(event) => Event::BlocklistMqtt(event.into()),
                 RecordType::Nfs(event) => Event::BlocklistNfs(event.into()),
                 RecordType::Ntlm(event) => Event::BlocklistNtlm(event.into()),
-                RecordType::Radius(event) => Event::BlocklistRadius(event.into()),
                 RecordType::Rdp(event) => Event::BlocklistRdp(event.into()),
                 RecordType::Smb(event) => Event::BlocklistSmb(event.into()),
                 RecordType::Smtp(event) => Event::BlocklistSmtp(event.into()),
@@ -1069,9 +1052,9 @@ fn from_filter_input(
     let categories = if let Some(categories_input) = &input.categories {
         let mut categories = Vec::with_capacity(categories_input.len());
         for category in categories_input {
-            categories.push(Some(
+            categories.push(
                 EventCategory::from_u8(*category).ok_or_else(|| anyhow!("Invalid category"))?,
-            ));
+            );
         }
         Some(categories)
     } else {
