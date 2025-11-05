@@ -13,6 +13,7 @@ mod mqtt;
 mod network;
 mod nfs;
 mod ntlm;
+mod radius;
 mod rdp;
 mod smb;
 mod smtp;
@@ -59,6 +60,7 @@ use self::{
     network::NetworkThreat,
     nfs::BlocklistNfs,
     ntlm::BlocklistNtlm,
+    radius::BlocklistRadius,
     rdp::{BlocklistRdp, RdpBruteForce},
     smb::BlocklistSmb,
     smtp::BlocklistSmtp,
@@ -176,6 +178,7 @@ async fn fetch_events(
     let mut blocklist_mqtt_time = start_time;
     let mut blocklist_nfs_time = start_time;
     let mut blocklist_ntlm_time = start_time;
+    let mut blocklist_radius_time = start_time;
     let mut blocklist_rdp_time = start_time;
     let mut blocklist_smb_time = start_time;
     let mut blocklist_smtp_time = start_time;
@@ -222,6 +225,7 @@ async fn fetch_events(
                 blocklist_mqtt_time,
                 blocklist_nfs_time,
                 blocklist_ntlm_time,
+                blocklist_radius_time,
                 blocklist_rdp_time,
                 blocklist_smb_time,
                 blocklist_smtp_time,
@@ -326,6 +330,9 @@ async fn fetch_events(
                 if blocklist_ntlm_time == iter_time_key {
                     blocklist_ntlm_time = min_time_key;
                 }
+                if blocklist_radius_time == iter_time_key {
+                    blocklist_radius_time = min_time_key;
+                }
                 if blocklist_rdp_time == iter_time_key {
                     blocklist_rdp_time = min_time_key;
                 }
@@ -393,6 +400,7 @@ async fn fetch_events(
             .min(blocklist_mqtt_time)
             .min(blocklist_nfs_time)
             .min(blocklist_ntlm_time)
+            .min(blocklist_radius_time)
             .min(blocklist_rdp_time)
             .min(blocklist_smb_time)
             .min(blocklist_smtp_time)
@@ -587,6 +595,12 @@ async fn fetch_events(
                         blocklist_ntlm_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
+                EventKind::BlocklistRadius => {
+                    if event_time >= blocklist_radius_time {
+                        tx.unbounded_send(value.into())?;
+                        blocklist_radius_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
                 EventKind::BlocklistRdp => {
                     if event_time >= blocklist_rdp_time {
                         tx.unbounded_send(value.into())?;
@@ -772,6 +786,8 @@ enum Event {
 
     BlocklistNtlm(BlocklistNtlm),
 
+    BlocklistRadius(BlocklistRadius),
+
     BlocklistRdp(BlocklistRdp),
 
     BlocklistSmb(BlocklistSmb),
@@ -835,6 +851,7 @@ impl From<database::Event> for Event {
                 RecordType::Mqtt(event) => Event::BlocklistMqtt(event.into()),
                 RecordType::Nfs(event) => Event::BlocklistNfs(event.into()),
                 RecordType::Ntlm(event) => Event::BlocklistNtlm(event.into()),
+                RecordType::Radius(event) => Event::BlocklistRadius(event.into()),
                 RecordType::Rdp(event) => Event::BlocklistRdp(event.into()),
                 RecordType::Smb(event) => Event::BlocklistSmb(event.into()),
                 RecordType::Smtp(event) => Event::BlocklistSmtp(event.into()),
@@ -2321,6 +2338,94 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {sensor: "s1"}}, {node: {sensor: "s2"}}], totalCount: 2}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn event_list_blocklist_radius() {
+        use review_database::event::BlocklistRadiusFields;
+
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        let db = store.events();
+        let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let fields = BlocklistRadiusFields {
+            sensor: "sensor1".to_string(),
+            src_addr: Ipv4Addr::LOCALHOST.into(),
+            src_port: 1812,
+            dst_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
+            dst_port: 1812,
+            proto: 17,
+            start_time: timestamp.timestamp_nanos_opt().unwrap(),
+            end_time: timestamp.timestamp_nanos_opt().unwrap(),
+            id: 1,
+            code: 1,
+            resp_code: 2,
+            auth: "authenticator".to_string(),
+            resp_auth: "response_authenticator".to_string(),
+            user_name: vec![0x75, 0x73, 0x65, 0x72],
+            user_passwd: vec![0x70, 0x61, 0x73, 0x73],
+            chap_passwd: vec![0x63, 0x68, 0x61, 0x70],
+            nas_ip: Ipv4Addr::new(192, 168, 1, 1).into(),
+            nas_port: 5000,
+            state: vec![0x73, 0x74, 0x61, 0x74, 0x65],
+            nas_id: vec![0x6e, 0x61, 0x73],
+            nas_port_type: 15,
+            message: "RADIUS message".to_string(),
+            confidence: 0.9,
+            category: Some(EventCategory::InitialAccess),
+        };
+
+        let message = EventMessage {
+            time: timestamp,
+            kind: EventKind::BlocklistRadius,
+            fields: bincode::serialize(&fields).expect("serializable"),
+        };
+        db.put(&message).unwrap();
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertCustomer(
+                        name: "c0",
+                        description: "",
+                        networks: [
+                            {
+                                name: "n0",
+                                description: "",
+                                networkType: INTRANET,
+                                networkGroup: {
+                                    hosts: ["127.0.0.1"],
+                                    networks: [],
+                                    ranges: []
+                                }
+                            }
+                        ])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let query = format!(
+            "{{ \
+                eventList(filter: {{
+                    start:\"{timestamp}\"
+                    customers: [0],
+                    directions: [\"OUTBOUND\"],
+                }}) {{ \
+                    edges {{ node {{... on BlocklistRadius {{ srcAddr,nasIp,userName,message }} }} }} \
+                }} \
+            }}"
+        );
+        let res = schema.execute(&query).await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventList: {edges: [{node: {srcAddr: "127.0.0.1", nasIp: "192.168.1.1", userName: "75:73:65:72", message: "RADIUS message"}}]}}"#
         );
     }
 }
