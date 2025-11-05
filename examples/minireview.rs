@@ -1,3 +1,7 @@
+// TODO: Remove this recursion_limit once we resolve the underlying issue.
+// See https://github.com/aicers/review-web/issues/677
+#![recursion_limit = "256"]
+
 use std::{
     collections::HashMap,
     env, fs,
