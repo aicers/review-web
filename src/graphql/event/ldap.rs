@@ -13,12 +13,12 @@ pub(super) struct LdapBruteForce {
 #[Object]
 impl LdapBruteForce {
     /// Event Generation Time
-    async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
     /// Sensor
-    async fn sensor(&self) -> &str {
+    pub async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
@@ -106,17 +106,17 @@ impl LdapBruteForce {
     }
 
     /// Confidence
-    async fn confidence(&self) -> f32 {
+    pub async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> Option<ThreatCategory> {
+    pub async fn category(&self) -> Option<ThreatCategory> {
         self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
-    async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
+    pub async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
             .as_ref()
@@ -124,7 +124,7 @@ impl LdapBruteForce {
     }
 
     /// Threat Level
-    async fn level(&self) -> ThreatLevel {
+    pub async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
 }
@@ -143,12 +143,12 @@ pub(super) struct LdapPlainText {
 #[Object]
 impl LdapPlainText {
     /// Event Generation Time
-    async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
     /// Sensor
-    async fn sensor(&self) -> &str {
+    pub async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
@@ -267,17 +267,17 @@ impl LdapPlainText {
     }
 
     /// Confidence
-    async fn confidence(&self) -> f32 {
+    pub async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> Option<ThreatCategory> {
+    pub async fn category(&self) -> Option<ThreatCategory> {
         self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
-    async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
+    pub async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
             .as_ref()
@@ -285,7 +285,7 @@ impl LdapPlainText {
     }
 
     /// Threat Level
-    async fn level(&self) -> ThreatLevel {
+    pub async fn level(&self) -> ThreatLevel {
         ThreatLevel::Low
     }
 }
@@ -303,12 +303,12 @@ pub(super) struct BlocklistLdap {
 #[Object]
 impl BlocklistLdap {
     /// Event Generation Time
-    async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
     /// Sensor
-    async fn sensor(&self) -> &str {
+    pub async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
@@ -426,13 +426,18 @@ impl BlocklistLdap {
         &self.inner.argument
     }
 
+    /// Confidence
+    pub async fn confidence(&self) -> f32 {
+        self.inner.confidence
+    }
+
     /// MITRE Tactic
-    async fn category(&self) -> Option<ThreatCategory> {
+    pub async fn category(&self) -> Option<ThreatCategory> {
         self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
-    async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
+    pub async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
             .as_ref()
@@ -440,7 +445,7 @@ impl BlocklistLdap {
     }
 
     /// Threat Level
-    async fn level(&self) -> ThreatLevel {
+    pub async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
 }

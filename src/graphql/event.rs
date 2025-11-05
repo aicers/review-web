@@ -24,7 +24,7 @@ use std::{cmp, net::IpAddr, num::NonZeroU8, sync::Arc};
 
 use anyhow::{Context as AnyhowContext, anyhow, bail};
 use async_graphql::{
-    Context, Enum, ID, InputObject, Object, Result, Subscription, Union,
+    Context, Enum, ID, InputObject, Interface, Object, Result, Subscription,
     connection::{Connection, Edge, EmptyFields},
 };
 use chrono::{DateTime, Utc};
@@ -71,6 +71,7 @@ use super::{
     customer::{Customer, HostNetworkGroupInput},
     filter::{FlowKind, LearningMethod, TrafficDirection},
     network::Network,
+    triage::ThreatCategory,
 };
 use crate::{error_with_username, graphql::query, warn_with_username};
 
@@ -690,8 +691,16 @@ pub(super) struct EndpointInput {
     pub(super) custom: Option<HostNetworkGroupInput>,
 }
 
-/// An event to report.
-#[derive(Union)]
+/// Common interface for all event types.
+#[derive(Interface)]
+#[graphql(
+    field(name = "time", ty = "DateTime<Utc>"),
+    field(name = "sensor", ty = "&str"),
+    field(name = "confidence", ty = "f32"),
+    field(name = "category", ty = "Option<ThreatCategory>"),
+    field(name = "level", ty = "ThreatLevel"),
+    field(name = "triage_scores", ty = "Option<Vec<TriageScore<'_>>>")
+)]
 enum Event {
     /// DNS requests and responses that convey unusual host names.
     DnsCovertChannel(DnsCovertChannel),

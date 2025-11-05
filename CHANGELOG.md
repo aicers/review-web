@@ -21,6 +21,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- Converted GraphQL `Event` type from Union to Interface. The `Event` type now
+  exposes six common fields directly (`time`, `sensor`, `confidence`,
+  `category`, `level`, `triageScores`) without requiring inline fragments.
+  Existing queries using inline fragments remain compatible, while new queries
+  can access common fields directly. Type-specific fields like `learningMethod`
+  remain on individual event types.
 - Updated authentication endpoints (`signIn`, `signInWithNewPassword`, and
   `refreshToken`) to return dual JWT tokens: `reviewToken` for REview
   authentication and `aimerToken` for Aimer integration. The `aimerToken` uses

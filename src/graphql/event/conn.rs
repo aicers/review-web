@@ -15,12 +15,12 @@ pub(super) struct PortScan {
 #[Object]
 impl PortScan {
     /// Event Generation Time
-    async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
     /// Sensor
-    async fn sensor(&self) -> &str {
+    pub async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
@@ -99,17 +99,17 @@ impl PortScan {
     }
 
     /// Confidence
-    async fn confidence(&self) -> f32 {
+    pub async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> Option<ThreatCategory> {
+    pub async fn category(&self) -> Option<ThreatCategory> {
         self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
-    async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
+    pub async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
             .as_ref()
@@ -117,7 +117,7 @@ impl PortScan {
     }
 
     /// Threat Level
-    async fn level(&self) -> ThreatLevel {
+    pub async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
 }
@@ -135,12 +135,12 @@ pub(super) struct MultiHostPortScan {
 #[Object]
 impl MultiHostPortScan {
     /// Event Generation Time
-    async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
     /// Sensor
-    async fn sensor(&self) -> &str {
+    pub async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
@@ -238,17 +238,17 @@ impl MultiHostPortScan {
     }
 
     /// Confidence
-    async fn confidence(&self) -> f32 {
+    pub async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> Option<ThreatCategory> {
+    pub async fn category(&self) -> Option<ThreatCategory> {
         self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
-    async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
+    pub async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
             .as_ref()
@@ -256,7 +256,7 @@ impl MultiHostPortScan {
     }
 
     /// Threat Level
-    async fn level(&self) -> ThreatLevel {
+    pub async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
 }
@@ -274,12 +274,12 @@ pub(super) struct ExternalDdos {
 #[Object]
 impl ExternalDdos {
     /// Event Generation Time
-    async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
     /// Sensor
-    async fn sensor(&self) -> &str {
+    pub async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
@@ -372,24 +372,24 @@ impl ExternalDdos {
     }
 
     /// Confidence
-    async fn confidence(&self) -> f32 {
+    pub async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> Option<ThreatCategory> {
+    pub async fn category(&self) -> Option<ThreatCategory> {
         self.inner.category.map(Into::into)
     }
 
     /// Triage Scores
-    async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
+    pub async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
             .as_ref()
             .map(|scores| scores.iter().map(Into::into).collect::<Vec<TriageScore>>())
     }
 
-    async fn level(&self) -> ThreatLevel {
+    pub async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
 }
@@ -407,12 +407,12 @@ pub(super) struct BlocklistConn {
 #[Object]
 impl BlocklistConn {
     /// Event Generation Time
-    async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
     /// Sensor
-    async fn sensor(&self) -> &str {
+    pub async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
@@ -536,17 +536,17 @@ impl BlocklistConn {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> Option<ThreatCategory> {
+    pub async fn category(&self) -> Option<ThreatCategory> {
         self.inner.category.map(Into::into)
     }
 
     /// Confidence
-    async fn confidence(&self) -> f32 {
+    pub async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
     /// Triage Scores
-    async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
+    pub async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
             .as_ref()
@@ -554,7 +554,7 @@ impl BlocklistConn {
     }
 
     /// Threat Level
-    async fn level(&self) -> ThreatLevel {
+    pub async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
 }
@@ -572,12 +572,12 @@ pub(super) struct TorConnectionConn {
 #[Object]
 impl TorConnectionConn {
     /// Event Generation Time
-    async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
     }
 
     /// Sensor
-    async fn sensor(&self) -> &str {
+    pub async fn sensor(&self) -> &str {
         &self.inner.sensor
     }
 
@@ -701,17 +701,17 @@ impl TorConnectionConn {
     }
 
     /// MITRE Tactic
-    async fn category(&self) -> Option<ThreatCategory> {
+    pub async fn category(&self) -> Option<ThreatCategory> {
         self.inner.category.map(Into::into)
     }
 
     /// Confidence
-    async fn confidence(&self) -> f32 {
+    pub async fn confidence(&self) -> f32 {
         self.inner.confidence
     }
 
     /// Triage Scores
-    async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
+    pub async fn triage_scores(&self) -> Option<Vec<TriageScore<'_>>> {
         self.inner
             .triage_scores
             .as_ref()
@@ -719,7 +719,7 @@ impl TorConnectionConn {
     }
 
     /// Threat Level
-    async fn level(&self) -> ThreatLevel {
+    pub async fn level(&self) -> ThreatLevel {
         ThreatLevel::Medium
     }
 
