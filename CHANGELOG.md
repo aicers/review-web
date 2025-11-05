@@ -11,13 +11,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Exposed `start_time` field in GraphQL APIs for all detection event types,
   reflecting the corresponding updates in review-database. Event types that
   already had `start_time` (`RdpBruteForce`, `LdapBruteForce`, `FtpBruteForce`,
-  `RepeatedHttpSessions`,`PortScan`, `MultiHostPortScan`, `ExternalDdos`) are unchanged.
-  With this update, the `time` field now represents when the event was generated
-  , while `start_time` indicates when the event actually began.
+  `RepeatedHttpSessions`,`PortScan`, `MultiHostPortScan`, `ExternalDdos`) are
+  unchanged. With this update, the `time` field now represents when the event
+  was generated, while `start_time` indicates when the event actually began.
 - Added `backups` GraphQL query for listing RocksDB backups. Returns backup
   information including id, timestamp, and size, sorted by timestamp in
   descending order (latest first) without pagination. Available to System and
   Security Administrators for backup management and restore point selection.
+- Added support for confidence operator filtering in the detection GraphQL API.
+  The `EventListFilterInput` and `FilterInput` now accept `confidence_min` and
+  `confidence_max` fields for range-based filtering, replacing the single
+  `confidence` field. Filter insert/replace/list mutations correctly handle and
+  round-trip the expanded confidence data.
 
 ### Changed
 

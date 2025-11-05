@@ -90,7 +90,8 @@ impl FilterMutation {
         levels: Option<Vec<u8>>,
         kinds: Option<Vec<String>>,
         learning_methods: Option<Vec<LearningMethod>>,
-        confidence: Option<f32>,
+        confidence_min: Option<f32>,
+        confidence_max: Option<f32>,
         period: Option<PeriodForSearchInput>,
     ) -> Result<String> {
         let store = crate::graphql::get_store(ctx).await?;
@@ -128,7 +129,8 @@ impl FilterMutation {
             levels,
             kinds,
             learning_methods: learning_methods.map(|v| v.into_iter().map(Into::into).collect()),
-            confidence,
+            confidence_min,
+            confidence_max,
             period: period.map_or_else(
                 || database::PeriodForSearch::Recent("1 hour".to_string()),
                 Into::into,
@@ -439,8 +441,12 @@ impl Filter {
             })
     }
 
-    async fn confidence(&self) -> Option<f32> {
-        self.inner.confidence
+    async fn confidence_min(&self) -> Option<f32> {
+        self.inner.confidence_min
+    }
+
+    async fn confidence_max(&self) -> Option<f32> {
+        self.inner.confidence_max
     }
 
     async fn period_for_search(&self) -> PeriodForSearch<'_> {
@@ -501,7 +507,8 @@ impl TryFrom<FilterInput> for database::Filter {
             learning_methods: input
                 .learning_methods
                 .map(|values| values.into_iter().map(Into::into).collect()),
-            confidence: input.confidence,
+            confidence_min: input.confidence_min,
+            confidence_max: input.confidence_max,
             period: input.period.map_or_else(
                 || database::PeriodForSearch::Recent("1 hour".to_string()),
                 Into::into,
@@ -587,7 +594,8 @@ struct FilterInput {
     levels: Option<Vec<u8>>,
     kinds: Option<Vec<String>>,
     learning_methods: Option<Vec<LearningMethod>>,
-    confidence: Option<f32>,
+    confidence_min: Option<f32>,
+    confidence_max: Option<f32>,
     period: Option<PeriodForSearchInput>,
 }
 
