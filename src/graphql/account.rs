@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::anyhow;
 use async_graphql::{
-    Context, Enum, ID, InputObject, Object, Result, ServerError, SimpleObject,
+    Context, Enum, ID, InputObject, Object, Result, ServerError, SimpleObject, StringNumber,
     connection::{Connection, EmptyFields, OpaqueCursor},
 };
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
@@ -287,11 +287,11 @@ impl AccountQuery {
         .or(RoleGuard::new(super::Role::SecurityAdministrator))
         .or(RoleGuard::new(super::Role::SecurityManager))
         .or(RoleGuard::new(super::Role::SecurityMonitor))")]
-    async fn expiration_time(&self, ctx: &Context<'_>) -> Result<i64> {
+    async fn expiration_time(&self, ctx: &Context<'_>) -> Result<StringNumber<u32>> {
         let store = crate::graphql::get_store(ctx).await?;
 
         info_with_username!(ctx, "Account session expiration settings retrieved");
-        expiration_time(&store).map(i64::from)
+        expiration_time(&store).map(StringNumber)
     }
 }
 
@@ -2372,7 +2372,7 @@ mod tests {
                 }",
             )
             .await;
-        assert_eq!(res.data.to_string(), r"{expirationTime: 12}");
+        assert_eq!(res.data.to_string(), r#"{expirationTime: "12"}"#);
 
         let res = schema
             .execute(
@@ -2390,7 +2390,7 @@ mod tests {
                 }",
             )
             .await;
-        assert_eq!(res.data.to_string(), r"{expirationTime: 120}");
+        assert_eq!(res.data.to_string(), r#"{expirationTime: "120"}"#);
     }
 
     #[tokio::test]
