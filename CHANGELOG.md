@@ -21,6 +21,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Added `restoreFromBackup` GraphQL mutation to restore RocksDB from a
   specific backup ID. This enables point-in-time recovery and operational
   workflows for database restoration.
+- Added support for confidence operator filtering in the detection GraphQL API.
+  The `EventListFilterInput` and `FilterInput` now accept `confidenceMin` and
+  `confidenceMax` fields for range-based filtering, replacing the single
+  `confidence` field. Filter insert/replace/list mutations correctly handle and
+  round-trip the expanded confidence data.
 
 ### Changed
 

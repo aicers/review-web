@@ -875,7 +875,8 @@ struct EventListFilterInput {
     levels: Option<Vec<u8>>,
     kinds: Option<Vec<String>>,
     learning_methods: Option<Vec<LearningMethod>>,
-    confidence: Option<f32>,
+    confidence_min: Option<f32>,
+    confidence_max: Option<f32>,
     triage_policies: Option<Vec<ID>>,
 }
 
@@ -1143,7 +1144,8 @@ fn from_filter_input(
             .as_ref()
             .map(|v| v.iter().map(|v| (*v).into()).collect()),
         sensors,
-        input.confidence,
+        input.confidence_min,
+        input.confidence_max,
         triage_policies,
     ))
 }
