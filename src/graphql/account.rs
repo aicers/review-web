@@ -3246,6 +3246,12 @@ mod tests {
                 }"#,
             )
             .await;
+        if !res.errors.is_empty() {
+            println!(
+                "signInWithNewPassword (final step) errors: {:?}",
+                res.errors
+            );
+        }
         assert!(res.is_ok());
 
         let store = schema.store().await;
