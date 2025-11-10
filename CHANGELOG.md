@@ -46,15 +46,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - Breaking changes to GraphQL APIs: `clusters`, `update_cluster`.
 - The String type for `cluster_id` is no longer used as the cluster key. it is
   now identified by a numeric cluster ID combined with the model ID.
-- Removed the `Unknown` variant from the `ThreatCategory` enum. This change
-  reflects the removal of the `Unknown` variant from `review_database::EventCategory`.
-  As a result, event-related GraphQL APIs that expose the `category` field using
-  `ThreatCategory` now return `Option<ThreatCategory>`. Events with an unspecified
-  category will return None, while known categories will be wrapped in Some.
-- Updated the `EventListFilterInput` GraphQL input type to allow filtering for
-  events with an `Unknown` category. The `categories` field now accepts `None`
-  values within its list, enabling queries to specifically target events where
-  the category is `Unknown`.
+- Removed the `Unknown` variant from the `ThreatCategory` enum, following its
+  removal from `review_database::EventCategory`.
+  - As a result, event-related GraphQL APIs that expose the `category` field
+    using `ThreatCategory` now return `Option<ThreatCategory>`. Events with an
+    unspecified category will return `None`, while known categories will be
+    wrapped in `Some`.
+  - Updated the `EventListFilterInput` GraphQL input type to support filtering
+    for events with unspecified categories. The `categories` field now accepts
+    `None` values within its list, allowing queries to explicitly match events
+    without a defined category.
 - Updated GraphQL response structures for FTP-related events (`FtpPlainText`,
   `BlocklistFtp`) to reflect changes in review-database. These now expose a
   `commands: Vec<FtpCommand>` field containing full session command and response
