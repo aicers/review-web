@@ -101,17 +101,17 @@ impl BlocklistRadius {
         StringNumber(self.inner.end_time)
     }
 
-    /// RADIUS Packet ID
+    /// ID
     async fn id(&self) -> u8 {
         self.inner.id
     }
 
-    /// RADIUS Code
+    /// Code
     async fn code(&self) -> u8 {
         self.inner.code
     }
 
-    /// RADIUS Response Code
+    /// Response Code
     async fn resp_code(&self) -> u8 {
         self.inner.resp_code
     }
@@ -129,16 +129,6 @@ impl BlocklistRadius {
     /// User Name
     async fn user_name(&self) -> String {
         format!("{:02x}", self.inner.user_name.iter().format(":"))
-    }
-
-    /// User Password
-    async fn user_passwd(&self) -> String {
-        format!("{:02x}", self.inner.user_passwd.iter().format(":"))
-    }
-
-    /// CHAP Password
-    async fn chap_passwd(&self) -> String {
-        format!("{:02x}", self.inner.chap_passwd.iter().format(":"))
     }
 
     /// NAS IP Address

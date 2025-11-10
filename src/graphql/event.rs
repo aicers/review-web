@@ -1946,6 +1946,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn filter_by_unknown_category() {
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        let db = store.events();
+
+        let ts1 = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_micro_opt(0, 0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_with_category(
+            ts1,
+            1,
+            2,
+            Some(EventCategory::InitialAccess), //category = 2
+            "s1",
+        ))
+        .unwrap();
+
+        let ts2 = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_micro_opt(0, 0, 1, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_with_category(ts2, 3, 4, None, "s2"))
+            .unwrap();
+
+        // 1. Filter by unknown category
+        let query = r"{ eventList(filter: { categories: [null] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }";
+        let res = schema.execute(query).await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventList: {edges: [{node: {sensor: "s2"}}], totalCount: 1}}"#
+        );
+
+        // 2. Filter by a specific category (InitialAccess = 2)
+        let query = r"{ eventList(filter: { categories: [2] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }";
+        let res = schema.execute(query).await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventList: {edges: [{node: {sensor: "s1"}}], totalCount: 1}}"#
+        );
+
+        // 3. Filter by both specific and unknown categories
+        let query = r"{ eventList(filter: { categories: [2, null] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }";
+        let res = schema.execute(query).await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventList: {edges: [{node: {sensor: "s1"}}, {node: {sensor: "s2"}}], totalCount: 2}}"#
+        );
+    }
+
+    #[tokio::test]
     async fn event_stream() {
         let schema = TestSchema::new().await;
         let store = schema.store().await;
@@ -2283,61 +2338,6 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1", cipher: 1234, subjectCountry: "US", confidence: 0.800000011920929}}]}}"#
-        );
-    }
-
-    #[tokio::test]
-    async fn filter_by_unknown_category() {
-        let schema = TestSchema::new().await;
-        let store = schema.store().await;
-        let db = store.events();
-
-        let ts1 = NaiveDate::from_ymd_opt(2024, 1, 1)
-            .unwrap()
-            .and_hms_micro_opt(0, 0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-        db.put(&event_message_with_category(
-            ts1,
-            1,
-            2,
-            Some(EventCategory::InitialAccess), //category = 2
-            "s1",
-        ))
-        .unwrap();
-
-        let ts2 = NaiveDate::from_ymd_opt(2024, 1, 1)
-            .unwrap()
-            .and_hms_micro_opt(0, 0, 1, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-        db.put(&event_message_with_category(ts2, 3, 4, None, "s2"))
-            .unwrap();
-
-        // 1. Filter by unknown category
-        let query = r"{ eventList(filter: { categories: [null] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }";
-        let res = schema.execute(query).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventList: {edges: [{node: {sensor: "s2"}}], totalCount: 1}}"#
-        );
-
-        // 2. Filter by a specific category (InitialAccess = 2)
-        let query = r"{ eventList(filter: { categories: [2] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }";
-        let res = schema.execute(query).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventList: {edges: [{node: {sensor: "s1"}}], totalCount: 1}}"#
-        );
-
-        // 3. Filter by both specific and unknown categories
-        let query = r"{ eventList(filter: { categories: [2, null] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }";
-        let res = schema.execute(query).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventList: {edges: [{node: {sensor: "s1"}}, {node: {sensor: "s2"}}], totalCount: 2}}"#
         );
     }
 
