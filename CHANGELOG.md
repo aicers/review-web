@@ -51,6 +51,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   As a result, event-related GraphQL APIs that expose the `category` field using
   `ThreatCategory` now return `Option<ThreatCategory>`. Events with an unspecified
   category will return None, while known categories will be wrapped in Some.
+- Updated the `EventListFilterInput` GraphQL input type to allow filtering for
+  events with an `Unknown` category. The `categories` field now accepts `None`
+  values within its list, enabling queries to specifically target events where
+  the category is `Unknown`.
 - Updated GraphQL response structures for FTP-related events (`FtpPlainText`,
   `BlocklistFtp`) to reflect changes in review-database. These now expose a
   `commands: Vec<FtpCommand>` field containing full session command and response

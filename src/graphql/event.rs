@@ -871,7 +871,7 @@ struct EventListFilterInput {
     user_names: Option<Vec<String>>,
     user_departments: Option<Vec<String>>,
     countries: Option<Vec<String>>,
-    categories: Option<Vec<u8>>,
+    categories: Option<Vec<Option<u8>>>,
     levels: Option<Vec<u8>>,
     kinds: Option<Vec<String>>,
     learning_methods: Option<Vec<LearningMethod>>,
@@ -1053,7 +1053,9 @@ fn from_filter_input(
         let mut categories = Vec::with_capacity(categories_input.len());
         for category in categories_input {
             categories.push(
-                EventCategory::from_u8(*category).ok_or_else(|| anyhow!("Invalid category"))?,
+                category
+                    .map(|c| EventCategory::from_u8(c).ok_or_else(|| anyhow!("Invalid category")))
+                    .transpose()?,
             );
         }
         Some(categories)
@@ -1427,8 +1429,24 @@ mod tests {
     /// Creates an event message at `timestamp` with the given sensor and
     /// destination `IPv4` addresses.
     fn event_message_at(timestamp: DateTime<Utc>, src: u32, dst: u32) -> EventMessage {
+        event_message_with_category(
+            timestamp,
+            src,
+            dst,
+            Some(EventCategory::CommandAndControl),
+            "sensor1",
+        )
+    }
+
+    fn event_message_with_category(
+        timestamp: DateTime<Utc>,
+        src: u32,
+        dst: u32,
+        category: Option<EventCategory>,
+        sensor: &str,
+    ) -> EventMessage {
         let fields = DnsEventFields {
-            sensor: "sensor1".to_string(),
+            sensor: sensor.to_string(),
             start_time: timestamp,
             end_time: timestamp,
             src_addr: Ipv4Addr::from(src).into(),
@@ -1449,7 +1467,7 @@ mod tests {
             ra_flag: false,
             ttl: Vec::new(),
             confidence: 0.8,
-            category: Some(EventCategory::CommandAndControl),
+            category,
         };
         EventMessage {
             time: timestamp,
@@ -2248,6 +2266,61 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1", cipher: 1234, subjectCountry: "US", confidence: 0.800000011920929}}]}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn filter_by_unknown_category() {
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        let db = store.events();
+
+        let ts1 = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_micro_opt(0, 0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_with_category(
+            ts1,
+            1,
+            2,
+            Some(EventCategory::InitialAccess), //category = 2
+            "s1",
+        ))
+        .unwrap();
+
+        let ts2 = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_micro_opt(0, 0, 1, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_with_category(ts2, 3, 4, None, "s2"))
+            .unwrap();
+
+        // 1. Filter by unknown category
+        let query = r"{ eventList(filter: { categories: [null] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }";
+        let res = schema.execute(query).await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventList: {edges: [{node: {sensor: "s2"}}], totalCount: 1}}"#
+        );
+
+        // 2. Filter by a specific category (InitialAccess = 2)
+        let query = r"{ eventList(filter: { categories: [2] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }";
+        let res = schema.execute(query).await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventList: {edges: [{node: {sensor: "s1"}}], totalCount: 1}}"#
+        );
+
+        // 3. Filter by both specific and unknown categories
+        let query = r"{ eventList(filter: { categories: [2, null] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }";
+        let res = schema.execute(query).await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventList: {edges: [{node: {sensor: "s1"}}, {node: {sensor: "s2"}}], totalCount: 2}}"#
         );
     }
 }
