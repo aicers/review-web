@@ -693,6 +693,37 @@ impl EventQuery {
         )
         .await
     }
+
+    /// A list of detection events sorted by triage policy score in descending
+    /// order.
+    ///
+    /// Returns events that have triage scores applied based on the specified
+    /// triage policies. Each event is sorted by its highest triage score, and
+    /// only the top `count` events are returned.
+    ///
+    /// # Arguments
+    ///
+    /// * `filter` - Event filtering criteria, including triage policies to apply
+    /// * `count` - Maximum number of events to return (defaults to 100)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// * The database connection fails
+    /// * The filter parameters are invalid
+    /// * An event cannot be processed
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityManager))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
+    async fn event_triage_list(
+        &self,
+        ctx: &Context<'_>,
+        filter: EventListFilterInput,
+        count: Option<i32>,
+    ) -> Result<Vec<Event>> {
+        load_triage_list(ctx, &filter, count).await
+    }
 }
 
 /// An endpoint of a network flow. One of `predefined`, `side`, and `custom` is
@@ -1318,6 +1349,120 @@ async fn load(
             .map(|(k, ev)| Edge::new(k.to_string(), ev)),
     );
     Ok(connection)
+}
+
+/// Loads events sorted by triage policy score in descending order.
+///
+/// This function retrieves events that match the given filter, calculates
+/// their triage scores based on the specified triage policies, and returns
+/// them sorted by their highest triage score. Only events with triage scores
+/// are included in the result.
+///
+/// # Arguments
+///
+/// * `ctx` - GraphQL context
+/// * `filter` - Event filtering criteria
+/// * `count` - Maximum number of events to return (defaults to 100)
+///
+/// # Errors
+///
+/// Returns an error if:
+/// * The database store cannot be accessed
+/// * The filter parameters are invalid
+/// * An event cannot be processed or matched against the filter
+async fn load_triage_list(
+    ctx: &Context<'_>,
+    filter: &EventListFilterInput,
+    count: Option<i32>,
+) -> Result<Vec<Event>> {
+    let store = crate::graphql::get_store(ctx).await?;
+    #[allow(clippy::cast_sign_loss)]
+    let count = count.unwrap_or(100).max(0) as usize;
+
+    let start = filter.start;
+    let end = filter.end;
+    let mut filter = from_filter_input(ctx, &store, filter)?;
+    filter.moderate_kinds();
+    let db = store.events();
+
+    // Iterate through all events in the time range
+    let start_key = if let Some(start) = start {
+        i128::from(start.timestamp_nanos_opt().unwrap_or_default()) << 64
+    } else {
+        0
+    };
+
+    let end_key = if let Some(end) = end {
+        let end = end
+            .timestamp_nanos_opt()
+            .map_or(i128::MAX, |s| i128::from(s) << 64);
+        if end == 0 {
+            return Err("invalid time `end`".into());
+        }
+        end - 1
+    } else {
+        i128::MAX
+    };
+
+    let iter = db.iter_from(start_key, Direction::Forward);
+    let locator = if filter.has_country() {
+        Some(
+            ctx.data::<ip2location::DB>()
+                .map_err(|_| "unable to locate IP address")?,
+        )
+    } else {
+        None
+    };
+
+    // Collect all events with triage scores
+    let mut events_with_scores = Vec::new();
+
+    for item in iter {
+        let (key, mut event) = match item {
+            Ok(kv) => kv,
+            Err(e) => {
+                warn_with_username!(ctx, "Invalid event: {:?}", e);
+                continue;
+            }
+        };
+
+        if key > end_key {
+            break;
+        }
+
+        let triage_score = {
+            let matches = event.matches(locator, &filter)?;
+            if !matches.0 {
+                continue;
+            }
+            matches.1
+        };
+
+        // Only include events with triage scores
+        if let Some(triage_score) = triage_score
+            && !triage_score.is_empty()
+        {
+            // Find the highest score for this event
+            let max_score = triage_score
+                .iter()
+                .map(|s| s.score)
+                .max_by(|a, b| a.partial_cmp(b).unwrap_or(cmp::Ordering::Equal))
+                .unwrap_or(0.0);
+
+            event.set_triage_scores(triage_score);
+            events_with_scores.push((max_score, event.into()));
+        }
+    }
+
+    // Sort by highest score in descending order
+    events_with_scores.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(cmp::Ordering::Equal));
+
+    // Return only the top `count` events
+    Ok(events_with_scores
+        .into_iter()
+        .take(count)
+        .map(|(_, event)| event)
+        .collect())
 }
 
 fn earliest(start: Option<DateTime<Utc>>, after: Option<String>) -> Result<i128> {
@@ -2427,5 +2572,54 @@ mod tests {
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {srcAddr: "127.0.0.1", nasIp: "192.168.1.1", userName: "75:73:65:72", message: "RADIUS message"}}]}}"#
         );
+    }
+
+    #[tokio::test]
+    async fn event_triage_list() {
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        let db = store.events();
+
+        // Create test events
+        let ts1 = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_micro_opt(0, 0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(ts1, 1, 2)).unwrap();
+
+        let ts2 = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_micro_opt(0, 0, 1, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(ts2, 3, 4)).unwrap();
+
+        let ts3 = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_micro_opt(0, 0, 2, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(ts3, 5, 6)).unwrap();
+
+        // Test basic query structure - without triage policies, should return empty
+        let query = r"{ eventTriageList(filter: {}) { __typename } }";
+        let res = schema.execute(query).await;
+        assert_eq!(res.data.to_string(), "{eventTriageList: []}");
+
+        // Test with count parameter
+        let query = r"{ eventTriageList(filter: {}, count: 5) { __typename } }";
+        let res = schema.execute(query).await;
+        assert_eq!(res.data.to_string(), "{eventTriageList: []}");
+
+        // Test with time range filter
+        let query = format!(
+            r#"{{ eventTriageList(filter: {{ start: "{ts1}", end: "{ts3}" }}) {{ __typename }} }}"#
+        );
+        let res = schema.execute(&query).await;
+        assert_eq!(res.data.to_string(), "{eventTriageList: []}");
     }
 }
