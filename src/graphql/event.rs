@@ -22,7 +22,7 @@ mod ssh;
 mod sysmon;
 mod tls;
 
-use std::{cmp, net::IpAddr, num::NonZeroU8, sync::Arc};
+use std::{cmp, collections::BinaryHeap, net::IpAddr, num::NonZeroU8, sync::Arc};
 
 use anyhow::{Context as AnyhowContext, anyhow, bail};
 use async_graphql::{
@@ -82,6 +82,7 @@ use crate::{error_with_username, graphql::query, warn_with_username};
 const DEFAULT_CONNECTION_SIZE: usize = 100;
 const DEFAULT_EVENT_FETCH_TIME: u64 = 20;
 const ADD_TIME_FOR_NEXT_COMPARE: i64 = 1;
+const DEFAULT_TRIAGE_LIST_COUNT: usize = 100;
 
 /// Threat level.
 #[derive(Clone, Copy, Enum, Eq, PartialEq)]
@@ -706,6 +707,37 @@ impl EventQuery {
             },
         )
         .await
+    }
+
+    /// A list of detection events sorted by triage policy score in descending
+    /// order.
+    ///
+    /// Returns events that have triage scores applied based on the specified
+    /// triage policies. Each event is sorted by its highest triage score, and
+    /// only the top `count` events are returned.
+    ///
+    /// # Arguments
+    ///
+    /// * `filter` - Event filtering criteria, including triage policies to apply
+    /// * `count` - Maximum number of events to return (defaults to 100)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// * The database connection fails
+    /// * The filter parameters are invalid
+    /// * An event cannot be processed
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityManager))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
+    async fn event_triage_list(
+        &self,
+        ctx: &Context<'_>,
+        filter: EventListFilterInput,
+        count: Option<usize>,
+    ) -> Result<Vec<Event>> {
+        load_triage_list(ctx, &filter, count).await
     }
 }
 
@@ -1337,6 +1369,178 @@ async fn load(
     Ok(connection)
 }
 
+/// Loads events sorted by triage policy score in descending order.
+///
+/// This function retrieves events that match the given filter, calculates
+/// their triage scores based on the specified triage policies, and returns
+/// them sorted by their highest triage score. Only events with triage scores
+/// are included in the result.
+///
+/// # Arguments
+///
+/// * `ctx` - GraphQL context
+/// * `filter` - Event filtering criteria
+/// * `count` - Maximum number of events to return (defaults to [`DEFAULT_TRIAGE_LIST_COUNT`])
+///
+/// # Errors
+///
+/// Returns an error if:
+/// * The database store cannot be accessed
+/// * The filter parameters are invalid
+/// * An event cannot be processed or matched against the filter
+async fn load_triage_list(
+    ctx: &Context<'_>,
+    filter: &EventListFilterInput,
+    count: Option<usize>,
+) -> Result<Vec<Event>> {
+    let store = crate::graphql::get_store(ctx).await?;
+    let count = count.unwrap_or(DEFAULT_TRIAGE_LIST_COUNT);
+
+    let start_key = filter
+        .start
+        .map(|t| i128::from(t.timestamp_nanos_opt().unwrap_or_default()) << 64)
+        .unwrap_or_default();
+    let end_key = filter.end.map_or(i128::MAX, |t| {
+        let end = t
+            .timestamp_nanos_opt()
+            .map_or(i128::MAX, |t| i128::from(t) << 64);
+        if end > 0 { end - 1 } else { 0 }
+    });
+    let mut filter = from_filter_input(ctx, &store, filter)?;
+    filter.moderate_kinds();
+    let db = store.events();
+
+    let iter = db.iter_from(start_key, Direction::Forward);
+    let locator = if filter.has_country() {
+        Some(
+            ctx.data::<ip2location::DB>()
+                .map_err(|_| "unable to locate IP address")?,
+        )
+    } else {
+        None
+    };
+
+    // Use a binary heap to efficiently maintain only the top `count` events
+    // This prevents OOM issues with large datasets
+    let mut heap = BinaryHeap::new();
+
+    for item in iter {
+        let (key, mut event) = match item {
+            Ok(kv) => kv,
+            Err(e) => {
+                warn_with_username!(ctx, "Invalid event: {:?}", e);
+                continue;
+            }
+        };
+
+        if key > end_key {
+            break;
+        }
+
+        let triage_score = {
+            let matches = event.matches(locator, &filter)?;
+            if !matches.0 {
+                continue;
+            }
+            matches.1
+        };
+
+        // Only include events with triage scores
+        if let Some(triage_score) = triage_score
+            && !triage_score.is_empty()
+        {
+            // Find the highest score for this event
+            let max_score = triage_score
+                .iter()
+                .map(|s| s.score)
+                .max_by(|a, b| a.partial_cmp(b).unwrap_or(cmp::Ordering::Equal))
+                .unwrap_or(0.0);
+
+            event.set_triage_scores(triage_score);
+            let event_priority = event_priority(&event);
+            let scored_event = ScoredEvent {
+                score: max_score,
+                priority: event_priority,
+                event,
+            };
+
+            heap.push(scored_event);
+
+            // Keep only top `count` events to prevent OOM
+            if heap.len() > count {
+                heap.pop();
+            }
+        }
+    }
+
+    // Extract events from heap in descending order
+    let result: Vec<Event> = heap
+        .into_sorted_vec()
+        .into_iter()
+        .map(|scored| scored.event.into())
+        .collect();
+    Ok(result)
+}
+
+/// Represents an event with its triage score and priority for sorting.
+struct ScoredEvent {
+    score: f64,
+    priority: u8,
+    event: database::Event,
+}
+
+impl PartialEq for ScoredEvent {
+    fn eq(&self, other: &Self) -> bool {
+        self.score == other.score && self.priority == other.priority
+    }
+}
+
+impl Eq for ScoredEvent {}
+
+impl PartialOrd for ScoredEvent {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ScoredEvent {
+    // Sorting logic for BinaryHeap (min-heap behavior):
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        // Primary sort: lower scores are ranked higher
+        other
+            .score
+            .partial_cmp(&self.score)
+            .unwrap_or(cmp::Ordering::Equal)
+            // Secondary sort: higher priority values (i.e., lower importance) are ranked higher.
+            .then_with(|| self.priority.cmp(&other.priority))
+    }
+}
+
+/// Assigns a priority value to an event based on its type and characteristics.
+///
+/// Priority order (lower value = higher priority):
+/// 1. `HttpThreat` with `cluster_id` = `None`
+/// 2. `DnsCovertChannel`
+/// 3. `DomainGenerationAlgorithm`
+/// 4. `LockyRansomware`
+/// 5. `HttpThreat` with `cluster_id` = `Some`
+/// 6. Other detection events
+fn event_priority(event: &database::Event) -> u8 {
+    match event {
+        database::Event::HttpThreat(http_threat) => {
+            if http_threat.cluster_id.is_none() {
+                0 // Highest priority
+            } else {
+                4 // Lower priority when cluster_id is present
+            }
+        }
+        database::Event::DnsCovertChannel(_) => 1,
+        database::Event::DomainGenerationAlgorithm(_) => 2,
+        database::Event::LockyRansomware(_) => 3,
+        _ => 5, // All other events have lowest priority
+    }
+}
+
 fn earliest(start: Option<DateTime<Utc>>, after: Option<String>) -> Result<i128> {
     let earliest = if let Some(start) = start {
         let start = i128::from(start.timestamp_nanos_opt().unwrap_or_default()) << 64;
@@ -1454,7 +1658,7 @@ mod tests {
     use chrono::{DateTime, NaiveDate, Utc};
     use futures_util::StreamExt;
     use review_database::{
-        EventCategory, EventKind, EventMessage,
+        self as database, EventCategory, EventKind, EventMessage,
         event::{BlocklistBootpFields, BlocklistDhcpFields, BlocklistTlsFields, DnsEventFields},
     };
 
@@ -2534,6 +2738,388 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {srcAddr: "127.0.0.1", dstAddr: "127.0.0.2", transId: 42, queryBody: ["de:ad"], respBody: ["ca:fe"]}}]}}"#
+        );
+    }
+
+    /// Basic smoke test for the eventTriageList GraphQL API.
+    ///
+    /// This test validates that:
+    /// 1. The eventTriageList GraphQL API endpoint exists and accepts the correct parameters
+    /// 2. The API returns a valid response structure without errors
+    /// 3. The triagePolicies filter parameter is accepted
+    ///
+    /// Note: Full integration testing of triage policy matching requires more complex setup
+    /// involving review-database internals. This test provides basic API validation.
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn event_triage_list() {
+        use review_database::event::{
+            DgaFields, DnsEventFields, HttpEventFields, HttpThreatFields,
+        };
+
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        let db = store.events();
+        let triage_map = store.triage_policy_map();
+
+        let base_ts = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_micro_opt(0, 0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+
+        // 1. Insert multiple detection events
+        // Event 1: Unlabeled Outlier(cluster_id = None) - Score 0.9
+        let unlabeled_outlier = HttpThreatFields {
+            time: base_ts,
+            start_time: base_ts.timestamp_nanos_opt().unwrap(),
+            end_time: base_ts.timestamp_nanos_opt().unwrap(),
+            sensor: "sensor1".to_string(),
+            src_addr: Ipv4Addr::new(192, 168, 1, 1).into(),
+            src_port: 10001,
+            dst_addr: Ipv4Addr::new(10, 0, 0, 1).into(),
+            dst_port: 80,
+            proto: 6,
+            method: "GET".to_string(),
+            host: "unlabeled.com".to_string(),
+            uri: "/malware".to_string(),
+            referer: String::new(),
+            version: "HTTP/1.1".to_string(),
+            user_agent: "Mozilla/5.0".to_string(),
+            request_len: 100,
+            response_len: 200,
+            status_code: 200,
+            status_msg: "OK".to_string(),
+            username: String::new(),
+            password: String::new(),
+            cookie: String::new(),
+            content_encoding: String::new(),
+            content_type: "text/html".to_string(),
+            cache_control: String::new(),
+            filenames: vec![],
+            mime_types: vec![],
+            body: vec![],
+            state: String::new(),
+            db_name: String::new(),
+            rule_id: 0,
+            matched_to: String::new(),
+            cluster_id: None,
+            attack_kind: String::new(),
+            confidence: 1.0,
+            category: Some(EventCategory::CommandAndControl),
+        };
+        db.put(&EventMessage {
+            time: base_ts,
+            kind: EventKind::HttpThreat,
+            fields: bincode::serialize(&unlabeled_outlier).unwrap(),
+        })
+        .unwrap();
+
+        // Event 2: HttpThreat(cluster_id = Some) - Score 0.9
+        let http_threat_fields = HttpThreatFields {
+            time: base_ts,
+            start_time: base_ts.timestamp_nanos_opt().unwrap(),
+            end_time: base_ts.timestamp_nanos_opt().unwrap(),
+            sensor: "sensor1".to_string(),
+            src_addr: Ipv4Addr::new(192, 168, 1, 1).into(),
+            src_port: 10001,
+            dst_addr: Ipv4Addr::new(10, 0, 0, 1).into(),
+            dst_port: 80,
+            proto: 6,
+            method: "GET".to_string(),
+            host: "http_threat.com".to_string(),
+            uri: "/malware".to_string(),
+            referer: String::new(),
+            version: "HTTP/1.1".to_string(),
+            user_agent: "Mozilla/5.0".to_string(),
+            request_len: 100,
+            response_len: 200,
+            status_code: 200,
+            status_msg: "OK".to_string(),
+            username: String::new(),
+            password: String::new(),
+            cookie: String::new(),
+            content_encoding: String::new(),
+            content_type: "text/html".to_string(),
+            cache_control: String::new(),
+            filenames: vec![],
+            mime_types: vec![],
+            body: vec![],
+            state: String::new(),
+            db_name: String::new(),
+            rule_id: 0,
+            matched_to: String::new(),
+            cluster_id: Some(1005),
+            attack_kind: String::new(),
+            confidence: 1.0,
+            category: Some(EventCategory::CommandAndControl),
+        };
+        db.put(&EventMessage {
+            time: base_ts,
+            kind: EventKind::HttpThreat,
+            fields: bincode::serialize(&http_threat_fields).unwrap(),
+        })
+        .unwrap();
+
+        // Event 3: DnsCovertChannel - Score 0.9
+        // Same score as HttpThreat, but different type.
+        // We need to check which one comes first.
+        let dns_fields = DnsEventFields {
+            sensor: "sensor1".to_string(),
+            start_time: base_ts,
+            end_time: base_ts,
+            src_addr: Ipv4Addr::new(192, 168, 1, 2).into(),
+            src_port: 10002,
+            dst_addr: Ipv4Addr::new(8, 8, 8, 8).into(),
+            dst_port: 53,
+            proto: 17,
+            query: "covert.example.com".to_string(),
+            answer: vec![],
+            trans_id: 1234,
+            rtt: 10,
+            qclass: 1,
+            qtype: 1,
+            rcode: 0,
+            aa_flag: false,
+            tc_flag: false,
+            rd_flag: true,
+            ra_flag: true,
+            ttl: vec![],
+            confidence: 1.0,
+            category: Some(EventCategory::CommandAndControl),
+        };
+        db.put(&EventMessage {
+            time: base_ts,
+            kind: EventKind::DnsCovertChannel,
+            fields: bincode::serialize(&dns_fields).unwrap(),
+        })
+        .unwrap();
+
+        // Event 4: DomainGenerationAlgorithm - Score 0.8
+        let dga_fields = DgaFields {
+            start_time: base_ts.timestamp_nanos_opt().unwrap(),
+            end_time: base_ts.timestamp_nanos_opt().unwrap(),
+            sensor: "sensor1".to_string(),
+            src_addr: Ipv4Addr::new(192, 168, 1, 3).into(),
+            src_port: 10003,
+            dst_addr: Ipv4Addr::new(10, 0, 0, 2).into(),
+            dst_port: 80,
+            proto: 6,
+            host: "dga.com".to_string(),
+            method: "GET".to_string(),
+            uri: "/".to_string(),
+            referer: String::new(),
+            version: "HTTP/1.1".to_string(),
+            user_agent: "Bot".to_string(),
+            request_len: 50,
+            response_len: 50,
+            status_code: 404,
+            status_msg: "Not Found".to_string(),
+            username: String::new(),
+            password: String::new(),
+            cookie: String::new(),
+            content_encoding: String::new(),
+            content_type: String::new(),
+            cache_control: String::new(),
+            filenames: vec![],
+            mime_types: vec![],
+            body: vec![],
+            state: String::new(),
+            confidence: 0.8,
+            category: Some(EventCategory::InitialAccess),
+        };
+        db.put(&EventMessage {
+            time: base_ts,
+            kind: EventKind::DomainGenerationAlgorithm,
+            fields: bincode::serialize(&dga_fields).unwrap(),
+        })
+        .unwrap();
+
+        // Event 5: LockyRansomware - Score 0.8
+        // Same score as DomainGenerationAlgorithm, but different type.
+        // We need to check which one comes first.
+        let locky_fields = DnsEventFields {
+            sensor: "sensor1".to_string(),
+            start_time: base_ts,
+            end_time: base_ts,
+            src_addr: Ipv4Addr::new(192, 168, 1, 4).into(),
+            src_port: 10004,
+            dst_addr: Ipv4Addr::new(8, 8, 8, 8).into(),
+            dst_port: 53,
+            proto: 17,
+            query: "locky.example.com".to_string(),
+            answer: vec![],
+            trans_id: 5678,
+            rtt: 10,
+            qclass: 1,
+            qtype: 1,
+            rcode: 0,
+            aa_flag: false,
+            tc_flag: false,
+            rd_flag: true,
+            ra_flag: true,
+            ttl: vec![],
+            confidence: 0.8,
+            category: Some(EventCategory::InitialAccess),
+        };
+        db.put(&EventMessage {
+            time: base_ts,
+            kind: EventKind::LockyRansomware,
+            fields: bincode::serialize(&locky_fields).unwrap(),
+        })
+        .unwrap();
+
+        // Event 6: NonBrowser - Score 0.5
+        let non_browser_fields = HttpEventFields {
+            start_time: base_ts,
+            end_time: base_ts,
+            sensor: "sensor1".to_string(),
+            src_addr: Ipv4Addr::new(192, 168, 1, 5).into(),
+            src_port: 10005,
+            dst_addr: Ipv4Addr::new(10, 0, 0, 3).into(),
+            dst_port: 8080,
+            proto: 6,
+            host: "api.com".to_string(),
+            method: "POST".to_string(),
+            uri: "/api".to_string(),
+            referer: String::new(),
+            version: "HTTP/1.1".to_string(),
+            user_agent: "curl".to_string(),
+            request_len: 20,
+            response_len: 20,
+            status_code: 200,
+            status_msg: "OK".to_string(),
+            username: String::new(),
+            password: String::new(),
+            cookie: String::new(),
+            content_encoding: String::new(),
+            content_type: "application/json".to_string(),
+            cache_control: String::new(),
+            filenames: vec![],
+            mime_types: vec![],
+            body: vec![],
+            state: String::new(),
+            confidence: 0.5,
+            category: Some(EventCategory::Discovery),
+        };
+        db.put(&EventMessage {
+            time: base_ts,
+            kind: EventKind::NonBrowser,
+            fields: bincode::serialize(&non_browser_fields).unwrap(),
+        })
+        .unwrap();
+
+        // 2. Insert triage policies
+        let policy = database::TriagePolicy {
+            id: 0,
+            name: "Test Policy".to_string(),
+            ti_db: Vec::new(),
+            packet_attr: Vec::new(),
+            confidence: vec![
+                database::Confidence {
+                    threat_category: database::EventCategory::CommandAndControl,
+                    threat_kind: "dns covert channel".to_string(),
+                    confidence: 0.0,
+                    weight: Some(0.9),
+                },
+                database::Confidence {
+                    threat_category: database::EventCategory::CommandAndControl,
+                    threat_kind: "http threat".to_string(),
+                    confidence: 0.0,
+                    weight: Some(0.9),
+                },
+                database::Confidence {
+                    threat_category: database::EventCategory::InitialAccess,
+                    threat_kind: "dga".to_string(),
+                    confidence: 0.0,
+                    weight: Some(0.8),
+                },
+                database::Confidence {
+                    threat_category: database::EventCategory::InitialAccess,
+                    threat_kind: "locky ransomware".to_string(),
+                    confidence: 0.0,
+                    weight: Some(0.8),
+                },
+                database::Confidence {
+                    threat_category: database::EventCategory::Discovery,
+                    threat_kind: "non browser".to_string(),
+                    confidence: 0.0,
+                    weight: Some(0.5),
+                },
+            ],
+            response: [database::Response {
+                minimum_score: 0.3,
+                kind: database::ResponseKind::Manual,
+            }]
+            .to_vec(),
+            creation_time: base_ts,
+        };
+        let policy_id = triage_map.put(policy).unwrap();
+
+        // 3. Invoke eventTriageList
+        let query = format!(
+            r#"{{
+                eventTriageList(filter: {{
+                    start: "2024-01-01T00:00:00Z",
+                    end: "2024-01-02T00:00:00Z",
+                    triagePolicies: ["{policy_id}"]
+                }}, count: 10) {{
+                    __typename
+                    ... on HttpThreat {{ srcAddr, clusterId }}
+                    ... on DnsCovertChannel {{ srcAddr }}
+                    ... on DomainGenerationAlgorithm {{ srcAddr }}
+                    ... on LockyRansomware {{ srcAddr }}
+                    ... on NonBrowser {{ srcAddr }}
+                }}
+            }}"#
+        );
+        let res = schema.execute(&query).await;
+
+        // 4. Validate query results
+        assert!(res.errors.is_empty(), "Errors: {:?}", res.errors);
+        let json: serde_json::Value =
+            serde_json::to_value(&res.data).expect("serializable response data");
+        let events = json["eventTriageList"]
+            .as_array()
+            .expect("eventTriageList should be an array");
+        assert_eq!(events.len(), 6);
+
+        // Expected order of triaged events:
+        // 1. Score 0.9: Unlabeled Outlier vs HttpThreat vs DnsCovertChannel.
+        //    Priority:
+        //    - HttpThreat(cluster_id = None)  ← treated as the unlabeled outlier
+        //    - DnsCovertChannel
+        //    - HttpThreat(cluster_id = Some(_))
+        // 2. Score 0.8: DomainGenerationAlgorithm vs LockyRansomware.
+        //    Priority:
+        //    - DomainGenerationAlgorithm
+        //    - LockyRansomware
+        // 3. Score 0.5: NonBrowser.
+
+        // first event should be unlabeled outlier (cluster_id = None)
+        let cluster_id = events
+            .first()
+            .and_then(|event| event["clusterId"].as_str())
+            .unwrap();
+        assert_eq!(cluster_id, "", "first event should be unlabeled outlier");
+
+        // Validate the full ordering matches the score/priority contract described
+        let actual_order: Vec<&str> = events
+            .iter()
+            .map(|event| event["__typename"].as_str().expect("typename string"))
+            .collect();
+        let expected_order = vec![
+            "HttpThreat",
+            "DnsCovertChannel",
+            "HttpThreat",
+            "DomainGenerationAlgorithm",
+            "LockyRansomware",
+            "NonBrowser",
+        ];
+        assert_eq!(
+            actual_order, expected_order,
+            "events should be sorted by score and priority"
         );
     }
 }
