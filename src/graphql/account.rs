@@ -372,25 +372,16 @@ impl AccountMutation {
 
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
-        if let Some(account) = map.get(&normalized_username)? {
+        if let Some(mut account) = map.get(&normalized_username)? {
             if account.role == review_database::Role::SystemAdministrator {
                 // Validate that the new password is different from the current password
                 if account.verify_password(&password) {
                     return Err("new password cannot be the same as the current password".into());
                 }
+                account.update_password(&password)?;
+                account.reset_last_signin_time();
+                map.put(&account)?;
 
-                map.update(
-                    normalized_username.as_bytes(),
-                    &Some(password),
-                    None,
-                    &None,
-                    &None,
-                    &None,
-                    &None,
-                    &None,
-                    &None,
-                    &None,
-                )?;
                 info_with_username!(
                     ctx,
                     "System administrator {normalized_username}'s password has been changed"
@@ -557,7 +548,6 @@ impl AccountMutation {
             }
         }
 
-        let password_new = password;
         let role = role.map(|r| (database::Role::from(r.old), database::Role::from(r.new)));
         let name = name.map(|n| (n.old, n.new));
         let dept = department.map(|d| (d.old, d.new));
@@ -574,7 +564,7 @@ impl AccountMutation {
 
         map.update(
             normalized_username.as_bytes(),
-            &password_new,
+            &password,
             role,
             &name,
             &dept,
@@ -584,6 +574,12 @@ impl AccountMutation {
             &max_parallel_sessions,
             &customer_ids,
         )?;
+        if password.is_some()
+            && let Some(mut account) = map.get(&normalized_username)?
+        {
+            account.reset_last_signin_time();
+            map.put(&account)?;
+        }
         info_with_username!(
             ctx,
             "Updated profile information for user {normalized_username}"
@@ -4230,5 +4226,181 @@ mod tests {
             res.data.to_string(),
             r#"{removeAccountsExact: ["exactremove"]}"#
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn reset_admin_password_and_force_password_change() {
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        let account_map = store.account_map();
+
+        // 1. Initial Sign-in with default password (should fail)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signIn(username: "admin", password: "admin") {
+                        reviewToken
+                    }
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "a password change is required to proceed"
+        );
+
+        // 2. First Password Change (Success)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signInWithNewPassword(username: "admin", password: "admin", newPassword: "password2") {
+                        reviewToken
+                    }
+                }"#,
+            )
+            .await;
+        assert!(res.is_ok());
+        let account = account_map.get("admin").unwrap().unwrap();
+        assert!(account.verify_password("password2"));
+
+        // 3. Admin Password Reset
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                resetAdminPassword(username: "admin", password: "newpassword")
+            }"#,
+                RoleGuard::Local,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{resetAdminPassword: "admin"}"#);
+
+        // 4. Second Sign-in (Fail)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signIn(username: "admin", password: "newpassword") {
+                        reviewToken
+                    }
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "a password change is required to proceed"
+        );
+
+        // 5. Second Password Change (Success)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signInWithNewPassword(username: "admin", password: "newpassword", newPassword: "finalpassword") {
+                        reviewToken
+                    }
+                }"#,
+            )
+            .await;
+        assert!(res.is_ok());
+        let account = account_map.get("admin").unwrap().unwrap();
+        assert!(account.verify_password("finalpassword"));
+        restore_review_admin(original_review_admin);
+    }
+
+    #[tokio::test]
+    async fn update_account_and_force_password_change() {
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        let account_map = store.account_map();
+
+        // Create a test user.
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertAccount(
+                        username: "testuser",
+                        password: "oldpassword",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Test User",
+                        department: "Test Dept",
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "testuser"}"#);
+
+        // 1. Initial Sign-in with old password (should fail)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signIn(username: "testuser", password: "oldpassword") {
+                        reviewToken
+                    }
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "a password change is required to proceed"
+        );
+
+        // 2. First Password Change (Success)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signInWithNewPassword(username: "testuser", password: "oldpassword", newPassword: "password2") {
+                        reviewToken
+                    }
+                }"#,
+            )
+            .await;
+        assert!(res.is_ok());
+        let account = account_map.get("testuser").unwrap().unwrap();
+        assert!(account.verify_password("password2"));
+
+        // 3. Update the user's password.
+        let res = schema
+            .execute(
+                r#"mutation {
+                    updateAccount(
+                        username: "testuser",
+                        password: "newpassword"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{updateAccount: "testuser"}"#);
+
+        // 4. Second Sign-in (Fail)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signIn(username: "testuser", password: "newpassword") {
+                        reviewToken
+                    }
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "a password change is required to proceed"
+        );
+
+        // 5. Second Password Change (Success)
+        let res = schema
+            .execute(
+                r#"mutation {
+                    signInWithNewPassword(username: "testuser", password: "newpassword", newPassword: "finalpassword") {
+                        reviewToken
+                    }
+                }"#,
+            )
+            .await;
+        assert!(res.is_ok());
+        let account = account_map.get("testuser").unwrap().unwrap();
+        assert!(account.verify_password("finalpassword"));
     }
 }
