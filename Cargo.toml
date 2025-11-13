@@ -63,3 +63,9 @@ name = "minireview"
 [lints.clippy]
 pedantic = "warn"
 unwrap_used = "warn"
+
+[patch.crates-io]
+# Patch axum-server to fix trait bound issues with hyper 1.8.0+
+# See: https://github.com/programatik29/axum-server/issues/170
+# Using fix from PR: https://github.com/programatik29/axum-server/pull/171
+axum-server = { git = "https://github.com/AlvaroParker/axum-server", branch = "fix-trait-bound" }
