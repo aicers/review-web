@@ -3161,6 +3161,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn sign_in_with_new_password_proceed() {
         let schema = TestSchema::new().await;
         let res = schema
