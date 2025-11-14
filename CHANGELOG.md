@@ -82,6 +82,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- Removed `recursion_limit` attribute from minireview example. The example
+  now builds successfully without requiring a non-default recursion limit,
+  likely due to improvements in the Rust compiler and recent GraphQL schema
+  simplifications.
 - Fixed `FtpPlainText` threat level to Medium to match `review-database`.
 
 ## [0.28.0] - 2025-09-30
