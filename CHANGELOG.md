@@ -26,11 +26,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `confidenceMax` fields for range-based filtering, replacing the single
   `confidence` field. Filter insert/replace/list mutations correctly handle and
   round-trip the expanded confidence data.
-- Added GraphQL support for the `BlocklistRadius` event type, exposing RADIUS
-  protocol detection through `eventList` and `eventStream` queries. This event
-  type includes standard flow metadata (source/destination addresses and ports,
-  timestamps) and RADIUS-specific fields (packet ID, codes, authenticators,
-  user name, NAS details, and state information).
+- Added GraphQL support for new blocklist detection events (`BlocklistRadius`
+  and `BlocklistMalformedDns`) in both `eventList` and `eventStream` queries.
+  Each event exposes the standard flow metadata (addresses, ports, protocol,
+  timestamps) along with its protocol-specific fields for detailed RADIUS and
+  DNS anomaly analysis.
 
 ### Changed
 
