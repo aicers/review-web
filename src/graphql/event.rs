@@ -9,6 +9,7 @@ mod http;
 mod kerberos;
 mod ldap;
 mod log;
+mod malformed_dns;
 mod mqtt;
 mod network;
 mod nfs;
@@ -56,6 +57,7 @@ use self::{
     kerberos::BlocklistKerberos,
     ldap::{BlocklistLdap, LdapBruteForce, LdapPlainText},
     log::ExtraThreat,
+    malformed_dns::BlocklistMalformedDns,
     mqtt::BlocklistMqtt,
     network::NetworkThreat,
     nfs::BlocklistNfs,
@@ -175,6 +177,7 @@ async fn fetch_events(
     let mut blocklist_http_time = start_time;
     let mut blocklist_kerberos_time = start_time;
     let mut blocklist_ldap_time = start_time;
+    let mut blocklist_malformed_dns_time = start_time;
     let mut blocklist_mqtt_time = start_time;
     let mut blocklist_nfs_time = start_time;
     let mut blocklist_ntlm_time = start_time;
@@ -222,6 +225,7 @@ async fn fetch_events(
                 blocklist_http_time,
                 blocklist_kerberos_time,
                 blocklist_ldap_time,
+                blocklist_malformed_dns_time,
                 blocklist_mqtt_time,
                 blocklist_nfs_time,
                 blocklist_ntlm_time,
@@ -321,6 +325,9 @@ async fn fetch_events(
                 if blocklist_ldap_time == iter_time_key {
                     blocklist_ldap_time = min_time_key;
                 }
+                if blocklist_malformed_dns_time == iter_time_key {
+                    blocklist_malformed_dns_time = min_time_key;
+                }
                 if blocklist_mqtt_time == iter_time_key {
                     blocklist_mqtt_time = min_time_key;
                 }
@@ -397,6 +404,7 @@ async fn fetch_events(
             .min(blocklist_http_time)
             .min(blocklist_kerberos_time)
             .min(blocklist_ldap_time)
+            .min(blocklist_malformed_dns_time)
             .min(blocklist_mqtt_time)
             .min(blocklist_nfs_time)
             .min(blocklist_ntlm_time)
@@ -575,6 +583,12 @@ async fn fetch_events(
                     if event_time >= blocklist_ldap_time {
                         tx.unbounded_send(value.into())?;
                         blocklist_ldap_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
+                EventKind::BlocklistMalformedDns => {
+                    if event_time >= blocklist_malformed_dns_time {
+                        tx.unbounded_send(value.into())?;
+                        blocklist_malformed_dns_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
                 EventKind::BlocklistMqtt => {
@@ -780,6 +794,8 @@ enum Event {
 
     BlocklistLdap(BlocklistLdap),
 
+    BlocklistMalformedDns(BlocklistMalformedDns),
+
     BlocklistMqtt(BlocklistMqtt),
 
     BlocklistNfs(BlocklistNfs),
@@ -848,6 +864,7 @@ impl From<database::Event> for Event {
                 RecordType::Http(event) => Event::BlocklistHttp(event.into()),
                 RecordType::Kerberos(event) => Event::BlocklistKerberos(event.into()),
                 RecordType::Ldap(event) => Event::BlocklistLdap(event.into()),
+                RecordType::MalformedDns(event) => Event::BlocklistMalformedDns(event.into()),
                 RecordType::Mqtt(event) => Event::BlocklistMqtt(event.into()),
                 RecordType::Nfs(event) => Event::BlocklistNfs(event.into()),
                 RecordType::Ntlm(event) => Event::BlocklistNtlm(event.into()),
@@ -2426,6 +2443,97 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {srcAddr: "127.0.0.1", nasIp: "192.168.1.1", userName: "75:73:65:72", message: "RADIUS message"}}]}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn event_list_blocklist_malformed_dns() {
+        use review_database::event::BlocklistMalformedDnsFields;
+
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        let db = store.events();
+        let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let fields = BlocklistMalformedDnsFields {
+            sensor: "sensor1".to_string(),
+            orig_addr: Ipv4Addr::LOCALHOST.into(),
+            orig_port: 53000,
+            resp_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
+            resp_port: 53,
+            proto: 17,
+            start_time: timestamp,
+            end_time: timestamp,
+            duration: 1,
+            orig_pkts: 2,
+            resp_pkts: 3,
+            orig_l2_bytes: 40,
+            resp_l2_bytes: 60,
+            trans_id: 42,
+            flags: 0b1010,
+            question_count: 1,
+            answer_count: 1,
+            authority_count: 0,
+            additional_count: 0,
+            query_count: 1,
+            resp_count: 1,
+            query_bytes: 20,
+            resp_bytes: 40,
+            query_body: vec![vec![0xde, 0xad]],
+            resp_body: vec![vec![0xca, 0xfe]],
+            confidence: 0.9,
+            category: Some(EventCategory::InitialAccess),
+        };
+
+        let message = EventMessage {
+            time: timestamp,
+            kind: EventKind::BlocklistMalformedDns,
+            fields: bincode::serialize(&fields).expect("serializable"),
+        };
+        db.put(&message).unwrap();
+
+        let res = schema
+            .execute(
+                r#"mutation {
+                    insertCustomer(
+                        name: "c0",
+                        description: "",
+                        networks: [
+                            {
+                                name: "n0",
+                                description: "",
+                                networkType: INTRANET,
+                                networkGroup: {
+                                    hosts: ["127.0.0.1"],
+                                    networks: [],
+                                    ranges: []
+                                }
+                            }
+                        ])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let query = format!(
+            "{{ \
+                eventList(filter: {{
+                    start:\"{timestamp}\"
+                    customers: [0],
+                    directions: [\"OUTBOUND\"],
+                }}) {{ \
+                    edges {{ node {{... on BlocklistMalformedDns {{ srcAddr,dstAddr,transId,queryBody,respBody }} }} }} \
+                }} \
+            }}"
+        );
+        let res = schema.execute(&query).await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventList: {edges: [{node: {srcAddr: "127.0.0.1", dstAddr: "127.0.0.2", transId: 42, queryBody: ["de:ad"], respBody: ["ca:fe"]}}]}}"#
         );
     }
 }
