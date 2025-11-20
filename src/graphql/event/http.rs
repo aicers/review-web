@@ -93,6 +93,38 @@ impl HttpThreat {
         self.inner.proto
     }
 
+    /// Start Time
+    async fn start_time(&self) -> DateTime<Utc> {
+        self.inner.start_time
+    }
+
+    /// Duration
+    ///
+    /// It is measured in nanoseconds.
+    async fn duration(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.duration)
+    }
+
+    /// Packets Sent (by Source)
+    async fn orig_pkts(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.orig_pkts)
+    }
+
+    /// Packets Received (by Destination)
+    async fn resp_pkts(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.resp_pkts)
+    }
+
+    /// Layer 2 Bytes Sent (by Source)
+    async fn orig_l2_bytes(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.orig_l2_bytes)
+    }
+
+    /// Layer 2 Bytes Received (by Destination)
+    async fn resp_l2_bytes(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.resp_l2_bytes)
+    }
+
     /// HTTP Method
     async fn method(&self) -> &str {
         &self.inner.method
@@ -415,11 +447,6 @@ impl TorConnection {
         &self.inner.sensor
     }
 
-    /// End Time
-    async fn end_time(&self) -> DateTime<Utc> {
-        self.inner.end_time
-    }
-
     /// Source IP (Address)
     async fn src_addr(&self) -> String {
         self.inner.src_addr.to_string()
@@ -487,6 +514,38 @@ impl TorConnection {
     /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
+    }
+
+    /// Start Time
+    async fn start_time(&self) -> DateTime<Utc> {
+        self.inner.start_time
+    }
+
+    /// Duration
+    ///
+    /// It is measured in nanoseconds.
+    async fn duration(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.duration)
+    }
+
+    /// Packets Sent (by Source)
+    async fn orig_pkts(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.orig_pkts)
+    }
+
+    /// Packets Received (by Destination)
+    async fn resp_pkts(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.resp_pkts)
+    }
+
+    /// Layer 2 Bytes Sent (by Source)
+    async fn orig_l2_bytes(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.orig_l2_bytes)
+    }
+
+    /// Layer 2 Bytes Received (by Destination)
+    async fn resp_l2_bytes(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.resp_l2_bytes)
     }
 
     /// Host
@@ -709,6 +768,38 @@ impl DomainGenerationAlgorithm {
         self.inner.proto
     }
 
+    /// Start Time
+    async fn start_time(&self) -> DateTime<Utc> {
+        self.inner.start_time
+    }
+
+    /// Duration
+    ///
+    /// It is measured in nanoseconds.
+    async fn duration(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.duration)
+    }
+
+    /// Packets Sent (by Source)
+    async fn orig_pkts(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.orig_pkts)
+    }
+
+    /// Packets Received (by Destination)
+    async fn resp_pkts(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.resp_pkts)
+    }
+
+    /// Layer 2 Bytes Sent (by Source)
+    async fn orig_l2_bytes(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.orig_l2_bytes)
+    }
+
+    /// Layer 2 Bytes Received (by Destination)
+    async fn resp_l2_bytes(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.resp_l2_bytes)
+    }
+
     /// Host
     async fn host(&self) -> &str {
         &self.inner.host
@@ -927,6 +1018,38 @@ impl NonBrowser {
     /// Protocol Number
     async fn proto(&self) -> u8 {
         self.inner.proto
+    }
+
+    /// Start Time
+    async fn start_time(&self) -> DateTime<Utc> {
+        self.inner.start_time
+    }
+
+    /// Duration
+    ///
+    /// It is measured in nanoseconds.
+    async fn duration(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.duration)
+    }
+
+    /// Packets Sent (by Source)
+    async fn orig_pkts(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.orig_pkts)
+    }
+
+    /// Packets Received (by Destination)
+    async fn resp_pkts(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.resp_pkts)
+    }
+
+    /// Layer 2 Bytes Sent (by Source)
+    async fn orig_l2_bytes(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.orig_l2_bytes)
+    }
+
+    /// Layer 2 Bytes Received (by Destination)
+    async fn resp_l2_bytes(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.resp_l2_bytes)
     }
 
     /// Host
@@ -1149,9 +1272,36 @@ impl BlocklistHttp {
         self.inner.proto
     }
 
-    /// End Time
-    async fn end_time(&self) -> StringNumber<i64> {
-        StringNumber(self.inner.end_time)
+    /// Start Time
+    async fn start_time(&self) -> DateTime<Utc> {
+        self.inner.start_time
+    }
+
+    /// Duration
+    ///
+    /// It is measured in nanoseconds.
+    async fn duration(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.duration)
+    }
+
+    /// Packets Sent (by Source)
+    async fn orig_pkts(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.orig_pkts)
+    }
+
+    /// Packets Received (by Destination)
+    async fn resp_pkts(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.resp_pkts)
+    }
+
+    /// Layer 2 Bytes Sent (by Source)
+    async fn orig_l2_bytes(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.orig_l2_bytes)
+    }
+
+    /// Layer 2 Bytes Received (by Destination)
+    async fn resp_l2_bytes(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.resp_l2_bytes)
     }
 
     /// HTTP Method
