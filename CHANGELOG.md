@@ -34,6 +34,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- Implemented forced password change for users whose passwords are reset by a
+  system administrator via `resetAdminPassword` or `updateAccount` GraphQL APIs.
 - Converted GraphQL `Event` type from Union to Interface. The `Event` type now
   exposes six common fields directly (`time`, `sensor`, `confidence`,
   `category`, `level`, `triageScores`) without requiring inline fragments.
