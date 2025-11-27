@@ -4311,6 +4311,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn update_account_and_force_password_change() {
         let schema = TestSchema::new().await;
         let store = schema.store().await;
