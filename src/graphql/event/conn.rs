@@ -491,13 +491,15 @@ impl BlocklistConn {
     }
 
     /// Start Time
-    async fn start_time(&self) -> StringNumber<i64> {
-        StringNumber(self.inner.start_time)
+    async fn start_time(&self) -> DateTime<Utc> {
+        self.inner.start_time
     }
 
-    /// End Time
-    async fn end_time(&self) -> StringNumber<i64> {
-        StringNumber(self.inner.end_time)
+    /// Duration
+    ///
+    /// It is measured in nanoseconds.
+    async fn duration(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.duration)
     }
 
     /// Service Name
@@ -656,13 +658,15 @@ impl TorConnectionConn {
     }
 
     /// Start Time
-    async fn start_time(&self) -> StringNumber<i64> {
-        StringNumber(self.inner.start_time)
+    async fn start_time(&self) -> DateTime<Utc> {
+        self.inner.start_time
     }
 
-    /// End Time
-    async fn end_time(&self) -> StringNumber<i64> {
-        StringNumber(self.inner.end_time)
+    /// Duration
+    ///
+    /// It is measured in nanoseconds.
+    async fn duration(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.duration)
     }
 
     /// Service Name

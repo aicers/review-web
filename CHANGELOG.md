@@ -23,6 +23,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `RepeatedHttpSessions`, `PortScan`, `MultiHostPortScan`, `ExternalDdos`) are
   unchanged. With this update, the `time` field now represents when the event
   was generated, while `start_time` indicates when the event actually began.
+- Added session information fields to GraphQL APIs for all single-raw event-based
+  detection event types. The new fields include `duration` (session duration in
+  nanoseconds), `orig_pkts` (packets sent by source), `resp_pkts` (packets
+  received by destination), `orig_l2_bytes` (layer 2 bytes sent by source),
+  and `resp_l2_bytes` (layer 2 bytes received by destination). These fields
+  provide detailed network session metrics for protocol-level detection events.
 - Added `backups` GraphQL query for listing RocksDB backups. Returns backup
   information including id, timestamp, and size, sorted by timestamp in
   descending order (latest first) without pagination. Available to System and
@@ -45,6 +51,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - Implemented forced password change for users whose passwords are reset by a
   system administrator via `resetAdminPassword` or `updateAccount` GraphQL APIs.
+- Unified the `start_time` field type to `DateTime<Utc>` across all detection
+  event types in GraphQL APIs. Previously, some blocklist events returned
+  `start_time` as a numeric timestamp, while others used `DateTime<Utc>`. All
+  detection events now consistently return `start_time` as `DateTime<Utc>` for
+  better type safety and interoperability.
 - Converted GraphQL `Event` type from Union to Interface. The `Event` type now
   exposes six common fields directly (`time`, `sensor`, `confidence`,
   `category`, `level`, `triageScores`) without requiring inline fragments.
@@ -90,6 +101,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (e.g., `12` becomes `"12"`) to prevent overflow issues with GraphQL's `Int` type
   while maintaining the correct underlying `u32` data type for the account expiry
   period in seconds.
+
+### Removed
+
+- Removed `end_time` from single-raw event-based detection events, in alignment
+  with recent changes in review-database where the `end_time` field was removed.
+  This is because the combination of `start_time` and `duration` sufficiently
+  represents the event’s time range, making `end_time` redundant.
 
 ### Fixed
 

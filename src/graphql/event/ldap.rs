@@ -222,13 +222,35 @@ impl LdapPlainText {
     }
 
     /// Start Time
-    async fn start_time(&self) -> StringNumber<i64> {
-        StringNumber(self.inner.start_time)
+    async fn start_time(&self) -> DateTime<Utc> {
+        self.inner.start_time
     }
 
-    /// End Time
-    async fn end_time(&self) -> StringNumber<i64> {
-        StringNumber(self.inner.end_time)
+    /// Duration
+    ///
+    /// It is measured in nanoseconds.
+    async fn duration(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.duration)
+    }
+
+    /// Packets Sent (by Source)
+    async fn orig_pkts(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.orig_pkts)
+    }
+
+    /// Packets Received (by Destination)
+    async fn resp_pkts(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.resp_pkts)
+    }
+
+    /// Layer 2 Bytes Sent (by Source)
+    async fn orig_l2_bytes(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.orig_l2_bytes)
+    }
+
+    /// Layer 2 Bytes Received (by Destination)
+    async fn resp_l2_bytes(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.resp_l2_bytes)
     }
 
     /// Message ID
@@ -382,13 +404,35 @@ impl BlocklistLdap {
     }
 
     /// Start Time
-    async fn start_time(&self) -> StringNumber<i64> {
-        StringNumber(self.inner.start_time)
+    async fn start_time(&self) -> DateTime<Utc> {
+        self.inner.start_time
     }
 
-    /// End Time
-    async fn end_time(&self) -> StringNumber<i64> {
-        StringNumber(self.inner.end_time)
+    /// Duration
+    ///
+    /// It is measured in nanoseconds.
+    async fn duration(&self) -> StringNumber<i64> {
+        StringNumber(self.inner.duration)
+    }
+
+    /// Packets Sent (by Source)
+    async fn orig_pkts(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.orig_pkts)
+    }
+
+    /// Packets Received (by Destination)
+    async fn resp_pkts(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.resp_pkts)
+    }
+
+    /// Layer 2 Bytes Sent (by Source)
+    async fn orig_l2_bytes(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.orig_l2_bytes)
+    }
+
+    /// Layer 2 Bytes Received (by Destination)
+    async fn resp_l2_bytes(&self) -> StringNumber<u64> {
+        StringNumber(self.inner.resp_l2_bytes)
     }
 
     /// Message ID

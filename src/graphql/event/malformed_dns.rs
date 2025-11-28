@@ -96,32 +96,29 @@ impl BlocklistMalformedDns {
         self.inner.start_time
     }
 
-    /// End Time
-    async fn end_time(&self) -> DateTime<Utc> {
-        self.inner.end_time
-    }
-
     /// Duration
+    ///
+    /// It is measured in nanoseconds.
     async fn duration(&self) -> StringNumber<i64> {
         StringNumber(self.inner.duration)
     }
 
-    /// Originating Packets
+    /// Packets Sent by Source
     async fn orig_pkts(&self) -> StringNumber<u64> {
         StringNumber(self.inner.orig_pkts)
     }
 
-    /// Response Packets
+    /// Packets Received by Destination
     async fn resp_pkts(&self) -> StringNumber<u64> {
         StringNumber(self.inner.resp_pkts)
     }
 
-    /// Originating L2 Bytes
+    /// Layer 2 Bytes Sent by Source
     async fn orig_l2_bytes(&self) -> StringNumber<u64> {
         StringNumber(self.inner.orig_l2_bytes)
     }
 
-    /// Response L2 Bytes
+    /// Layer 2 Bytes Received by Destination
     async fn resp_l2_bytes(&self) -> StringNumber<u64> {
         StringNumber(self.inner.resp_l2_bytes)
     }
