@@ -8,6 +8,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- Added `eventTriageList` GraphQL query to retrieve detection events sorted by
+  triage policy score in descending order. This API accepts filter criteria
+  (including time ranges and triage policies) and an optional count parameter
+  (defaulting to 100). Events are sorted by their highest triage score, with
+  secondary priority given to event type when scores are equal (`HttpThreat`
+  without cluster ID has highest priority, followed by `DnsCovertChannel`,
+  `DomainGenerationAlgorithm`, `LockyRansomware`, `HttpThreat` with cluster ID,
+  and other events). Only events with triage scores are included in the results.
+  This enables prioritizing analysis of potentially high-risk events.
 - Exposed `start_time` field in GraphQL APIs for all detection event types,
   reflecting the corresponding updates in review-database. Event types that
   already had `start_time` (`RdpBruteForce`, `LdapBruteForce`, `FtpBruteForce`,
