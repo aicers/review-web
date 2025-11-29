@@ -21,6 +21,7 @@ mod smtp;
 mod ssh;
 mod sysmon;
 mod tls;
+mod unusual_destination_pattern;
 
 use std::{cmp, collections::BinaryHeap, net::IpAddr, num::NonZeroU8, sync::Arc};
 
@@ -69,6 +70,7 @@ use self::{
     ssh::BlocklistSsh,
     sysmon::WindowsThreat,
     tls::{BlocklistTls, SuspiciousTlsTraffic},
+    unusual_destination_pattern::UnusualDestinationPattern,
 };
 use super::{
     Role, RoleGuard,
@@ -193,6 +195,7 @@ async fn fetch_events(
     let mut extra_threat_time = start_time;
     let mut locky_ransomware_time = start_time;
     let mut suspicious_tls_time = start_time;
+    let mut unusual_destination_pattern_time = start_time;
 
     loop {
         itv.tick().await;
@@ -241,6 +244,7 @@ async fn fetch_events(
                 extra_threat_time,
                 locky_ransomware_time,
                 suspicious_tls_time,
+                unusual_destination_pattern_time,
             ];
 
             // Find the minimum time greater than iter_time_key
@@ -371,6 +375,9 @@ async fn fetch_events(
                 if suspicious_tls_time == iter_time_key {
                     suspicious_tls_time = min_time_key;
                 }
+                if unusual_destination_pattern_time == iter_time_key {
+                    unusual_destination_pattern_time = min_time_key;
+                }
 
                 // Update iter_time_key to the new minimum time
                 iter_time_key = min_time_key;
@@ -419,7 +426,8 @@ async fn fetch_events(
             .min(network_threat_time)
             .min(extra_threat_time)
             .min(locky_ransomware_time)
-            .min(suspicious_tls_time);
+            .min(suspicious_tls_time)
+            .min(unusual_destination_pattern_time);
 
         // Fetch event iterator based on time
         let start = i128::from(start) << 64;
@@ -676,6 +684,12 @@ async fn fetch_events(
                         suspicious_tls_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
+                EventKind::UnusualDestinationPattern => {
+                    if event_time >= unusual_destination_pattern_time {
+                        tx.unbounded_send(value.into())?;
+                        unusual_destination_pattern_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
+                    }
+                }
             }
         }
     }
@@ -859,6 +873,10 @@ enum Event {
     BlocklistDhcp(BlocklistDhcp),
 
     SuspiciousTlsTraffic(SuspiciousTlsTraffic),
+
+    /// An event indicating an unusual pattern of connections to multiple
+    /// destination IP addresses.
+    UnusualDestinationPattern(UnusualDestinationPattern),
 }
 
 impl From<database::Event> for Event {
@@ -906,6 +924,9 @@ impl From<database::Event> for Event {
                 RecordType::Smtp(event) => Event::BlocklistSmtp(event.into()),
                 RecordType::Ssh(event) => Event::BlocklistSsh(event.into()),
                 RecordType::Tls(event) => Event::BlocklistTls(event.into()),
+                RecordType::UnusualDestinationPattern(event) => {
+                    Event::UnusualDestinationPattern(event.into())
+                }
             },
             database::Event::WindowsThreat(event) => Event::WindowsThreat(event.into()),
             database::Event::NetworkThreat(event) => Event::NetworkThreat(event.into()),
@@ -1659,7 +1680,10 @@ mod tests {
     use futures_util::StreamExt;
     use review_database::{
         self as database, EventCategory, EventKind, EventMessage,
-        event::{BlocklistBootpFields, BlocklistDhcpFields, BlocklistTlsFields, DnsEventFields},
+        event::{
+            BlocklistBootpFields, BlocklistDhcpFields, BlocklistTlsFields, DnsEventFields,
+            UnusualDestinationPatternFields,
+        },
     };
 
     use crate::graphql::TestSchema;
@@ -3168,5 +3192,91 @@ mod tests {
             actual_order, expected_order,
             "events should be sorted by score and priority"
         );
+    }
+
+    #[tokio::test]
+    async fn event_list_unusual_destination_pattern() {
+        let schema = TestSchema::new().await;
+        let store = schema.store().await;
+        let db = store.events();
+        let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let start_time = NaiveDate::from_ymd_opt(2018, 1, 26)
+            .unwrap()
+            .and_hms_micro_opt(18, 0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let end_time = NaiveDate::from_ymd_opt(2018, 1, 26)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+
+        let fields = UnusualDestinationPatternFields {
+            sensor: "sensor1".to_string(),
+            start_time: start_time.timestamp_nanos_opt().unwrap(),
+            end_time: end_time.timestamp_nanos_opt().unwrap(),
+            destination_ips: vec![
+                Ipv4Addr::new(192, 168, 1, 1).into(),
+                Ipv4Addr::new(192, 168, 1, 2).into(),
+                Ipv4Addr::new(192, 168, 1, 3).into(),
+            ],
+            count: 150,
+            expected_mean: 50.0,
+            std_deviation: 20.0,
+            z_score: 5.0,
+            confidence: 0.85,
+            category: Some(EventCategory::Reconnaissance),
+        };
+
+        let message = EventMessage {
+            time: timestamp,
+            kind: EventKind::UnusualDestinationPattern,
+            fields: bincode::serialize(&fields).expect("serializable"),
+        };
+        db.put(&message).unwrap();
+
+        let query = format!(
+            "{{ \
+                eventList(filter: {{ start:\"{timestamp}\" }}) {{ \
+                    edges {{ \
+                        node {{ \
+                            ... on UnusualDestinationPattern {{ \
+                                sensor \
+                                dstAddrs \
+                                count \
+                                expectedMean \
+                                stdDeviation \
+                                zScore \
+                                confidence \
+                                level \
+                                learningMethod \
+                            }} \
+                        }} \
+                    }} \
+                    totalCount \
+                }} \
+            }}"
+        );
+        let res = schema.execute(&query).await;
+        let data = res.data.to_string();
+        assert!(data.contains("sensor1"));
+        assert!(data.contains("192.168.1.1"));
+        assert!(data.contains("192.168.1.2"));
+        assert!(data.contains("192.168.1.3"));
+        assert!(data.contains("count: 150"));
+        assert!(data.contains("expectedMean: 50.0"));
+        assert!(data.contains("stdDeviation: 20.0"));
+        assert!(data.contains("zScore: 5.0"));
+        assert!(data.contains("confidence: 0.85"));
+        assert!(data.contains("level: MEDIUM"));
+        assert!(data.contains("learningMethod: SEMI_SUPERVISED"));
+        assert!(data.contains("totalCount: 1"));
     }
 }

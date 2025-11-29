@@ -46,6 +46,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Each event exposes the standard flow metadata (addresses, ports, protocol,
   timestamps) along with its protocol-specific fields for detailed RADIUS and
   DNS anomaly analysis.
+- Added GraphQL support for the `UnusualDestinationPattern` detection event
+  in both `eventList` and `eventStream` queries. This event detects unusual
+  patterns of connections to multiple destination IP addresses, exposing
+  fields such as destination IPs, connection count, statistical measures
+  (expected mean, standard deviation, z-score), confidence, category,
+  and triage scores.
 
 ### Changed
 
