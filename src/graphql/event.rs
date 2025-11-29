@@ -2797,7 +2797,11 @@ mod tests {
         let unlabeled_outlier = HttpThreatFields {
             time: base_ts,
             start_time: base_ts.timestamp_nanos_opt().unwrap(),
-            end_time: base_ts.timestamp_nanos_opt().unwrap(),
+            duration: 0,
+            orig_pkts: 0,
+            resp_pkts: 0,
+            orig_l2_bytes: 0,
+            resp_l2_bytes: 0,
             sensor: "sensor1".to_string(),
             src_addr: Ipv4Addr::new(192, 168, 1, 1).into(),
             src_port: 10001,
@@ -2843,7 +2847,11 @@ mod tests {
         let http_threat_fields = HttpThreatFields {
             time: base_ts,
             start_time: base_ts.timestamp_nanos_opt().unwrap(),
-            end_time: base_ts.timestamp_nanos_opt().unwrap(),
+            duration: 0,
+            orig_pkts: 0,
+            resp_pkts: 0,
+            orig_l2_bytes: 0,
+            resp_l2_bytes: 0,
             sensor: "sensor1".to_string(),
             src_addr: Ipv4Addr::new(192, 168, 1, 1).into(),
             src_port: 10001,
@@ -2890,8 +2898,12 @@ mod tests {
         // We need to check which one comes first.
         let dns_fields = DnsEventFields {
             sensor: "sensor1".to_string(),
-            start_time: base_ts,
-            end_time: base_ts,
+            start_time: base_ts.timestamp_nanos_opt().unwrap(),
+            duration: 0,
+            orig_pkts: 0,
+            resp_pkts: 0,
+            orig_l2_bytes: 0,
+            resp_l2_bytes: 0,
             src_addr: Ipv4Addr::new(192, 168, 1, 2).into(),
             src_port: 10002,
             dst_addr: Ipv4Addr::new(8, 8, 8, 8).into(),
@@ -2922,7 +2934,11 @@ mod tests {
         // Event 4: DomainGenerationAlgorithm - Score 0.8
         let dga_fields = DgaFields {
             start_time: base_ts.timestamp_nanos_opt().unwrap(),
-            end_time: base_ts.timestamp_nanos_opt().unwrap(),
+            duration: 0,
+            orig_pkts: 0,
+            resp_pkts: 0,
+            orig_l2_bytes: 0,
+            resp_l2_bytes: 0,
             sensor: "sensor1".to_string(),
             src_addr: Ipv4Addr::new(192, 168, 1, 3).into(),
             src_port: 10003,
@@ -2964,8 +2980,12 @@ mod tests {
         // We need to check which one comes first.
         let locky_fields = DnsEventFields {
             sensor: "sensor1".to_string(),
-            start_time: base_ts,
-            end_time: base_ts,
+            start_time: base_ts.timestamp_nanos_opt().unwrap(),
+            duration: 0,
+            orig_pkts: 0,
+            resp_pkts: 0,
+            orig_l2_bytes: 0,
+            resp_l2_bytes: 0,
             src_addr: Ipv4Addr::new(192, 168, 1, 4).into(),
             src_port: 10004,
             dst_addr: Ipv4Addr::new(8, 8, 8, 8).into(),
@@ -2995,8 +3015,12 @@ mod tests {
 
         // Event 6: NonBrowser - Score 0.5
         let non_browser_fields = HttpEventFields {
-            start_time: base_ts,
-            end_time: base_ts,
+            start_time: base_ts.timestamp_nanos_opt().unwrap(),
+            duration: 0,
+            orig_pkts: 0,
+            resp_pkts: 0,
+            orig_l2_bytes: 0,
+            resp_l2_bytes: 0,
             sensor: "sensor1".to_string(),
             src_addr: Ipv4Addr::new(192, 168, 1, 5).into(),
             src_port: 10005,
