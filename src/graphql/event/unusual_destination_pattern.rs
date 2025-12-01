@@ -35,7 +35,7 @@ impl UnusualDestinationPattern {
         self.inner.end_time
     }
 
-    /// Destination IP Addresses
+    /// Destination IP (Address) List
     async fn dst_addrs(&self) -> Vec<String> {
         self.inner
             .destination_ips
@@ -44,7 +44,7 @@ impl UnusualDestinationPattern {
             .collect()
     }
 
-    /// Destination Countries
+    /// Destination Country List
     /// The two-letter country codes of the destination IP addresses. `"XX"` if
     /// the location of an address is not known, and `"ZZ"` if the location
     /// database is unavailable.
@@ -56,7 +56,7 @@ impl UnusualDestinationPattern {
             .collect()
     }
 
-    /// Destination Customers
+    /// Destination Customer List
     async fn dst_customers(&self, ctx: &Context<'_>) -> Result<Vec<Option<Customer>>> {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.customer_map();
@@ -78,18 +78,18 @@ impl UnusualDestinationPattern {
         }
     }
 
-    /// Count of destination connections
+    /// Count of connections
     #[allow(clippy::cast_possible_wrap)]
     async fn count(&self) -> i64 {
         self.inner.count as i64
     }
 
-    /// Expected mean of destination connections
+    /// Expected mean of connections
     async fn expected_mean(&self) -> f64 {
         self.inner.expected_mean
     }
 
-    /// Standard deviation of destination connections
+    /// Standard deviation of connections
     async fn std_deviation(&self) -> f64 {
         self.inner.std_deviation
     }
