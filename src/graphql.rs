@@ -795,12 +795,33 @@ impl TestSchema {
 
     async fn execute_with_guard(&self, query: &str, guard: RoleGuard) -> async_graphql::Response {
         let request: async_graphql::Request = query.into();
+        let request = self.request_with_guard(request, guard);
+        self.schema.execute(request).await
+    }
+
+    async fn execute_with_data(
+        &self,
+        query: &str,
+        data: impl Send + Sync + 'static,
+    ) -> async_graphql::Response {
+        let request: async_graphql::Request = query.into();
+        let request = self
+            .request_with_guard(request, RoleGuard::Role(Role::SystemAdministrator))
+            .data(data);
+        self.schema.execute(request).await
+    }
+
+    fn request_with_guard(
+        &self,
+        request: async_graphql::Request,
+        guard: RoleGuard,
+    ) -> async_graphql::Request {
         let request = if let Some(addr) = self.test_addr {
             request.data(addr)
         } else {
             request
         };
-        self.schema.execute(request.data(guard)).await
+        request.data(guard)
     }
 
     async fn execute_stream(
