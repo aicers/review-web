@@ -27,7 +27,7 @@ jobs:
       - name: Check
         run: cargo check --examples
       - name: markdownlint
-        uses: articulate/actions-markdownlint@v1
+        uses: DavidAnson/markdownlint-cli2-action@v19
 
   test:
     runs-on: ${{ matrix.os }}
