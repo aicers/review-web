@@ -28,7 +28,7 @@ use axum_extra::{
     typed_header::TypedHeaderRejection,
 };
 use graphql::RoleGuard;
-use review_database::{Database, Store};
+use review_database::Store;
 use rustls::{
     ClientConfig, RootCertStore,
     pki_types::{CertificateDer, PrivateKeyDer},
@@ -63,7 +63,6 @@ pub struct ServerConfig {
 /// Panics if binding to the address fails.
 pub fn serve<A>(
     config: ServerConfig,
-    db: Database,
     store: Arc<RwLock<Store>>,
     ip_locator: Option<ip2location::DB>,
     agent_manager: A,
@@ -75,7 +74,6 @@ where
     use tracing::info;
 
     let schema = graphql::schema(
-        db,
         store.clone(),
         agent_manager,
         ip_locator,

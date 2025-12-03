@@ -16,7 +16,7 @@ use futures::{
     pin_mut,
 };
 use ipnet::IpNet;
-use review_database::{Database, HostNetworkGroup, Store, migrate_data_dir};
+use review_database::{HostNetworkGroup, Store, migrate_data_dir};
 use review_web::{
     self as web,
     backend::{AgentManager, CertManager},
@@ -333,9 +333,6 @@ async fn run(config: Config) -> Result<Arc<Notify>> {
     } else {
         None
     };
-    let db = Database::new(config.database_url(), &config.ca_certs(), config.data_dir())
-        .await
-        .context("failed to connect to the PostgreSQL database")?;
     let store = Store::new(config.data_dir(), config.backup_dir())?;
     // Ignores the error if the initial admin password is already set.
     let _ = set_initial_admin_password(&store);
@@ -358,7 +355,7 @@ async fn run(config: Config) -> Result<Arc<Notify>> {
         client_cert_path: config.client_cert.clone(),
         client_key_path: config.client_key.clone(),
     };
-    let web_srv_shutdown_handle = web::serve(web_config, db, store, ip_locator, agent_manager);
+    let web_srv_shutdown_handle = web::serve(web_config, store, ip_locator, agent_manager);
 
     Ok(web_srv_shutdown_handle)
 }

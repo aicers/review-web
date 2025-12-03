@@ -9,7 +9,7 @@ use chrono::NaiveDateTime;
 use chrono::{DateTime, Utc};
 use database::Store;
 use num_traits::ToPrimitive;
-use review_database::{self as database, Database};
+use review_database as database;
 use tokio::sync::RwLock;
 
 use super::{
@@ -85,33 +85,19 @@ impl ClusterQuery {
             .unwrap_or(DEFAULT_SIZE)
             .to_usize()
             .ok_or("invalid size")?;
-        let db = ctx.data::<Database>()?;
+        let model_id = model
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid model id(u32)")?;
         let cluster_id_to_i32 = cluster_id
             .parse::<i32>()
             .map_err(|_| "invalid cluster id")?;
-        let cluster_ids = db
-            .load_cluster_ids(
-                model
-                    .as_str()
-                    .parse::<i32>()
-                    .map_err(|_| "invalid model id(i32)")?,
-                Some(&cluster_id_to_i32),
-            )
-            .await?
-            .into_iter()
-            .map(|(id, _)| id)
-            .collect::<Vec<_>>();
 
         let store = crate::graphql::get_store(ctx).await?;
+        let cluster_ids = load_cluster_ids(&store, model_id, Some(cluster_id_to_i32))?;
+
         let map = store.column_stats_map();
-        let counts = map.get_top_ip_addresses_of_cluster(
-            model
-                .as_str()
-                .parse::<u32>()
-                .map_err(|_| "invalid model id(u32)")?,
-            &cluster_ids,
-            size,
-        )?;
+        let counts = map.get_top_ip_addresses_of_cluster(model_id, &cluster_ids, size)?;
         Ok(counts.into_iter().map(Into::into).collect())
     }
 
@@ -465,4 +451,39 @@ where
     } else {
         Ok(None)
     }
+}
+
+const UNCATEGORIZED: i32 = 2;
+
+/// Loads cluster IDs for the given model, excluding "Uncategorized" clusters.
+///
+/// # Errors
+///
+/// Returns an error if a database operation fails.
+fn load_cluster_ids(
+    store: &database::Store,
+    model_id: u32,
+    cluster_id: Option<i32>,
+) -> Result<Vec<i32>> {
+    let map = store.cluster_map();
+    let clusters = map.load_clusters(
+        model_id,
+        None,
+        None,
+        None,
+        None,
+        &None,
+        &None,
+        true,
+        usize::MAX,
+    )?;
+
+    let ids: Vec<i32> = clusters
+        .into_iter()
+        .filter(|c| c.category_id != UNCATEGORIZED)
+        .filter(|c| cluster_id.is_none_or(|id| c.id == id))
+        .map(|c| c.id)
+        .collect();
+
+    Ok(ids)
 }

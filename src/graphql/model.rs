@@ -6,9 +6,8 @@ use async_graphql::{
     types::ID,
 };
 use chrono::NaiveDateTime;
-use database::Store;
 use num_traits::ToPrimitive;
-use review_database::{self as database, Database};
+use review_database::{self as database, Store};
 use tokio::sync::RwLock;
 
 use super::{
@@ -207,15 +206,10 @@ impl ModelQuery {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid model id(u32)")?;
-        let db = ctx.data::<Database>()?;
-        let cluster_ids = db
-            .load_cluster_ids_with_size_limit(model_id, portion_of_clusters)
-            .await?
-            .into_iter()
-            .filter_map(|id| id.to_u32())
-            .collect();
 
         let store = crate::graphql::get_store(ctx).await?;
+        let cluster_ids = load_cluster_ids_with_size_limit(&store, model_id, portion_of_clusters)?;
+
         let csv_column_extra_map = store.csv_column_extra_map();
         let Some(csv_extra) = csv_column_extra_map
             .get_by_model(model_id_to_i32)
@@ -261,16 +255,10 @@ impl ModelQuery {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid model id(u32)")?;
-        let db = ctx.data::<Database>()?;
-
-        let cluster_ids: Vec<u32> = db
-            .load_cluster_ids_with_size_limit(model_id, portion_of_clusters)
-            .await?
-            .into_iter()
-            .filter_map(|id| id.to_u32())
-            .collect();
 
         let store = crate::graphql::get_store(ctx).await?;
+        let cluster_ids = load_cluster_ids_with_size_limit(&store, model_id, portion_of_clusters)?;
+
         let map = store.column_stats_map();
         let counts = map.get_top_ip_addresses_of_model(
             model_id,
@@ -312,15 +300,10 @@ impl ModelQuery {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid model id(u32)")?;
-        let db = ctx.data::<Database>()?;
-        let cluster_ids: Vec<u32> = db
-            .load_cluster_ids(model_id_to_i32, None)
-            .await?
-            .into_iter()
-            .filter_map(|(_, cluster_id)| u32::try_from(cluster_id).ok())
-            .collect();
 
         let store = crate::graphql::get_store(ctx).await?;
+        let cluster_ids = load_cluster_ids(&store, model_id, None)?;
+
         let csv_column_extra_map = store.csv_column_extra_map();
         let csv_extra = csv_column_extra_map
             .get_by_model(model_id_to_i32)
@@ -1020,4 +1003,101 @@ async fn load(
             .map(|model| Edge::new(OpaqueCursor((model.id, model.name.clone())), model.into())),
     );
     Ok(connection)
+}
+
+const UNCATEGORIZED: i32 = 2;
+const DEFAULT_PORTION_OF_CLUSTER: f64 = 0.3;
+const DEFAULT_NUMBER_OF_CLUSTER: usize = 10;
+
+/// Loads cluster IDs for the given model, excluding "Uncategorized" clusters.
+///
+/// # Errors
+///
+/// Returns an error if a database operation fails.
+fn load_cluster_ids(
+    store: &database::Store,
+    model_id: u32,
+    cluster_id: Option<i32>,
+) -> Result<Vec<u32>> {
+    let map = store.cluster_map();
+    let clusters = map.load_clusters(
+        model_id,
+        None,
+        None,
+        None,
+        None,
+        &None,
+        &None,
+        true,
+        usize::MAX,
+    )?;
+
+    let ids: Vec<u32> = clusters
+        .into_iter()
+        .filter(|c| c.category_id != UNCATEGORIZED)
+        .filter(|c| cluster_id.is_none_or(|id| c.id == id))
+        .filter_map(|c| c.id.to_u32())
+        .collect();
+
+    Ok(ids)
+}
+
+/// Loads cluster IDs limited by the given portion of total cluster sizes.
+///
+/// # Errors
+///
+/// Returns an error if a database operation fails.
+fn load_cluster_ids_with_size_limit(
+    store: &database::Store,
+    model_id: u32,
+    portion_of_clusters: Option<f64>,
+) -> Result<Vec<u32>> {
+    let map = store.cluster_map();
+    let clusters = map.load_clusters(
+        model_id,
+        None,
+        None,
+        None,
+        None,
+        &None,
+        &None,
+        true,
+        usize::MAX,
+    )?;
+
+    // Filter out "Uncategorized" and sort by size descending
+    let mut clusters: Vec<database::Cluster> = clusters
+        .into_iter()
+        .filter(|c| c.category_id != UNCATEGORIZED)
+        .collect();
+    clusters.sort_by(|a, b| b.size.cmp(&a.size).then_with(|| a.id.cmp(&b.id)));
+
+    if clusters.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let total_sizes: i64 = clusters.iter().map(|c| c.size).sum();
+    let portion_of_clusters = portion_of_clusters.unwrap_or(DEFAULT_PORTION_OF_CLUSTER);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+    let size_including_clusters = ((total_sizes as f64) * portion_of_clusters).trunc() as i64;
+
+    let mut sum_sizes: i64 = 0;
+    let mut index_included: usize = 0;
+    for (index, c) in clusters.iter().enumerate() {
+        sum_sizes += c.size;
+        index_included = index;
+        if sum_sizes > size_including_clusters {
+            break;
+        }
+    }
+
+    // Ensure at least DEFAULT_NUMBER_OF_CLUSTER clusters are included
+    let index_included = index_included.max(DEFAULT_NUMBER_OF_CLUSTER.saturating_sub(1));
+    let cluster_ids: Vec<u32> = clusters
+        .iter()
+        .take(index_included + 1)
+        .filter_map(|c| c.id.to_u32())
+        .collect();
+
+    Ok(cluster_ids)
 }
