@@ -51,7 +51,7 @@ use async_graphql::{
 use num_traits::ToPrimitive;
 #[cfg(test)]
 use review_database::HostNetworkGroup;
-use review_database::{self as database, Database, Role, Store, event::Direction};
+use review_database::{self as database, Role, Store, event::Direction};
 pub use roxy::{Process, ResourceUsage};
 use tokio::sync::{Notify, RwLock};
 use tracing::warn;
@@ -73,13 +73,11 @@ pub(super) type Schema = async_graphql::Schema<Query, Mutation, Subscription>;
 
 type BoxedAgentManager = Box<dyn AgentManager>;
 
-/// Builds a GraphQL schema with the given database connection pool as its
-/// context.
+/// Builds a GraphQL schema with the given database store as its context.
 ///
-/// The connection pool is stored in `async_graphql::Context` and passed to
-/// every GraphQL API function.
+/// The store is stored in `async_graphql::Context` and passed to every
+/// GraphQL API function.
 pub(super) fn schema<B>(
-    db: Database,
     store: Arc<RwLock<Store>>,
     agent_manager: B,
     ip_locator: Option<ip2location::DB>,
@@ -95,7 +93,6 @@ where
         Mutation::default(),
         Subscription::default(),
     )
-    .data(db)
     .data(store)
     .data(agent_manager)
     .data(cert_manager)

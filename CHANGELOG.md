@@ -55,6 +55,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- Removed the `db: Database` parameter from the `serve()` function. Cluster
+  loading operations now use the RocksDB-based `Store` instead of the
+  PostgreSQL-based `Database`. Callers of `serve()` no longer need to provide
+  a `Database` instance.
 - Implemented forced password change for users whose passwords are reset by a
   system administrator via `resetAdminPassword` or `updateAccount` GraphQL APIs.
 - Unified the `start_time` field type to `DateTime<Utc>` across all detection
