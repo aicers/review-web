@@ -89,6 +89,7 @@ pub enum RawEventKind {
     Network,
     Nfs,
     Ntlm,
+    Radius,
     Rdp,
     Smb,
     Smtp,
