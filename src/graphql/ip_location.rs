@@ -101,28 +101,130 @@ impl TryFrom<ip2location::Record<'_>> for IpLocation {
     fn try_from(record: ip2location::Record) -> Result<Self, Self::Error> {
         use ip2location::Record;
         match record {
-            Record::LocationDb(record) => Ok(Self {
-                latitude: record.latitude,
-                longitude: record.longitude,
-                country: record.country.map(|c| c.short_name.to_string()),
-                region: record.region.map(|r| r.to_string()),
-                city: record.city.map(|r| r.to_string()),
-                isp: record.isp.map(|r| r.to_string()),
-                domain: record.domain.map(|r| r.to_string()),
-                zip_code: record.zip_code.map(|r| r.to_string()),
-                time_zone: record.time_zone.map(|r| r.to_string()),
-                net_speed: record.net_speed.map(|r| r.to_string()),
-                idd_code: record.idd_code.map(|r| r.to_string()),
-                area_code: record.area_code.map(|r| r.to_string()),
-                weather_station_code: record.weather_station_code.map(|r| r.to_string()),
-                weather_station_name: record.weather_station_name.map(|r| r.to_string()),
-                mcc: record.mcc.map(|r| r.to_string()),
-                mnc: record.mnc.map(|r| r.to_string()),
-                mobile_brand: record.mobile_brand.map(|r| r.to_string()),
-                elevation: record.elevation.map(|r| r.to_string()),
-                usage_type: record.usage_type.map(|r| r.to_string()),
-            }),
+            Record::LocationDb(record) => {
+                // ip2location returns (0.0, 0.0) for private/unresolved IPs; treat as no location.
+                let (latitude, longitude) = match (record.latitude, record.longitude) {
+                    (Some(lat), Some(lon)) if lat == 0.0 && lon == 0.0 => (None, None),
+                    (lat, lon) => (lat, lon),
+                };
+                Ok(Self {
+                    latitude,
+                    longitude,
+                    country: record.country.map(|c| c.short_name.to_string()),
+                    region: record.region.map(|r| r.to_string()),
+                    city: record.city.map(|r| r.to_string()),
+                    isp: record.isp.map(|r| r.to_string()),
+                    domain: record.domain.map(|r| r.to_string()),
+                    zip_code: record.zip_code.map(|r| r.to_string()),
+                    time_zone: record.time_zone.map(|r| r.to_string()),
+                    net_speed: record.net_speed.map(|r| r.to_string()),
+                    idd_code: record.idd_code.map(|r| r.to_string()),
+                    area_code: record.area_code.map(|r| r.to_string()),
+                    weather_station_code: record.weather_station_code.map(|r| r.to_string()),
+                    weather_station_name: record.weather_station_name.map(|r| r.to_string()),
+                    mcc: record.mcc.map(|r| r.to_string()),
+                    mnc: record.mnc.map(|r| r.to_string()),
+                    mobile_brand: record.mobile_brand.map(|r| r.to_string()),
+                    elevation: record.elevation.map(|r| r.to_string()),
+                    usage_type: record.usage_type.map(|r| r.to_string()),
+                })
+            }
             Record::ProxyDb(_) => Err("Failed to create IpLocation from ProxyDb record"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::IpAddr;
+
+    use ip2location::{LocationRecord, Record};
+
+    use super::*;
+
+    fn create_location_record(lat: Option<f32>, lon: Option<f32>) -> Record<'static> {
+        let record = LocationRecord {
+            ip: "127.0.0.1".parse::<IpAddr>().unwrap(),
+            latitude: lat,
+            longitude: lon,
+            ..Default::default()
+        };
+        Record::LocationDb(Box::new(record))
+    }
+
+    #[test]
+    fn try_from_zero_coords_returns_none() {
+        // When ip2location returns (0.0, 0.0), both latitude and longitude should be None.
+        let record = create_location_record(Some(0.0), Some(0.0));
+        let location: IpLocation = record.try_into().unwrap();
+
+        assert!(location.latitude.is_none());
+        assert!(location.longitude.is_none());
+    }
+
+    #[test]
+    fn try_from_valid_coords_preserved() {
+        // Valid coordinates should be preserved as-is.
+        let record = create_location_record(Some(37.7749), Some(-122.4194));
+        let location: IpLocation = record.try_into().unwrap();
+
+        assert_eq!(location.latitude, Some(37.7749));
+        assert_eq!(location.longitude, Some(-122.4194));
+    }
+
+    #[test]
+    fn try_from_none_coords_preserved() {
+        // When latitude and/or longitude are already None, they remain None.
+        let record = create_location_record(None, None);
+        let location: IpLocation = record.try_into().unwrap();
+
+        assert!(location.latitude.is_none());
+        assert!(location.longitude.is_none());
+    }
+
+    #[test]
+    fn try_from_partial_none_preserved() {
+        // When only one coordinate is None, preserve both as-is (not treated as zero coords).
+        let record = create_location_record(Some(37.7749), None);
+        let location: IpLocation = record.try_into().unwrap();
+
+        assert_eq!(location.latitude, Some(37.7749));
+        assert!(location.longitude.is_none());
+
+        let record = create_location_record(None, Some(-122.4194));
+        let location: IpLocation = record.try_into().unwrap();
+
+        assert!(location.latitude.is_none());
+        assert_eq!(location.longitude, Some(-122.4194));
+    }
+
+    #[test]
+    fn try_from_single_zero_coord_preserved() {
+        // When only one coordinate is 0.0 (but not both), preserve both.
+        // This handles edge cases where a location might legitimately have a zero value.
+        let record = create_location_record(Some(0.0), Some(-122.4194));
+        let location: IpLocation = record.try_into().unwrap();
+
+        assert_eq!(location.latitude, Some(0.0));
+        assert_eq!(location.longitude, Some(-122.4194));
+
+        let record = create_location_record(Some(37.7749), Some(0.0));
+        let location: IpLocation = record.try_into().unwrap();
+
+        assert_eq!(location.latitude, Some(37.7749));
+        assert_eq!(location.longitude, Some(0.0));
+    }
+
+    #[test]
+    fn try_from_proxy_db_fails() {
+        let proxy_record = ip2location::ProxyRecord::default();
+        let record = Record::ProxyDb(Box::new(proxy_record));
+        let result: Result<IpLocation, _> = record.try_into();
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap(),
+            "Failed to create IpLocation from ProxyDb record"
+        );
     }
 }
