@@ -1,3 +1,4 @@
+use std::sync::RwLock;
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::anyhow;
@@ -17,7 +18,7 @@ use review_database::{
 };
 use serde::Deserialize;
 use serde::Serialize;
-use tokio::{sync::RwLock, time};
+use tokio::time;
 use tracing::error;
 
 use super::{Role, RoleGuard, model::ModelDigest, query};
@@ -79,7 +80,7 @@ async fn fetch_ranked_outliers(
 
         // Read current model's ids
         let rows = {
-            let store = store.read().await;
+            let store = store.read().expect("RwLock should not be poisoned");
             let map = store.model_map();
             map.load_models(&None, &None, true, MAX_MODEL_LIST_SIZE)?
         };
@@ -87,7 +88,7 @@ async fn fetch_ranked_outliers(
 
         // Search for ranked outliers by model.
         for model_id in model_ids {
-            let store = store.read().await;
+            let store = store.read().expect("RwLock should not be poisoned");
             let map = store.outlier_map();
 
             let (iter, is_first_fetch) = if let Some(cursor) = latest_fetched_key.get(&model_id) {
@@ -127,7 +128,7 @@ impl OutlierMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] input: Vec<PreserveOutliersInput>,
     ) -> Result<Vec<PreserveOutliersOutput>> {
-        let store = super::get_store(ctx).await?;
+        let store = super::get_store(ctx)?;
         let map = store.outlier_map();
         let mut outdated_items: Vec<PreserveOutliersOutput> = vec![];
         for outlier_key in input {
@@ -287,7 +288,7 @@ async fn load_outliers(
         buf
     };
 
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let map = store.outlier_map();
 
     let (nodes, has_previous, has_next) =
@@ -413,7 +414,7 @@ struct RankedOutlierTotalCount {
 impl RankedOutlierTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.outlier_map();
 
         let iter = map.get(self.model_id, self.timestamp, Direction::Forward, None);
@@ -459,7 +460,7 @@ impl Outlier {
     }
 
     async fn model(&self, ctx: &Context<'_>) -> Result<ModelDigest> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.model_map();
         Ok(map.load_model(self.model_id)?.into())
     }
@@ -474,7 +475,7 @@ impl OutlierTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
         use std::collections::HashSet;
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let table = store.outlier_map();
         let iter = table.get(self.model_id, None, Direction::Forward, None);
 
@@ -493,7 +494,7 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Outlier, OutlierTotalCount, EmptyFields>> {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let table = store.outlier_map();
 
     let after = after.map(|cursor| cursor.0);
@@ -658,7 +659,7 @@ async fn load_ranked_outliers_with_filter(
         unreachable!();
     };
 
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let table = store.outlier_map();
 
     let remarks_map = store.triage_response_map();
@@ -750,6 +751,7 @@ async fn load_ranked_outliers_with_filter(
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use async_graphql::Value;
     use chrono::{DateTime, Utc};
@@ -784,7 +786,7 @@ mod tests {
     #[tokio::test]
     async fn outliers() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.outlier_map();
         let model = 3;
         let t1 = chrono::Utc::now();
@@ -841,7 +843,7 @@ mod tests {
     #[allow(clippy::too_many_lines)]
     async fn ranked_outliers() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.outlier_map();
         let model = 3;
         let t1 = chrono::Utc::now();
@@ -981,7 +983,7 @@ mod tests {
     #[tokio::test]
     async fn saved_outliers() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.outlier_map();
 
         let t = chrono::Utc::now();
@@ -1016,7 +1018,7 @@ mod tests {
     #[tokio::test]
     async fn preserved_outliers() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.outlier_map();
 
         let t = chrono::Utc::now();

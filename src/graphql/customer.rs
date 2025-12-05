@@ -85,7 +85,7 @@ impl CustomerQuery {
     async fn customer(&self, ctx: &Context<'_>, id: ID) -> Result<Customer> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         let Some(inner) = map.get_by_id(i)? else {
             return Err("no such customer".into());
@@ -108,7 +108,7 @@ impl CustomerMutation {
         description: String,
         networks: Vec<CustomerNetworkInput>,
     ) -> Result<ID> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         let mut networks: Vec<review_database::CustomerNetwork> = networks
             .into_iter()
@@ -142,42 +142,45 @@ impl CustomerMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
-        let map = store.customer_map();
-        let network_map = store.network_map();
+        let (removed, removed_customer_networks) = {
+            let store = crate::graphql::get_store(ctx)?;
+            let map = store.customer_map();
+            let network_map = store.network_map();
 
-        // Parse customer IDs before validation to catch invalid IDs early
-        let customer_ids = ids
-            .iter()
-            .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID"))
-            .collect::<Result<Vec<u32>, _>>()?;
+            // Parse customer IDs before validation to catch invalid IDs early
+            let customer_ids = ids
+                .iter()
+                .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID"))
+                .collect::<Result<Vec<u32>, _>>()?;
 
-        // Validate that no accounts or nodes reference these customers
-        validate_customer_removal(&store, &customer_ids)?;
+            // Validate that no accounts or nodes reference these customers
+            validate_customer_removal(&store, &customer_ids)?;
 
-        let customer_id_hash = agent_keys_by_customer_id(&store)?;
-        let mut removed_customer_networks = Vec::new();
-        let mut removed = Vec::<String>::with_capacity(customer_ids.len());
-        for i in customer_ids {
-            let key = map.remove(i)?;
-            network_map.remove_customer(i)?;
+            let customer_id_hash = agent_keys_by_customer_id(&store)?;
+            let mut removed_customer_networks = Vec::new();
+            let mut removed = Vec::<String>::with_capacity(customer_ids.len());
+            for i in customer_ids {
+                let key = map.remove(i)?;
+                network_map.remove_customer(i)?;
 
-            let name = match String::from_utf8(key) {
-                Ok(key) => key,
-                Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
-            };
-            info_with_username!(ctx, "Customer {name} has been deleted");
-            removed.push(name);
+                let name = match String::from_utf8(key) {
+                    Ok(key) => key,
+                    Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
+                };
+                info_with_username!(ctx, "Customer {name} has been deleted");
+                removed.push(name);
 
-            if let Some(agent_keys) = customer_id_hash.get(&i) {
-                let network_list = NetworksTargetAgentKeysPair::new(
-                    database::HostNetworkGroup::new(vec![], vec![], vec![]),
-                    agent_keys.clone(),
-                    SEMI_SUPERVISED_AGENT,
-                );
-                removed_customer_networks.push(network_list);
+                if let Some(agent_keys) = customer_id_hash.get(&i) {
+                    let network_list = NetworksTargetAgentKeysPair::new(
+                        database::HostNetworkGroup::new(vec![], vec![], vec![]),
+                        agent_keys.clone(),
+                        SEMI_SUPERVISED_AGENT,
+                    );
+                    removed_customer_networks.push(network_list);
+                }
             }
-        }
+            (removed, removed_customer_networks)
+        };
 
         if !removed_customer_networks.is_empty()
             && let Err(e) =
@@ -200,41 +203,47 @@ impl CustomerMutation {
     ) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
         let old = old.try_into()?;
-        let new = new.try_into()?;
+        let new: review_database::CustomerUpdate = new.try_into()?;
 
-        let store = crate::graphql::get_store(ctx).await?;
-        let mut map = store.customer_map();
-        map.update(i, &old, &new)?;
-        info_with_username!(
-            ctx,
-            "Customer {:?} has been updated to {:?}",
-            old.name,
-            new.name
-        );
+        let network_list = {
+            let store = crate::graphql::get_store(ctx)?;
+            let mut map = store.customer_map();
+            map.update(i, &old, &new)?;
+            info_with_username!(
+                ctx,
+                "Customer {:?} has been updated to {:?}",
+                old.name,
+                new.name
+            );
 
-        if let Some(new_networks) = new.networks {
-            let customer_id_hash = agent_keys_by_customer_id(&store)?;
-            if let Some(agent_keys) = customer_id_hash.get(&i) {
-                let (hosts, networks, ip_ranges) = new_networks.iter().fold(
-                    (vec![], vec![], vec![]),
-                    |(mut hosts, mut networks, mut ip_ranges), nn| {
-                        hosts.extend(nn.network_group.hosts());
-                        networks.extend(nn.network_group.networks());
-                        ip_ranges.extend(nn.network_group.ip_ranges().to_vec());
-                        (hosts, networks, ip_ranges)
-                    },
-                );
+            if let Some(ref new_networks) = new.networks {
+                let customer_id_hash = agent_keys_by_customer_id(&store)?;
+                customer_id_hash.get(&i).map(|agent_keys| {
+                    let (hosts, networks, ip_ranges) = new_networks.iter().fold(
+                        (vec![], vec![], vec![]),
+                        |(mut hosts, mut networks, mut ip_ranges), nn| {
+                            hosts.extend(nn.network_group.hosts());
+                            networks.extend(nn.network_group.networks());
+                            ip_ranges.extend(nn.network_group.ip_ranges().to_vec());
+                            (hosts, networks, ip_ranges)
+                        },
+                    );
 
-                let network_list = NetworksTargetAgentKeysPair::new(
-                    database::HostNetworkGroup::new(hosts, networks, ip_ranges),
-                    agent_keys.clone(),
-                    SEMI_SUPERVISED_AGENT,
-                );
-
-                if let Err(e) = send_agent_specific_customer_networks(ctx, &[network_list]).await {
-                    error_with_username!(ctx, "Failed to broadcast internal networks: {e:?}");
-                }
+                    NetworksTargetAgentKeysPair::new(
+                        database::HostNetworkGroup::new(hosts, networks, ip_ranges),
+                        agent_keys.clone(),
+                        SEMI_SUPERVISED_AGENT,
+                    )
+                })
+            } else {
+                None
             }
+        };
+
+        if let Some(network_list) = network_list
+            && let Err(e) = send_agent_specific_customer_networks(ctx, &[network_list]).await
+        {
+            error_with_username!(ctx, "Failed to broadcast internal networks: {e:?}");
         }
 
         Ok(id)
@@ -559,7 +568,7 @@ struct CustomerTotalCount;
 impl CustomerTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         Ok(store.customer_map().count()?)
     }
 }
@@ -571,7 +580,7 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Customer, CustomerTotalCount, EmptyFields>> {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let map = store.customer_map();
     super::load_edges(&map, after, before, first, last, CustomerTotalCount)
 }

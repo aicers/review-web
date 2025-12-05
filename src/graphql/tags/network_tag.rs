@@ -14,7 +14,7 @@ impl NetworkTagQuery {
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
     async fn network_tag_list(&self, ctx: &Context<'_>) -> Result<Vec<Tag>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let tags = store.network_tag_set()?;
         Ok(tags
             .tags()
@@ -36,7 +36,7 @@ impl NetworkTagMutation {
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))")]
     async fn insert_network_tag(&self, ctx: &Context<'_>, name: String) -> Result<ID> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let mut tags = store.network_tag_set()?;
         let id = tags.insert(&name)?;
         Ok(ID(id.to_string()))
@@ -48,7 +48,7 @@ impl NetworkTagMutation {
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))")]
     async fn remove_network_tag(&self, ctx: &Context<'_>, id: ID) -> Result<Option<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let mut tags = store.network_tag_set()?;
         let networks = store.network_map();
         let id = id.0.parse::<u32>()?;
@@ -70,7 +70,7 @@ impl NetworkTagMutation {
         old: String,
         new: String,
     ) -> Result<bool> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let mut tags = store.network_tag_set()?;
         Ok(tags.update(id.0.parse()?, &old, &new)?)
     }

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
@@ -8,7 +9,6 @@ use async_graphql::{
 use database::event::Direction;
 use review_database::{self as database, Store};
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 use tracing::info;
 
 use super::{
@@ -63,20 +63,25 @@ impl BlockNetworkMutation {
         networks: HostNetworkGroupInput,
         description: String,
     ) -> Result<ID> {
-        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
-        let map = db.block_network_map();
-        let networks: database::HostNetworkGroup =
-            networks.try_into().map_err(|_| "invalid network")?;
-        let value = review_database::BlockNetwork {
-            id: u32::MAX,
-            name: name.clone(),
-            networks,
-            description,
+        let id = {
+            let db = ctx
+                .data::<Arc<RwLock<Store>>>()?
+                .read()
+                .expect("RwLock should not be poisoned");
+            let map = db.block_network_map();
+            let networks: database::HostNetworkGroup =
+                networks.try_into().map_err(|_| "invalid network")?;
+            let value = review_database::BlockNetwork {
+                id: u32::MAX,
+                name: name.clone(),
+                networks,
+                description,
+            };
+            map.put(value)?
         };
-        let id = map.put(value)?;
         info_with_username!(ctx, "Blocklist {name} has been registered");
 
-        apply_block_networks(&db, ctx).await?;
+        apply_block_networks(ctx).await?;
         Ok(ID(id.to_string()))
     }
 
@@ -88,37 +93,43 @@ impl BlockNetworkMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
-        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
-        let map = db.block_network_map();
+        let (removed, count) = {
+            let db = ctx
+                .data::<Arc<RwLock<Store>>>()?
+                .read()
+                .expect("RwLock should not be poisoned");
+            let map = db.block_network_map();
 
-        let ids: Vec<u32> = ids
-            .iter()
-            .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID"))
-            .collect::<Result<_, _>>()?;
+            let ids: Vec<u32> = ids
+                .iter()
+                .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID"))
+                .collect::<Result<_, _>>()?;
 
-        let count = ids.len();
-        let removed = ids
-            .into_iter()
-            .try_fold(Vec::with_capacity(count), |mut removed, id| {
-                if let Ok(key) = map.remove(id) {
-                    let name = match String::from_utf8(key) {
-                        Ok(key) => key,
-                        Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
-                    };
-                    info_with_username!(ctx, "Blocklist {name} has been deleted");
-                    removed.push(name);
-                    Ok(removed)
-                } else {
-                    Err(removed)
-                }
-            })
-            .unwrap_or_else(|r| r);
+            let count = ids.len();
+            let removed = ids
+                .into_iter()
+                .try_fold(Vec::with_capacity(count), |mut removed, id| {
+                    if let Ok(key) = map.remove(id) {
+                        let name = match String::from_utf8(key) {
+                            Ok(key) => key,
+                            Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
+                        };
+                        info_with_username!(ctx, "Blocklist {name} has been deleted");
+                        removed.push(name);
+                        Ok(removed)
+                    } else {
+                        Err(removed)
+                    }
+                })
+                .unwrap_or_else(|r| r);
+            (removed, count)
+        };
 
         if removed.is_empty() {
             return Err("None of the specified blocked networks was removed.".into());
         }
 
-        apply_block_networks(&db, ctx).await?;
+        apply_block_networks(ctx).await?;
 
         if removed.len() < count {
             return Err("Some blocked networks were removed, but not all.".into());
@@ -139,11 +150,13 @@ impl BlockNetworkMutation {
     ) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
-        let db = super::get_store(ctx).await?;
-        let mut map = db.block_network_map();
         let old: review_database::BlockNetworkUpdate = old.try_into()?;
         let new: review_database::BlockNetworkUpdate = new.try_into()?;
-        map.update(i, &old, &new)?;
+        {
+            let db = super::get_store(ctx)?;
+            let mut map = db.block_network_map();
+            map.update(i, &old, &new)?;
+        }
         info_with_username!(
             ctx,
             "Blocklist {:?} has been updated to {:?}",
@@ -151,7 +164,7 @@ impl BlockNetworkMutation {
             new.name
         );
 
-        apply_block_networks(&db, ctx).await?;
+        apply_block_networks(ctx).await?;
         Ok(id)
     }
 }
@@ -212,7 +225,10 @@ struct BlockNetworkTotalCount;
 impl BlockNetworkTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+        let db = ctx
+            .data::<Arc<RwLock<Store>>>()?
+            .read()
+            .expect("RwLock should not be poisoned");
         Ok(db.block_network_map().count()?)
     }
 }
@@ -224,7 +240,7 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, BlockNetwork, BlockNetworkTotalCount, EmptyFields>> {
-    let db = super::get_store(ctx).await?;
+    let db = super::get_store(ctx)?;
     let map = db.block_network_map();
     super::load_edges(&map, after, before, first, last, BlockNetworkTotalCount)
 }
@@ -250,8 +266,11 @@ pub fn get_block_networks(db: &Store) -> Result<database::HostNetworkGroup> {
     Ok(database::HostNetworkGroup::new(hosts, networks, ip_ranges))
 }
 
-async fn apply_block_networks(store: &Store, ctx: &Context<'_>) -> Result<()> {
-    let networks = get_block_networks(store)?;
+async fn apply_block_networks(ctx: &Context<'_>) -> Result<()> {
+    let networks = {
+        let store = super::get_store(ctx)?;
+        get_block_networks(&store)?
+    };
     let agent_manager = ctx.data::<BoxedAgentManager>()?;
     agent_manager.broadcast_block_networks(&networks).await?;
     Ok(())

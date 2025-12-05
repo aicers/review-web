@@ -48,7 +48,7 @@ impl NodeQuery {
     async fn node(&self, ctx: &Context<'_>, id: ID) -> Result<Node> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.node_map();
         let Some((node, _invalid_agents, _invalid_external_services)) = map.get_by_id(i)? else {
             return Err("no such node".into());
@@ -74,7 +74,7 @@ impl NodeMutation {
         agents: Vec<AgentDraftInput>,
         external_services: Vec<ExternalServiceInput>,
     ) -> Result<ID> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.node_map();
         let customer_id = customer_id
             .as_str()
@@ -157,7 +157,7 @@ impl NodeMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.node_map();
 
         let mut removed = Vec::<String>::with_capacity(ids.len());
@@ -186,7 +186,7 @@ impl NodeMutation {
         new: NodeDraftInput,
     ) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let mut map = store.node_map();
         let new = super::input::create_draft_update(&old, new)?;
         let old = old.try_into()?;
@@ -203,7 +203,7 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Node, NodeTotalCount, EmptyFields>> {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let map = store.node_map();
     super::super::load_edges(&map, after, before, first, last, NodeTotalCount)
 }

@@ -4,6 +4,25 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `backupConfig` GraphQL query to retrieve the current backup configuration.
+  Returns default values if no configuration has been saved. Accessible to all
+  authenticated users.
+- Added `saveBackupConfig` GraphQL mutation to save a new backup configuration.
+  Validates input values before persisting. Restricted to administrators.
+- Added `updateBackupConfig` GraphQL mutation to update an existing backup
+  configuration. Requires both old and new configuration for verification.
+  Restricted to administrators.
+
+### Changed
+
+- Updated review-database dependency to rev 2d62eb1 to support BackupConfig API.
+- Migrated internal store locking from `tokio::sync::RwLock` to `std::sync::RwLock`
+  to align with changes in review-database.
+
 ## [0.29.1] - 2025-12-04
 
 ### Changed

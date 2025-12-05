@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use axum::{
     Router,
@@ -17,7 +17,6 @@ use axum_extra::{
 use http::{StatusCode, request::Parts};
 use review_database::types::Role;
 use serde::Deserialize;
-use tokio::sync::RwLock;
 
 use crate::{Error, Store, auth::validate_token};
 
@@ -92,8 +91,11 @@ async fn auth(
             let bearer = bearer?;
             let roles = config.roles();
 
-            let store = state.store.read().await;
-            let (_, role) = validate_token(&store, bearer.token())?;
+            let role = {
+                let store = state.store.read().expect("RwLock should not be poisoned");
+                let (_, role) = validate_token(&store, bearer.token())?;
+                role
+            };
 
             if roles.contains(&role) {
                 Ok(next.run(req).await)

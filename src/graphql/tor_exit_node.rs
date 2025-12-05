@@ -52,7 +52,7 @@ impl TorExitNodeMutation {
         ctx: &Context<'_>,
         ip_addresses: Vec<String>,
     ) -> Result<Vec<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.tor_exit_node_map();
         let updated_at = Utc::now();
         map.replace_all(
@@ -88,7 +88,7 @@ struct TorExitNodeTotalCount;
 impl TorExitNodeTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.tor_exit_node_map();
         let count = map.iter(Direction::Forward, None).count();
         Ok(count)
@@ -102,7 +102,7 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, TorExitNode, TorExitNodeTotalCount, EmptyFields>> {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let map = store.tor_exit_node_map();
 
     super::load_edges(&map, after, before, first, last, TorExitNodeTotalCount)

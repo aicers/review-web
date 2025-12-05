@@ -1,3 +1,4 @@
+use std::sync::RwLock;
 use std::{
     collections::HashMap,
     env, fs,
@@ -28,7 +29,7 @@ use review_web::{
 use serde::Deserialize;
 use tokio::{
     signal::unix::{SignalKind, signal},
-    sync::{Notify, RwLock},
+    sync::Notify,
 };
 use tracing::{error, info, metadata::LevelFilter};
 use tracing_appender::non_blocking::WorkerGuard;

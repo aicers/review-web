@@ -30,7 +30,7 @@ impl StatisticsQuery {
     ) -> Result<JsonValue> {
         let cluster = cluster.as_str().parse()?;
         let model = model.as_str().parse()?;
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.column_stats_map();
         let result = map.get_column_statistics(model, cluster, time)?;
         Ok(serde_json::to_value(result)?)
@@ -114,7 +114,7 @@ struct TotalCountByCluster {
 impl TotalCountByCluster {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<i64> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.column_stats_map();
         Ok(map.count_rounds_by_cluster(i32::try_from(self.model)?, self.cluster)?)
     }
@@ -129,7 +129,7 @@ impl TotalCountByModel {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<i64> {
         use num_traits::ToPrimitive;
-        let store = super::get_store(ctx).await?;
+        let store = super::get_store(ctx)?;
         let map = store.batch_info_map();
         Ok(map
             .count(self.model)
@@ -194,7 +194,7 @@ async fn load_rounds_by_cluster(
 > {
     let is_first = first.is_some();
     let limit = slicing::len(first, last)?;
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let map = store.column_stats_map();
     let (_, batches) = map.load_rounds_by_cluster(
         model,
@@ -207,7 +207,7 @@ async fn load_rounds_by_cluster(
 
     let (batches, has_previous, has_next) = slicing::page_info(is_first, limit, batches);
     let batch_infos: Vec<_> = {
-        let store = super::get_store(ctx).await?;
+        let store = super::get_store(ctx)?;
         let map = store.batch_info_map();
         batches
             .into_iter()
@@ -245,7 +245,7 @@ async fn load_rounds_by_model(
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Round, TotalCountByModel, EmptyFields, RoundByModel>>
 {
-    let store = super::get_store(ctx).await?;
+    let store = super::get_store(ctx)?;
     let table = store.batch_info_map();
     super::load_edges(
         &table,

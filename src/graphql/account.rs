@@ -94,7 +94,7 @@ impl AccountQuery {
         // Normalize the username for lookup (convert to lowercase)
         let normalized_username = username.to_lowercase();
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.account_map();
         let inner = map
             .get(&normalized_username)?
@@ -109,7 +109,7 @@ impl AccountQuery {
         .or(RoleGuard::new(super::Role::SecurityManager))
         .or(RoleGuard::new(super::Role::SecurityMonitor))")]
     async fn my_account(&self, ctx: &Context<'_>) -> Result<MyAccount> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let username = ctx.data::<String>()?;
         let account_map = store.account_map();
         let access_token_map = store.access_token_map();
@@ -185,7 +185,7 @@ impl AccountQuery {
 
         use review_database::Iterable;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let access_token_map = store.access_token_map();
         let account_map = store.account_map();
 
@@ -252,7 +252,7 @@ impl AccountQuery {
     ) -> Result<Vec<ComprehensiveUserAccount>> {
         use review_database::Iterable;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let account_map = store.account_map();
 
         let users = account_map
@@ -288,7 +288,7 @@ impl AccountQuery {
         .or(RoleGuard::new(super::Role::SecurityManager))
         .or(RoleGuard::new(super::Role::SecurityMonitor))")]
     async fn expiration_time(&self, ctx: &Context<'_>) -> Result<StringNumber<u32>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
 
         info_with_username!(ctx, "Account session expiration settings retrieved");
         expiration_time(&store).map(StringNumber)
@@ -322,7 +322,7 @@ impl AccountMutation {
             .map_err(|e| format!("Invalid username: {e}"))?;
 
         let customer_ids = try_id_args_into_ints::<u32>(customer_ids)?;
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let table = store.account_map();
         if table.contains(&normalized_username)? {
             info_with_username!(ctx, "Account creation skipped: username already exists");
@@ -370,7 +370,7 @@ impl AccountMutation {
         // Normalize the username for lookup (convert to lowercase)
         let normalized_username = username.to_lowercase();
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.account_map();
         if let Some(mut account) = map.get(&normalized_username)? {
             if account.role == review_database::Role::SystemAdministrator {
@@ -411,7 +411,7 @@ impl AccountMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] usernames: Vec<String>,
     ) -> Result<Vec<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.account_map();
         let current_username = ctx.data::<String>()?;
 
@@ -453,7 +453,7 @@ impl AccountMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] usernames: Vec<String>,
     ) -> Result<Vec<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.account_map();
         let mut removed = Vec::with_capacity(usernames.len());
         for username in usernames {
@@ -511,7 +511,7 @@ impl AccountMutation {
         // Normalize the username for lookup (convert to lowercase)
         let normalized_username = username.to_lowercase();
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.account_map();
 
         // Validate password change if provided
@@ -606,7 +606,7 @@ impl AccountMutation {
         // Normalize the username for lookup (convert to lowercase)
         let normalized_username = username.to_lowercase();
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let account_map = store.account_map();
         let client_ip = get_client_ip(ctx);
 
@@ -648,7 +648,7 @@ impl AccountMutation {
         // Normalize the username for lookup (convert to lowercase)
         let normalized_username = username.to_lowercase();
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let account_map = store.account_map();
         let client_ip = get_client_ip(ctx);
 
@@ -681,7 +681,7 @@ impl AccountMutation {
         .or(RoleGuard::new(super::Role::SecurityManager))
         .or(RoleGuard::new(super::Role::SecurityMonitor))")]
     async fn sign_out(&self, ctx: &Context<'_>, token: String) -> Result<String> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         revoke_token(&store, &token)?;
         info_with_username!(ctx, "Signed out");
         Ok(token)
@@ -703,7 +703,7 @@ impl AccountMutation {
         // Normalize the username for lookup (convert to lowercase)
         let normalized_username = username.to_lowercase();
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let account_map = store.account_map();
 
         // Verify the target user exists
@@ -782,7 +782,7 @@ impl AccountMutation {
         .or(RoleGuard::new(super::Role::SecurityManager))
         .or(RoleGuard::new(super::Role::SecurityMonitor))")]
     async fn refresh_token(&self, ctx: &Context<'_>, token: String) -> Result<AuthPayload> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let decoded_token = decode_token(&token)?;
         let username = decoded_token.sub;
         let (review_token, expiration_time) = create_token(username.clone(), decoded_token.role)?;
@@ -815,7 +815,7 @@ impl AccountMutation {
         ctx: &Context<'_>,
         review_token: String,
     ) -> Result<AimerTokenPayload> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         validate_token(&store, &review_token)
             .map_err(|err| async_graphql::Error::new(err.to_string()))?;
 
@@ -849,7 +849,7 @@ impl AccountMutation {
         let Ok(expires_in) = u32::try_from(time) else {
             unreachable!("`time` is a positive integer")
         };
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.config_map();
         map.update(ACCOUNT_EXPIRY_CONFIG_KEY, &expires_in.to_string())?;
         info_with_username!(
@@ -871,7 +871,7 @@ impl AccountMutation {
         ctx: &Context<'_>,
         language: UpdateLanguage,
     ) -> Result<Option<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.account_map();
 
         let username = ctx.data::<String>()?;
@@ -899,7 +899,7 @@ impl AccountMutation {
    .or(RoleGuard::new(super::Role::SecurityManager))
    .or(RoleGuard::new(super::Role::SecurityMonitor))")]
     async fn update_theme(&self, ctx: &Context<'_>, theme: UpdateTheme) -> Result<Option<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.account_map();
 
         let username = ctx.data::<String>()?;
@@ -941,7 +941,7 @@ impl AccountMutation {
             return Err("At least one of the optional fields must be provided to update.".into());
         }
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.account_map();
         let username = ctx.data::<String>()?;
 
@@ -1365,7 +1365,7 @@ impl AccountTotalCount {
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
         use database::Iterable;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.account_map();
         let count = map.iter(Direction::Forward, None).count();
         Ok(count)
@@ -1379,7 +1379,7 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Account, AccountTotalCount, EmptyFields>> {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let table = store.account_map();
     super::load_edges(&table, after, before, first, last, AccountTotalCount)
 }
@@ -1452,6 +1452,7 @@ fn read_review_admin() -> anyhow::Result<(String, String)> {
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use std::{env, net::SocketAddr};
 
@@ -1467,7 +1468,7 @@ mod tests {
     };
 
     async fn update_account_last_signin_time(schema: &TestSchema, name: &str) {
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.account_map();
         let mut account = map.get(name).unwrap().unwrap();
         account.update_last_signin_time();
@@ -2000,7 +2001,7 @@ mod tests {
         assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
 
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         super::init_expiration_time(&store, 3600).unwrap();
         update_account_last_signin_time(&schema, "admin").await;
         let res = schema
@@ -2088,7 +2089,7 @@ mod tests {
         assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
 
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         super::init_expiration_time(&store, 3600).unwrap();
         drop(store);
         update_account_last_signin_time(&schema, "admin").await;
@@ -2166,7 +2167,7 @@ mod tests {
         assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
 
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         super::init_expiration_time(&store, 3600).unwrap();
         drop(store);
         update_account_last_signin_time(&schema, "admin").await;
@@ -2227,7 +2228,7 @@ mod tests {
         assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
 
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         super::init_expiration_time(&store, 3600).unwrap();
         drop(store);
 
@@ -2275,7 +2276,7 @@ mod tests {
         assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
 
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         super::init_expiration_time(&store, 3600).unwrap();
         drop(store);
 
@@ -2358,7 +2359,7 @@ mod tests {
     async fn expiration_time() {
         let schema = TestSchema::new().await;
 
-        let store = schema.store().await;
+        let store = schema.store();
         assert!(super::init_expiration_time(&store, 12).is_ok());
 
         let res = schema
@@ -2859,7 +2860,7 @@ mod tests {
     #[tokio::test]
     async fn max_parallel_sessions() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         super::init_expiration_time(&store, 3600).unwrap();
         let res = schema
             .execute(
@@ -3244,7 +3245,7 @@ mod tests {
             .await;
         assert!(res.is_ok());
 
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.account_map();
         let account = map.get("user3").unwrap().unwrap();
         assert!(account.verify_password("pw4"));
@@ -3437,7 +3438,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{updateAccount: "testuser"}"#);
 
         // Verify the password was actually changed
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.account_map();
         let account = map.get("testuser").unwrap().unwrap();
         assert!(account.verify_password("differentpassword"));
@@ -3479,7 +3480,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{resetAdminPassword: "admin"}"#);
 
         // Verify the password was actually changed
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.account_map();
         let account = map.get("admin").unwrap().unwrap();
         assert!(account.verify_password("newadminpassword"));
@@ -3545,7 +3546,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{updateMyAccount: "testuser"}"#);
 
         // Verify all changes were applied
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.account_map();
         let account = map.get("testuser").unwrap().unwrap();
         assert!(account.verify_password("newpassword"));
@@ -3600,7 +3601,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{updateMyAccount: "testuser"}"#);
 
         // Verify only specified fields were changed
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.account_map();
         let account = map.get("testuser").unwrap().unwrap();
         assert!(account.verify_password("password")); // Password unchanged
@@ -3777,7 +3778,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{updateMyAccount: "testuser"}"#);
 
         // Verify values were set
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.account_map();
         let account = map.get("testuser").unwrap().unwrap();
         assert_eq!(account.language, Some("en-US".to_string()));
@@ -3804,7 +3805,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{updateMyAccount: "testuser"}"#);
 
         // Verify values were cleared
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.account_map();
         let account = map.get("testuser").unwrap().unwrap();
         assert_eq!(account.language, None);
@@ -3817,7 +3818,7 @@ mod tests {
         let original_review_admin = backup_and_set_review_admin();
 
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         super::init_expiration_time(&store, 3600).unwrap();
 
         // Create a test user
@@ -4236,7 +4237,7 @@ mod tests {
         assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
 
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let account_map = store.account_map();
 
         // 1. Initial Sign-in with default password (should fail)
@@ -4314,7 +4315,7 @@ mod tests {
     #[serial]
     async fn update_account_and_force_password_change() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let account_map = store.account_map();
 
         // Create a test user.
