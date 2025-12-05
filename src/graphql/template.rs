@@ -81,7 +81,7 @@ impl TemplateMutation {
             }
         };
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.template_map();
         map.insert(template)?;
         info_with_username!(ctx, "Template {name} has been registered");
@@ -93,7 +93,7 @@ impl TemplateMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn remove_template(&self, ctx: &Context<'_>, name: String) -> Result<String> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.template_map();
         map.remove(&name)?;
         info_with_username!(ctx, "Template {name} has been deleted");
@@ -147,7 +147,7 @@ impl TemplateMutation {
                 );
             }
         };
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.template_map();
         map.update(old, new)?;
         info_with_username!(ctx, "Template {old_name} has been updated to {new_name}");
@@ -348,7 +348,7 @@ impl TemplateTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
         use review_database::{Iterable, event::Direction};
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.template_map();
         let count = map.iter(Direction::Forward, None).count();
         Ok(count)
@@ -362,7 +362,7 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Template, TemplateTotalCount, EmptyFields>> {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let map = store.template_map();
     super::load_edges(&map, after, before, first, last, TemplateTotalCount)
 }

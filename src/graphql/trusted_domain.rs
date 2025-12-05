@@ -52,15 +52,18 @@ impl TrustedDomainMutation {
         name: String,
         remarks: String,
     ) -> Result<String> {
-        let store = crate::graphql::get_store(ctx).await?;
-        let map = store.trusted_domain_map();
-        let entry = review_database::TrustedDomain { name, remarks };
-        map.put(&entry)?;
+        let entry_name = {
+            let store = crate::graphql::get_store(ctx)?;
+            let map = store.trusted_domain_map();
+            let entry = review_database::TrustedDomain { name, remarks };
+            map.put(&entry)?;
+            entry.name.clone()
+        };
 
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
         agent_manager.broadcast_trusted_domains().await?;
-        info_with_username!(ctx, "Trusted domain {} has been registered", entry.name);
-        Ok(entry.name)
+        info_with_username!(ctx, "Trusted domain {} has been registered", entry_name);
+        Ok(entry_name)
     }
 
     /// Updates a trusted domain, returning the new value.
@@ -72,21 +75,24 @@ impl TrustedDomainMutation {
         old: TrustedDomainInput,
         new: TrustedDomainInput,
     ) -> Result<String> {
-        let store = crate::graphql::get_store(ctx).await?;
-        let map = store.trusted_domain_map();
-        let old = review_database::TrustedDomain::from(old);
-        let new = review_database::TrustedDomain::from(new);
-        map.update(&old, &new)?;
+        let (old_name, new_name) = {
+            let store = crate::graphql::get_store(ctx)?;
+            let map = store.trusted_domain_map();
+            let old = review_database::TrustedDomain::from(old);
+            let new = review_database::TrustedDomain::from(new);
+            map.update(&old, &new)?;
+            (old.name.clone(), new.name.clone())
+        };
 
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
         agent_manager.broadcast_trusted_domains().await?;
         info_with_username!(
             ctx,
             "Trusted domain {} has been updated to {}",
-            old.name,
-            new.name
+            old_name,
+            new_name
         );
-        Ok(new.name)
+        Ok(new_name)
     }
 
     /// Removes multiple trusted domains, returning the removed values.
@@ -99,26 +105,30 @@ impl TrustedDomainMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] names: Vec<String>,
     ) -> Result<Vec<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
-        let map = store.trusted_domain_map();
+        let (removed, count) = {
+            let store = crate::graphql::get_store(ctx)?;
+            let map = store.trusted_domain_map();
 
-        let count = names.len();
-        let removed = names
-            .into_iter()
-            .try_fold(Vec::with_capacity(count), |mut removed, name| {
-                if map.remove(&name).is_ok() {
-                    info_with_username!(ctx, "Trusted domain {name} has been deleted");
-                    removed.push(name);
-                    Ok(removed)
-                } else {
-                    Err(removed)
-                }
-            })
-            .unwrap_or_else(|r| r);
+            let count = names.len();
+            let removed = names
+                .into_iter()
+                .try_fold(Vec::with_capacity(count), |mut removed, name| {
+                    if map.remove(&name).is_ok() {
+                        info_with_username!(ctx, "Trusted domain {name} has been deleted");
+                        removed.push(name);
+                        Ok(removed)
+                    } else {
+                        Err(removed)
+                    }
+                })
+                .unwrap_or_else(|r| r);
 
-        if removed.is_empty() {
-            return Err("None of the specified trusted domains was removed.".into());
-        }
+            if removed.is_empty() {
+                return Err("None of the specified trusted domains was removed.".into());
+            }
+
+            (removed, count)
+        };
 
         let agent_manager = ctx.data::<Box<dyn AgentManager>>()?;
         agent_manager.broadcast_trusted_domains().await?;
@@ -168,7 +178,7 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, TrustedDomain, EmptyFields, EmptyFields>> {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let map = store.trusted_domain_map();
     super::load_edges(&map, after, before, first, last, EmptyFields)
 }

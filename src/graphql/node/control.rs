@@ -102,12 +102,14 @@ impl NodeControlMutation {
         }
 
         if let Some(ref target_agents) = apply_scope.agents {
-            let store = crate::graphql::get_store(ctx).await?;
-            let node_map = store.node_map();
-            let (node, _, _) = node_map
-                .get_by_id(i)?
-                .ok_or_else(|| async_graphql::Error::new(format!("Node with ID {i} not found")))?;
-            let hostname = node.profile.map(|p| p.hostname).unwrap_or_default();
+            let hostname = {
+                let store = crate::graphql::get_store(ctx)?;
+                let node_map = store.node_map();
+                let (node, _, _) = node_map.get_by_id(i)?.ok_or_else(|| {
+                    async_graphql::Error::new(format!("Node with ID {i} not found"))
+                })?;
+                node.profile.map(|p| p.hostname).unwrap_or_default()
+            };
 
             if hostname.is_empty() {
                 info_with_username!(
@@ -233,7 +235,7 @@ async fn update_db(
     node: &NodeInput,
     disable_agent_ids: &[&str],
 ) -> Result<()> {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let mut map = store.node_map();
 
     let mut update = node.clone();
@@ -311,10 +313,11 @@ async fn send_customer_change(
     customer_id: u32,
     agent_keys: Vec<String>,
 ) -> Result<()> {
-    let store = crate::graphql::get_store(ctx).await?;
-    let networks = get_customer_networks(&store, customer_id)?;
-    let network_list =
-        NetworksTargetAgentKeysPair::new(networks, agent_keys, SEMI_SUPERVISED_AGENT);
+    let network_list = {
+        let store = crate::graphql::get_store(ctx)?;
+        let networks = get_customer_networks(&store, customer_id)?;
+        NetworksTargetAgentKeysPair::new(networks, agent_keys, SEMI_SUPERVISED_AGENT)
+    };
     if let Err(e) = send_agent_specific_customer_networks(ctx, &[network_list]).await {
         error_with_username!(ctx, "Failed to broadcast internal networks: {e:?}");
     }
@@ -323,6 +326,7 @@ async fn send_customer_change(
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use std::{collections::HashMap, time::Duration};
 
@@ -1938,19 +1942,13 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
         // Simulate a situation where `name_draft` is set to `None`
-        let (node, _, _) = schema
-            .store()
-            .await
-            .node_map()
-            .get_by_id(0)
-            .unwrap()
-            .unwrap();
+        let (node, _, _) = schema.store().node_map().get_by_id(0).unwrap().unwrap();
         let mut update = node.clone();
         update.name_draft = None;
 
         let old = node.clone().into();
         let new = update.into();
-        let _ = schema.store().await.node_map().update(node.id, &old, &new);
+        let _ = schema.store().node_map().update(node.id, &old, &new);
 
         // Apply node
         let res = schema

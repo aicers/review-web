@@ -59,17 +59,23 @@ impl UserAgentMutation {
         ctx: &Context<'_>,
         user_agents: Vec<String>,
     ) -> Result<bool> {
-        let store = crate::graphql::get_store(ctx).await?;
-        let map = store.trusted_user_agent_map();
-        for user_agent in user_agents {
-            let entry = database::TrustedUserAgent {
-                user_agent,
-                updated_at: Utc::now(),
-            };
-            map.put(&entry)?;
-        }
+        let list = {
+            let store = crate::graphql::get_store(ctx)?;
+            let map = store.trusted_user_agent_map();
+            for user_agent in user_agents {
+                let entry = database::TrustedUserAgent {
+                    user_agent,
+                    updated_at: Utc::now(),
+                };
+                map.put(&entry)?;
+            }
+            get_trusted_user_agent_list(&store)?
+        };
 
-        apply_trusted_user_agent_list(&store, ctx).await?;
+        let agent_manager = ctx.data::<BoxedAgentManager>()?;
+        agent_manager
+            .broadcast_trusted_user_agent_list(&list)
+            .await?;
         Ok(true)
     }
 
@@ -81,27 +87,35 @@ impl UserAgentMutation {
         ctx: &Context<'_>,
         user_agents: Vec<String>,
     ) -> Result<Vec<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
-        let map = store.trusted_user_agent_map();
+        let (removed, count, list) = {
+            let store = crate::graphql::get_store(ctx)?;
+            let map = store.trusted_user_agent_map();
 
-        let count = user_agents.len();
-        let removed = user_agents
-            .into_iter()
-            .try_fold(Vec::with_capacity(count), |mut removed, user_agent| {
-                if map.remove(&user_agent).is_ok() {
-                    removed.push(user_agent);
-                    Ok(removed)
-                } else {
-                    Err(removed)
-                }
-            })
-            .unwrap_or_else(|r| r);
+            let count = user_agents.len();
+            let removed = user_agents
+                .into_iter()
+                .try_fold(Vec::with_capacity(count), |mut removed, user_agent| {
+                    if map.remove(&user_agent).is_ok() {
+                        removed.push(user_agent);
+                        Ok(removed)
+                    } else {
+                        Err(removed)
+                    }
+                })
+                .unwrap_or_else(|r| r);
 
-        if removed.is_empty() {
-            return Err("None of the specified trusted user agents was removed.".into());
-        }
+            if removed.is_empty() {
+                return Err("None of the specified trusted user agents was removed.".into());
+            }
 
-        apply_trusted_user_agent_list(&store, ctx).await?;
+            let list = get_trusted_user_agent_list(&store)?;
+            (removed, count, list)
+        };
+
+        let agent_manager = ctx.data::<BoxedAgentManager>()?;
+        agent_manager
+            .broadcast_trusted_user_agent_list(&list)
+            .await?;
 
         if removed.len() < count {
             return Err("Some trusted user agents were removed, but not all.".into());
@@ -119,15 +133,21 @@ impl UserAgentMutation {
         old: String,
         new: String,
     ) -> Result<bool> {
-        let store = crate::graphql::get_store(ctx).await?;
-        let map = store.trusted_user_agent_map();
-        let new = database::TrustedUserAgent {
-            user_agent: new,
-            updated_at: Utc::now(),
+        let list = {
+            let store = crate::graphql::get_store(ctx)?;
+            let map = store.trusted_user_agent_map();
+            let new = database::TrustedUserAgent {
+                user_agent: new,
+                updated_at: Utc::now(),
+            };
+            map.update(&old, &new)?;
+            get_trusted_user_agent_list(&store)?
         };
-        map.update(&old, &new)?;
 
-        apply_trusted_user_agent_list(&store, ctx).await?;
+        let agent_manager = ctx.data::<BoxedAgentManager>()?;
+        agent_manager
+            .broadcast_trusted_user_agent_list(&list)
+            .await?;
         Ok(true)
     }
 }
@@ -153,7 +173,7 @@ struct TrustedUserAgentTotalCount;
 impl TrustedUserAgentTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.trusted_user_agent_map();
 
         Ok(map.iter(Direction::Forward, None).count())
@@ -173,15 +193,6 @@ fn get_trusted_user_agent_list(db: &Store) -> Result<Vec<String>> {
         .collect::<Result<Vec<_>, anyhow::Error>>()?)
 }
 
-async fn apply_trusted_user_agent_list(store: &Store, ctx: &Context<'_>) -> Result<()> {
-    let list = get_trusted_user_agent_list(store)?;
-    let agent_manager = ctx.data::<BoxedAgentManager>()?;
-    agent_manager
-        .broadcast_trusted_user_agent_list(&list)
-        .await
-        .map_err(Into::into)
-}
-
 async fn load(
     ctx: &Context<'_>,
     after: Option<OpaqueCursor<Vec<u8>>>,
@@ -191,7 +202,7 @@ async fn load(
 ) -> Result<
     Connection<OpaqueCursor<Vec<u8>>, TrustedUserAgent, TrustedUserAgentTotalCount, EmptyFields>,
 > {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let map = store.trusted_user_agent_map();
     super::load_edges(&map, after, before, first, last, TrustedUserAgentTotalCount)
 }

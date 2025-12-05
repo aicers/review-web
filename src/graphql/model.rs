@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use async_graphql::{
     Context, Object, Result, SimpleObject, StringNumber,
@@ -8,7 +9,6 @@ use async_graphql::{
 use chrono::NaiveDateTime;
 use num_traits::ToPrimitive;
 use review_database::{self as database, Store};
-use tokio::sync::RwLock;
 
 use super::{
     DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, Role, RoleGuard, cluster::TimeCount,
@@ -57,7 +57,10 @@ impl ModelQuery {
         ctx: &Context<'_>,
         model: i32,
     ) -> Result<Option<CsvColumnExtraConfig>> {
-        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+        let db = ctx
+            .data::<Arc<RwLock<Store>>>()?
+            .read()
+            .expect("RwLock should not be poisoned");
         let map = db.csv_column_extra_map();
         Ok(map
             .get_by_model(model)?
@@ -73,7 +76,7 @@ impl ModelQuery {
         ctx: &Context<'_>,
         model: ID,
     ) -> Result<Vec<StructuredColumnType>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.column_stats_map();
         let model = model
             .as_str()
@@ -88,7 +91,7 @@ impl ModelQuery {
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
     async fn time_range_of_model(&self, ctx: &Context<'_>, model: ID) -> Result<TimeRange> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.time_series_map();
         let model = model
             .as_str()
@@ -128,7 +131,7 @@ impl ModelQuery {
             .to_usize()
             .ok_or("invalid size")?;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.time_series_map();
         let model = model
             .as_str()
@@ -207,7 +210,7 @@ impl ModelQuery {
             .parse::<u32>()
             .map_err(|_| "invalid model id(u32)")?;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let cluster_ids = load_cluster_ids_with_size_limit(&store, model_id, portion_of_clusters)?;
 
         let csv_column_extra_map = store.csv_column_extra_map();
@@ -256,7 +259,7 @@ impl ModelQuery {
             .parse::<u32>()
             .map_err(|_| "invalid model id(u32)")?;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let cluster_ids = load_cluster_ids_with_size_limit(&store, model_id, portion_of_clusters)?;
 
         let map = store.column_stats_map();
@@ -301,7 +304,7 @@ impl ModelQuery {
             .parse::<u32>()
             .map_err(|_| "invalid model id(u32)")?;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let cluster_ids = load_cluster_ids(&store, model_id, None)?;
 
         let csv_column_extra_map = store.csv_column_extra_map();
@@ -345,7 +348,10 @@ impl ModelMutation {
         column_1: Option<Vec<bool>>,
         column_n: Option<Vec<bool>>,
     ) -> Result<ID> {
-        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+        let db = ctx
+            .data::<Arc<RwLock<Store>>>()?
+            .read()
+            .expect("RwLock should not be poisoned");
         let map = db.csv_column_extra_map();
         Ok(ID(map
             .insert(
@@ -372,7 +378,10 @@ impl ModelMutation {
         column_1: Option<Vec<bool>>,
         column_n: Option<Vec<bool>>,
     ) -> Result<ID> {
-        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+        let db = ctx
+            .data::<Arc<RwLock<Store>>>()?
+            .read()
+            .expect("RwLock should not be poisoned");
         let map = db.csv_column_extra_map();
         map.update(
             id.as_str().parse()?,
@@ -484,7 +493,7 @@ impl ModelDigest {
     }
 
     async fn data_source(&self, ctx: &Context<'_>) -> Result<DataSource> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.data_source_map();
         #[allow(clippy::cast_sign_loss)] // u32 stored as i32 in the database
         match map
@@ -975,7 +984,7 @@ struct ModelTotalCount;
 impl ModelTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.model_map();
         Ok(map.count_models()?)
     }
@@ -991,7 +1000,7 @@ async fn load(
     let is_first = first.is_some();
     let limit = slicing::len(first, last)?;
 
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let map = store.model_map();
     let rows = map.load_models(&after.map(|c| c.0), &before.map(|c| c.0), is_first, limit)?;
 

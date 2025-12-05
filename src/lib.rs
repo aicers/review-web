@@ -3,6 +3,7 @@ pub mod auth;
 pub mod backend;
 pub mod graphql;
 
+use std::sync::RwLock;
 use std::{
     fs::read,
     io,
@@ -34,10 +35,7 @@ use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer},
 };
 use serde_json::json;
-use tokio::{
-    sync::{Notify, RwLock},
-    task::JoinHandle,
-};
+use tokio::{sync::Notify, task::JoinHandle};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing::{error, warn};
 
@@ -215,7 +213,7 @@ async fn graphql_handler(
     match auth {
         Ok(auth) => {
             let (username, role) = {
-                let store = store.read().await;
+                let store = store.read().expect("RwLock should not be poisoned");
                 validate_token(&store, auth.token())?
             };
             Ok(schema
@@ -257,7 +255,7 @@ async fn graphql_ws_handler(
                     let mut data = Data::default();
                     if let Some(token) = auth_data.auth.split_ascii_whitespace().last() {
                         let (username, role) = {
-                            let store = store.read().await;
+                            let store = store.read().expect("RwLock should not be poisoned");
                             validate_token(&store, token)?
                         };
 

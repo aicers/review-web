@@ -225,7 +225,7 @@ impl EventGroupQuery {
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] period: i64,
     ) -> Result<Vec<usize>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
 
         let start = filter
             .start
@@ -303,7 +303,7 @@ async fn count_events<T>(
     count: EventCountFn<T>,
     first: i32,
 ) -> Result<(Vec<T>, Vec<usize>)> {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
 
     let start = filter
         .start
@@ -354,7 +354,7 @@ async fn count_events_by_network(
     filter: &EventListFilterInput,
     first: i32,
 ) -> Result<(Vec<String>, Vec<usize>)> {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let network_map = store.network_map();
     let networks = load_networks(&network_map)?;
 
@@ -414,6 +414,7 @@ fn load_networks(
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use std::net::Ipv4Addr;
 
@@ -463,7 +464,7 @@ mod tests {
     #[tokio::test]
     async fn count_events_by_network() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         let ts1 = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()

@@ -14,7 +14,7 @@ impl TidbQuery {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn tidb(&self, ctx: &Context<'_>, name: String) -> Result<Tidb> {
-        let store = super::get_store(ctx).await?;
+        let store = super::get_store(ctx)?;
         let table = store.tidb_map();
         let Some(tidb) = table.get(&name)? else {
             return Err("no such tidb".into());
@@ -26,7 +26,7 @@ impl TidbQuery {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn tidb_list(&self, ctx: &Context<'_>) -> Result<Vec<Tidb>> {
-        let store = super::get_store(ctx).await?;
+        let store = super::get_store(ctx)?;
         let table = store.tidb_map();
 
         info_with_username!(ctx, "TI list requested");
@@ -46,7 +46,7 @@ impl TidbQuery {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid rule ID")?;
-        let store = super::get_store(ctx).await?;
+        let store = super::get_store(ctx)?;
         let table = store.tidb_map();
         let Some(tidb) = table.get(&name)? else {
             return Err("no such tidb".into());
@@ -76,7 +76,7 @@ impl TidbMutation {
             version: tidb.version.clone(),
         };
 
-        let store = super::get_store(ctx).await?;
+        let store = super::get_store(ctx)?;
         let table = store.tidb_map();
         table.insert(tidb)?;
         info_with_username!(ctx, "TI {} has been registered", output.name);
@@ -94,7 +94,7 @@ impl TidbMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] names: Vec<String>,
     ) -> Result<Vec<String>> {
-        let store = super::get_store(ctx).await?;
+        let store = super::get_store(ctx)?;
         let table = store.tidb_map();
         let mut removed = Vec::with_capacity(names.len());
         for name in names {
@@ -125,7 +125,7 @@ impl TidbMutation {
             name: tidb.name.clone(),
             version: tidb.version.clone(),
         };
-        let store = super::get_store(ctx).await?;
+        let store = super::get_store(ctx)?;
         let table = store.tidb_map();
 
         table.update(&name, tidb)?;

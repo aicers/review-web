@@ -39,14 +39,14 @@ impl PortScan {
 
     /// Source Customer
     async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.src_addr)
     }
 
     /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.src_addr)
     }
@@ -66,14 +66,14 @@ impl PortScan {
 
     /// Destination Customer
     async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.dst_addr)
     }
 
     /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
     }
@@ -159,14 +159,14 @@ impl MultiHostPortScan {
 
     /// Source Customer
     async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.src_addr)
     }
 
     /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.src_addr)
     }
@@ -194,7 +194,7 @@ impl MultiHostPortScan {
 
     /// Destination Customer List
     async fn dst_customers(&self, ctx: &Context<'_>) -> Result<Vec<Option<Customer>>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         let mut customers = vec![];
         for dst_addr in &self.inner.dst_addrs {
@@ -205,7 +205,7 @@ impl MultiHostPortScan {
 
     /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         find_ip_network(
             &map,
@@ -306,7 +306,7 @@ impl ExternalDdos {
 
     /// Source Customer List
     async fn src_customers(&self, ctx: &Context<'_>) -> Result<Vec<Option<Customer>>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         let mut customers = vec![];
         for src_addr in &self.inner.src_addrs {
@@ -317,7 +317,7 @@ impl ExternalDdos {
 
     /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         find_ip_network(
             &map,
@@ -344,14 +344,14 @@ impl ExternalDdos {
 
     /// Destination Customer
     async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.dst_addr)
     }
 
     /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
     }
@@ -431,14 +431,14 @@ impl BlocklistConn {
 
     /// Source Customer
     async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.src_addr)
     }
 
     /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.src_addr)
     }
@@ -463,14 +463,14 @@ impl BlocklistConn {
 
     /// Destination Customer
     async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.dst_addr)
     }
 
     /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
     }
@@ -598,14 +598,14 @@ impl TorConnectionConn {
 
     /// Source Customer
     async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.src_addr)
     }
 
     /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.src_addr)
     }
@@ -630,14 +630,14 @@ impl TorConnectionConn {
 
     /// Destination Customer
     async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.dst_addr)
     }
 
     /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
     }

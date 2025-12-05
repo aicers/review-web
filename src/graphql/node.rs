@@ -197,7 +197,7 @@ struct NodeTotalCount;
 impl NodeTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         Ok(store.node_map().count()?)
     }
 }
@@ -358,7 +358,7 @@ struct NodeStatusTotalCount;
 impl NodeStatusTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         Ok(store.node_map().count()?)
     }
 }
