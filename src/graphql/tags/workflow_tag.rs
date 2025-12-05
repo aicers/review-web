@@ -9,7 +9,7 @@ pub(in crate::graphql) struct WorkflowTagQuery;
 impl WorkflowTagQuery {
     /// A list of workflow tags.
     async fn workflow_tag_list(&self, ctx: &Context<'_>) -> Result<Vec<Tag>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let set = store.workflow_tag_set()?;
         Ok(set
             .tags()
@@ -28,7 +28,7 @@ pub(in crate::graphql) struct WorkflowTagMutation;
 impl WorkflowTagMutation {
     /// Inserts a new workflow tag, returning the ID of the new tag.
     async fn insert_workflow_tag(&self, ctx: &Context<'_>, name: String) -> Result<ID> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let mut set = store.workflow_tag_set()?;
         let id = set.insert(&name)?;
         Ok(ID(id.to_string()))
@@ -37,7 +37,7 @@ impl WorkflowTagMutation {
     /// Removes a workflow tag for the given ID, returning the name of the removed
     /// tag.
     async fn remove_workflow_tag(&self, ctx: &Context<'_>, id: ID) -> Result<Option<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         // TODO: Delete the tag from workflows when assigning tags to a workflow
         // is implemented.
         let mut set = store.workflow_tag_set()?;
@@ -56,7 +56,7 @@ impl WorkflowTagMutation {
         old: String,
         new: String,
     ) -> Result<bool> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let mut set = store.workflow_tag_set()?;
         Ok(set.update(id.0.parse()?, &old, &new)?)
     }

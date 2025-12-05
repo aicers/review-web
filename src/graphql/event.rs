@@ -113,7 +113,7 @@ impl EventStream {
         fetch_interval: Option<u64>,
         event_stuck_check_interval: Option<u64>,
     ) -> Result<impl Stream<Item = Event> + use<>> {
-        use tokio::sync::RwLock;
+        use std::sync::RwLock;
         let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
         let fetch_time = if let Some(fetch_time) = fetch_interval {
             fetch_time
@@ -126,9 +126,8 @@ impl EventStream {
             .unwrap_or("<unknown user>".to_string());
         let (tx, rx) = unbounded();
         tokio::spawn(async move {
-            let store = store.read().await;
             let fetch = fetch_events(
-                &store,
+                store,
                 start.timestamp_nanos_opt().unwrap_or_default(),
                 tx,
                 fetch_time,
@@ -145,7 +144,7 @@ impl EventStream {
 
 #[allow(clippy::too_many_lines)]
 async fn fetch_events(
-    db: &Store,
+    store: Arc<std::sync::RwLock<Store>>,
     start_time: i64,
     tx: UnboundedSender<Event>,
     fecth_time: u64,
@@ -430,9 +429,10 @@ async fn fetch_events(
             .min(unusual_destination_pattern_time);
 
         // Fetch event iterator based on time
-        let start = i128::from(start) << 64;
+        let start_key = i128::from(start) << 64;
+        let db = store.read().expect("RwLock should not be poisoned");
         let events = db.events();
-        let iter = events.iter_from(start, Direction::Forward);
+        let iter = events.iter_from(start_key, Direction::Forward);
 
         // Check for new data per event and send events that meet the conditions
         for event in iter {
@@ -1026,7 +1026,7 @@ struct EventTotalCount {
 impl EventTotalCount {
     /// The total number of events.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let events = store.events();
         let locator = if self.filter.has_country() {
             Some(
@@ -1354,7 +1354,7 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<String, Event, EventTotalCount, EmptyFields>> {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
 
     let start = filter.start;
     let end = filter.end;
@@ -1414,7 +1414,7 @@ async fn load_triage_list(
     filter: &EventListFilterInput,
     count: Option<usize>,
 ) -> Result<Vec<Event>> {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let count = count.unwrap_or(DEFAULT_TRIAGE_LIST_COUNT);
 
     let start_key = filter
@@ -1673,6 +1673,7 @@ fn iter_to_events(
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use std::net::Ipv4Addr;
 
@@ -1745,7 +1746,7 @@ mod tests {
     #[tokio::test]
     async fn event_level_and_learning_method() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         let ts = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()
@@ -1782,7 +1783,7 @@ mod tests {
             "{eventList: {edges: [], totalCount: 0}}"
         );
 
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         let ts1 = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()
@@ -1880,7 +1881,7 @@ mod tests {
             )
             .await;
 
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         let ts1 = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()
@@ -1944,7 +1945,7 @@ mod tests {
         .collect();
         let src_dst: Vec<_> = vec![(1, 2), (3, 1), (2, 3)];
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         timestamps
             .iter()
@@ -2007,7 +2008,7 @@ mod tests {
     #[tokio::test]
     async fn filter_by_customer() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         let ts1 = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()
@@ -2069,7 +2070,7 @@ mod tests {
     #[tokio::test]
     async fn filter_by_direction() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         let ts1 = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()
@@ -2135,7 +2136,7 @@ mod tests {
     #[tokio::test]
     async fn filter_by_network() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         let ts1 = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()
@@ -2197,7 +2198,7 @@ mod tests {
     #[tokio::test]
     async fn filter_by_unknown_category() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
 
         let ts1 = NaiveDate::from_ymd_opt(2024, 1, 1)
@@ -2252,7 +2253,7 @@ mod tests {
     #[tokio::test]
     async fn event_stream() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         let ts1 = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()
@@ -2296,7 +2297,7 @@ mod tests {
     #[tokio::test]
     async fn event_list_blocklist_dhcp() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()
@@ -2390,7 +2391,7 @@ mod tests {
     #[tokio::test]
     async fn event_list_blocklist_bootp() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()
@@ -2477,7 +2478,7 @@ mod tests {
     #[tokio::test]
     async fn event_list_locky_ransomware() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()
@@ -2538,7 +2539,7 @@ mod tests {
     #[tokio::test]
     async fn event_list_suspicious_tls_traffic() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()
@@ -2611,7 +2612,7 @@ mod tests {
         use review_database::event::BlocklistRadiusFields;
 
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()
@@ -2703,7 +2704,7 @@ mod tests {
         use review_database::event::BlocklistMalformedDnsFields;
 
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()
@@ -2805,7 +2806,7 @@ mod tests {
         };
 
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         let triage_map = store.triage_policy_map();
 
@@ -3197,7 +3198,7 @@ mod tests {
     #[tokio::test]
     async fn event_list_unusual_destination_pattern() {
         let schema = TestSchema::new().await;
-        let store = schema.store().await;
+        let store = schema.store();
         let db = store.events();
         let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()

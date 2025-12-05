@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use async_graphql::{
     ComplexObject, Context, Object, Result, SimpleObject, StringNumber,
@@ -10,7 +11,6 @@ use chrono::{DateTime, Utc};
 use database::Store;
 use num_traits::ToPrimitive;
 use review_database as database;
-use tokio::sync::RwLock;
 
 use super::{
     DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, Role, RoleGuard,
@@ -93,7 +93,7 @@ impl ClusterQuery {
             .parse::<i32>()
             .map_err(|_| "invalid cluster id")?;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let cluster_ids = load_cluster_ids(&store, model_id, Some(cluster_id_to_i32))?;
 
         let map = store.column_stats_map();
@@ -116,7 +116,7 @@ impl ClusterQuery {
         start: Option<i64>,
         end: Option<i64>,
     ) -> Result<TimeSeriesResult> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.time_series_map();
         let id = cluster_id
             .parse::<i32>()
@@ -152,7 +152,7 @@ impl ClusterMutation {
         qualifier: Option<ID>,
         status: Option<ID>,
     ) -> Result<ID> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.cluster_map();
         let id_to_i32 = |v: ID| v.as_str().parse().ok();
 
@@ -202,7 +202,10 @@ impl Cluster {
     }
 
     async fn category(&self, ctx: &Context<'_>) -> Result<Category> {
-        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+        let db = ctx
+            .data::<Arc<RwLock<Store>>>()?
+            .read()
+            .expect("RwLock should not be poisoned");
         let map = db.category_map();
         let Some(res) = map.get_by_id(u32::try_from(self.category)?)? else {
             return Err("no such category".into());
@@ -219,13 +222,16 @@ impl Cluster {
     }
 
     async fn model(&self, ctx: &Context<'_>) -> Result<ModelDigest> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.model_map();
         Ok(map.load_model(self.model_id)?.into())
     }
 
     async fn qualifier(&self, ctx: &Context<'_>) -> Result<Qualifier> {
-        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+        let db = ctx
+            .data::<Arc<RwLock<Store>>>()?
+            .read()
+            .expect("RwLock should not be poisoned");
         let map = db.qualifier_map();
         let Some(res) = map.get_by_id(u32::try_from(self.qualifier).expect("invalid id"))? else {
             return Err("no such qualifier".into());
@@ -234,7 +240,10 @@ impl Cluster {
     }
 
     async fn status(&self, ctx: &Context<'_>) -> Result<Status> {
-        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+        let db = ctx
+            .data::<Arc<RwLock<Store>>>()?
+            .read()
+            .expect("RwLock should not be poisoned");
         let map = db.status_map();
         let Some(res) = map.get_by_id(u32::try_from(self.status).expect("invalid id"))? else {
             return Err("no such status".into());
@@ -255,7 +264,7 @@ struct ClusterTotalCount {
 impl ClusterTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.cluster_map();
         Ok(map.count_clusters(
             self.model_id,
@@ -389,7 +398,7 @@ async fn load(
 ) -> Result<Connection<OpaqueCursor<(i32, i64)>, Cluster, ClusterTotalCount, EmptyFields>> {
     let is_first = first.is_some();
     let limit = slicing::len(first, last)?;
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let map = store.cluster_map();
     let rows = map.load_clusters(
         model,

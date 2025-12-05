@@ -3,7 +3,6 @@ use std::sync::Arc;
 use async_graphql::{Context, ID, Object, Result, SimpleObject, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::{Store, backup};
-use tokio::sync::RwLock;
 use tracing::info;
 
 use super::{Role, RoleGuard};
@@ -24,9 +23,9 @@ impl DbManagementQuery {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn backups(&self, ctx: &Context<'_>) -> Result<Vec<BackupInfo>> {
-        let store = ctx.data::<Arc<RwLock<Store>>>()?;
+        let store = ctx.data::<Arc<std::sync::RwLock<Store>>>()?;
         info_with_username!(ctx, "Database backup list is being fetched");
-        let backup_infos = backup::list(store).await?;
+        let backup_infos = backup::list(store)?;
 
         // Convert from review_database::backup::BackupInfo to our GraphQL BackupInfo
         // Sort by timestamp in descending order (latest first)
@@ -53,19 +52,17 @@ impl DbManagementMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn backup(&self, ctx: &Context<'_>, num_of_backups_to_keep: u32) -> Result<bool> {
-        let store = ctx.data::<Arc<RwLock<Store>>>()?;
+        let store = ctx.data::<Arc<std::sync::RwLock<Store>>>()?;
         info_with_username!(ctx, "Database backup is being executed");
-        Ok(backup::create(store, false, num_of_backups_to_keep)
-            .await
-            .is_ok())
+        Ok(backup::create(store, false, num_of_backups_to_keep).is_ok())
     }
 
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn restore_from_latest_backup(&self, ctx: &Context<'_>) -> Result<bool> {
-        let store = ctx.data::<Arc<RwLock<Store>>>()?;
+        let store = ctx.data::<Arc<std::sync::RwLock<Store>>>()?;
         info_with_username!(ctx, "Database is being restored from the latest backup");
-        backup::restore(store, None).await?;
+        backup::restore(store, None)?;
         Ok(true)
     }
 
@@ -81,9 +78,9 @@ impl DbManagementMutation {
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn restore_from_backup(&self, ctx: &Context<'_>, id: ID) -> Result<bool> {
         let id = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-        let store = ctx.data::<Arc<RwLock<Store>>>()?;
+        let store = ctx.data::<Arc<std::sync::RwLock<Store>>>()?;
         info_with_username!(ctx, "Database is being restored from backup {}", id);
-        backup::restore(store, Some(id)).await?;
+        backup::restore(store, Some(id))?;
         info_with_username!(ctx, "Database successfully restored from backup {}", id);
         Ok(true)
     }

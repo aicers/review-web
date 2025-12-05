@@ -60,20 +60,24 @@ impl AllowNetworkMutation {
         networks: HostNetworkGroupInput,
         description: String,
     ) -> Result<ID> {
-        let store = crate::graphql::get_store(ctx).await?;
-        let map = store.allow_network_map();
-        let networks: database::HostNetworkGroup =
-            networks.try_into().map_err(|_| "invalid network")?;
-        let value = review_database::AllowNetwork {
-            id: u32::MAX,
-            name: name.clone(),
-            networks,
-            description,
+        let (id, allow_networks) = {
+            let store = crate::graphql::get_store(ctx)?;
+            let map = store.allow_network_map();
+            let networks: database::HostNetworkGroup =
+                networks.try_into().map_err(|_| "invalid network")?;
+            let value = review_database::AllowNetwork {
+                id: u32::MAX,
+                name: name.clone(),
+                networks,
+                description,
+            };
+            let id = map.put(value)?;
+            info_with_username!(ctx, "Allowlist {name} has been registered");
+            let allow_networks = get_allow_networks(&store)?;
+            (id, allow_networks)
         };
-        let id = map.put(value)?;
-        info_with_username!(ctx, "Allowlist {name} has been registered");
 
-        apply_allow_networks(&store, ctx).await?;
+        broadcast_allow_networks(&allow_networks, ctx).await?;
         Ok(ID(id.to_string()))
     }
 
@@ -85,37 +89,42 @@ impl AllowNetworkMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
-        let map = store.allow_network_map();
+        let (removed, count, allow_networks) = {
+            let store = crate::graphql::get_store(ctx)?;
+            let map = store.allow_network_map();
 
-        let ids: Vec<u32> = ids
-            .iter()
-            .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID"))
-            .collect::<Result<_, _>>()?;
+            let ids: Vec<u32> = ids
+                .iter()
+                .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID"))
+                .collect::<Result<_, _>>()?;
 
-        let count = ids.len();
-        let removed = ids
-            .into_iter()
-            .try_fold(Vec::with_capacity(count), |mut removed, id| {
-                if let Ok(key) = map.remove(id) {
-                    let name = match String::from_utf8(key) {
-                        Ok(key) => key,
-                        Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
-                    };
-                    info_with_username!(ctx, "Allowlist {name} has been deleted");
-                    removed.push(name);
-                    Ok(removed)
-                } else {
-                    Err(removed)
-                }
-            })
-            .unwrap_or_else(|r| r);
+            let count = ids.len();
+            let removed = ids
+                .into_iter()
+                .try_fold(Vec::with_capacity(count), |mut removed, id| {
+                    if let Ok(key) = map.remove(id) {
+                        let name = match String::from_utf8(key) {
+                            Ok(key) => key,
+                            Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
+                        };
+                        info_with_username!(ctx, "Allowlist {name} has been deleted");
+                        removed.push(name);
+                        Ok(removed)
+                    } else {
+                        Err(removed)
+                    }
+                })
+                .unwrap_or_else(|r| r);
 
-        if removed.is_empty() {
-            return Err("None of the specified allowed networks was removed.".into());
-        }
+            if removed.is_empty() {
+                return Err("None of the specified allowed networks was removed.".into());
+            }
 
-        apply_allow_networks(&store, ctx).await?;
+            let allow_networks = get_allow_networks(&store)?;
+            (removed, count, allow_networks)
+        };
+
+        broadcast_allow_networks(&allow_networks, ctx).await?;
 
         if removed.len() < count {
             return Err("Some allowed networks were removed, but not all.".into());
@@ -136,19 +145,22 @@ impl AllowNetworkMutation {
     ) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
-        let store = crate::graphql::get_store(ctx).await?;
-        let mut map = store.allow_network_map();
-        let old: review_database::AllowNetworkUpdate = old.try_into()?;
-        let new: review_database::AllowNetworkUpdate = new.try_into()?;
-        map.update(i, &old, &new)?;
-        info_with_username!(
-            ctx,
-            "Allowlist {:?} has been updated to {:?}",
-            old.name,
-            new.name
-        );
+        let allow_networks = {
+            let store = crate::graphql::get_store(ctx)?;
+            let mut map = store.allow_network_map();
+            let old: review_database::AllowNetworkUpdate = old.try_into()?;
+            let new: review_database::AllowNetworkUpdate = new.try_into()?;
+            map.update(i, &old, &new)?;
+            info_with_username!(
+                ctx,
+                "Allowlist {:?} has been updated to {:?}",
+                old.name,
+                new.name
+            );
+            get_allow_networks(&store)?
+        };
 
-        apply_allow_networks(&store, ctx).await?;
+        broadcast_allow_networks(&allow_networks, ctx).await?;
         Ok(id)
     }
 }
@@ -209,7 +221,7 @@ struct AllowNetworkTotalCount;
 impl AllowNetworkTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
 
         Ok(store.allow_network_map().count()?)
     }
@@ -222,7 +234,7 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, AllowNetwork, AllowNetworkTotalCount, EmptyFields>> {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let map = store.allow_network_map();
     super::load_edges(&map, after, before, first, last, AllowNetworkTotalCount)
 }
@@ -248,10 +260,12 @@ pub fn get_allow_networks(db: &Store) -> Result<database::HostNetworkGroup> {
     Ok(database::HostNetworkGroup::new(hosts, networks, ip_ranges))
 }
 
-async fn apply_allow_networks(store: &Store, ctx: &Context<'_>) -> Result<()> {
-    let networks = get_allow_networks(store)?;
+async fn broadcast_allow_networks(
+    networks: &database::HostNetworkGroup,
+    ctx: &Context<'_>,
+) -> Result<()> {
     let agent_manager = ctx.data::<BoxedAgentManager>()?;
-    agent_manager.broadcast_allow_networks(&networks).await?;
+    agent_manager.broadcast_allow_networks(networks).await?;
     Ok(())
 }
 

@@ -14,7 +14,7 @@ impl EventTagQuery {
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
     async fn event_tag_list(&self, ctx: &Context<'_>) -> Result<Vec<Tag>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let set = store.event_tag_set()?;
         Ok(set
             .tags()
@@ -36,7 +36,7 @@ impl EventTagMutation {
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))")]
     async fn insert_event_tag(&self, ctx: &Context<'_>, name: String) -> Result<ID> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let mut set = store.event_tag_set()?;
         let id = set.insert(&name)?;
         Ok(ID(id.to_string()))
@@ -48,7 +48,7 @@ impl EventTagMutation {
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))")]
     async fn remove_event_tag(&self, ctx: &Context<'_>, id: ID) -> Result<Option<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let mut set = store.event_tag_set()?;
         let triage_response_map = store.triage_response_map();
         let id = id.0.parse::<u32>()?;
@@ -70,7 +70,7 @@ impl EventTagMutation {
         old: String,
         new: String,
     ) -> Result<bool> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let mut set = store.event_tag_set()?;
         Ok(set.update(id.0.parse()?, &old, &new)?)
     }

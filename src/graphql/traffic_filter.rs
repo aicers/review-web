@@ -25,7 +25,7 @@ impl TrafficFilterQuery {
         ctx: &Context<'_>,
         agents: Option<Vec<String>>,
     ) -> Result<Option<Vec<TrafficFilter>>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let table = store.traffic_filter_map();
 
         let res = table.get_list(&agents)?;
@@ -52,7 +52,7 @@ impl TrafficFilterMutation {
         description: Option<String>,
     ) -> Result<usize> {
         let network = parse_network(&network)?;
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let table = store.traffic_filter_map();
 
         table
@@ -74,7 +74,7 @@ impl TrafficFilterMutation {
         description: Option<String>,
     ) -> Result<usize> {
         let network = parse_network(&network)?;
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let table = store.traffic_filter_map();
 
         table
@@ -87,7 +87,7 @@ impl TrafficFilterMutation {
         guard = "RoleGuard::new(Role::SystemAdministrator).or(RoleGuard::new(Role::SecurityAdministrator))"
     )]
     async fn clear_traffic_filter_rules(&self, ctx: &Context<'_>, agent: String) -> Result<usize> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let table = store.traffic_filter_map();
 
         info_with_username!(ctx, "All traffic filters have been deleted");
@@ -108,7 +108,7 @@ impl TrafficFilterMutation {
         for network in networks {
             new_rules.push(parse_network(&network)?);
         }
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let table = store.traffic_filter_map();
 
         table.remove_rules(&agent, &new_rules).map_err(Into::into)
@@ -123,12 +123,11 @@ impl TrafficFilterMutation {
         ctx: &Context<'_>,
         agents: Vec<String>,
     ) -> Result<Vec<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
-
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
         let mut res = Vec::new();
         for agent in &agents {
             let rules = {
+                let store = crate::graphql::get_store(ctx)?;
                 let table = store.traffic_filter_map();
                 table.get(agent)?.map_or(vec![], |tf| tf.rules())
             };
@@ -138,6 +137,7 @@ impl TrafficFilterMutation {
             {
                 res.push(format!("{agent}: update request failed. {e:?}"));
             } else {
+                let store = crate::graphql::get_store(ctx)?;
                 let table = store.traffic_filter_map();
                 table.update_time(agent)?;
                 res.push(format!("{agent}: {} rules are updated.", rules.len()));
