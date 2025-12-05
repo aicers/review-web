@@ -11,6 +11,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Updated the `serve` function signature to use `Arc<std::sync::RwLock<Store>>`
   instead of `Arc<tokio::sync::RwLock<Store>>`, following the removal of the
   `tokio` dependency from the `review-database` crate.
+- Aligned triage GraphQL with the updated review-database schema:
+  - Added CRUD GraphQL for `TriageExclusionReason` backed by the RocksDB
+    `triage_exclusion_map`.
+  - Triage policies now take `triageExclusionId` and optional `customerId`;
+    `triagePolicyList` supports `customerId` filtering (matching or global
+    policies), and `totalCount` follows the same rule.
+  - Event filters resolve triage exclusion IDs through the RocksDB map to build
+    `TriagePolicyInput` before calling `EventFilter::new`, keeping triage
+    application consistent with the new model.
 
 ## [0.29.4] - 2025-12-11
 

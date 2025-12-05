@@ -1212,12 +1212,29 @@ fn from_filter_input(
         }
     };
 
-    let triage_policies = if let Some(triage_policies) = &input.triage_policies {
-        let map = store.triage_policy_map();
-        Some(convert_triage_input(&map, triage_policies)?)
-    } else {
-        None
-    };
+    let triage_policies: Option<Vec<review_database::TriagePolicyInput>> =
+        if let Some(triage_policies) = &input.triage_policies {
+            let map = store.triage_policy_map();
+            let triage_policies = convert_triage_input(&map, triage_policies)?;
+
+            let exclusion_reason_map = store.triage_exclusion_reason_map();
+            let triage_result = triage_policies
+                .iter()
+                .map(|policy| {
+                    let policy = policy.clone();
+                    let exclusion_reasons = policy
+                        .triage_exclusion_id
+                        .iter()
+                        .filter_map(|id| exclusion_reason_map.get_by_id(*id).ok().flatten())
+                        .map(|reason| reason.exclusion_reason)
+                        .collect::<Vec<_>>();
+                    policy.into_input_with_exclusion_reason(exclusion_reasons)
+                })
+                .collect::<Vec<_>>();
+            Some(triage_result)
+        } else {
+            None
+        };
 
     Ok(EventFilter::new(
         customers,
@@ -3088,7 +3105,7 @@ mod tests {
         let policy = database::TriagePolicy {
             id: 0,
             name: "Test Policy".to_string(),
-            ti_db: Vec::new(),
+            triage_exclusion_id: Vec::new(),
             packet_attr: Vec::new(),
             confidence: vec![
                 database::Confidence {
@@ -3128,6 +3145,7 @@ mod tests {
             }]
             .to_vec(),
             creation_time: base_ts,
+            customer_id: None,
         };
         let policy_id = triage_map.put(policy).unwrap();
 

@@ -1,17 +1,16 @@
 #![allow(deprecated)]
 
+mod exclusion_reason;
 mod policy;
 pub(super) mod response;
 
-use async_graphql::{Enum, ID, InputObject, Object, Union};
+use async_graphql::{Enum, ID, InputObject, Object, Result};
 use chrono::{DateTime, Utc};
+pub(crate) use exclusion_reason::{TriageExclusionReasonMutation, TriageExclusionReasonQuery};
 use review_database as database;
 use serde::Deserialize;
 
-use super::{
-    Role, RoleGuard,
-    customer::{HostNetworkGroup, HostNetworkGroupInput},
-};
+use super::{Role, RoleGuard};
 
 #[derive(Default)]
 pub(super) struct TriagePolicyQuery;
@@ -39,8 +38,12 @@ impl TriagePolicy {
         &self.inner.name
     }
 
-    async fn ti_db(&self) -> Vec<TriageExclusionReason> {
-        self.inner.ti_db.iter().map(Into::into).collect()
+    async fn triage_exclusion_id(&self) -> Vec<ID> {
+        self.inner
+            .triage_exclusion_id
+            .iter()
+            .map(|id| ID::from(id.to_string()))
+            .collect()
     }
 
     async fn packet_attr(&self) -> Vec<PacketAttr<'_>> {
@@ -57,6 +60,10 @@ impl TriagePolicy {
 
     async fn creation_time(&self) -> DateTime<Utc> {
         self.inner.creation_time
+    }
+
+    async fn customer_id(&self) -> Option<ID> {
+        self.inner.customer_id.map(|id| ID::from(id.to_string()))
     }
 }
 
@@ -151,65 +158,6 @@ pub enum ThreatCategory {
     ResourceDevelopment, // 2nd
 }
 
-#[derive(Union)]
-enum TriageExclusionReason {
-    IpAddress(IpAddressTriageExclusion),
-    Domain(DomainTriageExclusion),
-    Hostname(HostnameTriageExclusion),
-    Uri(UriTriageExclusion),
-}
-
-impl From<&database::TriageExclusionReason> for TriageExclusionReason {
-    fn from(value: &database::TriageExclusionReason) -> Self {
-        match value {
-            database::TriageExclusionReason::IpAddress(g) => {
-                IpAddressTriageExclusion(g.clone()).into()
-            }
-            database::TriageExclusionReason::Domain(d) => DomainTriageExclusion(d.clone()).into(),
-            database::TriageExclusionReason::Hostname(h) => {
-                HostnameTriageExclusion(h.clone()).into()
-            }
-            database::TriageExclusionReason::Uri(u) => UriTriageExclusion(u.clone()).into(),
-        }
-    }
-}
-
-struct IpAddressTriageExclusion(database::HostNetworkGroup);
-
-#[Object]
-impl IpAddressTriageExclusion {
-    async fn ip_address(&self) -> HostNetworkGroup<'_> {
-        (&self.0).into()
-    }
-}
-
-struct DomainTriageExclusion(Vec<String>);
-
-#[Object]
-impl DomainTriageExclusion {
-    async fn domain(&self) -> &[String] {
-        &self.0
-    }
-}
-
-struct UriTriageExclusion(Vec<String>);
-
-#[Object]
-impl UriTriageExclusion {
-    async fn uri(&self) -> &[String] {
-        &self.0
-    }
-}
-
-struct HostnameTriageExclusion(Vec<String>);
-
-#[Object]
-impl HostnameTriageExclusion {
-    async fn hostname(&self) -> &[String] {
-        &self.0
-    }
-}
-
 struct PacketAttr<'a> {
     inner: &'a database::PacketAttr,
 }
@@ -302,34 +250,6 @@ impl<'a> From<&'a database::Response> for Response<'a> {
 }
 
 #[derive(Clone, InputObject)]
-pub(super) struct TriageExclusionReasonInput {
-    ip_address: Option<HostNetworkGroupInput>,
-    domain: Option<Vec<String>>,
-    hostname: Option<Vec<String>>,
-    uri: Option<Vec<String>>,
-}
-
-impl TryFrom<TriageExclusionReasonInput> for database::TriageExclusionReason {
-    type Error = anyhow::Error;
-
-    fn try_from(value: TriageExclusionReasonInput) -> Result<Self, Self::Error> {
-        if let Some(ip_address) = value.ip_address {
-            Ok(database::TriageExclusionReason::IpAddress(
-                ip_address.try_into()?,
-            ))
-        } else if let Some(domain) = value.domain {
-            Ok(database::TriageExclusionReason::Domain(domain))
-        } else if let Some(hostname) = value.hostname {
-            Ok(database::TriageExclusionReason::Hostname(hostname))
-        } else if let Some(uri) = value.uri {
-            Ok(database::TriageExclusionReason::Uri(uri))
-        } else {
-            Err(anyhow::anyhow!("invalid input"))
-        }
-    }
-}
-
-#[derive(Clone, InputObject)]
 pub(super) struct PacketAttrInput {
     raw_event_kind: RawEventKind,
     attr_name: String,
@@ -377,27 +297,34 @@ impl From<&ResponseInput> for database::Response {
 #[derive(Clone, InputObject)]
 pub(super) struct TriagePolicyInput {
     pub name: String,
-    pub ti_db: Vec<TriageExclusionReasonInput>,
+    pub triage_exclusion_id: Vec<ID>,
     pub packet_attr: Vec<PacketAttrInput>,
     pub confidence: Vec<ConfidenceInput>,
     pub response: Vec<ResponseInput>,
+    pub customer_id: Option<ID>,
 }
 
 impl TryFrom<TriagePolicyInput> for database::TriagePolicyUpdate {
     type Error = anyhow::Error;
 
     fn try_from(input: TriagePolicyInput) -> Result<Self, Self::Error> {
-        let ti_db = input
-            .ti_db
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<_>, _>>()?;
+        let triage_exclusion_id = input
+            .triage_exclusion_id
+            .iter()
+            .map(|id| id.as_str().parse::<u32>())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| anyhow::anyhow!("invalid triage exclusion id"))?;
         Ok(Self {
             name: input.name,
-            ti_db,
+            triage_exclusion_id,
             packet_attr: input.packet_attr.iter().map(Into::into).collect(),
             confidence: input.confidence.iter().map(Into::into).collect(),
             response: input.response.iter().map(Into::into).collect(),
+            customer_id: input
+                .customer_id
+                .map(|id| id.as_str().parse::<u32>())
+                .transpose()
+                .map_err(|_| anyhow::anyhow!("invalid customer id"))?,
         })
     }
 }
@@ -425,6 +352,45 @@ mod tests {
     async fn test_triage_policy() {
         let schema = TestSchema::new().await;
 
+        // Prepare triage exclusion reasons
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason A"
+                        description: "reason a"
+                        ipAddress: {
+                            hosts: ["1.1.1.1"]
+                            networks: []
+                            ranges: []
+                        }
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason B"
+                        description: "reason b"
+                        domain: ["example.com"]
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "1"}"#
+        );
+
         let res = schema
             .execute_as_system_admin(r"{triagePolicyList{totalCount}}")
             .await;
@@ -436,15 +402,7 @@ mod tests {
                 mutation {
                     insertTriagePolicy(
                         name: "Triage 1"
-                        tiDb: [{
-                            ipAddress: {
-                                hosts: ["1.2.3.4"],
-                                networks: [],
-                                ranges: []
-                            }
-                        }, {
-                            domain: ["*.example.com"]
-                        }]
+                        triageExclusionId: ["0"]
                         packetAttr: [{
                             rawEventKind: CONN
                             attrName: "Packets Received"
@@ -490,15 +448,7 @@ mod tests {
                         id: 0
                         old: {
                             name: "Triage 1"
-                            tiDb: [{
-                                ipAddress: {
-                                    hosts: ["1.2.3.4"],
-                                    networks: [],
-                                    ranges: []
-                                }
-                            }, {
-                                domain: ["*.example.com"]
-                            }]
+                            triageExclusionId: ["0"]
                             packetAttr: [{
                                 rawEventKind: CONN
                                 attrName: "Packets Received"
@@ -533,15 +483,7 @@ mod tests {
                         }
                         new: {
                             name: "Triage 2"
-                            tiDb: [{
-                                ipAddress: {
-                                    hosts: ["1.2.3.4"],
-                                    networks: [],
-                                    ranges: []
-                                }
-                            }, {
-                                domain: ["*.example.com"]
-                            }]
+                            triageExclusionId: ["1"]
                             packetAttr: [{
                                 rawEventKind: CONN
                                 attrName: "Packets Received"
@@ -604,9 +546,137 @@ mod tests {
                 }"#,
             )
             .await;
+        let removed = res.data.to_string();
+        assert!(
+            removed.contains("Triage 2"),
+            "Unexpected removeTriagePolicies payload: {removed}"
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn test_triage_policy_filter_by_customer() {
+        let schema = TestSchema::new().await;
+
+        // Prepare customers for validation
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c2", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "2"}"#);
+
+        // exclusion reason to satisfy validation
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason Filter"
+                        description: "filter reason"
+                        ipAddress: {
+                            hosts: ["10.0.0.1"]
+                            networks: []
+                            ranges: []
+                        }
+                    })
+                }"#,
+            )
+            .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{removeTriagePolicies: ["Triage 2"]}"#
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        // global policy (customer_id None)
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertTriagePolicy(
+                        name: "Global Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
+
+        // customer-specific policy
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertTriagePolicy(
+                        name: "Customer Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "1"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "1"}"#);
+
+        // customer_id = 1 should include both (None and 1)
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                {
+                    triagePolicyList(first: 10, customerId: "1") {
+                        totalCount
+                        nodes { name customerId }
+                    }
+                }"#,
+            )
+            .await;
+        let json = res.data.into_json().unwrap();
+        assert_eq!(json["triagePolicyList"]["totalCount"], 2);
+        let names: Vec<String> = json["triagePolicyList"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(names.contains(&"Global Policy".to_string()));
+        assert!(names.contains(&"Customer Policy".to_string()));
+
+        // customer_id = 2 should include only global
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                {
+                    triagePolicyList(first: 10, customerId: "2") {
+                        totalCount
+                        nodes { name }
+                    }
+                }"#,
+            )
+            .await;
+        let json = res.data.into_json().unwrap();
+        assert_eq!(json["triagePolicyList"]["totalCount"], 1);
+        assert_eq!(
+            json["triagePolicyList"]["nodes"][0]["name"]
+                .as_str()
+                .unwrap(),
+            "Global Policy"
         );
     }
 
