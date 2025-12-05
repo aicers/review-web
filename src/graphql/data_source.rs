@@ -104,7 +104,7 @@ impl DataSourceMutation {
 
         validate_policy(ctx, &value.source, value.data_type).await?;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.data_source_map();
 
         let id = map.put(value)?;
@@ -117,7 +117,7 @@ impl DataSourceMutation {
     async fn remove_data_source(&self, ctx: &Context<'_>, id: ID) -> Result<String> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.data_source_map();
 
         let key = map.remove(i)?;
@@ -138,7 +138,7 @@ impl DataSourceMutation {
     ) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let mut map = store.data_source_map();
         let old: review_database::DataSourceUpdate = old.into();
         let new: review_database::DataSourceUpdate = new.into();
@@ -252,7 +252,7 @@ struct DataSourceTotalCount;
 impl DataSourceTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.data_source_map();
 
         Ok(map.count()?)
@@ -266,7 +266,7 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, DataSource, DataSourceTotalCount, EmptyFields>> {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let map = store.data_source_map();
 
     super::load_edges(&map, after, before, first, last, DataSourceTotalCount)
@@ -276,7 +276,7 @@ async fn validate_policy(ctx: &Context<'_>, policy: &str, kind: database::DataTy
     match kind {
         database::DataType::TimeSeries => {
             let policy = policy.parse::<u32>()?;
-            let store = crate::graphql::get_store(ctx).await?;
+            let store = crate::graphql::get_store(ctx)?;
             let map = store.sampling_policy_map();
             let Some(_value) = map.get_by_id(policy)? else {
                 return Err("no such sampling policy".into());

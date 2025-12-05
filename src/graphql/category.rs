@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
@@ -8,7 +9,6 @@ use async_graphql::{
 };
 use database::Store;
 use review_database::{self as database};
-use tokio::sync::RwLock;
 
 use super::{Role, RoleGuard};
 use crate::graphql::query_with_constraints;
@@ -51,7 +51,10 @@ impl CategoryMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn add_category(&self, ctx: &Context<'_>, name: String) -> Result<ID> {
-        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+        let db = ctx
+            .data::<Arc<RwLock<Store>>>()?
+            .read()
+            .expect("RwLock should not be poisoned");
         let map = db.category_map();
         let id = map.insert(&name)?;
         Ok(ID(id.to_string()))
@@ -61,7 +64,10 @@ impl CategoryMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn update_category(&self, ctx: &Context<'_>, id: ID, name: String) -> Result<ID> {
-        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+        let db = ctx
+            .data::<Arc<RwLock<Store>>>()?
+            .read()
+            .expect("RwLock should not be poisoned");
         let mut map = db.category_map();
         let id: u32 = id.as_str().parse()?;
         let Some(old) = map.get_by_id(id)? else {
@@ -100,7 +106,10 @@ struct CategoryTotalCount;
 impl CategoryTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<i64> {
-        let db = ctx.data::<Arc<RwLock<Store>>>()?.read().await;
+        let db = ctx
+            .data::<Arc<RwLock<Store>>>()?
+            .read()
+            .expect("RwLock should not be poisoned");
         let map = db.category_map();
 
         Ok(i64::try_from(map.count()?)?)
@@ -114,7 +123,7 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Category, CategoryTotalCount, EmptyFields>> {
-    let store = super::get_store(ctx).await?;
+    let store = super::get_store(ctx)?;
     let table = store.category_map();
     super::load_edges(&table, after, before, first, last, CategoryTotalCount)
 }
