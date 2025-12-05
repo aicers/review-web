@@ -49,10 +49,11 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, NodeStatus, NodeStatusTotalCount, EmptyFields>> {
-    let store = crate::graphql::get_store(ctx).await?;
-    let map = store.node_map();
-    let (node_list, has_previous, has_next) =
-        super::super::load_edges_interim(&map, after, before, first, last, None)?;
+    let (node_list, has_previous, has_next) = {
+        let store = crate::graphql::get_store(ctx)?;
+        let map = store.node_map();
+        super::super::load_edges_interim(&map, after, before, first, last, None)?
+    };
 
     let agent_manager = ctx.data::<BoxedAgentManager>()?;
 

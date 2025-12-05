@@ -40,6 +40,7 @@ use std::net::IpAddr;
 #[cfg(test)]
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use async_graphql::connection::{
     Connection, ConnectionNameType, CursorType, Edge, EdgeNameType, EmptyFields, OpaqueCursor,
@@ -53,7 +54,7 @@ use num_traits::ToPrimitive;
 use review_database::HostNetworkGroup;
 use review_database::{self as database, Role, Store, event::Direction};
 pub use roxy::{Process, ResourceUsage};
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::Notify;
 use tracing::warn;
 use vinum::signal;
 
@@ -324,8 +325,11 @@ fn extra_validate_pagination_params(
 const DEFAULT_CUTOFF_RATE: f64 = 0.1;
 const DEFAULT_TRENDI_ORDER: i32 = 4;
 
-async fn get_store<'a>(ctx: &Context<'a>) -> Result<tokio::sync::RwLockReadGuard<'a, Store>> {
-    Ok(ctx.data::<Arc<RwLock<Store>>>()?.read().await)
+pub(crate) fn get_store<'a>(ctx: &'a Context<'a>) -> Result<std::sync::RwLockReadGuard<'a, Store>> {
+    Ok(ctx
+        .data::<Arc<RwLock<Store>>>()?
+        .read()
+        .expect("RwLock should not be poisoned"))
 }
 
 #[allow(clippy::type_complexity)]
@@ -784,8 +788,8 @@ impl TestSchema {
         }
     }
 
-    async fn store(&self) -> tokio::sync::RwLockReadGuard<'_, Store> {
-        self.store.read().await
+    fn store(&self) -> std::sync::RwLockReadGuard<'_, Store> {
+        self.store.read().expect("RwLock should not be poisoned")
     }
 
     async fn execute(&self, query: &str) -> async_graphql::Response {

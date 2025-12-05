@@ -58,7 +58,7 @@ impl UnusualDestinationPattern {
 
     /// Destination Customer List
     async fn dst_customers(&self, ctx: &Context<'_>) -> Result<Vec<Option<Customer>>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         let mut customers = vec![];
         for dst_addr in &self.inner.destination_ips {
@@ -69,7 +69,7 @@ impl UnusualDestinationPattern {
 
     /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         if let Some(first_ip) = self.inner.destination_ips.first() {
             find_ip_network(&map, *first_ip)

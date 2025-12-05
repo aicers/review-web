@@ -52,7 +52,7 @@ impl TriageResponseTotalCount {
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
         use review_database::{Iterable, event::Direction};
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.triage_response_map();
         Ok(map.iter(Direction::Forward, None).count())
     }
@@ -108,7 +108,7 @@ impl super::TriageResponseQuery {
         sensor: String,
         time: DateTime<Utc>,
     ) -> Result<Option<TriageResponse>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.triage_response_map();
         let response: Option<TriageResponse> = map.get(&sensor, &time)?.map(Into::into);
 
@@ -144,7 +144,7 @@ async fn load(
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, TriageResponse, TriageResponseTotalCount, EmptyFields>>
 {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let table = store.triage_response_map();
     crate::graphql::load_edges(&table, after, before, first, last, TriageResponseTotalCount)
 }
@@ -171,7 +171,7 @@ impl super::TriageResponseMutation {
             tag_ids_converted,
             remarks.clone(),
         );
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.triage_response_map();
         let id = map.put(pol)?;
         info_with_username!(
@@ -196,7 +196,7 @@ impl super::TriageResponseMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.triage_response_map();
 
         let mut removed = Vec::<String>::with_capacity(ids.len());
@@ -234,7 +234,7 @@ impl super::TriageResponseMutation {
         let old_remarks_str = old.remarks.as_deref().unwrap_or("None").to_string();
         let new_remarks_str = new.remarks.as_deref().unwrap_or("None").to_string();
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let mut map = store.triage_response_map();
         let old_update: review_database::TriageResponseUpdate = old.try_into()?;
         let new_update: review_database::TriageResponseUpdate = new.try_into()?;
