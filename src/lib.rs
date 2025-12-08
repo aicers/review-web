@@ -213,7 +213,7 @@ async fn graphql_handler(
     match auth {
         Ok(auth) => {
             let (username, role) = {
-                let store = store.read().expect("RwLock should not be poisoned");
+                let store = store.read().expect("the Store is always readable due to controlled write access");
                 validate_token(&store, auth.token())?
             };
             Ok(schema
@@ -255,7 +255,7 @@ async fn graphql_ws_handler(
                     let mut data = Data::default();
                     if let Some(token) = auth_data.auth.split_ascii_whitespace().last() {
                         let (username, role) = {
-                            let store = store.read().expect("RwLock should not be poisoned");
+                            let store = store.read().expect("the Store is always readable due to controlled write access");
                             validate_token(&store, token)?
                         };
 

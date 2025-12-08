@@ -54,7 +54,7 @@ impl CategoryMutation {
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
-            .expect("RwLock should not be poisoned");
+            .expect("the Store is always readable due to controlled write access");
         let map = db.category_map();
         let id = map.insert(&name)?;
         Ok(ID(id.to_string()))
@@ -67,7 +67,7 @@ impl CategoryMutation {
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
-            .expect("RwLock should not be poisoned");
+            .expect("the Store is always readable due to controlled write access");
         let mut map = db.category_map();
         let id: u32 = id.as_str().parse()?;
         let Some(old) = map.get_by_id(id)? else {
@@ -109,7 +109,7 @@ impl CategoryTotalCount {
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
-            .expect("RwLock should not be poisoned");
+            .expect("the Store is always readable due to controlled write access");
         let map = db.category_map();
 
         Ok(i64::try_from(map.count()?)?)

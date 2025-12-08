@@ -80,7 +80,7 @@ async fn fetch_ranked_outliers(
 
         // Read current model's ids
         let rows = {
-            let store = store.read().expect("RwLock should not be poisoned");
+            let store = store.read().expect("the Store is always readable due to controlled write access");
             let map = store.model_map();
             map.load_models(&None, &None, true, MAX_MODEL_LIST_SIZE)?
         };
@@ -88,7 +88,7 @@ async fn fetch_ranked_outliers(
 
         // Search for ranked outliers by model.
         for model_id in model_ids {
-            let store = store.read().expect("RwLock should not be poisoned");
+            let store = store.read().expect("the Store is always readable due to controlled write access");
             let map = store.outlier_map();
 
             let (iter, is_first_fetch) = if let Some(cursor) = latest_fetched_key.get(&model_id) {

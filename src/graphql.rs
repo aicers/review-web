@@ -329,7 +329,7 @@ pub(crate) fn get_store<'a>(ctx: &'a Context<'a>) -> Result<std::sync::RwLockRea
     Ok(ctx
         .data::<Arc<RwLock<Store>>>()?
         .read()
-        .expect("RwLock should not be poisoned"))
+        .expect("the Store is always readable due to controlled write access"))
 }
 
 #[allow(clippy::type_complexity)]
@@ -789,7 +789,7 @@ impl TestSchema {
     }
 
     fn store(&self) -> std::sync::RwLockReadGuard<'_, Store> {
-        self.store.read().expect("RwLock should not be poisoned")
+        self.store.read().expect("the Store is always readable due to controlled write access")
     }
 
     async fn execute(&self, query: &str) -> async_graphql::Response {

@@ -93,7 +93,7 @@ async fn auth(
             let roles = config.roles();
 
             let role = {
-                let store = state.store.read().expect("RwLock should not be poisoned");
+                let store = state.store.read().expect("the Store is always readable due to controlled write access");
                 let (_, role) = validate_token(&store, bearer.token())?;
                 role
             };
