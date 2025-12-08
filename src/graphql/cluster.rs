@@ -205,7 +205,7 @@ impl Cluster {
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
-            .expect("RwLock should not be poisoned");
+            .expect("the Store is always readable due to controlled write access");
         let map = db.category_map();
         let Some(res) = map.get_by_id(u32::try_from(self.category)?)? else {
             return Err("no such category".into());
@@ -231,7 +231,7 @@ impl Cluster {
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
-            .expect("RwLock should not be poisoned");
+            .expect("the Store is always readable due to controlled write access");
         let map = db.qualifier_map();
         let Some(res) = map.get_by_id(u32::try_from(self.qualifier).expect("invalid id"))? else {
             return Err("no such qualifier".into());
@@ -243,7 +243,7 @@ impl Cluster {
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
-            .expect("RwLock should not be poisoned");
+            .expect("the Store is always readable due to controlled write access");
         let map = db.status_map();
         let Some(res) = map.get_by_id(u32::try_from(self.status).expect("invalid id"))? else {
             return Err("no such status".into());

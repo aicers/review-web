@@ -55,7 +55,7 @@ impl QualifierMutation {
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
-            .expect("RwLock should not be poisoned");
+            .expect("the Store is always readable due to controlled write access");
         let map = db.qualifier_map();
         Ok(ID(map.insert(&description)?.to_string()))
     }
@@ -67,7 +67,7 @@ impl QualifierMutation {
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
-            .expect("RwLock should not be poisoned");
+            .expect("the Store is always readable due to controlled write access");
         let mut map = db.qualifier_map();
         let id: u32 = id.as_str().parse()?;
         let Some(old) = map.get_by_id(id)? else {
@@ -108,7 +108,7 @@ impl QualifierTotalCount {
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
-            .expect("RwLock should not be poisoned");
+            .expect("the Store is always readable due to controlled write access");
         let map = db.qualifier_map();
         Ok(i64::try_from(map.count()?)?)
     }
