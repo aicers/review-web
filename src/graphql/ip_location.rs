@@ -195,7 +195,7 @@ mod tests {
         let locator = TestIpLocator::new(Some(0.0), Some(0.0));
 
         let res = schema
-            .execute_with_data(
+            .execute_as_system_admin_with_data(
                 r#"
                 {
                     ipLocation(address: "127.0.0.1") {
@@ -221,7 +221,7 @@ mod tests {
         let locator = TestIpLocator::new(Some(0.0), Some(0.0));
 
         let res = schema
-            .execute_with_data(
+            .execute_as_system_admin_with_data(
                 r#"
                 {
                     ipLocationList(addresses: ["127.0.0.1", "192.0.2.1"]) {

@@ -805,7 +805,7 @@ impl TestSchema {
         self.schema.execute(request).await
     }
 
-    async fn execute_with_data(
+    async fn execute_as_system_admin_with_data(
         &self,
         query: &str,
         data: impl Send + Sync + 'static,
