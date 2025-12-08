@@ -83,19 +83,23 @@ mod tests {
     #[tokio::test]
     async fn network_tag() {
         let schema = TestSchema::new().await;
-        let res = schema.execute(r"{networkTagList{name}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{networkTagList{name}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{networkTagList: []}");
 
         let res = schema
-            .execute(r#"mutation {insertNetworkTag(name: "foo")}"#)
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(name: "foo")}"#)
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "0"}"#);
 
-        let res = schema.execute(r"{networkTagList{name}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{networkTagList{name}}")
+            .await;
         assert_eq!(res.data.to_string(), r#"{networkTagList: [{name: "foo"}]}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNetwork(name: "n1", description: "", networks: {
                         hosts: [], networks: [], ranges: []
@@ -105,11 +109,13 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
 
-        let res = schema.execute(r#"{network(id: "0") {tagIds}}"#).await;
+        let res = schema
+            .execute_as_system_admin(r#"{network(id: "0") {tagIds}}"#)
+            .await;
         assert_eq!(res.data.to_string(), r#"{network: {tagIds: ["0"]}}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     removeNetworkTag(id: "0")
                 }"#,
@@ -117,7 +123,9 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{removeNetworkTag: "foo"}"#);
 
-        let res = schema.execute(r#"{network(id: "0") {tagIds}}"#).await;
+        let res = schema
+            .execute_as_system_admin(r#"{network(id: "0") {tagIds}}"#)
+            .await;
         assert_eq!(res.data.to_string(), r"{network: {tagIds: []}}");
     }
 }

@@ -294,11 +294,12 @@ mod tests {
     #[tokio::test]
     async fn remove_data_source() {
         let schema = TestSchema::new().await;
-        let res = schema.execute(r"{dataSourceList{edges{node{name}}}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{dataSourceList{edges{node{name}}}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{dataSourceList: {edges: []}}");
 
-        let res = schema
-            .execute(
+        let res = schema.execute_as_system_admin(
                 r#"mutation {
                     insertDataSource(input: { name: "d1", dataType: "LOG", source: "test", kind: "Dns", description: "" })
                 }"#,
@@ -306,17 +307,21 @@ mod tests {
             .await;
 
         assert_eq!(res.data.to_string(), r#"{insertDataSource: "0"}"#);
-        let res = schema.execute(r"{dataSourceList{edges{node{name}}}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{dataSourceList{edges{node{name}}}}")
+            .await;
         assert_eq!(
             res.data.to_string(),
             r#"{dataSourceList: {edges: [{node: {name: "d1"}}]}}"#
         );
 
         let res = schema
-            .execute(r#"mutation { removeDataSource(id: "0") }"#)
+            .execute_as_system_admin(r#"mutation { removeDataSource(id: "0") }"#)
             .await;
         assert_eq!(res.data.to_string(), r#"{removeDataSource: "d1"}"#);
-        let res = schema.execute(r"{dataSourceList{edges{node{name}}}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{dataSourceList{edges{node{name}}}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{dataSourceList: {edges: []}}");
     }
 }

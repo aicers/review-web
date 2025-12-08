@@ -374,11 +374,13 @@ mod tests {
     #[tokio::test]
     async fn test_unstructured_template() {
         let schema = TestSchema::new().await;
-        let res = schema.execute(r"{templateList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{templateList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 0}}");
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertTemplate(unstructured: {
                         name: "t1",
@@ -391,11 +393,13 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertTemplate: "t1"}"#);
 
-        let res = schema.execute(r"{templateList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{templateList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 1}}");
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"{
                 templateList {
                     edges {
@@ -416,7 +420,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 updateTemplate(oldUnstructured: {
                     name: "t1",
@@ -436,7 +440,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r"{updateTemplate: true}");
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"{
                 templateList {
                     edges {
@@ -457,22 +461,26 @@ mod tests {
         );
 
         let res = schema
-            .execute(r#"mutation { removeTemplate(name: "t1") }"#)
+            .execute_as_system_admin(r#"mutation { removeTemplate(name: "t1") }"#)
             .await;
         assert_eq!(res.data.to_string(), r#"{removeTemplate: "t1"}"#);
 
-        let res = schema.execute(r"{templateList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{templateList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 0}}");
     }
 
     #[tokio::test]
     async fn test_structured_template() {
         let schema = TestSchema::new().await;
-        let res = schema.execute(r"{templateList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{templateList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 0}}");
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertTemplate(structured: {
                         name: "t1",
@@ -488,11 +496,13 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertTemplate: "t1"}"#);
 
-        let res = schema.execute(r"{templateList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{templateList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 1}}");
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"{
                 templateList {
                     edges {
@@ -514,7 +524,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 updateTemplate(oldStructured: {
                     name: "t1",
@@ -540,7 +550,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r"{updateTemplate: true}");
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"{
                 templateList {
                     edges {
@@ -562,11 +572,13 @@ mod tests {
         );
 
         let res = schema
-            .execute(r#"mutation { removeTemplate(name: "t1") }"#)
+            .execute_as_system_admin(r#"mutation { removeTemplate(name: "t1") }"#)
             .await;
         assert_eq!(res.data.to_string(), r#"{removeTemplate: "t1"}"#);
 
-        let res = schema.execute(r"{templateList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{templateList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 0}}");
     }
 }
