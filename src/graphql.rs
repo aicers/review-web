@@ -789,7 +789,9 @@ impl TestSchema {
     }
 
     fn store(&self) -> std::sync::RwLockReadGuard<'_, Store> {
-        self.store.read().expect("the Store is always readable due to controlled write access")
+        self.store
+            .read()
+            .expect("the Store is always readable due to controlled write access")
     }
 
     async fn execute(&self, query: &str) -> async_graphql::Response {
