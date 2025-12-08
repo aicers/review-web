@@ -228,7 +228,9 @@ mod tests {
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // check empty
-        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
 
         // insert 2 nodes
@@ -252,11 +254,11 @@ mod tests {
                 )
             }}"#
         );
-        let res = schema.execute(&mutation).await;
+        let res = schema.execute_as_system_admin(&mutation).await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 format!(
                     r#"mutation {{
                         applyNode(
@@ -288,8 +290,7 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
 
-        let res = schema
-            .execute(
+        let res = schema.execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "node2",
@@ -315,8 +316,7 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
 
-        let res = schema
-            .execute(
+        let res = schema.execute_as_system_admin(
                 r#"mutation {
                     applyNode(
                         id: "1"
@@ -353,7 +353,7 @@ mod tests {
 
         // check node status list
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     nodeStatusList(first: 10) {
                         edges {
@@ -490,7 +490,7 @@ mod tests {
 
         // Insert 5 nodes
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "test1",
@@ -515,7 +515,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "test2",
@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(res.data.to_string(), "null");
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "test3",
@@ -565,7 +565,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "test4",
@@ -590,7 +590,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNode: "2"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "test5",
@@ -610,7 +610,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNode: "3"}"#);
 
         let res = schema
-            .execute(r"{nodeStatusList(first:5){edges{node{name}}}}")
+            .execute_as_system_admin(r"{nodeStatusList(first:5){edges{node{name}}}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -618,36 +618,34 @@ mod tests {
         );
 
         let res = schema
-            .execute(r"{nodeStatusList(last:5){edges{node{name}},pageInfo{endCursor}}}")
+            .execute_as_system_admin(
+                r"{nodeStatusList(last:5){edges{node{name}},pageInfo{endCursor}}}",
+            )
             .await;
         assert_eq!(
             res.data.to_string(),
             r#"{nodeStatusList: {edges: [{node: {name: "test1"}}, {node: {name: "test3"}}, {node: {name: "test4"}}, {node: {name: "test5"}}], pageInfo: {endCursor: "WzExNiwxMDEsMTE1LDExNiw1M10"}}}"#
         );
 
-        let res = schema
-            .execute(r#"{nodeStatusList(last:3,before:"WzExNiwxMDEsMTE1LDExNiw1MV0"){edges{node{name}},pageInfo{startCursor}}}"#)
+        let res = schema.execute_as_system_admin(r#"{nodeStatusList(last:3,before:"WzExNiwxMDEsMTE1LDExNiw1MV0"){edges{node{name}},pageInfo{startCursor}}}"#)
             .await;
         assert_eq!(
             res.data.to_string(),
             r#"{nodeStatusList: {edges: [{node: {name: "test1"}}], pageInfo: {startCursor: "WzExNiwxMDEsMTE1LDExNiw0OV0"}}}"#
         );
 
-        let res = schema
-            .execute(r#"{nodeStatusList(first:3,after:"WzExNiwxMDEsMTE1LDExNiw1MV0"){edges{node{name}},pageInfo{endCursor}}}"#)
+        let res = schema.execute_as_system_admin(r#"{nodeStatusList(first:3,after:"WzExNiwxMDEsMTE1LDExNiw1MV0"){edges{node{name}},pageInfo{endCursor}}}"#)
             .await;
         assert_eq!(
             res.data.to_string(),
             r#"{nodeStatusList: {edges: [{node: {name: "test4"}}, {node: {name: "test5"}}], pageInfo: {endCursor: "WzExNiwxMDEsMTE1LDExNiw1M10"}}}"#
         );
 
-        let res = schema
-            .execute(r#"{nodeStatusList(last:2, after:"WzExNiwxMDEsMTE1LDExNiw1M10"){edges{node{name}}}}"#)
+        let res = schema.execute_as_system_admin(r#"{nodeStatusList(last:2, after:"WzExNiwxMDEsMTE1LDExNiw1M10"){edges{node{name}}}}"#)
             .await;
         assert!(res.is_err());
 
-        let res = schema
-            .execute(r#"{nodeStatusList(first:2, before:"WzExNiwxMDEsMTE1LDExNiw1M10"){edges{node{name}}}}"#)
+        let res = schema.execute_as_system_admin(r#"{nodeStatusList(first:2, before:"WzExNiwxMDEsMTE1LDExNiw1M10"){edges{node{name}}}}"#)
             .await;
         assert!(res.is_err());
     }

@@ -799,7 +799,7 @@ mod tests {
             assert!(map.insert(outlier).is_ok());
         }
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                 outliers(model: 3) {
                     nodes {id, events, size},
@@ -829,7 +829,7 @@ mod tests {
         }
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     outliers(model: 3) {
                         totalCount
@@ -857,7 +857,7 @@ mod tests {
         }
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     rankedOutliers(modelId: 3) {
                         totalCount
@@ -881,8 +881,7 @@ mod tests {
             assert!(map.insert(outlier).is_ok());
         }
 
-        let res = schema
-            .execute(&format!(
+        let res = schema.execute_as_system_admin(&format!(
                 "query {{rankedOutliers(modelId: 3, time: \"{}\", first: 1) {{ nodes {{ id }} }} }}",
                 &t2_str
             ))
@@ -893,7 +892,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(&format!(
+            .execute_as_system_admin(&format!(
                 "query {{rankedOutliers(modelId: 3, time: \"{}\", first: 3) {{ pageInfo {{
                 hasNextPage,
                 startCursor,
@@ -919,8 +918,7 @@ mod tests {
             panic!("unexpected response: {page_info:?}");
         };
 
-        let res = schema
-            .execute(&format!(
+        let res = schema.execute_as_system_admin(&format!(
                 "query {{rankedOutliers(modelId: 3, time: \"{}\", after: \"{cursor}\", first: 1) {{ nodes {{ id }} }} }}",
                 &t2_str
             ))
@@ -931,7 +929,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(&format!(
+            .execute_as_system_admin(&format!(
                 "query {{rankedOutliers(modelId: 3, time: \"{}\", last: 2) {{ nodes {{ id }} }} }}",
                 &t2_str
             ))
@@ -946,7 +944,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(&format!(
+            .execute_as_system_admin(&format!(
                 "query {{rankedOutliers(modelId: 3, time: \"{}\", last: 3) {{ pageInfo {{
             hasPreviousPage,
             startCursor,
@@ -972,8 +970,7 @@ mod tests {
             panic!("unexpected response: {page_info:?}");
         };
 
-        let res = schema
-        .execute(&format!(
+        let res = schema.execute_as_system_admin(&format!(
             "query {{rankedOutliers(modelId: 3, time: \"{}\", before: \"{cursor}\", last: 1) {{ nodes {{ id }} }} }}",
             &t2_str
         ))
@@ -1008,7 +1005,7 @@ mod tests {
         }
 
         let res = schema
-            .execute(&format!(
+            .execute_as_system_admin(&format!(
                 "query {{savedOutliers(modelId: {model}, time: \"{}\") {{ totalCount }} }}",
                 &t_str
             ))
@@ -1039,7 +1036,7 @@ mod tests {
         }
 
         let res = schema
-            .execute(&format!(
+            .execute_as_system_admin(&format!(
                 "query {{savedOutliers(modelId: {model}, time: \"{}\") {{ totalCount }} }}",
                 &t_str
             ))
@@ -1055,7 +1052,7 @@ mod tests {
             t.timestamp_nanos_opt().unwrap()
         );
         let res = schema
-            .execute(&format!(
+            .execute_as_system_admin(&format!(
                 "mutation {{
                     preserveOutliers(input: {to_preserve}) {{
                         id
@@ -1075,7 +1072,7 @@ mod tests {
             t.timestamp_nanos_opt().unwrap()
         );
         let res = schema
-            .execute(&format!(
+            .execute_as_system_admin(&format!(
                 "mutation {{
                     preserveOutliers(input: {to_preserve}) {{
                         id

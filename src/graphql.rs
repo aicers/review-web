@@ -794,7 +794,7 @@ impl TestSchema {
             .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"))
     }
 
-    async fn execute(&self, query: &str) -> async_graphql::Response {
+    async fn execute_as_system_admin(&self, query: &str) -> async_graphql::Response {
         self.execute_with_guard(query, RoleGuard::Role(Role::SystemAdministrator))
             .await
     }

@@ -193,26 +193,32 @@ mod tests {
     async fn trusted_domain_list() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute(r"{trustedDomainList{edges{node{name}}}}")
+            .execute_as_system_admin(r"{trustedDomainList{edges{node{name}}}}")
             .await;
         assert_eq!(res.data.to_string(), r"{trustedDomainList: {edges: []}}");
 
         let res = schema
-            .execute(r#"mutation{insertTrustedDomain(name:"example1.com",remarks:"test")}"#)
+            .execute_as_system_admin(
+                r#"mutation{insertTrustedDomain(name:"example1.com",remarks:"test")}"#,
+            )
             .await;
         assert_eq!(
             res.data.to_string(),
             r#"{insertTrustedDomain: "example1.com"}"#
         );
         let res = schema
-            .execute(r#"mutation{insertTrustedDomain(name:"example2.org",remarks:"test")}"#)
+            .execute_as_system_admin(
+                r#"mutation{insertTrustedDomain(name:"example2.org",remarks:"test")}"#,
+            )
             .await;
         assert_eq!(
             res.data.to_string(),
             r#"{insertTrustedDomain: "example2.org"}"#
         );
         let res = schema
-            .execute(r#"mutation{insertTrustedDomain(name:"example3.org",remarks:"test")}"#)
+            .execute_as_system_admin(
+                r#"mutation{insertTrustedDomain(name:"example3.org",remarks:"test")}"#,
+            )
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -220,7 +226,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(r"{trustedDomainList{edges{node{name}}}}")
+            .execute_as_system_admin(r"{trustedDomainList{edges{node{name}}}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -228,7 +234,9 @@ mod tests {
         );
 
         let res = schema
-            .execute(r#"mutation{removeTrustedDomains(names:["example1.com", "example2.org"])}"#)
+            .execute_as_system_admin(
+                r#"mutation{removeTrustedDomains(names:["example1.com", "example2.org"])}"#,
+            )
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -236,7 +244,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(r"{trustedDomainList{edges{node{name}}}}")
+            .execute_as_system_admin(r"{trustedDomainList{edges{node{name}}}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -272,16 +280,16 @@ mod tests {
               }
               "#;
 
-        let res = schema.execute(update_query).await;
+        let res = schema.execute_as_system_admin(update_query).await;
         assert_eq!(
             res.errors.first().unwrap().message,
             "no such entry".to_string()
         );
 
-        let res = schema.execute(insert_query).await;
+        let res = schema.execute_as_system_admin(insert_query).await;
         assert_eq!(res.data.to_string(), r#"{insertTrustedDomain: "test.com"}"#);
 
-        let res = schema.execute(update_query).await;
+        let res = schema.execute_as_system_admin(update_query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{updateTrustedDomain: "test2.com"}"#

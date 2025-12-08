@@ -116,12 +116,14 @@ mod tests {
     async fn test_query_and_mutation() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute(r"query{torExitNodeList(first:10){edges{node{ipAddress}}}}")
+            .execute_as_system_admin(r"query{torExitNodeList(first:10){edges{node{ipAddress}}}}")
             .await;
         assert_eq!(res.data.to_string(), r"{torExitNodeList: {edges: []}}");
 
         let res = schema
-            .execute(r#"mutation{updateTorExitNodeList(ipAddresses:["192.168.1.1"])}"#)
+            .execute_as_system_admin(
+                r#"mutation{updateTorExitNodeList(ipAddresses:["192.168.1.1"])}"#,
+            )
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -129,7 +131,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(r"query{torExitNodeList(first:10){edges{node{ipAddress}}}}")
+            .execute_as_system_admin(r"query{torExitNodeList(first:10){edges{node{ipAddress}}}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -137,7 +139,9 @@ mod tests {
         );
 
         let res = schema
-            .execute(r#"mutation{updateTorExitNodeList(ipAddresses:["192.168.1.2"])}"#)
+            .execute_as_system_admin(
+                r#"mutation{updateTorExitNodeList(ipAddresses:["192.168.1.2"])}"#,
+            )
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -145,7 +149,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(r"query{torExitNodeList(first:10){edges{node{ipAddress}}}}")
+            .execute_as_system_admin(r"query{torExitNodeList(first:10){edges{node{ipAddress}}}}")
             .await;
         assert_eq!(
             res.data.to_string(),

@@ -212,7 +212,7 @@ mod tests {
         let schema = TestSchema::new().await;
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertTrafficFilterRules(
                         agent: "moon"
@@ -225,7 +225,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r"{insertTrafficFilterRules: 1}");
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertTrafficFilterRules(
                         agent: "moon"
@@ -238,7 +238,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r"{insertTrafficFilterRules: 2}");
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertTrafficFilterRules(
                         agent: "sun"
@@ -251,7 +251,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r"{insertTrafficFilterRules: 1}");
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateTrafficFilterRules(
                         agent: "sun"
@@ -265,7 +265,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r"{updateTrafficFilterRules: 1}");
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     trafficFilterList(agents: null) {
                         agent
@@ -285,7 +285,7 @@ mod tests {
         let schema = TestSchema::new().await;
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertTrafficFilterRules(
                         agent: "moon"
@@ -298,7 +298,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r"{insertTrafficFilterRules: 1}");
 
         let res: async_graphql::Response = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertTrafficFilterRules(
                         agent: "moon"
@@ -313,7 +313,7 @@ mod tests {
         assert!(res.is_err());
 
         let res: async_graphql::Response = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     removeTrafficFilterRules(
                         agent: "moon"
@@ -325,7 +325,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r"{removeTrafficFilterRules: 1}");
 
         let res: async_graphql::Response = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     clearTrafficFilterRules(
                         agent: "moon"

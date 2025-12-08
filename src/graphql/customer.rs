@@ -633,7 +633,7 @@ mod tests {
     async fn check_customer_ordering() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute(r"{customerList{edges{node{name}}totalCount}}")
+            .execute_as_system_admin(r"{customerList{edges{node{name}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -641,7 +641,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertCustomer(name: "t1", description: "", networks: [])
             }"#,
@@ -650,7 +650,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertCustomer(name: "t2", description: "", networks: [])
             }"#,
@@ -659,7 +659,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertCustomer(name: "t3", description: "", networks: [])
             }"#,
@@ -668,7 +668,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "2"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertCustomer(name: "t4", description: "", networks: [])
             }"#,
@@ -677,7 +677,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "3"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertCustomer(name: "t5", description: "", networks: [])
             }"#,
@@ -686,7 +686,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "4"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertCustomer(name: "t6", description: "", networks: [])
             }"#,
@@ -695,7 +695,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "5"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertCustomer(name: "t7", description: "", networks: [])
             }"#,
@@ -704,7 +704,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "6"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertCustomer(name: "t8", description: "", networks: [])
             }"#,
@@ -713,7 +713,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "7"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertCustomer(name: "t9", description: "", networks: [])
             }"#,
@@ -722,7 +722,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "8"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertCustomer(name: "t10", description: "", networks: [])
             }"#,
@@ -731,30 +731,27 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "9"}"#);
 
         let res = schema
-            .execute(r"{customerList(last: 10){edges{node{name}}totalCount}}")
+            .execute_as_system_admin(r"{customerList(last: 10){edges{node{name}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
             r#"{customerList: {edges: [{node: {name: "t1"}}, {node: {name: "t10"}}, {node: {name: "t2"}}, {node: {name: "t3"}}, {node: {name: "t4"}}, {node: {name: "t5"}}, {node: {name: "t6"}}, {node: {name: "t7"}}, {node: {name: "t8"}}, {node: {name: "t9"}}], totalCount: 10}}"#
         );
 
-        let res = schema
-            .execute(r#"{customerList(last: 10, before: "WzExNiw1Nl0"){edges{node{name}}totalCount,pageInfo{startCursor}}}"#)
+        let res = schema.execute_as_system_admin(r#"{customerList(last: 10, before: "WzExNiw1Nl0"){edges{node{name}}totalCount,pageInfo{startCursor}}}"#)
             .await;
         assert_eq!(
             res.data.to_string(),
             r#"{customerList: {edges: [{node: {name: "t1"}}, {node: {name: "t10"}}, {node: {name: "t2"}}, {node: {name: "t3"}}, {node: {name: "t4"}}, {node: {name: "t5"}}, {node: {name: "t6"}}, {node: {name: "t7"}}], totalCount: 10, pageInfo: {startCursor: "WzExNiw0OV0"}}}"#
         );
 
-        let res = schema
-            .execute(
+        let res = schema.execute_as_system_admin(
                 r#"{customerList(last: 10, after: "dDc="){edges{node{name}}totalCount,pageInfo{startCursor}}}"#,
             )
             .await;
         assert!(res.is_err());
 
-        let res = schema
-            .execute(
+        let res = schema.execute_as_system_admin(
                 r#"{customerList(first:10 after:"WzExNiw1NV0" ){edges{node{name}}totalCount,pageInfo{endCursor}}}"#,
             )
             .await;
@@ -763,15 +760,14 @@ mod tests {
             r#"{customerList: {edges: [{node: {name: "t8"}}, {node: {name: "t9"}}], totalCount: 10, pageInfo: {endCursor: "WzExNiw1N10"}}}"#
         );
 
-        let res = schema
-        .execute(
+        let res = schema.execute_as_system_admin(
             r#"{customerList(first:10 before:"WzExNiw1NV0" ){edges{node{name}}totalCount,pageInfo{endCursor}}}"#,
         )
         .await;
         assert!(res.is_err());
 
         let res = schema
-            .execute(r"{customerList(first:10){edges{node{name}}totalCount}}")
+            .execute_as_system_admin(r"{customerList(first:10){edges{node{name}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -779,7 +775,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation { removeCustomers(ids: ["0","1","2","3","4","5","6","7","8","9"]) }"#,
             )
             .await;
@@ -789,7 +785,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(r"{customerList{edges{node{name}}totalCount}}")
+            .execute_as_system_admin(r"{customerList{edges{node{name}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -801,7 +797,7 @@ mod tests {
     async fn remove_customers() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute(r"{customerList{edges{node{name}}totalCount}}")
+            .execute_as_system_admin(r"{customerList{edges{node{name}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -809,7 +805,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertCustomer(name: "c1", description: "", networks: [])
                 }"#,
@@ -818,7 +814,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
 
         let res = schema
-            .execute(r"{customerList{edges{node{name}}totalCount}}")
+            .execute_as_system_admin(r"{customerList{edges{node{name}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -826,7 +822,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertNetwork(name: "n1", description: "", networks: {
                     hosts: [], networks: [], ranges: []
@@ -837,12 +833,12 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
 
         let res = schema
-            .execute(r#"mutation { removeCustomers(ids: ["0"]) }"#)
+            .execute_as_system_admin(r#"mutation { removeCustomers(ids: ["0"]) }"#)
             .await;
         assert_eq!(res.data.to_string(), r#"{removeCustomers: ["c1"]}"#);
 
         let res = schema
-            .execute(r"{networkList{edges{node{customerList{name}}}totalCount}}")
+            .execute_as_system_admin(r"{networkList{edges{node{customerList{name}}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -856,7 +852,7 @@ mod tests {
 
         // Create a customer
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertCustomer(name: "test_customer", description: "", networks: [])
                 }"#,
@@ -866,7 +862,7 @@ mod tests {
 
         // Create an account that references this customer
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "test_user",
@@ -884,7 +880,7 @@ mod tests {
 
         // Try to remove the customer - should fail
         let res = schema
-            .execute(r#"mutation { removeCustomers(ids: ["0"]) }"#)
+            .execute_as_system_admin(r#"mutation { removeCustomers(ids: ["0"]) }"#)
             .await;
         assert!(!res.errors.is_empty());
         assert!(
@@ -895,7 +891,7 @@ mod tests {
 
         // Verify customer is still there
         let res = schema
-            .execute(r"{customerList{edges{node{name}}totalCount}}")
+            .execute_as_system_admin(r"{customerList{edges{node{name}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),

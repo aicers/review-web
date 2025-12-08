@@ -290,11 +290,13 @@ mod tests {
     async fn test_block_network() {
         let schema = TestSchema::new().await;
 
-        let res = schema.execute(r"{blockNetworkList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{blockNetworkList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{blockNetworkList: {totalCount: 0}}");
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 mutation {
                     insertBlockNetwork(
@@ -312,7 +314,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertBlockNetwork: "0"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 mutation {
                     updateBlockNetwork(
@@ -342,7 +344,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{updateBlockNetwork: "0"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"
                 query {
                     blockNetworkList(first: 10) {
@@ -359,7 +361,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     removeBlockNetworks(ids: ["0"])
                 }"#,

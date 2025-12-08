@@ -95,7 +95,9 @@ mod tests {
         let schema = TestSchema::new().await;
 
         // Query for backups - this should work and return an empty array initially
-        let res = schema.execute(r"{ backups { id timestamp size } }").await;
+        let res = schema
+            .execute_as_system_admin(r"{ backups { id timestamp size } }")
+            .await;
 
         // If there are errors, it might be due to RocksDB setup issues in test environment
         // In that case, we should at least verify the query is properly structured
@@ -121,7 +123,9 @@ mod tests {
         let schema = TestSchema::new().await;
 
         // Ensure initially empty
-        let res = schema.execute(r"{ backups { id timestamp } }").await;
+        let res = schema
+            .execute_as_system_admin(r"{ backups { id timestamp } }")
+            .await;
         assert!(res.errors.is_empty(), "GraphQL errors: {:?}", res.errors);
         assert_eq!(res.data.to_string(), r"{backups: []}");
 
@@ -129,7 +133,7 @@ mod tests {
         // Add a delay between backups to ensure distinct timestamps
         for _ in 0..3 {
             let res = schema
-                .execute(r"mutation { backup(numOfBackupsToKeep: 5) }")
+                .execute_as_system_admin(r"mutation { backup(numOfBackupsToKeep: 5) }")
                 .await;
             assert!(
                 res.errors.is_empty(),
@@ -141,7 +145,9 @@ mod tests {
         }
 
         // Fetch and verify order strictly
-        let res = schema.execute(r"{ backups { id timestamp } }").await;
+        let res = schema
+            .execute_as_system_admin(r"{ backups { id timestamp } }")
+            .await;
         assert!(
             res.errors.is_empty(),
             "Backups query failed unexpectedly: {:?}",

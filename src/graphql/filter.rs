@@ -624,11 +624,11 @@ mod tests {
     #[tokio::test]
     async fn filter() {
         let schema = TestSchema::new().await;
-        let res = schema.execute(r"{filterList{name}}").await;
+        let res = schema.execute_as_system_admin(r"{filterList{name}}").await;
         assert_eq!(res.data.to_string(), r"{filterList: []}");
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertFilter(name: "foo", directions: [INBOUND, OUTBOUND])
                 }"#,
@@ -636,21 +636,23 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertFilter: "foo"}"#);
 
-        let res = schema.execute(r"{filterList{name}}").await;
+        let res = schema.execute_as_system_admin(r"{filterList{name}}").await;
         assert_eq!(res.data.to_string(), r#"{filterList: [{name: "foo"}]}"#);
 
-        let res = schema.execute(
+        let res = schema.execute_as_system_admin(
             r#"mutation {
                 replaceFilter(old: {name: "foo", directions: [INBOUND, OUTBOUND]}, new: {name: "foo", directions: [INBOUND]})
             }"#,
         ).await;
         assert_eq!(res.data.to_string(), r#"{replaceFilter: "foo"}"#);
 
-        let res = schema.execute(r#"{filter(name: "foo"){directions}}"#).await;
+        let res = schema
+            .execute_as_system_admin(r#"{filter(name: "foo"){directions}}"#)
+            .await;
         assert_eq!(res.data.to_string(), r"{filter: {directions: [INBOUND]}}");
 
         let res = schema
-            .execute(r#"mutation {removeFilters(names: ["foo"])}"#)
+            .execute_as_system_admin(r#"mutation {removeFilters(names: ["foo"])}"#)
             .await;
         assert_eq!(res.data.to_string(), r#"{removeFilters: ["foo"]}"#);
     }

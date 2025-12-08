@@ -488,7 +488,7 @@ mod tests {
             .unwrap();
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNetwork(
                         name: "n0",
@@ -516,7 +516,7 @@ mod tests {
                 }}
             }}"
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventCountsByNetwork: {values: ["0"], counts: [1]}}"#

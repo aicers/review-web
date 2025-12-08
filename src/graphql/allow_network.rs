@@ -277,11 +277,13 @@ mod tests {
     async fn test_allow_network() {
         let schema = TestSchema::new().await;
 
-        let res = schema.execute(r"{allowNetworkList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{allowNetworkList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{allowNetworkList: {totalCount: 0}}");
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 mutation {
                     insertAllowNetwork(
@@ -299,7 +301,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertAllowNetwork: "0"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 mutation {
                     updateAllowNetwork(
@@ -329,7 +331,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{updateAllowNetwork: "0"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"
                 query {
                     allowNetworkList(first: 10) {
@@ -346,7 +348,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     removeAllowNetworks(ids: ["0"])
                 }"#,
