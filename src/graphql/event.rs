@@ -430,7 +430,9 @@ async fn fetch_events(
 
         // Fetch event iterator based on time
         let start_key = i128::from(start) << 64;
-        let db = store.read().expect("the Store is always readable due to controlled write access");
+        let db = store
+            .read()
+            .expect("the Store is always readable due to controlled write access");
         let events = db.events();
         let iter = events.iter_from(start_key, Direction::Forward);
 
