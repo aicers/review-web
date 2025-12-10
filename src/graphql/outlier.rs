@@ -82,7 +82,7 @@ async fn fetch_ranked_outliers(
         let rows = {
             let store = store
                 .read()
-                .expect("the Store is always readable due to controlled write access");
+                .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
             let map = store.model_map();
             map.load_models(&None, &None, true, MAX_MODEL_LIST_SIZE)?
         };
@@ -92,7 +92,7 @@ async fn fetch_ranked_outliers(
         for model_id in model_ids {
             let store = store
                 .read()
-                .expect("the Store is always readable due to controlled write access");
+                .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
             let map = store.outlier_map();
 
             let (iter, is_first_fetch) = if let Some(cursor) = latest_fetched_key.get(&model_id) {
