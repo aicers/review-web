@@ -96,7 +96,7 @@ async fn auth(
                 let store = state
                     .store
                     .read()
-                    .expect("the Store is always readable due to controlled write access");
+                    .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
                 let (_, role) = validate_token(&store, bearer.token())?;
                 role
             };

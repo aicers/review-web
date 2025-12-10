@@ -67,7 +67,7 @@ impl BlockNetworkMutation {
             let db = ctx
                 .data::<Arc<RwLock<Store>>>()?
                 .read()
-                .expect("the Store is always readable due to controlled write access");
+                .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
             let map = db.block_network_map();
             let networks: database::HostNetworkGroup =
                 networks.try_into().map_err(|_| "invalid network")?;
@@ -103,7 +103,7 @@ impl BlockNetworkMutation {
             let db = ctx
                 .data::<Arc<RwLock<Store>>>()?
                 .read()
-                .expect("the Store is always readable due to controlled write access");
+                .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
             let map = db.block_network_map();
 
             let ids: Vec<u32> = ids
@@ -244,7 +244,7 @@ impl BlockNetworkTotalCount {
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
-            .expect("the Store is always readable due to controlled write access");
+            .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
         Ok(db.block_network_map().count()?)
     }
 }

@@ -60,7 +60,7 @@ impl ModelQuery {
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
-            .expect("the Store is always readable due to controlled write access");
+            .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
         let map = db.csv_column_extra_map();
         Ok(map
             .get_by_model(model)?
@@ -351,7 +351,7 @@ impl ModelMutation {
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
-            .expect("the Store is always readable due to controlled write access");
+            .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
         let map = db.csv_column_extra_map();
         Ok(ID(map
             .insert(
@@ -381,7 +381,7 @@ impl ModelMutation {
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
-            .expect("the Store is always readable due to controlled write access");
+            .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
         let map = db.csv_column_extra_map();
         map.update(
             id.as_str().parse()?,

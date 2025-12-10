@@ -432,7 +432,7 @@ async fn fetch_events(
         let start_key = i128::from(start) << 64;
         let db = store
             .read()
-            .expect("the Store is always readable due to controlled write access");
+            .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
         let events = db.events();
         let iter = events.iter_from(start_key, Direction::Forward);
 
