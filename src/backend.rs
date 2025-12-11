@@ -3,7 +3,6 @@ use std::{collections::HashMap, path::PathBuf, time::Duration};
 use anyhow::anyhow;
 use async_trait::async_trait;
 use ipnet::IpNet;
-use review_database::HostNetworkGroup;
 pub use roxy::{Process, ResourceUsage};
 
 use crate::graphql::customer::NetworksTargetAgentKeysPair;
@@ -20,14 +19,14 @@ pub trait AgentManager: Send + Sync {
         networks: &[NetworksTargetAgentKeysPair],
     ) -> Result<Vec<String>, anyhow::Error>;
 
-    async fn broadcast_allow_networks(
+    async fn send_agent_specific_allow_networks(
         &self,
-        networks: &HostNetworkGroup,
+        networks: &[NetworksTargetAgentKeysPair],
     ) -> Result<Vec<String>, anyhow::Error>;
 
-    async fn broadcast_block_networks(
+    async fn send_agent_specific_block_networks(
         &self,
-        networks: &HostNetworkGroup,
+        networks: &[NetworksTargetAgentKeysPair],
     ) -> Result<Vec<String>, anyhow::Error>;
 
     async fn broadcast_trusted_user_agent_list(

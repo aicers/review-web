@@ -110,7 +110,6 @@ mod tests {
 
     use assert_json_diff::assert_json_include;
     use async_trait::async_trait;
-    use review_database::HostNetworkGroup;
     use roxy::ResourceUsage;
     use serde_json::json;
 
@@ -132,16 +131,16 @@ mod tests {
             anyhow::bail!("not expected to be called")
         }
 
-        async fn broadcast_allow_networks(
+        async fn send_agent_specific_allow_networks(
             &self,
-            _networks: &HostNetworkGroup,
+            _networks: &[NetworksTargetAgentKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             unimplemented!()
         }
 
-        async fn broadcast_block_networks(
+        async fn send_agent_specific_block_networks(
             &self,
-            _networks: &HostNetworkGroup,
+            _networks: &[NetworksTargetAgentKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             unimplemented!()
         }
