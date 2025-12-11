@@ -56,6 +56,23 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - Replaced the `tidb` schema module with `label_db`.
   - Affected GraphQL APIs: `labelDb`, `labelDbList`, `labelDbRule`,
     `insertLabelDb`, `updateLabelDb`, `removeLabelDb`.
+- `AllowNetwork` and `BlockNetwork` GraphQL APIs now require `customer_id` for
+  all operations (insert, update, list).
+  - Affected GraphQL APIs: `insertAllowNetwork`, `updateAllowNetwork`,
+    `allowNetworkList`, `insertBlockNetwork`, `updateBlockNetwork`,
+    `blockNetworkList`.
+- Modified `AllowNetwork` and `BlockNetwork` operations to transmit networks
+  only to the semi-supervised engines belonging to the affected customer,
+  replacing the previous global broadcast behavior.
+  - Renamed the `broadcast_[allow/block]_networks` method of `AgentManager` trait
+    to `send_agent_specific_[allow/block]_networks` as the functionality of
+    `broadcast_[allow/block]_networks` changes from broadcast to fine-targeting
+    nodes and agents using agent keys and hostnames to send.
+  - Changed the argument type of the `send_agent_specific_[allow/block]_networks`
+    method from `HostNetworkGroup` to `NetworksTargetAgentKeysPair` array. This
+    change will allow the Manager Server that implements
+    `send_agent_specific_[allow/block]_networks` to provide the allow/block
+    networks corresponding to the agent information of the Semi-supervised Engine.
 
 ### Fixed
 

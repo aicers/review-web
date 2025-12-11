@@ -50,8 +50,6 @@ use async_graphql::{
     ObjectType, OutputType, Result, Scalar, ScalarType, Value,
 };
 use num_traits::ToPrimitive;
-#[cfg(test)]
-use review_database::HostNetworkGroup;
 use review_database::{self as database, Role, Store, event::Direction};
 pub use roxy::{Process, ResourceUsage};
 use tokio::sync::Notify;
@@ -425,6 +423,43 @@ where
     Ok(connection)
 }
 
+#[allow(clippy::type_complexity)]
+fn load_edges_with_prefix<'a, T, I, R, N, A, NodesField>(
+    table: &'a T,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
+    first: Option<usize>,
+    last: Option<usize>,
+    prefix: Option<&[u8]>,
+    additional_fields: A,
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, N, A, EmptyFields, NodesField>>
+where
+    T: database::Iterable<'a, I>,
+    I: Iterator<Item = anyhow::Result<R>>,
+    R: database::UniqueKey,
+    N: From<R> + OutputType,
+    A: ObjectType,
+    NodesField: ConnectionNameType,
+{
+    let (nodes, has_previous, has_next) =
+        process_load_edges(table, after, before, first, last, prefix);
+
+    for node in &nodes {
+        let Err(e) = node else { continue };
+        warn!("Failed to load from DB: {}", e);
+        return Err("database error".into());
+    }
+
+    let mut connection =
+        Connection::with_additional_fields(has_previous, has_next, additional_fields);
+    connection.edges.extend(nodes.into_iter().map(|node| {
+        let Ok(node) = node else { unreachable!() };
+        let key = node.unique_key().as_ref().to_vec();
+        Edge::new(OpaqueCursor(key), node.into())
+    }));
+    Ok(connection)
+}
+
 fn collect_edges<'a, T, I, R>(
     table: &'a T,
     dir: Direction,
@@ -598,18 +633,20 @@ impl AgentManager for MockAgentManager {
     ) -> Result<Vec<String>, anyhow::Error> {
         Ok(vec!["semi-supervised@hostA".to_string()])
     }
-    async fn broadcast_allow_networks(
+
+    async fn send_agent_specific_allow_networks(
         &self,
-        _networks: &HostNetworkGroup,
+        _networks: &[customer::NetworksTargetAgentKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         Ok(vec![
             "semi-supervised@hostA".to_string(),
             "semi-supervised@hostB".to_string(),
         ])
     }
-    async fn broadcast_block_networks(
+
+    async fn send_agent_specific_block_networks(
         &self,
-        _networks: &HostNetworkGroup,
+        _networks: &[customer::NetworksTargetAgentKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         Ok(vec![
             "semi-supervised@hostA".to_string(),
@@ -617,6 +654,7 @@ impl AgentManager for MockAgentManager {
             "semi-supervised@hostC".to_string(),
         ])
     }
+
     async fn online_apps_by_host_id(
         &self,
     ) -> Result<std::collections::HashMap<String, Vec<(String, String)>>, anyhow::Error> {

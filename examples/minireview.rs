@@ -17,7 +17,7 @@ use futures::{
     pin_mut,
 };
 use ipnet::IpNet;
-use review_database::{HostNetworkGroup, Store, migrate_data_dir};
+use review_database::{Store, migrate_data_dir};
 use review_web::{
     self as web,
     backend::{AgentManager, CertManager},
@@ -86,16 +86,16 @@ impl AgentManager for Manager {
         bail!("Not supported")
     }
 
-    async fn broadcast_allow_networks(
+    async fn send_agent_specific_allow_networks(
         &self,
-        _networks: &HostNetworkGroup,
+        _networks: &[NetworksTargetAgentKeysPair],
     ) -> Result<Vec<String>, Error> {
         bail!("Not supported")
     }
 
-    async fn broadcast_block_networks(
+    async fn send_agent_specific_block_networks(
         &self,
-        _networks: &HostNetworkGroup,
+        _networks: &[NetworksTargetAgentKeysPair],
     ) -> Result<Vec<String>, Error> {
         bail!("Not supported")
     }
