@@ -1762,7 +1762,7 @@ mod tests {
                 }} \
             }}"
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
             r"{eventList: {edges: [{node: {level: MEDIUM, learningMethod: SEMI_SUPERVISED}}]}}"
@@ -1773,7 +1773,7 @@ mod tests {
     async fn event_list() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 "{eventList(filter: {}){edges{node{... on DnsCovertChannel{query}}}totalCount}}",
             )
             .await;
@@ -1813,7 +1813,7 @@ mod tests {
                 }} \
             }}"
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00"}}], totalCount: 1}}"#
@@ -1824,7 +1824,7 @@ mod tests {
     async fn filter_by_categories_and_sensors() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 "{eventList(filter: {}){edges{node{... on DnsCovertChannel{query}}}totalCount}}",
             )
             .await;
@@ -1834,7 +1834,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "sensor1",
@@ -1853,7 +1853,7 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
         let _ = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     applyNode(
                         id: "0"
@@ -1918,7 +1918,7 @@ mod tests {
                 }} \
             }}"
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00", sensor: "sensor1"}}], totalCount: 1}}"#
@@ -1954,7 +1954,7 @@ mod tests {
             });
 
         let _ = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertCustomer(
                         name: "c0",
@@ -1983,7 +1983,7 @@ mod tests {
                     }}",
             timestamps[0], timestamps[2]
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {time: "2018-01-26T18:30:09.453829+00:00"}}, {node: {time: "2018-01-27T18:30:09.453829+00:00"}}], totalCount: 2}}"#
@@ -1997,7 +1997,7 @@ mod tests {
                 }}",
             timestamps[1], timestamps[2]
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00"}}], totalCount: 1}}"#
@@ -2031,7 +2031,7 @@ mod tests {
             .unwrap();
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertCustomer(
                         name: "c0",
@@ -2059,7 +2059,7 @@ mod tests {
                 }} \
             }}"
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1"}}]}}"#
@@ -2093,7 +2093,7 @@ mod tests {
             .unwrap();
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertCustomer(
                         name: "c0",
@@ -2125,7 +2125,7 @@ mod tests {
                 }} \
             }}"
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1"}}]}}"#
@@ -2159,7 +2159,7 @@ mod tests {
             .unwrap();
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNetwork(
                         name: "n0",
@@ -2187,7 +2187,7 @@ mod tests {
                 }} \
             }}"
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.3"}}]}}"#
@@ -2226,7 +2226,7 @@ mod tests {
 
         // 1. Filter by unknown category
         let query = r"{ eventList(filter: { categories: [null] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }";
-        let res = schema.execute(query).await;
+        let res = schema.execute_as_system_admin(query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {sensor: "s2"}}], totalCount: 1}}"#
@@ -2234,7 +2234,7 @@ mod tests {
 
         // 2. Filter by a specific category (InitialAccess = 2)
         let query = r"{ eventList(filter: { categories: [2] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }";
-        let res = schema.execute(query).await;
+        let res = schema.execute_as_system_admin(query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {sensor: "s1"}}], totalCount: 1}}"#
@@ -2242,7 +2242,7 @@ mod tests {
 
         // 3. Filter by both specific and unknown categories
         let query = r"{ eventList(filter: { categories: [2, null] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }";
-        let res = schema.execute(query).await;
+        let res = schema.execute_as_system_admin(query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {sensor: "s1"}}, {node: {sensor: "s2"}}], totalCount: 2}}"#
@@ -2347,7 +2347,7 @@ mod tests {
         db.put(&message).unwrap();
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertCustomer(
                         name: "c0",
@@ -2380,7 +2380,7 @@ mod tests {
                 }} \
             }}"
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {srcAddr: "127.0.0.1", giaddr: "127.0.0.8", reqIpAddr: "127.0.0.100", classId: "04:05:06", clientId: "07:08:09"}}]}}"#
@@ -2434,7 +2434,7 @@ mod tests {
         db.put(&message).unwrap();
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertCustomer(
                         name: "c0",
@@ -2467,7 +2467,7 @@ mod tests {
                 }} \
             }}"
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {srcAddr: "127.0.0.1", ciaddr: "127.0.0.5", chaddr: "01:02:03:04:05:06"}}]}}"#
@@ -2528,7 +2528,7 @@ mod tests {
                 }} \
             }}"
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1", rtt: "10", query: "domain"}}]}}"#
@@ -2599,7 +2599,7 @@ mod tests {
                 }} \
             }}"
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1", cipher: 1234, subjectCountry: "US", confidence: 0.800000011920929}}]}}"#
@@ -2658,7 +2658,7 @@ mod tests {
         db.put(&message).unwrap();
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertCustomer(
                         name: "c0",
@@ -2691,7 +2691,7 @@ mod tests {
                 }} \
             }}"
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {srcAddr: "127.0.0.1", nasIp: "192.168.1.1", userName: "75:73:65:72", message: "RADIUS message"}}]}}"#
@@ -2748,7 +2748,7 @@ mod tests {
         db.put(&message).unwrap();
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertCustomer(
                         name: "c0",
@@ -2781,7 +2781,7 @@ mod tests {
                 }} \
             }}"
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {srcAddr: "127.0.0.1", dstAddr: "127.0.0.2", transId: 42, queryBody: ["de:ad"], respBody: ["ca:fe"]}}]}}"#
@@ -3145,7 +3145,7 @@ mod tests {
                 }}
             }}"#
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
 
         // 4. Validate query results
         assert!(res.errors.is_empty(), "Errors: {:?}", res.errors);
@@ -3264,7 +3264,7 @@ mod tests {
                 }} \
             }}"
         );
-        let res = schema.execute(&query).await;
+        let res = schema.execute_as_system_admin(&query).await;
         let data = res.data.to_string();
         assert!(data.contains("sensor1"));
         assert!(data.contains("192.168.1.1"));

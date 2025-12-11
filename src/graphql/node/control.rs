@@ -348,12 +348,14 @@ mod tests {
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // check empty
-        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
 
         // insert node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "admin node",
@@ -381,7 +383,7 @@ mod tests {
 
         // check node list after insert
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     nodeList(first: 10) {
                       totalCount
@@ -466,7 +468,7 @@ mod tests {
 
         // apply node - expected to update db and notify agent
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     applyNode(
                         id: "0"
@@ -505,7 +507,7 @@ mod tests {
 
         // check node list after apply
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     nodeList(first: 10) {
                       totalCount
@@ -594,7 +596,7 @@ mod tests {
 
         // update node with name change
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateNodeDraft(
                         id: "0"
@@ -660,7 +662,7 @@ mod tests {
 
         // check node list after update
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     nodeList(first: 10) {
                       totalCount
@@ -750,7 +752,7 @@ mod tests {
 
         // apply node - expected to update db
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     applyNode(
                         id: "0"
@@ -793,7 +795,7 @@ mod tests {
 
         // check node list after apply
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     nodeList(first: 10) {
                       totalCount
@@ -882,7 +884,7 @@ mod tests {
 
         // update data store draft
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateNodeDraft(
                         id: "0"
@@ -956,7 +958,7 @@ mod tests {
 
         // apply node - expected to neither update nor notify agent
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     applyNode(
                         id: "0"
@@ -1007,7 +1009,7 @@ mod tests {
 
         // check node list after apply
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     nodeList(first: 10) {
                         totalCount
@@ -1105,7 +1107,7 @@ mod tests {
 
         // update sensor draft
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateNodeDraft(
                         id: "0"
@@ -1186,7 +1188,7 @@ mod tests {
 
         // check node list after update
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     nodeList(first: 10) {
                       totalCount
@@ -1284,7 +1286,7 @@ mod tests {
 
         // apply node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     applyNode(
                         id: "0"
@@ -1335,7 +1337,7 @@ mod tests {
 
         // check node list after apply
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     nodeList(first: 10) {
                         totalCount
@@ -1433,7 +1435,7 @@ mod tests {
 
         // update node to disable one of the agents (sensor@all-in-one) in next apply
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateNodeDraft(
                         id: "0"
@@ -1514,7 +1516,7 @@ mod tests {
 
         // check node list after update
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     nodeList(first: 10) {
                       totalCount
@@ -1613,7 +1615,7 @@ mod tests {
         // apply node - expected to update db and notify agent, and also sensor is expected to be
         // removed from the `agents` vector.
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                         applyNode(
                             id: "0"
@@ -1663,7 +1665,7 @@ mod tests {
 
         // check node list after apply
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                         nodeList(first: 10) {
                           totalCount
@@ -1766,7 +1768,7 @@ mod tests {
 
         // insert node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "admin node",
@@ -1788,7 +1790,7 @@ mod tests {
 
         // apply node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                         applyNode(
                             id: "0"
@@ -1820,7 +1822,7 @@ mod tests {
 
         // check node list after apply
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                         nodeList(first: 10) {
                           totalCount
@@ -1911,7 +1913,7 @@ mod tests {
 
         // insert node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "admin node",
@@ -1954,7 +1956,7 @@ mod tests {
 
         // Apply node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     applyNode(
                         id: "0"
@@ -2005,7 +2007,7 @@ mod tests {
 
         // insert node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "admin node",
@@ -2033,7 +2035,7 @@ mod tests {
 
         // Apply node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     applyNode(
                         id: "0"
@@ -2084,7 +2086,7 @@ mod tests {
 
         // insert node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "admin node",
@@ -2112,7 +2114,7 @@ mod tests {
 
         // Apply node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     applyNode(
                         id: "0"
@@ -2164,7 +2166,7 @@ mod tests {
 
         // insert node with external service
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "admin node",
@@ -2191,7 +2193,7 @@ mod tests {
 
         // apply node to save the initial state
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     applyNode(
                         id: "0"
@@ -2226,7 +2228,7 @@ mod tests {
 
         // verify external service is present
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     nodeList(first: 10) {
                         edges {
@@ -2267,7 +2269,7 @@ mod tests {
 
         // apply node with external service draft set to null (should remove it)
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     applyNode(
                         id: "0"
@@ -2306,7 +2308,7 @@ mod tests {
 
         // verify external service is removed
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     nodeList(first: 10) {
                         edges {
@@ -2349,7 +2351,7 @@ mod tests {
 
         // insert node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "admin node",
@@ -2377,7 +2379,7 @@ mod tests {
 
         // Apply node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     applyNode(
                         id: "0"
@@ -2624,7 +2626,7 @@ mod tests {
 
         // node_shutdown
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 nodeShutdown(hostname:"analysis")
             }"#,

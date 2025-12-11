@@ -1481,7 +1481,9 @@ mod tests {
         assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
 
         let schema = TestSchema::new().await;
-        let res = schema.execute(r"{accountList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{accountList{totalCount}}")
+            .await;
         let Value::Object(retval) = res.data else {
             panic!("unexpected response: {res:?}");
         };
@@ -1495,7 +1497,7 @@ mod tests {
 
         // Insert 4 more accounts.
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertAccount(
                     username: "user1",
@@ -1510,7 +1512,7 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertAccount: "user1"}"#);
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertAccount(
                     username: "user2",
@@ -1525,7 +1527,7 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertAccount: "user2"}"#);
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertAccount(
                     username: "user3",
@@ -1540,7 +1542,7 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertAccount: "user3"}"#);
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertAccount(
                     username: "user4",
@@ -1557,7 +1559,7 @@ mod tests {
 
         // Retrieve the first page.
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     accountList(first: 2) {
                         edges {
@@ -1628,7 +1630,7 @@ mod tests {
 
         // Retrieve the second page, with the cursor from the first page.
         let res = schema
-            .execute(&format!(
+            .execute_as_system_admin(&format!(
                 "query {{
                     accountList(first: 4, after: \"{end_cursor}\") {{
                         edges {{
@@ -1695,7 +1697,7 @@ mod tests {
 
         // Retrieve backward.
         let res = schema
-            .execute(&format!(
+            .execute_as_system_admin(&format!(
                 "query {{
                             accountList(last: 3, before: \"{cursor}\") {{
                                 edges {{
@@ -1753,7 +1755,7 @@ mod tests {
         let schema = TestSchema::new_with_params(agent_manager, None, "username").await;
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "username",
@@ -1771,7 +1773,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertAccount: "username"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     myAccount {
                         username
@@ -1809,11 +1811,13 @@ mod tests {
 
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
         let schema = TestSchema::new_with_params(agent_manager, None, "admin").await;
-        let res = schema.execute(r"{accountList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{accountList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "user1",
@@ -1829,7 +1833,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertAccount: "user1"}"#);
 
         let res = schema
-            .execute(r"{accountList{edges{node{username}}totalCount}}")
+            .execute_as_system_admin(r"{accountList{edges{node{username}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -1838,21 +1842,23 @@ mod tests {
 
         // A non-existent username is considered removed.
         let res = schema
-            .execute(r#"mutation { removeAccounts(usernames: ["none"]) }"#)
+            .execute_as_system_admin(r#"mutation { removeAccounts(usernames: ["none"]) }"#)
             .await;
         assert_eq!(res.data.to_string(), r#"{removeAccounts: ["none"]}"#);
 
         let res = schema
-            .execute(r#"mutation { removeAccounts(usernames: ["user1"]) }"#)
+            .execute_as_system_admin(r#"mutation { removeAccounts(usernames: ["user1"]) }"#)
             .await;
         assert_eq!(res.data.to_string(), r#"{removeAccounts: ["user1"]}"#);
 
-        let res = schema.execute(r"{accountList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{accountList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
 
         // Test that users cannot delete themselves
         let res = schema
-            .execute(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
+            .execute_as_system_admin(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
             .await;
         assert!(!res.errors.is_empty());
         assert!(
@@ -1862,7 +1868,9 @@ mod tests {
         );
 
         // Verify admin account still exists
-        let res = schema.execute(r"{accountList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{accountList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
 
         restore_review_admin(original_review_admin);
@@ -1878,12 +1886,14 @@ mod tests {
         let schema = TestSchema::new_with_params(agent_manager, None, "admin").await;
 
         // Start with default admin account (SystemAdministrator)
-        let res = schema.execute(r"{accountList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{accountList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
 
         // Try to delete self - should fail
         let res = schema
-            .execute(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
+            .execute_as_system_admin(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
             .await;
         assert!(!res.errors.is_empty());
         assert!(
@@ -1901,7 +1911,7 @@ mod tests {
 
         // Try to delete self - should fail
         let res = schema
-            .execute(r#"mutation { removeAccounts(usernames: ["user"]) }"#)
+            .execute_as_system_admin(r#"mutation { removeAccounts(usernames: ["user"]) }"#)
             .await;
         assert!(!res.errors.is_empty());
         assert!(
@@ -1921,7 +1931,7 @@ mod tests {
 
         // Insert an account with a username that will be normalized
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "TestUser1",
@@ -1939,11 +1949,13 @@ mod tests {
 
         // Test removing with uppercase - should normalize and find the account
         let res = schema
-            .execute(r#"mutation { removeAccounts(usernames: ["TestUser1"]) }"#)
+            .execute_as_system_admin(r#"mutation { removeAccounts(usernames: ["TestUser1"]) }"#)
             .await;
         assert_eq!(res.data.to_string(), r#"{removeAccounts: ["testuser1"]}"#);
 
-        let res = schema.execute(r"{accountList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{accountList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
 
         restore_review_admin(original_review_admin);
@@ -1959,7 +1971,7 @@ mod tests {
 
         // Insert an account using GraphQL - this will be normalized
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "testuser2",
@@ -1975,19 +1987,25 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertAccount: "testuser2"}"#);
 
         // Verify the account exists
-        let res = schema.execute(r"{accountList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{accountList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 2}}");
 
         // Test exact removal API - should work with normalized username
         let res = schema
-            .execute(r#"mutation { removeAccountsExact(usernames: ["testuser2"]) }"#)
+            .execute_as_system_admin(
+                r#"mutation { removeAccountsExact(usernames: ["testuser2"]) }"#,
+            )
             .await;
         assert_eq!(
             res.data.to_string(),
             r#"{removeAccountsExact: ["testuser2"]}"#
         );
 
-        let res = schema.execute(r"{accountList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{accountList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
 
         restore_review_admin(original_review_admin);
@@ -2004,7 +2022,7 @@ mod tests {
         super::init_expiration_time(&store, 3600).unwrap();
         update_account_last_signin_time(&schema, "admin").await;
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signIn(username: "admin", password: "admin") {
                         reviewToken
@@ -2027,7 +2045,7 @@ mod tests {
         assert!(map.contains_key("aimerToken"));
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     signedInAccountList {
                         username
@@ -2094,7 +2112,7 @@ mod tests {
         update_account_last_signin_time(&schema, "admin").await;
 
         let sign_in_res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signIn(username: "admin", password: "admin") {
                         reviewToken
@@ -2134,7 +2152,7 @@ mod tests {
                 }}
             }}"#
         );
-        let refresh_res = schema.execute(&refresh_query).await;
+        let refresh_res = schema.execute_as_system_admin(&refresh_query).await;
         assert!(
             refresh_res.errors.is_empty(),
             "errors: {:?}",
@@ -2172,7 +2190,7 @@ mod tests {
         update_account_last_signin_time(&schema, "admin").await;
 
         let sign_in_res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signIn(username: "admin", password: "admin") {
                         reviewToken
@@ -2203,7 +2221,7 @@ mod tests {
                 }}
             }}"#
         );
-        let res = schema.execute(&mutation).await;
+        let res = schema.execute_as_system_admin(&mutation).await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
         let Value::Object(root) = res.data else {
             panic!("unexpected response: {res:?}");
@@ -2236,7 +2254,7 @@ mod tests {
         let _force_failure = crate::auth::ForceAimerTokenFailureGuard::new();
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signIn(username: "admin", password: "admin") {
                         reviewToken
@@ -2280,7 +2298,7 @@ mod tests {
         drop(store);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     issueAimerToken(reviewToken: "not-a-valid-token") {
                         aimerToken
@@ -2362,7 +2380,7 @@ mod tests {
         assert!(super::init_expiration_time(&store, 12).is_ok());
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     expirationTime
                 }",
@@ -2371,7 +2389,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{expirationTime: "12"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"mutation {
                     updateExpirationTime(time: 120)
                 }",
@@ -2380,7 +2398,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r"{updateExpirationTime: 120}");
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     expirationTime
                 }",
@@ -2395,7 +2413,7 @@ mod tests {
 
         // given
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "user1",
@@ -2490,7 +2508,7 @@ mod tests {
         let schema = TestSchema::new().await;
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "sysadmin2",
@@ -2508,7 +2526,7 @@ mod tests {
 
         assert_eq!(res.data.to_string(), r#"{insertAccount: "sysadmin2"}"#);
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "secadmin1",
@@ -2528,7 +2546,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertAccount: "secadmin1"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertAccount(
                     username: "secadmin2",
@@ -2550,7 +2568,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertAccount(
                     username: "secmgr1",
@@ -2570,7 +2588,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertAccount: "secmgr1"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "secmgr2",
@@ -2591,7 +2609,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 insertAccount(
                     username: "secmon1",
@@ -2611,7 +2629,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertAccount: "secmon1"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "secmon2",
@@ -2638,7 +2656,7 @@ mod tests {
         let schema = TestSchema::new().await;
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "username",
@@ -2658,7 +2676,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertAccount: "username"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 query {
                      account(username: "username") {
@@ -2679,7 +2697,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 mutation {
                     updateAccount(
@@ -2717,7 +2735,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{updateAccount: "username"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 query {
                      account(username: "username") {
@@ -2739,7 +2757,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 mutation {
                     updateAccount(
@@ -2784,7 +2802,7 @@ mod tests {
         // Failure Case 1 Related to customer id: Update `customer_ids` to `None` while the current
         // account's `role` is set to a value other than `SYSTEM_ADMINISTRATOR`.
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 mutation {
                     updateAccount(
@@ -2805,7 +2823,7 @@ mod tests {
         // Failure Case 2 Related to customer id: Update `role` to a value other than
         // `SYSTEM_ADMINISTRATOR` and `customer_ids` to `None`.
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                     mutation {
                         updateAccount(
@@ -2838,7 +2856,7 @@ mod tests {
         // Failure Case 3 Related to customer id: Update `role` to a value other than
         // `SYSTEM_ADMINISTRATOR` while the current account's `customer_ids` is set to `None`.
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 mutation {
                     updateAccount(
@@ -2862,7 +2880,7 @@ mod tests {
         let store = schema.store().await;
         super::init_expiration_time(&store, 3600).unwrap();
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "user1",
@@ -2881,7 +2899,7 @@ mod tests {
         update_account_last_signin_time(&schema, "user1").await;
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signIn(username: "user1", password: "pw1") {
                         reviewToken
@@ -2893,7 +2911,7 @@ mod tests {
         assert!(res.data.to_string().contains("reviewToken"));
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     signedInAccountList {
                         username
@@ -2909,7 +2927,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signIn(username: "user1", password: "pw1") {
                         reviewToken
@@ -2922,7 +2940,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signIn(username: "user1", password: "pw1") {
                         reviewToken
@@ -2940,7 +2958,7 @@ mod tests {
 
         let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "user1").await;
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "user1",
@@ -2959,7 +2977,7 @@ mod tests {
         update_account_last_signin_time(&schema, "user1").await;
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signIn(username: "user1", password: "pw1") {
                         reviewToken
@@ -2978,7 +2996,7 @@ mod tests {
 
         let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "user1").await;
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "user1",
@@ -2997,7 +3015,7 @@ mod tests {
         update_account_last_signin_time(&schema, "user1").await;
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signIn(username: "user1", password: "pw1") {
                         reviewToken
@@ -3016,7 +3034,7 @@ mod tests {
 
         let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "user1").await;
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "user1",
@@ -3044,7 +3062,7 @@ mod tests {
         let schema = TestSchema::new_with_params(agent_manager, None, "username").await;
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "username",
@@ -3062,7 +3080,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertAccount: "username"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 query {
                      account(username: "username") {
@@ -3082,7 +3100,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 mutation {
                     updateLanguage(
@@ -3098,7 +3116,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{updateLanguage: "ko-KR"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 query {
                      account(username: "username") {
@@ -3122,7 +3140,7 @@ mod tests {
     async fn password_required_proceed() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "user2",
@@ -3143,7 +3161,7 @@ mod tests {
                         reviewToken
                     }
               }"#;
-        let res = schema.execute(query).await;
+        let res = schema.execute_as_system_admin(query).await;
 
         assert_eq!(
             res.errors.first().unwrap().message.clone(),
@@ -3152,7 +3170,7 @@ mod tests {
 
         update_account_last_signin_time(&schema, "user2").await;
 
-        let res = schema.execute(query).await;
+        let res = schema.execute_as_system_admin(query).await;
         assert!(res.is_ok());
     }
 
@@ -3161,7 +3179,7 @@ mod tests {
     async fn sign_in_with_new_password_proceed() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "user3",
@@ -3178,7 +3196,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertAccount: "user3"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signIn(username: "user3", password: "pw3") {
                         reviewToken
@@ -3193,7 +3211,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signInWithNewPassword(username: "user3", password: "pw3") {
                         reviewToken
@@ -3213,14 +3231,14 @@ mod tests {
                         reviewToken
                     }
               }"#;
-        let res = schema.execute(query).await;
+        let res = schema.execute_as_system_admin(query).await;
         assert_eq!(
             res.errors.first().unwrap().message.clone(),
             "incorrect username or password".to_string()
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signInWithNewPassword(username: "user3", password: "pw3", newPassword: "pw3") {
                         reviewToken
@@ -3234,7 +3252,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signInWithNewPassword(username: "user3", password: "pw3", newPassword: "pw4") {
                         reviewToken
@@ -3254,7 +3272,7 @@ mod tests {
     async fn password_validate_proceed() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "user2",
@@ -3271,7 +3289,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertAccount: "user2"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signIn(username: "user2", password: "pw3") {
                         reviewToken
@@ -3292,7 +3310,7 @@ mod tests {
         let schema = TestSchema::new_with_params(agent_manager, None, "username").await;
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "username",
@@ -3311,7 +3329,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertAccount: "username"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 query {
                      account(username: "username") {
@@ -3332,7 +3350,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 mutation {
                     updateTheme(
@@ -3348,7 +3366,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{updateTheme: "light"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 query {
                      account(username: "username") {
@@ -3375,7 +3393,7 @@ mod tests {
 
         // Create a test account
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
@@ -3392,7 +3410,7 @@ mod tests {
 
         // Try to update password with the same password (should fail)
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateAccount(
                         username: "testuser",
@@ -3410,7 +3428,7 @@ mod tests {
 
         // Update password without requiring old password (should succeed)
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateAccount(
                         username: "testuser",
@@ -3424,7 +3442,7 @@ mod tests {
 
         // Update password with a different new password (should succeed)
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateAccount(
                         username: "testuser",
@@ -3495,7 +3513,7 @@ mod tests {
 
         // Create a test account
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
@@ -3514,7 +3532,7 @@ mod tests {
 
         // Update all fields
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateMyAccount(
                         password: {
@@ -3562,7 +3580,7 @@ mod tests {
 
         // Create a test account
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
@@ -3581,7 +3599,7 @@ mod tests {
 
         // Update only name and department
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateMyAccount(
                         name: {
@@ -3617,7 +3635,7 @@ mod tests {
 
         // Create a test account
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
@@ -3634,7 +3652,7 @@ mod tests {
 
         // Try to update without providing any fields
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"mutation {
                     updateMyAccount
                 }",
@@ -3655,7 +3673,7 @@ mod tests {
 
         // Create a test account
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
@@ -3672,7 +3690,7 @@ mod tests {
 
         // Try to update password with wrong old password
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateMyAccount(
                         password: {
@@ -3698,7 +3716,7 @@ mod tests {
 
         // Create a test account
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
@@ -3715,7 +3733,7 @@ mod tests {
 
         // Try to update password with same old and new password
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateMyAccount(
                         password: {
@@ -3741,7 +3759,7 @@ mod tests {
 
         // Create a test account with null language and theme
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
@@ -3758,7 +3776,7 @@ mod tests {
 
         // Update from null to values
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateMyAccount(
                         language: {
@@ -3785,7 +3803,7 @@ mod tests {
 
         // Update from values back to null
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateMyAccount(
                         language: {
@@ -3822,7 +3840,7 @@ mod tests {
 
         // Create a test user
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
@@ -3840,7 +3858,7 @@ mod tests {
         // Sign in the test user to create an active session
         update_account_last_signin_time(&schema, "testuser").await;
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signIn(username: "testuser", password: "password123") {
                         reviewToken
@@ -3852,7 +3870,7 @@ mod tests {
 
         // Verify the user has an active session
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     signedInAccountList {
                         username
@@ -3864,7 +3882,7 @@ mod tests {
 
         // Force sign out the user as admin
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     forceSignOut(username: "testuser") {
                         username
@@ -3895,7 +3913,7 @@ mod tests {
 
         // Verify the user no longer has active sessions
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     signedInAccountList {
                         username
@@ -3914,7 +3932,7 @@ mod tests {
 
         // Try to force sign out a non-existent user
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     forceSignOut(username: "nonexistent") {
                         username
@@ -3936,7 +3954,7 @@ mod tests {
 
         // Create a test user but don't sign them in
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "inactiveuser",
@@ -3953,7 +3971,7 @@ mod tests {
 
         // Force sign out the user (who has no active sessions)
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     forceSignOut(username: "inactiveuser") {
                         username
@@ -4012,13 +4030,13 @@ mod tests {
         ];
 
         for mutation in &mutations {
-            let res = schema.execute(mutation).await;
+            let res = schema.execute_as_system_admin(mutation).await;
             assert!(res.errors.is_empty());
         }
 
         // Query comprehensive user list
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     comprehensiveUserList {
                         username
@@ -4241,7 +4259,7 @@ mod tests {
 
         // 1. Initial Sign-in with default password (should fail)
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signIn(username: "admin", password: "admin") {
                         reviewToken
@@ -4255,8 +4273,7 @@ mod tests {
         );
 
         // 2. First Password Change (Success)
-        let res = schema
-            .execute(
+        let res = schema.execute_as_system_admin(
                 r#"mutation {
                     signInWithNewPassword(username: "admin", password: "admin", newPassword: "password2") {
                         reviewToken
@@ -4281,7 +4298,7 @@ mod tests {
 
         // 4. Second Sign-in (Fail)
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signIn(username: "admin", password: "newpassword") {
                         reviewToken
@@ -4295,8 +4312,7 @@ mod tests {
         );
 
         // 5. Second Password Change (Success)
-        let res = schema
-            .execute(
+        let res = schema.execute_as_system_admin(
                 r#"mutation {
                     signInWithNewPassword(username: "admin", password: "newpassword", newPassword: "finalpassword") {
                         reviewToken
@@ -4319,7 +4335,7 @@ mod tests {
 
         // Create a test user.
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
@@ -4336,7 +4352,7 @@ mod tests {
 
         // 1. Initial Sign-in with old password (should fail)
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signIn(username: "testuser", password: "oldpassword") {
                         reviewToken
@@ -4350,8 +4366,7 @@ mod tests {
         );
 
         // 2. First Password Change (Success)
-        let res = schema
-            .execute(
+        let res = schema.execute_as_system_admin(
                 r#"mutation {
                     signInWithNewPassword(username: "testuser", password: "oldpassword", newPassword: "password2") {
                         reviewToken
@@ -4365,7 +4380,7 @@ mod tests {
 
         // 3. Update the user's password.
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateAccount(
                         username: "testuser",
@@ -4378,7 +4393,7 @@ mod tests {
 
         // 4. Second Sign-in (Fail)
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     signIn(username: "testuser", password: "newpassword") {
                         reviewToken
@@ -4392,8 +4407,7 @@ mod tests {
         );
 
         // 5. Second Password Change (Success)
-        let res = schema
-            .execute(
+        let res = schema.execute_as_system_admin(
                 r#"mutation {
                     signInWithNewPassword(username: "testuser", password: "newpassword", newPassword: "finalpassword") {
                         reviewToken

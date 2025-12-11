@@ -442,14 +442,16 @@ mod tests {
     async fn test_sampling_policy() {
         let schema = TestSchema::new().await;
 
-        let res = schema.execute(r"{samplingPolicyList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{samplingPolicyList{totalCount}}")
+            .await;
         assert_eq!(
             res.data.to_string(),
             r"{samplingPolicyList: {totalCount: 0}}"
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 mutation {
                     insertSamplingPolicy(
@@ -470,7 +472,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertSamplingPolicy: "0"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 mutation {
                     insertSamplingPolicy(
@@ -494,7 +496,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 mutation {
                     updateSamplingPolicy(
@@ -529,7 +531,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{updateSamplingPolicy: "0"}"#);
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r"query {
                     samplingPolicyList(first: 10) {
                         nodes {
@@ -568,7 +570,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"
                 mutation {
                     updateSamplingPolicy(
@@ -608,7 +610,7 @@ mod tests {
         );
 
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     removeSamplingPolicies(ids: ["0"])
                 }"#,

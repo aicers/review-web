@@ -250,12 +250,14 @@ mod tests {
         let schema = TestSchema::new().await;
 
         // check empty
-        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
 
         // insert node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "admin node",
@@ -282,12 +284,14 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
         // check node count after insert
-        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
 
         // check inserted node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"{node(id: "0") {
                     id
                     name
@@ -354,7 +358,7 @@ mod tests {
 
         // update node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateNodeDraft(
                         id: "0"
@@ -415,12 +419,14 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
 
         // check node count after update
-        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
 
         // check updated node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"{node(id: "0") {
                     id
                     name
@@ -487,7 +493,7 @@ mod tests {
 
         // try reverting node, but it should succeed even though the node is an initial draft
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 updateNodeDraft(
                     id: "0"
@@ -532,7 +538,7 @@ mod tests {
 
         // remove node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     removeNodes(ids: ["0"])
                 }"#,
@@ -541,7 +547,9 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{removeNodes: ["admin node"]}"#);
 
         // check node count after remove
-        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
     }
 
@@ -551,12 +559,14 @@ mod tests {
         let schema = TestSchema::new().await;
 
         // check empty
-        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
 
         // insert node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "admin node",
@@ -581,12 +591,14 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
         // check node count after insert
-        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
 
         // check inserted node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"{node(id: "0") {
                     id
                     name
@@ -647,7 +659,7 @@ mod tests {
 
         // update node (update name, update profile_draft to null)
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     updateNodeDraft(
                         id: "0"
@@ -703,12 +715,14 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
 
         // check node count after update
-        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
 
         // check updated node
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"{node(id: "0") {
                     id
                     name
@@ -748,12 +762,14 @@ mod tests {
         let schema = TestSchema::new().await;
 
         // Check initial node list (should be empty)
-        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
 
         // Insert node with unsupervised and semi-supervised agents
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "admin node",
@@ -780,12 +796,14 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
         // Check node count after insert
-        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
 
         // Remove the unsupervised agent
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 updateNodeDraft(
                     id: "0",
@@ -839,7 +857,7 @@ mod tests {
 
         // Add a sensor agent
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 updateNodeDraft(
                     id: "0",
@@ -893,7 +911,7 @@ mod tests {
 
         // Check final node state
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"{node(id: "0") {
                     id
                     name
@@ -968,12 +986,14 @@ mod tests {
         let schema = TestSchema::new().await;
 
         // Check initial node list (should be empty)
-        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
 
         // Insert node with unsupervised and semi-supervised agents
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                     insertNode(
                         name: "admin node",
@@ -1000,12 +1020,14 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
         // Check node count after insert
-        let res = schema.execute(r"{nodeList{totalCount}}").await;
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount}}")
+            .await;
         assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
 
         // update node with an outdated agent old value
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 updateNodeDraft(
                     id: "0",
@@ -1067,7 +1089,7 @@ mod tests {
 
         // Check node state
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"{node(id: "0") {
                     id
                     name
@@ -1137,7 +1159,7 @@ mod tests {
 
         // update node with an outdated agent old value
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"mutation {
                 updateNodeDraft(
                     id: "0",
@@ -1199,7 +1221,7 @@ mod tests {
 
         // Check node state
         let res = schema
-            .execute(
+            .execute_as_system_admin(
                 r#"{node(id: "0") {
                     id
                     name

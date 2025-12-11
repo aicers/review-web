@@ -266,7 +266,7 @@ mod tests {
         let schema = TestSchema::new().await;
 
         let query_tidblist = r"{tidbList{name,version,category}}";
-        let res = schema.execute(query_tidblist).await;
+        let res = schema.execute_as_system_admin(query_tidblist).await;
         assert_eq!(res.data.to_string(), r"{tidbList: []}");
     }
 }
