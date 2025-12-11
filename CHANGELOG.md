@@ -4,6 +4,14 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Updated the `serve` function signature to use `Arc<std::sync::RwLock<Store>>`
+  instead of `Arc<tokio::sync::RwLock<Store>>`, following the removal of the
+  `tokio` dependency from the `review-database` crate.
+
 ## [0.29.4] - 2025-12-11
 
 ### Changed
@@ -141,7 +149,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Removed `end_time` from single-raw event-based detection events, in alignment
   with recent changes in review-database where the `end_time` field was removed.
   This is because the combination of `start_time` and `duration` sufficiently
-  represents the event’s time range, making `end_time` redundant.
+  represents the event's time range, making `end_time` redundant.
 
 ### Fixed
 
@@ -210,7 +218,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - Now, only unexpired JWT tokens are considered when checking session limits,
     made possible by disabling the `Validation.validate_exp` option in
     `decode_token`. This change allows decoding of expired tokens—a behavior
-    previously blocked by the `jsonwebtoken` crate’s default expiration
+    previously blocked by the `jsonwebtoken` crate's default expiration
     check—and ensures that `validate_max_parallel_sessions` accurately counts
     only valid, unexpired tokens.
 - Migrated from PostgreSQL-based `Database` API to RocksDB-based `Table` API.
@@ -575,7 +583,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Updated review-database to 0.31.0.
 - Updated `nodeStatusList` GraphQL API response to include `nameDraft`,
   `profile`, `profileDraft`, and `gigantoDraft`, offering a more comprehensive
-  view of the node’s status.
+  view of the node's status.
 
 ### Fixed
 
@@ -1242,6 +1250,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.29.4...main
 [0.29.4]: https://github.com/aicers/review-web/compare/0.29.3...0.29.4
 [0.29.3]: https://github.com/aicers/review-web/compare/0.29.2...0.29.3
 [0.29.2]: https://github.com/aicers/review-web/compare/0.29.1...0.29.2

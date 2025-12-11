@@ -37,14 +37,14 @@ impl LdapBruteForce {
 
     /// Source Customer
     async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.src_addr)
     }
 
     /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.src_addr)
     }
@@ -64,14 +64,14 @@ impl LdapBruteForce {
 
     /// Destination Customer
     async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.dst_addr)
     }
 
     /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
     }
@@ -167,14 +167,14 @@ impl LdapPlainText {
 
     /// Source Customer
     async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.src_addr)
     }
 
     /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.src_addr)
     }
@@ -199,14 +199,14 @@ impl LdapPlainText {
 
     /// Destination Customer
     async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.dst_addr)
     }
 
     /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
     }
@@ -349,14 +349,14 @@ impl BlocklistLdap {
 
     /// Source Customer
     async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.src_addr)
     }
 
     /// Source Network
     async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.src_addr)
     }
@@ -381,14 +381,14 @@ impl BlocklistLdap {
 
     /// Destination Customer
     async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         find_ip_customer(&map, self.inner.dst_addr)
     }
 
     /// Destination Network
     async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         find_ip_network(&map, self.inner.dst_addr)
     }

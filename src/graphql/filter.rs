@@ -39,7 +39,7 @@ impl FilterQuery {
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
     async fn filter_list(&self, ctx: &Context<'_>) -> Result<Vec<Filter>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.filter_map();
         let username = ctx.data::<String>()?;
         Ok(map.list(username)?.into_iter().map(Into::into).collect())
@@ -51,7 +51,7 @@ impl FilterQuery {
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
     async fn filter(&self, ctx: &Context<'_>, name: String) -> Result<Option<Filter>> {
-        let db = crate::graphql::get_store(ctx).await?;
+        let db = crate::graphql::get_store(ctx)?;
         let username = ctx.data::<String>()?;
         let map = db.filter_map();
 
@@ -94,7 +94,7 @@ impl FilterMutation {
         confidence_max: Option<f32>,
         period: Option<PeriodForSearchInput>,
     ) -> Result<String> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.filter_map();
         let username = ctx.data::<String>()?;
         let endpoints = if let Some(endpoints_input) = endpoints {
@@ -153,7 +153,7 @@ impl FilterMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] names: Vec<String>,
     ) -> Result<Vec<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.filter_map();
         let username = ctx.data::<String>()?;
         map.remove(username, names.iter().map(String::as_str))?;
@@ -170,7 +170,7 @@ impl FilterMutation {
         old: FilterInput,
         new: FilterInput,
     ) -> Result<String> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let table = store.filter_map();
         let username = ctx.data::<String>()?;
 

@@ -55,7 +55,7 @@ impl NetworkQuery {
     async fn network(&self, ctx: &Context<'_>, id: ID) -> Result<Network> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         let Some(inner) = map.get_by_id(i)? else {
             return Err("no such network".into());
@@ -85,7 +85,7 @@ impl NetworkMutation {
     ) -> Result<ID> {
         let customer_ids = id_args_into_uints(&customer_ids)?;
         let tag_ids = id_args_into_uints(&tag_ids)?;
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         let entry = review_database::Network::new(
             name.clone(),
@@ -110,7 +110,7 @@ impl NetworkMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
 
         let mut removed = Vec::with_capacity(ids.len());
@@ -149,7 +149,7 @@ impl NetworkMutation {
 
         let old_name = old.name.clone();
         let new_name = new.name.clone();
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let mut map = store.network_map();
         map.update(i, &old.try_into()?, &new.try_into()?)?;
         info_with_username!(
@@ -211,7 +211,7 @@ impl Network {
 
     #[graphql(name = "customerList")]
     async fn customer_ids(&self, ctx: &Context<'_>) -> Result<Vec<Customer>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         let mut customers = Vec::new();
 
@@ -259,7 +259,7 @@ struct NetworkTotalCount;
 impl NetworkTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
 
         Ok(store.network_map().count()?)
     }
@@ -272,7 +272,7 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Network, NetworkTotalCount, EmptyFields>> {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let map = store.network_map();
     super::load_edges(&map, after, before, first, last, NetworkTotalCount)
 }

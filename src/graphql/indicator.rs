@@ -13,7 +13,7 @@ impl IndicatorQuery {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn indicator(&self, ctx: &Context<'_>, name: String) -> Result<Option<ModelIndicator>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.model_indicator_map();
         map.get(&name)
             .map(|indicator| indicator.map(Into::into))
@@ -28,7 +28,7 @@ impl IndicatorQuery {
     async fn indicator_list(&self, ctx: &Context<'_>) -> Result<Vec<ModelIndicator>> {
         use database::Iterable;
 
-        let store = super::get_store(ctx).await?;
+        let store = super::get_store(ctx)?;
         let map = store.model_indicator_map();
         map.iter(database::event::Direction::Forward, None)
             .map(|res| res.map(Into::into).map_err(Into::into))
@@ -52,7 +52,7 @@ impl IndicatorMutation {
         dbfile: String,
     ) -> Result<String> {
         let indicator = database::ModelIndicator::new(&name, &dbfile)?;
-        let store = super::get_store(ctx).await?;
+        let store = super::get_store(ctx)?;
         let map = store.model_indicator_map();
         map.insert(indicator).map_err(Into::into).map(|()| name)
     }
@@ -67,7 +67,7 @@ impl IndicatorMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] names: Vec<String>,
     ) -> Result<Vec<String>> {
-        let store = super::get_store(ctx).await?;
+        let store = super::get_store(ctx)?;
         let map = store.model_indicator_map();
         map.remove(names.iter().map(String::as_str))
             .map_err(Into::into)
@@ -86,7 +86,7 @@ impl IndicatorMutation {
         new: String,
     ) -> Result<String> {
         let indicator = database::ModelIndicator::new(&name, &new)?;
-        let store = super::get_store(ctx).await?;
+        let store = super::get_store(ctx)?;
         let map = store.model_indicator_map();
         map.update(indicator).map_err(Into::into).map(|()| name)
     }

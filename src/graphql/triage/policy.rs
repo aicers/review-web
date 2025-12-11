@@ -21,7 +21,7 @@ struct TriagePolicyTotalCount;
 impl TriagePolicyTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         Ok(store.triage_policy_map().count()?)
     }
 }
@@ -56,7 +56,7 @@ impl TriagePolicyQuery {
     async fn triage_policy(&self, ctx: &Context<'_>, id: ID) -> Result<TriagePolicy> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.triage_policy_map();
         let Some(inner) = map.get_by_id(i)? else {
             return Err("no such triage policy".into());
@@ -72,7 +72,7 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, TriagePolicy, TriagePolicyTotalCount, EmptyFields>> {
-    let store = crate::graphql::get_store(ctx).await?;
+    let store = crate::graphql::get_store(ctx)?;
     let map = store.triage_policy_map();
     super::super::load_edges(&map, after, before, first, last, TriagePolicyTotalCount)
 }
@@ -121,7 +121,7 @@ impl TriagePolicyMutation {
             creation_time: Utc::now(),
         };
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.triage_policy_map();
         let id = map.put(triage)?;
         info_with_username!(ctx, "Triage policy {name} has been registered");
@@ -139,7 +139,7 @@ impl TriagePolicyMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.triage_policy_map();
 
         let mut removed = Vec::<String>::with_capacity(ids.len());
@@ -172,7 +172,7 @@ impl TriagePolicyMutation {
         let old = old.try_into()?;
         let new = new.try_into()?;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let mut map = store.triage_policy_map();
         map.update(i, &old, &new)?;
         info_with_username!(
