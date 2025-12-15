@@ -57,7 +57,7 @@ impl TrustedDomainMutation {
             let map = store.trusted_domain_map();
             let entry = review_database::TrustedDomain { name, remarks };
             map.put(&entry)?;
-            entry.name.clone()
+            entry.name
         };
 
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
@@ -81,7 +81,7 @@ impl TrustedDomainMutation {
             let old = review_database::TrustedDomain::from(old);
             let new = review_database::TrustedDomain::from(new);
             map.update(&old, &new)?;
-            (old.name.clone(), new.name.clone())
+            (old.name, new.name)
         };
 
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
