@@ -226,7 +226,8 @@ impl DbManagementMutation {
     /// * The user is not an administrator
     /// * Input validation fails (e.g., invalid time format, zero values)
     /// * Database operation fails
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn set_backup_config(
         &self,
         ctx: &Context<'_>,
@@ -261,7 +262,8 @@ impl DbManagementMutation {
     /// * The old configuration doesn't match the current stored configuration
     /// * Input validation fails (e.g., invalid time format, zero values)
     /// * Database operation fails
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn update_backup_config(
         &self,
         ctx: &Context<'_>,
@@ -429,7 +431,7 @@ mod tests {
     async fn test_set_backup_config_admin_only() {
         let schema = TestSchema::new().await;
 
-        // Test that only SystemAdministrator can set backup config
+        // Test that SystemAdministrator and SecurityAdministrator can set backup config
         let mutation = r#"
             mutation {
                 setBackupConfig(input: {
@@ -458,12 +460,18 @@ mod tests {
             })
         );
 
-        // Should fail for other roles
-        for role in [
-            Role::SecurityAdministrator,
-            Role::SecurityManager,
-            Role::SecurityMonitor,
-        ] {
+        // Should succeed for SecurityAdministrator
+        let res = schema
+            .execute_with_guard(mutation, RoleGuard::Role(Role::SecurityAdministrator))
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "SecurityAdministrator should have access. Errors: {:?}",
+            res.errors
+        );
+
+        // Should fail for non-admin roles
+        for role in [Role::SecurityManager, Role::SecurityMonitor] {
             let res = schema
                 .execute_with_guard(mutation, RoleGuard::Role(role))
                 .await;
@@ -533,7 +541,11 @@ mod tests {
             })
         );
 
-        // Should fail for non-admin roles
+        // Reset config for SecurityAdministrator test
+        let res = schema.execute_as_system_admin(set_mutation).await;
+        assert!(res.errors.is_empty(), "Reset failed: {:?}", res.errors);
+
+        // Should succeed for SecurityAdministrator
         let res = schema
             .execute_with_guard(
                 update_mutation,
@@ -541,9 +553,25 @@ mod tests {
             )
             .await;
         assert!(
-            !res.errors.is_empty(),
-            "SecurityAdministrator should not have access to updateBackupConfig"
+            res.errors.is_empty(),
+            "SecurityAdministrator should have access. Errors: {:?}",
+            res.errors
         );
+
+        // Should fail for non-admin roles
+        for role in [Role::SecurityManager, Role::SecurityMonitor] {
+            let res = schema
+                .execute_with_guard(update_mutation, RoleGuard::Role(role))
+                .await;
+            assert!(
+                !res.errors.is_empty(),
+                "Role {role:?} should not have access to updateBackupConfig"
+            );
+            assert!(
+                res.errors[0].message.contains("Forbidden"),
+                "Expected Forbidden error for role {role:?}"
+            );
+        }
     }
 
     #[tokio::test]
