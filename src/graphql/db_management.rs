@@ -154,11 +154,9 @@ impl DbManagementQuery {
     /// - `backup_time`: "23:59:59" (UTC)
     /// - `num_of_backups_to_keep`: 5
     ///
-    /// Accessible to all authenticated users (all roles).
+    /// Accessible to administrators only.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))
-        .or(RoleGuard::new(Role::SecurityManager))
-        .or(RoleGuard::new(Role::SecurityMonitor))")]
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn backup_config(&self, ctx: &Context<'_>) -> Result<BackupConfig> {
         let store = crate::graphql::get_store(ctx)?;
         let table = store.backup_config_map();
@@ -402,16 +400,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_backup_config_query_accessible_to_all_roles() {
+    async fn test_backup_config_query_admin_only() {
         let schema = TestSchema::new().await;
 
-        // Test that all roles can access backup config
-        for role in [
-            Role::SystemAdministrator,
-            Role::SecurityAdministrator,
-            Role::SecurityManager,
-            Role::SecurityMonitor,
-        ] {
+        // Test that admin roles can access backup config
+        for role in [Role::SystemAdministrator, Role::SecurityAdministrator] {
             let res = schema
                 .execute_with_guard(
                     r"{ backupConfig { backupDuration backupTime numOfBackupsToKeep } }",
@@ -423,6 +416,25 @@ mod tests {
                 res.errors.is_empty(),
                 "Role {role:?} should have access. Errors: {:?}",
                 res.errors
+            );
+        }
+
+        // Test that non-admin roles are denied access
+        for role in [Role::SecurityManager, Role::SecurityMonitor] {
+            let res = schema
+                .execute_with_guard(
+                    r"{ backupConfig { backupDuration backupTime numOfBackupsToKeep } }",
+                    RoleGuard::Role(role),
+                )
+                .await;
+
+            assert!(
+                !res.errors.is_empty(),
+                "Role {role:?} should not have access to backupConfig"
+            );
+            assert!(
+                res.errors[0].message.contains("Forbidden"),
+                "Expected Forbidden error for role {role:?}"
             );
         }
     }

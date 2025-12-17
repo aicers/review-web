@@ -11,11 +11,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Added GraphQL API for managing `BackupConfig` settings:
   - `backupConfig` query: Retrieves the current backup configuration. Returns
     default values (backup every 1 day at 23:59:59 UTC, keeping 5 backups) if
-    no configuration is stored. Accessible to all authenticated users.
+    no configuration is stored. Accessible to SystemAdministrator and
+    SecurityAdministrator roles.
   - `setBackupConfig` mutation: Creates or overwrites the backup configuration.
-    Requires SystemAdministrator role.
+    Requires SystemAdministrator or SecurityAdministrator role.
   - `updateBackupConfig` mutation: Updates the existing backup configuration
-    using optimistic concurrency control. Requires SystemAdministrator role.
+    using optimistic concurrency control. Requires SystemAdministrator or
+    SecurityAdministrator role.
   - All mutations validate input: `backupDuration` and `numOfBackupsToKeep`
     must be >= 1, and `backupTime` must be in valid HH:MM:SS format.
 
