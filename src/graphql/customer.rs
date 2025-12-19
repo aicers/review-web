@@ -262,6 +262,9 @@ fn validate_customer_removal(store: &Store, customer_ids: &[u32]) -> Result<()> 
     let account_map = store.account_map();
     let node_map = store.node_map();
     let triage_policy_map = store.triage_policy_map();
+    let allow_network_map = store.allow_network_map();
+    let block_network_map = store.block_network_map();
+    let customer_ids_set: std::collections::HashSet<u32> = customer_ids.iter().copied().collect();
 
     // Check for account references
     for entry in account_map.iter(Direction::Forward, None) {
@@ -307,7 +310,6 @@ fn validate_customer_removal(store: &Store, customer_ids: &[u32]) -> Result<()> 
     }
 
     // Check for Triage Policy references
-    let customer_ids_set: std::collections::HashSet<u32> = customer_ids.iter().copied().collect();
     for entry in triage_policy_map.iter(Direction::Forward, None) {
         let policy = entry.map_err(|_| "failed to iterate triage policies")?;
         if let Some(customer_id) = policy.customer_id
@@ -316,6 +318,30 @@ fn validate_customer_removal(store: &Store, customer_ids: &[u32]) -> Result<()> 
             return Err(format!(
                 "Cannot remove customer {}: still referenced by triage policy {}",
                 customer_id, policy.name
+            )
+            .into());
+        }
+    }
+
+    // Check for allow network references
+    for entry in allow_network_map.iter(Direction::Forward, None) {
+        let allow_network = entry.map_err(|_| "failed to iterate allow networks")?;
+        if customer_ids_set.contains(&allow_network.customer_id) {
+            return Err(format!(
+                "Cannot remove customer {}: still referenced by allow network {}",
+                allow_network.customer_id, allow_network.name
+            )
+            .into());
+        }
+    }
+
+    // Check for block network references
+    for entry in block_network_map.iter(Direction::Forward, None) {
+        let block_network = entry.map_err(|_| "failed to iterate block networks")?;
+        if customer_ids_set.contains(&block_network.customer_id) {
+            return Err(format!(
+                "Cannot remove customer {}: still referenced by block network {}",
+                block_network.customer_id, block_network.name
             )
             .into());
         }
@@ -969,6 +995,82 @@ mod tests {
             res.errors[0]
                 .message
                 .contains("still referenced by triage policy")
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_customers_with_allow_network_reference() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertAllowNetwork(
+                        name: "Allow 1"
+                        customerId: 0
+                        networks: { hosts: ["1.1.1.1"], networks: [], ranges: [] }
+                        description: "d"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAllowNetwork: "0"}"#);
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { removeCustomers(ids: ["0"]) }"#)
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0]
+                .message
+                .contains("still referenced by allow network")
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_customers_with_block_network_reference() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertBlockNetwork(
+                        name: "Block 1"
+                        customerId: 0
+                        networks: { hosts: ["1.1.1.1"], networks: [], ranges: [] }
+                        description: "d"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertBlockNetwork: "0"}"#);
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { removeCustomers(ids: ["0"]) }"#)
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0]
+                .message
+                .contains("still referenced by block network")
         );
     }
 }
