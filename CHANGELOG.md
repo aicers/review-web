@@ -73,6 +73,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     change will allow the Manager Server that implements
     `send_agent_specific_[allow/block]_networks` to provide the allow/block
     networks corresponding to the agent information of the Semi-supervised Engine.
+  - Added validation to prevent deleting customers when referenced by allow/block
+    networks.
 
 ### Fixed
 
