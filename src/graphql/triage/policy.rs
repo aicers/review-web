@@ -271,7 +271,7 @@ impl TriagePolicyMutation {
         Ok(ID(id.to_string()))
     }
 
-    /// Removes triage policies, returning the IDs that no longer exist.
+    /// Removes triage policies, returning the names that no longer exist.
     ///
     /// On error, some triage policies may have been removed.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
