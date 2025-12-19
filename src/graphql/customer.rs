@@ -261,6 +261,7 @@ impl CustomerMutation {
 fn validate_customer_removal(store: &Store, customer_ids: &[u32]) -> Result<()> {
     let account_map = store.account_map();
     let node_map = store.node_map();
+    let triage_policy_map = store.triage_policy_map();
 
     // Check for account references
     for entry in account_map.iter(Direction::Forward, None) {
@@ -302,6 +303,21 @@ fn validate_customer_removal(store: &Store, customer_ids: &[u32]) -> Result<()> 
                 )
                 .into());
             }
+        }
+    }
+
+    // Check for Triage Policy references
+    let customer_ids_set: std::collections::HashSet<u32> = customer_ids.iter().copied().collect();
+    for entry in triage_policy_map.iter(Direction::Forward, None) {
+        let policy = entry.map_err(|_| "failed to iterate triage policies")?;
+        if let Some(customer_id) = policy.customer_id
+            && customer_ids_set.contains(&customer_id)
+        {
+            return Err(format!(
+                "Cannot remove customer {}: still referenced by triage policy {}",
+                customer_id, policy.name
+            )
+            .into());
         }
     }
 
@@ -896,6 +912,63 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             r#"{customerList: {edges: [{node: {name: "test_customer"}}], totalCount: 1}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_customers_with_triage_policy_reference() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason 1"
+                        description: "first reason"
+                        domain: ["example.com"]
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertTriagePolicy(
+                        name: "Policy 1"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: [{ minimumScore: 0.5, kind: MANUAL }]
+                        customerId: "0"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { removeCustomers(ids: ["0"]) }"#)
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0]
+                .message
+                .contains("still referenced by triage policy")
         );
     }
 }

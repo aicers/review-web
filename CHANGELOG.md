@@ -20,6 +20,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - Event filters resolve triage exclusion IDs through the RocksDB map to build
     `TriagePolicyInput` before calling `EventFilter::new`, keeping triage
     application consistent with the new model.
+  - Added validation to prevent deleting customers or triage exclusion reasons
+    when referenced by triage policies.
 
 ## [0.29.4] - 2025-12-11
 

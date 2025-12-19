@@ -239,11 +239,32 @@ impl TriageExclusionReasonMutation {
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<ID>> {
         let store = crate::graphql::get_store(ctx)?;
-        let map = store.triage_exclusion_reason_map();
 
-        let mut removed = Vec::with_capacity(ids.len());
-        for id in ids {
-            let id_u32 = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
+        let ids_u32 = ids
+            .iter()
+            .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let ids_set: std::collections::HashSet<u32> = ids_u32.iter().copied().collect();
+
+        let policy_map = store.triage_policy_map();
+        for res in policy_map.iter(Direction::Forward, None) {
+            let policy = res?;
+            if policy
+                .triage_exclusion_id
+                .iter()
+                .any(|id| ids_set.contains(id))
+            {
+                return Err(format!(
+                    "Cannot remove triage exclusion reason(s) because they are referenced by triage policy \"{}\".",
+                    policy.name
+                )
+                .into());
+            }
+        }
+
+        let map = store.triage_exclusion_reason_map();
+        let mut removed = Vec::with_capacity(ids_u32.len());
+        for id_u32 in ids_u32 {
             map.remove(id_u32)?;
             removed.push(ID::from(id_u32.to_string()));
             info_with_username!(ctx, "Triage exclusion reason {id_u32} has been deleted");
@@ -358,6 +379,57 @@ mod tests {
             res.data.to_string().contains(r#"["0"]"#),
             "Unexpected removeTriageExclusionReasons payload: {}",
             res.data
+        );
+    }
+
+    #[tokio::test]
+    async fn test_triage_exclusion_reason_remove_referenced_validation() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason 1"
+                        description: "first reason"
+                        domain: ["example.com"]
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertTriagePolicy(
+                        name: "Policy 1"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: [{ minimumScore: 0.5, kind: MANUAL }]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { removeTriageExclusionReasons(ids: ["0"]) }"#)
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0]
+                .message
+                .contains("referenced by triage policy"),
+            "Unexpected error: {:?}",
+            res.errors[0].message
         );
     }
 }
