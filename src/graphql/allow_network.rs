@@ -40,6 +40,13 @@ impl AllowNetworkQuery {
                     .map_err(|_| "invalid customer ID")
             })
             .transpose()?;
+        if let Some(customer_id) = customer_id {
+            let store = crate::graphql::get_store(ctx)?;
+            let customer_map = store.customer_map();
+            if customer_map.get_by_id(customer_id)?.is_none() {
+                return Err("no such customer".into());
+            }
+        }
         query_with_constraints(
             after,
             before,
@@ -73,6 +80,13 @@ impl AllowNetworkMutation {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid customer ID")?;
+        {
+            let store = crate::graphql::get_store(ctx)?;
+            let customer_map = store.customer_map();
+            if customer_map.get_by_id(customer_id)?.is_none() {
+                return Err("no such customer".into());
+            }
+        }
         let (id, network_list) = {
             let store = crate::graphql::get_store(ctx)?;
             let map = store.allow_network_map();
@@ -204,6 +218,24 @@ impl AllowNetworkMutation {
                 .ok_or_else(|| anyhow::anyhow!("no such allow network"))?;
             let old: review_database::AllowNetworkUpdate = old.try_into()?;
             let new: review_database::AllowNetworkUpdate = new.try_into()?;
+
+            let customer_map = store.customer_map();
+            if let Some(customer_id) = old.customer_id
+                && customer_map.get_by_id(customer_id)?.is_none()
+            {
+                return Err(format!(
+                    "Customer not found for current Allowlist (customerId: {customer_id})"
+                )
+                .into());
+            }
+            if let Some(customer_id) = new.customer_id
+                && customer_map.get_by_id(customer_id)?.is_none()
+            {
+                return Err(format!(
+                    "Customer not found for updated Allowlist (customerId: {customer_id})"
+                )
+                .into());
+            }
             map.update(i, &old, &new)?;
             info_with_username!(
                 ctx,
@@ -378,6 +410,18 @@ mod tests {
     #[tokio::test]
     async fn test_allow_network() {
         let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(r"{allowNetworkList(customerId: 0){totalCount}}")
+            .await;
+        assert!(!res.errors.is_empty());
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
 
         let res = schema
             .execute_as_system_admin(r"{allowNetworkList(customerId: 0){totalCount}}")
