@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use async_graphql::{Context, ID, InputObject, Object, Result, SimpleObject, StringNumber};
+use async_graphql::{
+    Context, CustomValidator, ID, InputObject, InputValueError, Object, Result, SimpleObject,
+    StringNumber,
+};
 use chrono::{DateTime, Utc};
 use review_database::{BackupConfig as DbBackupConfig, Store, backup};
 use tracing::info;
@@ -24,20 +27,62 @@ pub struct BackupInfo {
 #[derive(SimpleObject)]
 pub struct BackupConfig {
     /// Interval between backups in days. Minimum value is 1.
-    pub backup_duration: StringNumber<u16>,
+    pub backup_duration: u16,
     /// Scheduled backup execution time in HH:MM:SS UTC format.
     pub backup_time: String,
     /// Maximum number of retained backup snapshots. Minimum value is 1.
-    pub num_of_backups_to_keep: StringNumber<u16>,
+    pub num_of_backups_to_keep: u16,
 }
 
 impl From<DbBackupConfig> for BackupConfig {
     fn from(config: DbBackupConfig) -> Self {
         Self {
-            backup_duration: StringNumber(config.backup_duration),
+            backup_duration: config.backup_duration,
             backup_time: config.backup_time,
-            num_of_backups_to_keep: StringNumber(config.num_of_backups_to_keep),
+            num_of_backups_to_keep: config.num_of_backups_to_keep,
         }
+    }
+}
+
+/// Custom validator for backup time format (HH:MM:SS).
+struct BackupTimeValidator;
+
+impl CustomValidator<String> for BackupTimeValidator {
+    fn check(&self, value: &String) -> std::result::Result<(), InputValueError<String>> {
+        let parts: Vec<&str> = value.split(':').collect();
+        if parts.len() != 3 {
+            return Err(InputValueError::custom(
+                "invalid backup_time: must be in HH:MM:SS format",
+            ));
+        }
+
+        let hour: u8 = parts[0]
+            .parse()
+            .map_err(|_| InputValueError::custom("invalid backup_time: hour must be a number"))?;
+        let minute: u8 = parts[1]
+            .parse()
+            .map_err(|_| InputValueError::custom("invalid backup_time: minute must be a number"))?;
+        let second: u8 = parts[2]
+            .parse()
+            .map_err(|_| InputValueError::custom("invalid backup_time: second must be a number"))?;
+
+        if hour > 23 {
+            return Err(InputValueError::custom(
+                "invalid backup_time: hour must be 0-23",
+            ));
+        }
+        if minute > 59 {
+            return Err(InputValueError::custom(
+                "invalid backup_time: minute must be 0-59",
+            ));
+        }
+        if second > 59 {
+            return Err(InputValueError::custom(
+                "invalid backup_time: second must be 0-59",
+            ));
+        }
+
+        Ok(())
     }
 }
 
@@ -50,62 +95,14 @@ impl From<DbBackupConfig> for BackupConfig {
 #[derive(InputObject)]
 pub struct BackupConfigInput {
     /// Interval between backups in days. Must be >= 1.
+    #[graphql(validator(minimum = 1))]
     pub backup_duration: u16,
     /// Scheduled backup execution time in HH:MM:SS UTC format (e.g., "23:59:59").
+    #[graphql(validator(custom = "BackupTimeValidator"))]
     pub backup_time: String,
     /// Maximum number of retained backup snapshots. Must be >= 1.
+    #[graphql(validator(minimum = 1))]
     pub num_of_backups_to_keep: u16,
-}
-
-impl BackupConfigInput {
-    /// Validates the input values for backup configuration.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - `backup_duration` is 0
-    /// - `num_of_backups_to_keep` is 0
-    /// - `backup_time` is not in valid HH:MM:SS format
-    fn validate(&self) -> Result<()> {
-        if self.backup_duration == 0 {
-            return Err("invalid backup_duration: must be >= 1".into());
-        }
-        if self.num_of_backups_to_keep == 0 {
-            return Err("invalid num_of_backups_to_keep: must be >= 1".into());
-        }
-        validate_backup_time(&self.backup_time)?;
-        Ok(())
-    }
-}
-
-/// Validates that the backup time string is in HH:MM:SS format with valid ranges.
-fn validate_backup_time(time: &str) -> Result<()> {
-    let parts: Vec<&str> = time.split(':').collect();
-    if parts.len() != 3 {
-        return Err("invalid backup_time: must be in HH:MM:SS format".into());
-    }
-
-    let hour: u8 = parts[0]
-        .parse()
-        .map_err(|_| "invalid backup_time: hour must be a number")?;
-    let minute: u8 = parts[1]
-        .parse()
-        .map_err(|_| "invalid backup_time: minute must be a number")?;
-    let second: u8 = parts[2]
-        .parse()
-        .map_err(|_| "invalid backup_time: second must be a number")?;
-
-    if hour > 23 {
-        return Err("invalid backup_time: hour must be 0-23".into());
-    }
-    if minute > 59 {
-        return Err("invalid backup_time: minute must be 0-59".into());
-    }
-    if second > 59 {
-        return Err("invalid backup_time: second must be 0-59".into());
-    }
-
-    Ok(())
 }
 
 impl From<BackupConfigInput> for DbBackupConfig {
@@ -231,8 +228,6 @@ impl DbManagementMutation {
         ctx: &Context<'_>,
         input: BackupConfigInput,
     ) -> Result<BackupConfig> {
-        input.validate()?;
-
         let store = crate::graphql::get_store(ctx)?;
         let table = store.backup_config_map();
         let config: DbBackupConfig = input.into();
@@ -268,8 +263,6 @@ impl DbManagementMutation {
         old: BackupConfigInput,
         new: BackupConfigInput,
     ) -> Result<BackupConfig> {
-        new.validate()?;
-
         let store = crate::graphql::get_store(ctx)?;
         let table = store.backup_config_map();
         let old_config: DbBackupConfig = old.into();
@@ -391,9 +384,9 @@ mod tests {
             res.data.into_json().unwrap(),
             json!({
                 "backupConfig": {
-                    "backupDuration": "1",
+                    "backupDuration": 1,
                     "backupTime": "23:59:59",
-                    "numOfBackupsToKeep": "5"
+                    "numOfBackupsToKeep": 5
                 }
             })
         );
@@ -465,9 +458,9 @@ mod tests {
             res.data.into_json().unwrap(),
             json!({
                 "setBackupConfig": {
-                    "backupDuration": "7",
+                    "backupDuration": 7,
                     "backupTime": "03:00:00",
-                    "numOfBackupsToKeep": "10"
+                    "numOfBackupsToKeep": 10
                 }
             })
         );
@@ -546,9 +539,9 @@ mod tests {
             res.data.into_json().unwrap(),
             json!({
                 "updateBackupConfig": {
-                    "backupDuration": "14",
+                    "backupDuration": 14,
                     "backupTime": "02:30:00",
-                    "numOfBackupsToKeep": "7"
+                    "numOfBackupsToKeep": 7
                 }
             })
         );
@@ -605,11 +598,12 @@ mod tests {
 
         let res = schema.execute_as_system_admin(mutation).await;
         assert!(!res.errors.is_empty(), "Expected validation error");
+        // async-graphql's minimum validator produces error message about minimum value
         assert!(
             res.errors[0]
                 .message
-                .contains("invalid backup_duration: must be >= 1"),
-            "Expected specific error message, got: {}",
+                .contains("must be greater than or equal to 1"),
+            "Expected error message about minimum value, got: {}",
             res.errors[0].message
         );
     }
@@ -633,11 +627,12 @@ mod tests {
 
         let res = schema.execute_as_system_admin(mutation).await;
         assert!(!res.errors.is_empty(), "Expected validation error");
+        // async-graphql's minimum validator produces error message about minimum value
         assert!(
             res.errors[0]
                 .message
-                .contains("invalid num_of_backups_to_keep: must be >= 1"),
-            "Expected specific error message, got: {}",
+                .contains("must be greater than or equal to 1"),
+            "Expected error message about minimum value, got: {}",
             res.errors[0].message
         );
     }
@@ -714,9 +709,9 @@ mod tests {
             res.data.into_json().unwrap(),
             json!({
                 "backupConfig": {
-                    "backupDuration": "30",
+                    "backupDuration": 30,
                     "backupTime": "04:15:30",
-                    "numOfBackupsToKeep": "20"
+                    "numOfBackupsToKeep": 20
                 }
             })
         );
