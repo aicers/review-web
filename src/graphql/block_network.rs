@@ -3,7 +3,7 @@ use std::sync::RwLock;
 
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    Context, ID, InputObject, Object, Result,
+    Context, ID, InputObject, Object, Result, StringNumber,
     connection::{Connection, EmptyFields},
 };
 use database::event::Direction;
@@ -240,12 +240,12 @@ struct BlockNetworkTotalCount;
 #[Object]
 impl BlockNetworkTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
             .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
-        Ok(db.block_network_map().count()?)
+        Ok(StringNumber(db.block_network_map().count()?))
     }
 }
 
@@ -293,7 +293,10 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{blockNetworkList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{blockNetworkList: {totalCount: 0}}");
+        assert_eq!(
+            res.data.to_string(),
+            r#"{blockNetworkList: {totalCount: "0"}}"#
+        );
 
         let res = schema
             .execute_as_system_admin(

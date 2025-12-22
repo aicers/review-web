@@ -1362,13 +1362,13 @@ struct AccountTotalCount;
 #[Object]
 impl AccountTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         use database::Iterable;
 
         let store = crate::graphql::get_store(ctx)?;
         let map = store.account_map();
         let count = map.iter(Direction::Forward, None).count();
-        Ok(count)
+        Ok(StringNumber(count))
     }
 }
 
@@ -1491,10 +1491,10 @@ mod tests {
         let Some(Value::Object(account_list)) = retval.get("accountList") else {
             panic!("unexpected response: {retval:?}");
         };
-        let Some(Value::Number(total_count)) = account_list.get("totalCount") else {
+        let Some(Value::String(total_count)) = account_list.get("totalCount") else {
             panic!("unexpected response: {account_list:?}");
         };
-        assert_eq!(total_count.as_u64(), Some(1)); // By default, there is only one account, "admin".
+        assert_eq!(total_count, "1"); // By default, there is only one account, "admin".
 
         // Insert 4 more accounts.
         let res = schema
@@ -1815,7 +1815,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{accountList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
+        assert_eq!(res.data.to_string(), r#"{accountList: {totalCount: "1"}}"#);
 
         let res = schema
             .execute_as_system_admin(
@@ -1838,7 +1838,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{accountList: {edges: [{node: {username: "admin"}}, {node: {username: "user1"}}], totalCount: 2}}"#
+            r#"{accountList: {edges: [{node: {username: "admin"}}, {node: {username: "user1"}}], totalCount: "2"}}"#
         );
 
         // A non-existent username is considered removed.
@@ -1855,7 +1855,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{accountList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
+        assert_eq!(res.data.to_string(), r#"{accountList: {totalCount: "1"}}"#);
 
         // Test that users cannot delete themselves
         let res = schema
@@ -1872,7 +1872,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{accountList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
+        assert_eq!(res.data.to_string(), r#"{accountList: {totalCount: "1"}}"#);
 
         restore_review_admin(original_review_admin);
     }
@@ -1890,7 +1890,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{accountList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
+        assert_eq!(res.data.to_string(), r#"{accountList: {totalCount: "1"}}"#);
 
         // Try to delete self - should fail
         let res = schema
@@ -1957,7 +1957,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{accountList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
+        assert_eq!(res.data.to_string(), r#"{accountList: {totalCount: "1"}}"#);
 
         restore_review_admin(original_review_admin);
     }
@@ -1991,7 +1991,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{accountList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 2}}");
+        assert_eq!(res.data.to_string(), r#"{accountList: {totalCount: "2"}}"#);
 
         // Test exact removal API - should work with normalized username
         let res = schema
@@ -2007,7 +2007,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{accountList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{accountList: {totalCount: 1}}");
+        assert_eq!(res.data.to_string(), r#"{accountList: {totalCount: "1"}}"#);
 
         restore_review_admin(original_review_admin);
     }

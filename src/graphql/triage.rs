@@ -394,7 +394,10 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{triagePolicyList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{triagePolicyList: {totalCount: 0}}");
+        assert_eq!(
+            res.data.to_string(),
+            r#"{triagePolicyList: {totalCount: "0"}}"#
+        );
 
         let res = schema
             .execute_as_system_admin(
@@ -648,7 +651,7 @@ mod tests {
             )
             .await;
         let json = res.data.into_json().unwrap();
-        assert_eq!(json["triagePolicyList"]["totalCount"], 2);
+        assert_eq!(json["triagePolicyList"]["totalCount"], "2");
         let names: Vec<String> = json["triagePolicyList"]["nodes"]
             .as_array()
             .unwrap()
@@ -671,7 +674,7 @@ mod tests {
             )
             .await;
         let json = res.data.into_json().unwrap();
-        assert_eq!(json["triagePolicyList"]["totalCount"], 1);
+        assert_eq!(json["triagePolicyList"]["totalCount"], "1");
         assert_eq!(
             json["triagePolicyList"]["nodes"][0]["name"]
                 .as_str()
@@ -689,7 +692,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r"{triageResponseList: {totalCount: 0}}"
+            r#"{triageResponseList: {totalCount: "0"}}"#
         );
 
         let res = schema

@@ -1,6 +1,6 @@
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    Context, Enum, InputObject, Object, Result,
+    Context, Enum, InputObject, Object, Result, StringNumber,
     connection::{Connection, EmptyFields},
     types::ID,
 };
@@ -251,11 +251,11 @@ struct DataSourceTotalCount;
 #[Object]
 impl DataSourceTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.data_source_map();
 
-        Ok(map.count()?)
+        Ok(StringNumber(map.count()?))
     }
 }
 

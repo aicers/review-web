@@ -355,7 +355,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{nodeList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: "0"}}"#);
 
         // insert node
         let res = schema
@@ -431,7 +431,7 @@ mod tests {
             res.data.into_json().unwrap(),
             json!({
                 "nodeList": {
-                    "totalCount": 1,
+                    "totalCount": "1",
                     "edges": [
                         {
                             "node": {
@@ -555,7 +555,7 @@ mod tests {
             res.data.into_json().unwrap(),
             json!({
                 "nodeList": {
-                    "totalCount": 1,
+                    "totalCount": "1",
                     "edges": [
                         {
                             "node": {
@@ -711,7 +711,7 @@ mod tests {
             res.data.into_json().unwrap(),
             json!({
                 "nodeList": {
-                    "totalCount": 1,
+                    "totalCount": "1",
                     "edges": [
                         {
                             "node": {
@@ -843,7 +843,7 @@ mod tests {
             res.data.into_json().unwrap(),
             json!({
                 "nodeList": {
-                    "totalCount": 1,
+                    "totalCount": "1",
                     "edges": [
                         {
                             "node": {
@@ -1058,7 +1058,7 @@ mod tests {
             res.data.into_json().unwrap(),
             json!({
                 "nodeList": {
-                    "totalCount": 1,
+                    "totalCount": "1",
                     "edges": [
                         {
                             "node": {
@@ -1237,7 +1237,7 @@ mod tests {
             res.data.into_json().unwrap(),
             json!({
                 "nodeList": {
-                    "totalCount": 1,
+                    "totalCount": "1",
                     "edges": [
                         {
                             "node": {
@@ -1386,7 +1386,7 @@ mod tests {
             res.data.into_json().unwrap(),
             json!({
                 "nodeList": {
-                    "totalCount": 1,
+                    "totalCount": "1",
                     "edges": [
                         {
                             "node": {
@@ -1565,7 +1565,7 @@ mod tests {
             res.data.into_json().unwrap(),
             json!({
                 "nodeList": {
-                    "totalCount": 1,
+                    "totalCount": "1",
                     "edges": [
                         {
                             "node": {
@@ -1714,7 +1714,7 @@ mod tests {
             res.data.into_json().unwrap(),
             json!({
                 "nodeList": {
-                    "totalCount": 1,
+                    "totalCount": "1",
                     "edges": [
                         {
                             "node": {
@@ -1870,7 +1870,7 @@ mod tests {
             res.data.into_json().unwrap(),
             json!({
                 "nodeList": {
-                    "totalCount": 1,
+                    "totalCount": "1",
                     "edges": [
                         {
                             "node": {

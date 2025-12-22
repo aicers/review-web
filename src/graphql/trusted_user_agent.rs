@@ -1,6 +1,6 @@
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    Context, Object, Result, SimpleObject,
+    Context, Object, Result, SimpleObject, StringNumber,
     connection::{Connection, EmptyFields},
 };
 use chrono::{DateTime, Utc};
@@ -172,11 +172,11 @@ struct TrustedUserAgentTotalCount;
 #[Object]
 impl TrustedUserAgentTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.trusted_user_agent_map();
 
-        Ok(map.iter(Direction::Forward, None).count())
+        Ok(StringNumber(map.iter(Direction::Forward, None).count()))
     }
 }
 

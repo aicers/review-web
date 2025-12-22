@@ -417,7 +417,7 @@ struct RankedOutlierTotalCount {
 #[Object]
 impl RankedOutlierTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.outlier_map();
 
@@ -434,7 +434,7 @@ impl RankedOutlierTotalCount {
         } else {
             iter.count()
         };
-        Ok(count)
+        Ok(StringNumber(count))
     }
 }
 
@@ -477,16 +477,17 @@ struct OutlierTotalCount {
 #[Object]
 impl OutlierTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         use std::collections::HashSet;
         let store = crate::graphql::get_store(ctx)?;
         let table = store.outlier_map();
         let iter = table.get(self.model_id, None, Direction::Forward, None);
 
-        Ok(iter
-            .map(|res| res.map(|entry| entry.timestamp).map_err(Into::into))
-            .collect::<Result<HashSet<_>>>()?
-            .len())
+        Ok(StringNumber(
+            iter.map(|res| res.map(|entry| entry.timestamp).map_err(Into::into))
+                .collect::<Result<HashSet<_>>>()?
+                .len(),
+        ))
     }
 }
 
@@ -813,7 +814,7 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             format!(
-                "{{outliers: {{nodes: [{{id: \"{}\", events: [\"{e0}\", \"{e1}\"], size: 2}}], totalCount: {}}}}}",
+                "{{outliers: {{nodes: [{{id: \"{}\", events: [\"{e0}\", \"{e1}\"], size: 2}}], totalCount: \"{}\"}}}}",
                 t1.timestamp_nanos_opt().unwrap(),
                 1
             )
@@ -839,7 +840,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            format!("{{outliers: {{totalCount: {}}}}}", 2)
+            format!("{{outliers: {{totalCount: \"{}\"}}}}", 2)
         );
     }
 
@@ -867,7 +868,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            format!("{{rankedOutliers: {{totalCount: {}}}}}", outliers.len())
+            format!("{{rankedOutliers: {{totalCount: \"{}\"}}}}", outliers.len())
         );
 
         let t2 = t1 + chrono::TimeDelta::hours(1);
@@ -1012,7 +1013,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            format!("{{savedOutliers: {{totalCount: {}}}}}", total / 2)
+            format!("{{savedOutliers: {{totalCount: \"{}\"}}}}", total / 2)
         );
     }
 
@@ -1043,7 +1044,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            format!("{{savedOutliers: {{totalCount: {}}}}}", total / 2)
+            format!("{{savedOutliers: {{totalCount: \"{}\"}}}}", total / 2)
         );
 
         let to_save = start;

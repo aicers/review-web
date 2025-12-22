@@ -231,7 +231,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{nodeList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: "0"}}"#);
 
         // insert 2 nodes
         let mutation = format!(

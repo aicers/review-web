@@ -3,7 +3,7 @@ use std::convert::{TryFrom, TryInto};
 use anyhow::Context as AnyhowContext;
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    Context, Enum, InputObject, Object, Result, SimpleObject,
+    Context, Enum, InputObject, Object, Result, SimpleObject, StringNumber,
     connection::{Connection, EmptyFields},
     types::ID,
 };
@@ -586,9 +586,9 @@ struct CustomerTotalCount;
 #[Object]
 impl CustomerTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
-        Ok(store.customer_map().count()?)
+        Ok(StringNumber(store.customer_map().count()?))
     }
 }
 
@@ -653,7 +653,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r"{customerList: {edges: [], totalCount: 0}}"
+            r#"{customerList: {edges: [], totalCount: "0"}}"#
         );
 
         let res = schema
@@ -751,14 +751,14 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [{node: {name: "t1"}}, {node: {name: "t10"}}, {node: {name: "t2"}}, {node: {name: "t3"}}, {node: {name: "t4"}}, {node: {name: "t5"}}, {node: {name: "t6"}}, {node: {name: "t7"}}, {node: {name: "t8"}}, {node: {name: "t9"}}], totalCount: 10}}"#
+            r#"{customerList: {edges: [{node: {name: "t1"}}, {node: {name: "t10"}}, {node: {name: "t2"}}, {node: {name: "t3"}}, {node: {name: "t4"}}, {node: {name: "t5"}}, {node: {name: "t6"}}, {node: {name: "t7"}}, {node: {name: "t8"}}, {node: {name: "t9"}}], totalCount: "10"}}"#
         );
 
         let res = schema.execute_as_system_admin(r#"{customerList(last: 10, before: "WzExNiw1Nl0"){edges{node{name}}totalCount,pageInfo{startCursor}}}"#)
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [{node: {name: "t1"}}, {node: {name: "t10"}}, {node: {name: "t2"}}, {node: {name: "t3"}}, {node: {name: "t4"}}, {node: {name: "t5"}}, {node: {name: "t6"}}, {node: {name: "t7"}}], totalCount: 10, pageInfo: {startCursor: "WzExNiw0OV0"}}}"#
+            r#"{customerList: {edges: [{node: {name: "t1"}}, {node: {name: "t10"}}, {node: {name: "t2"}}, {node: {name: "t3"}}, {node: {name: "t4"}}, {node: {name: "t5"}}, {node: {name: "t6"}}, {node: {name: "t7"}}], totalCount: "10", pageInfo: {startCursor: "WzExNiw0OV0"}}}"#
         );
 
         let res = schema.execute_as_system_admin(
@@ -773,7 +773,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [{node: {name: "t8"}}, {node: {name: "t9"}}], totalCount: 10, pageInfo: {endCursor: "WzExNiw1N10"}}}"#
+            r#"{customerList: {edges: [{node: {name: "t8"}}, {node: {name: "t9"}}], totalCount: "10", pageInfo: {endCursor: "WzExNiw1N10"}}}"#
         );
 
         let res = schema.execute_as_system_admin(
@@ -787,7 +787,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [{node: {name: "t1"}}, {node: {name: "t10"}}, {node: {name: "t2"}}, {node: {name: "t3"}}, {node: {name: "t4"}}, {node: {name: "t5"}}, {node: {name: "t6"}}, {node: {name: "t7"}}, {node: {name: "t8"}}, {node: {name: "t9"}}], totalCount: 10}}"#
+            r#"{customerList: {edges: [{node: {name: "t1"}}, {node: {name: "t10"}}, {node: {name: "t2"}}, {node: {name: "t3"}}, {node: {name: "t4"}}, {node: {name: "t5"}}, {node: {name: "t6"}}, {node: {name: "t7"}}, {node: {name: "t8"}}, {node: {name: "t9"}}], totalCount: "10"}}"#
         );
 
         let res = schema
@@ -805,7 +805,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r"{customerList: {edges: [], totalCount: 0}}"
+            r#"{customerList: {edges: [], totalCount: "0"}}"#
         );
     }
 
@@ -817,7 +817,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r"{customerList: {edges: [], totalCount: 0}}"
+            r#"{customerList: {edges: [], totalCount: "0"}}"#
         );
 
         let res = schema
@@ -834,7 +834,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [{node: {name: "c1"}}], totalCount: 1}}"#
+            r#"{customerList: {edges: [{node: {name: "c1"}}], totalCount: "1"}}"#
         );
 
         let res = schema
@@ -858,7 +858,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r"{networkList: {edges: [{node: {customerList: []}}], totalCount: 1}}"
+            r#"{networkList: {edges: [{node: {customerList: []}}], totalCount: "1"}}"#
         );
     }
 
@@ -911,7 +911,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{customerList: {edges: [{node: {name: "test_customer"}}], totalCount: 1}}"#
+            r#"{customerList: {edges: [{node: {name: "test_customer"}}], totalCount: "1"}}"#
         );
     }
 

@@ -3,7 +3,7 @@ use std::sync::RwLock;
 
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    Context, Object, Result,
+    Context, Object, Result, StringNumber,
     connection::{Connection, EmptyFields},
     types::ID,
 };
@@ -103,13 +103,13 @@ struct StatusTotalCount;
 #[Object]
 impl StatusTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<i64> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
             .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
         let map = db.status_map();
-        Ok(i64::try_from(map.count()?)?)
+        Ok(StringNumber(map.count()?))
     }
 }
 

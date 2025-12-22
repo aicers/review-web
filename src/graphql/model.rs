@@ -983,10 +983,10 @@ struct ModelTotalCount;
 #[Object]
 impl ModelTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.model_map();
-        Ok(map.count_models()?)
+        Ok(StringNumber(map.count_models()?))
     }
 }
 

@@ -346,12 +346,12 @@ struct TemplateTotalCount;
 #[Object]
 impl TemplateTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         use review_database::{Iterable, event::Direction};
         let store = crate::graphql::get_store(ctx)?;
         let map = store.template_map();
         let count = map.iter(Direction::Forward, None).count();
-        Ok(count)
+        Ok(StringNumber(count))
     }
 }
 
@@ -377,7 +377,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{templateList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 0}}");
+        assert_eq!(res.data.to_string(), r#"{templateList: {totalCount: "0"}}"#);
 
         let res = schema
             .execute_as_system_admin(
@@ -396,7 +396,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{templateList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 1}}");
+        assert_eq!(res.data.to_string(), r#"{templateList: {totalCount: "1"}}"#);
 
         let res = schema
             .execute_as_system_admin(
@@ -416,7 +416,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{templateList: {edges: [{node: {name: "t1"}}], totalCount: 1}}"#
+            r#"{templateList: {edges: [{node: {name: "t1"}}], totalCount: "1"}}"#
         );
 
         let res = schema
@@ -457,7 +457,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r"{templateList: {edges: [{node: {algorithm: DISTRIBUTION}}], totalCount: 1}}"
+            r#"{templateList: {edges: [{node: {algorithm: DISTRIBUTION}}], totalCount: "1"}}"#
         );
 
         let res = schema
@@ -468,7 +468,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{templateList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 0}}");
+        assert_eq!(res.data.to_string(), r#"{templateList: {totalCount: "0"}}"#);
     }
 
     #[tokio::test]
@@ -477,7 +477,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{templateList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 0}}");
+        assert_eq!(res.data.to_string(), r#"{templateList: {totalCount: "0"}}"#);
 
         let res = schema
             .execute_as_system_admin(
@@ -499,7 +499,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{templateList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 1}}");
+        assert_eq!(res.data.to_string(), r#"{templateList: {totalCount: "1"}}"#);
 
         let res = schema
             .execute_as_system_admin(
@@ -520,7 +520,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{templateList: {edges: [{node: {name: "t1", timeIntervals: ["1", "2", "3"]}}], totalCount: 1}}"#
+            r#"{templateList: {edges: [{node: {name: "t1", timeIntervals: ["1", "2", "3"]}}], totalCount: "1"}}"#
         );
 
         let res = schema
@@ -568,7 +568,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{templateList: {edges: [{node: {algorithm: OPTICS, timeIntervals: ["1", "2", "4"]}}], totalCount: 1}}"#
+            r#"{templateList: {edges: [{node: {algorithm: OPTICS, timeIntervals: ["1", "2", "4"]}}], totalCount: "1"}}"#
         );
 
         let res = schema
@@ -579,6 +579,6 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{templateList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{templateList: {totalCount: 0}}");
+        assert_eq!(res.data.to_string(), r#"{templateList: {totalCount: "0"}}"#);
     }
 }

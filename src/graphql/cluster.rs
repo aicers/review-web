@@ -263,16 +263,16 @@ struct ClusterTotalCount {
 #[Object]
 impl ClusterTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.cluster_map();
-        Ok(map.count_clusters(
+        Ok(StringNumber(map.count_clusters(
             self.model_id,
             self.categories.as_deref(),
             self.detectors.as_deref(),
             self.qualifiers.as_deref(),
             self.statuses.as_deref(),
-        )?)
+        )?))
     }
 }
 

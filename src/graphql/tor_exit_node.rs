@@ -1,6 +1,6 @@
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    Context, Object, Result, SimpleObject,
+    Context, Object, Result, SimpleObject, StringNumber,
     connection::{Connection, EmptyFields},
 };
 use chrono::{DateTime, Utc};
@@ -87,11 +87,11 @@ struct TorExitNodeTotalCount;
 #[Object]
 impl TorExitNodeTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.tor_exit_node_map();
         let count = map.iter(Direction::Forward, None).count();
-        Ok(count)
+        Ok(StringNumber(count))
     }
 }
 

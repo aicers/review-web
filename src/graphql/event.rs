@@ -27,7 +27,7 @@ use std::{cmp, collections::BinaryHeap, net::IpAddr, num::NonZeroU8, sync::Arc};
 
 use anyhow::{Context as AnyhowContext, anyhow, bail};
 use async_graphql::{
-    Context, Enum, ID, InputObject, Interface, Object, Result, Subscription,
+    Context, Enum, ID, InputObject, Interface, Object, Result, StringNumber, Subscription,
     connection::{Connection, Edge, EmptyFields},
 };
 use chrono::{DateTime, Utc};
@@ -1027,7 +1027,7 @@ struct EventTotalCount {
 #[Object]
 impl EventTotalCount {
     /// The total number of events.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
         let events = store.events();
         let locator = if self.filter.has_country() {
@@ -1050,7 +1050,7 @@ impl EventTotalCount {
                 .timestamp_nanos_opt()
                 .map_or(i128::MAX, |e| i128::from(e) << 64);
             if end == 0 {
-                return Ok(0);
+                return Ok(StringNumber(0));
             }
             end - 1
         } else {
@@ -1074,7 +1074,7 @@ impl EventTotalCount {
             }
             count += 1;
         }
-        Ok(count)
+        Ok(StringNumber(count))
     }
 }
 
@@ -1799,7 +1799,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            "{eventList: {edges: [], totalCount: 0}}"
+            r#"{eventList: {edges: [], totalCount: "0"}}"#
         );
 
         let store = schema.store();
@@ -1836,7 +1836,7 @@ mod tests {
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00"}}], totalCount: 1}}"#
+            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00"}}], totalCount: "1"}}"#
         );
     }
 
@@ -1850,7 +1850,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            "{eventList: {edges: [], totalCount: 0}}"
+            r#"{eventList: {edges: [], totalCount: "0"}}"#
         );
 
         let res = schema
@@ -1941,7 +1941,7 @@ mod tests {
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00", sensor: "sensor1"}}], totalCount: 1}}"#
+            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00", sensor: "sensor1"}}], totalCount: "1"}}"#
         );
     }
 
@@ -2006,7 +2006,7 @@ mod tests {
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {time: "2018-01-26T18:30:09.453829+00:00"}}, {node: {time: "2018-01-27T18:30:09.453829+00:00"}}], totalCount: 2}}"#
+            r#"{eventList: {edges: [{node: {time: "2018-01-26T18:30:09.453829+00:00"}}, {node: {time: "2018-01-27T18:30:09.453829+00:00"}}], totalCount: "2"}}"#
         );
         let query = format!(
             "{{ \
@@ -2020,7 +2020,7 @@ mod tests {
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00"}}], totalCount: 1}}"#
+            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00"}}], totalCount: "1"}}"#
         );
     }
 
@@ -2249,7 +2249,7 @@ mod tests {
         let res = schema.execute_as_system_admin(query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {sensor: "s2"}}], totalCount: 1}}"#
+            r#"{eventList: {edges: [{node: {sensor: "s2"}}], totalCount: "1"}}"#
         );
 
         // 2. Filter by a specific category (InitialAccess = 2)
@@ -2257,7 +2257,7 @@ mod tests {
         let res = schema.execute_as_system_admin(query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {sensor: "s1"}}], totalCount: 1}}"#
+            r#"{eventList: {edges: [{node: {sensor: "s1"}}], totalCount: "1"}}"#
         );
 
         // 3. Filter by both specific and unknown categories
@@ -2265,7 +2265,7 @@ mod tests {
         let res = schema.execute_as_system_admin(query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {sensor: "s1"}}, {node: {sensor: "s2"}}], totalCount: 2}}"#
+            r#"{eventList: {edges: [{node: {sensor: "s1"}}, {node: {sensor: "s2"}}], totalCount: "2"}}"#
         );
     }
 
@@ -3298,6 +3298,6 @@ mod tests {
         assert!(data.contains("confidence: 0.85"));
         assert!(data.contains("level: MEDIUM"));
         assert!(data.contains("learningMethod: SEMI_SUPERVISED"));
-        assert!(data.contains("totalCount: 1"));
+        assert!(data.contains(r#"totalCount: "1""#));
     }
 }
