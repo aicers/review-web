@@ -1,6 +1,6 @@
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    Context, InputObject, Object, Result, SimpleObject,
+    Context, InputObject, Object, Result, SimpleObject, StringNumber,
     connection::{Connection, EmptyFields},
 };
 use database::{Iterable, event::Direction};
@@ -180,11 +180,11 @@ struct TrustedDomainTotalCount;
 #[Object]
 impl TrustedDomainTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.trusted_domain_map();
 
-        Ok(map.iter(Direction::Forward, None).count())
+        Ok(StringNumber(map.iter(Direction::Forward, None).count()))
     }
 }
 
@@ -215,7 +215,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r"{trustedDomainList: {totalCount: 0, edges: []}}"
+            r#"{trustedDomainList: {totalCount: "0", edges: []}}"#
         );
 
         let res = schema
@@ -251,7 +251,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{trustedDomainList: {totalCount: 3, edges: [{node: {name: "example1.com"}}, {node: {name: "example2.org"}}, {node: {name: "example3.org"}}]}}"#
+            r#"{trustedDomainList: {totalCount: "3", edges: [{node: {name: "example1.com"}}, {node: {name: "example2.org"}}, {node: {name: "example3.org"}}]}}"#
         );
 
         let res = schema
@@ -269,7 +269,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{trustedDomainList: {totalCount: 1, edges: [{node: {name: "example3.org"}}]}}"#
+            r#"{trustedDomainList: {totalCount: "1", edges: [{node: {name: "example3.org"}}]}}"#
         );
     }
 
