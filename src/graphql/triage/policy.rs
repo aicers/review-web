@@ -1,7 +1,7 @@
 use std::cmp;
 
 use async_graphql::{
-    Context, ID, Object, Result,
+    Context, ID, Object, Result, StringNumber,
     connection::{Connection, Edge, EmptyFields, OpaqueCursor},
 };
 use chrono::Utc;
@@ -26,17 +26,18 @@ struct TriagePolicyTotalCount {
 #[Object]
 impl TriagePolicyTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.triage_policy_map();
-        Ok(map
-            .iter(Direction::Forward, None)
-            .filter(|res| {
-                res.as_ref()
-                    .map(|policy| matches_customer(policy, self.customer_id))
-                    .unwrap_or(false)
-            })
-            .count())
+        Ok(StringNumber(
+            map.iter(Direction::Forward, None)
+                .filter(|res| {
+                    res.as_ref()
+                        .map(|policy| matches_customer(policy, self.customer_id))
+                        .unwrap_or(false)
+                })
+                .count(),
+        ))
     }
 }
 

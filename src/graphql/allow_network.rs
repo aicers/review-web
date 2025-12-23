@@ -1,6 +1,6 @@
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    Context, ID, InputObject, Object, Result,
+    Context, ID, InputObject, Object, Result, StringNumber,
     connection::{Connection, EmptyFields},
 };
 use database::event::Direction;
@@ -220,10 +220,10 @@ struct AllowNetworkTotalCount;
 #[Object]
 impl AllowNetworkTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
 
-        Ok(store.allow_network_map().count()?)
+        Ok(StringNumber(store.allow_network_map().count()?))
     }
 }
 
@@ -280,7 +280,10 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{allowNetworkList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{allowNetworkList: {totalCount: 0}}");
+        assert_eq!(
+            res.data.to_string(),
+            r#"{allowNetworkList: {totalCount: "0"}}"#
+        );
 
         let res = schema
             .execute_as_system_admin(

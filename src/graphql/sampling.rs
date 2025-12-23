@@ -182,10 +182,10 @@ struct SamplingPolicyTotalCount;
 #[Object]
 impl SamplingPolicyTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
 
-        Ok(store.sampling_policy_map().count()?)
+        Ok(StringNumber(store.sampling_policy_map().count()?))
     }
 }
 
@@ -449,7 +449,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r"{samplingPolicyList: {totalCount: 0}}"
+            r#"{samplingPolicyList: {totalCount: "0"}}"#
         );
 
         let res = schema

@@ -253,7 +253,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{nodeList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: "0"}}"#);
 
         // insert node
         let res = schema
@@ -287,7 +287,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{nodeList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: "1"}}"#);
 
         // check inserted node
         let res = schema
@@ -422,7 +422,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{nodeList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: "1"}}"#);
 
         // check updated node
         let res = schema
@@ -550,7 +550,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{nodeList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: "0"}}"#);
     }
 
     #[tokio::test]
@@ -562,7 +562,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{nodeList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: "0"}}"#);
 
         // insert node
         let res = schema
@@ -594,7 +594,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{nodeList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: "1"}}"#);
 
         // check inserted node
         let res = schema
@@ -718,7 +718,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{nodeList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: "1"}}"#);
 
         // check updated node
         let res = schema
@@ -765,7 +765,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{nodeList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: "0"}}"#);
 
         // Insert node with unsupervised and semi-supervised agents
         let res = schema
@@ -799,7 +799,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{nodeList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: "1"}}"#);
 
         // Remove the unsupervised agent
         let res = schema
@@ -989,7 +989,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{nodeList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 0}}");
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: "0"}}"#);
 
         // Insert node with unsupervised and semi-supervised agents
         let res = schema
@@ -1023,7 +1023,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{nodeList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{nodeList: {totalCount: 1}}");
+        assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: "1"}}"#);
 
         // update node with an outdated agent old value
         let res = schema

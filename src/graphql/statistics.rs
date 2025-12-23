@@ -113,10 +113,13 @@ struct TotalCountByCluster {
 #[Object]
 impl TotalCountByCluster {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<i64> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<i64>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.column_stats_map();
-        Ok(map.count_rounds_by_cluster(i32::try_from(self.model)?, self.cluster)?)
+        Ok(StringNumber(map.count_rounds_by_cluster(
+            i32::try_from(self.model)?,
+            self.cluster,
+        )?))
     }
 }
 
@@ -127,13 +130,10 @@ struct TotalCountByModel {
 #[Object]
 impl TotalCountByModel {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<i64> {
-        use num_traits::ToPrimitive;
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = super::get_store(ctx)?;
         let map = store.batch_info_map();
-        Ok(map
-            .count(self.model)
-            .map(|c| c.to_i64().unwrap_or_default())?)
+        Ok(StringNumber(map.count(self.model)?))
     }
 }
 

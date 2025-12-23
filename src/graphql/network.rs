@@ -2,7 +2,7 @@ use std::{convert::TryInto, mem::size_of};
 
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    Context, InputObject, Object, Result,
+    Context, InputObject, Object, Result, StringNumber,
     connection::{Connection, EmptyFields},
     types::ID,
 };
@@ -258,10 +258,10 @@ struct NetworkTotalCount;
 #[Object]
 impl NetworkTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
 
-        Ok(store.network_map().count()?)
+        Ok(StringNumber(store.network_map().count()?))
     }
 }
 
@@ -288,7 +288,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r"{networkList: {edges: [], totalCount: 0}}"
+            r#"{networkList: {edges: [], totalCount: "0"}}"#
         );
 
         let res = schema
@@ -307,7 +307,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{networkList: {edges: [{node: {name: "n1"}}], totalCount: 1}}"#
+            r#"{networkList: {edges: [{node: {name: "n1"}}], totalCount: "1"}}"#
         );
 
         let res = schema
@@ -320,7 +320,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r"{networkList: {edges: [], totalCount: 0}}"
+            r#"{networkList: {edges: [], totalCount: "0"}}"#
         );
     }
 
@@ -330,7 +330,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{networkList{totalCount}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{networkList: {totalCount: 0}}");
+        assert_eq!(res.data.to_string(), r#"{networkList: {totalCount: "0"}}"#);
 
         let res = schema
             .execute_as_system_admin(
@@ -393,7 +393,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{networkList: {edges: [{node: {name: "n1", tagIds: ["0", "1", "2"]}}], totalCount: 1}}"#
+            r#"{networkList: {edges: [{node: {name: "n1", tagIds: ["0", "1", "2"]}}], totalCount: "1"}}"#
         );
     }
 }

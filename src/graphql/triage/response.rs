@@ -1,6 +1,6 @@
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    Context, InputObject, Object, Result,
+    Context, InputObject, Object, Result, StringNumber,
     connection::{Connection, EmptyFields},
     types::ID,
 };
@@ -49,12 +49,12 @@ struct TriageResponseTotalCount;
 #[Object]
 impl TriageResponseTotalCount {
     /// The total number of edges.
-    async fn total_count(&self, ctx: &Context<'_>) -> Result<usize> {
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         use review_database::{Iterable, event::Direction};
 
         let store = crate::graphql::get_store(ctx)?;
         let map = store.triage_response_map();
-        Ok(map.iter(Direction::Forward, None).count())
+        Ok(StringNumber(map.iter(Direction::Forward, None).count()))
     }
 }
 

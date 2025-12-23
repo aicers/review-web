@@ -23,6 +23,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- Changed the return type of all GraphQL `totalCount` fields from integer types
+  to `StringNumber` to prevent potential overflow when casting large counts to
+  GraphQL's Int type (i32).
 - The `trustedDomainList` GraphQL API endpoint now exposes a `totalCount` field
   that returns the total number of trusted domains in the database as a
   `StringNumber<usize>`. This prevents potential overflow issues with GraphQL's
