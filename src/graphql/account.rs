@@ -1004,7 +1004,7 @@ impl AccountMutation {
         let normalized_username = validate_and_normalize_username(&username)
             .map_err(|e| format!("Invalid username: {e}"))?;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.account_map();
 
         let mut account = map
@@ -1056,7 +1056,7 @@ impl AccountMutation {
         let normalized_username = validate_and_normalize_username(&username)
             .map_err(|e| format!("Invalid username: {e}"))?;
 
-        let store = crate::graphql::get_store(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
         let map = store.account_map();
 
         let account = map
@@ -4536,7 +4536,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertAccount: "lockeduser"}"#);
 
         // Manually lock the account by setting locked_out_until
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.account_map();
         let mut account = map.get("lockeduser").unwrap().unwrap();
         account.locked_out_until = Some(Utc::now() + chrono::Duration::minutes(30));
@@ -4595,7 +4595,7 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertAccount: "expiredlock"}"#);
 
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.account_map();
         let mut account = map.get("expiredlock").unwrap().unwrap();
         account.locked_out_until = Some(Utc::now() - chrono::Duration::minutes(5));
@@ -4636,7 +4636,7 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertAccount: "notlocked"}"#);
 
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.account_map();
         let mut account = map.get("notlocked").unwrap().unwrap();
         account.locked_out_until = None;
@@ -4712,7 +4712,7 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertAccount: "suspendeduser"}"#);
 
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.account_map();
         let mut account = map.get("suspendeduser").unwrap().unwrap();
         account.is_suspended = true;
@@ -4755,7 +4755,7 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertAccount: "notsuspended"}"#);
 
-        let store = schema.store().await;
+        let store = schema.store();
         let map = store.account_map();
         let mut account = map.get("notsuspended").unwrap().unwrap();
         account.is_suspended = false;
