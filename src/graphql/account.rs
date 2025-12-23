@@ -1031,7 +1031,7 @@ impl AccountMutation {
             None => {
                 info_with_username!(
                     ctx,
-                    "User {normalized_username} is not locked; no lockout state changes applied"
+                    "User {normalized_username} was not locked; no lockout state changes applied"
                 );
             }
         }
@@ -1059,18 +1059,23 @@ impl AccountMutation {
         let store = crate::graphql::get_store(ctx).await?;
         let map = store.account_map();
 
-        let _account = map
+        let account = map
             .get(&normalized_username)?
             .ok_or_else::<async_graphql::Error, _>(|| "User not found".into())?;
 
-        // TODO: Update the account to unsuspend it - this would need to be implemented
-        // in the database layer to actually set is_suspended to false
-        // For now, we just validate that the account exists and log the action
+        if account.is_suspended {
+            map.unsuspend_account(&normalized_username)?;
+            info_with_username!(
+                ctx,
+                "User {normalized_username} has been manually unsuspended"
+            );
+        } else {
+            info_with_username!(
+                ctx,
+                "User {normalized_username} was not suspended; no suspension state changes applied"
+            );
+        }
 
-        info_with_username!(
-            ctx,
-            "User {normalized_username} has been manually unsuspended"
-        );
         Ok(normalized_username)
     }
 }
@@ -4707,7 +4712,13 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertAccount: "suspendeduser"}"#);
 
-        // Unsuspend the account (placeholder implementation)
+        let store = schema.store().await;
+        let map = store.account_map();
+        let mut account = map.get("suspendeduser").unwrap().unwrap();
+        account.is_suspended = true;
+        map.put(&account).unwrap();
+
+        // Unsuspend the account
         let res = schema
             .execute_with_guard(
                 r#"mutation { unsuspendAccount(username: "suspendeduser") }"#,
@@ -4718,6 +4729,51 @@ mod tests {
             res.data.to_string(),
             r#"{unsuspendAccount: "suspendeduser"}"#
         );
+
+        let account = map.get("suspendeduser").unwrap().unwrap();
+        assert!(!account.is_suspended);
+    }
+
+    #[tokio::test]
+    async fn unsuspend_account_not_suspended_no_changes() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertAccount(
+                        username: "notsuspended",
+                        password: "password123",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Not Suspended",
+                        department: "Test"
+                        customerIds: [0]
+                    )
+                }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "notsuspended"}"#);
+
+        let store = schema.store().await;
+        let map = store.account_map();
+        let mut account = map.get("notsuspended").unwrap().unwrap();
+        account.is_suspended = false;
+        map.put(&account).unwrap();
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { unsuspendAccount(username: "notsuspended") }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{unsuspendAccount: "notsuspended"}"#
+        );
+
+        let account = map.get("notsuspended").unwrap().unwrap();
+        assert!(!account.is_suspended);
     }
 
     #[tokio::test]
