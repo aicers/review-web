@@ -47,6 +47,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - Affected GraphQL APIs: `labelDb`, `labelDbList`, `labelDbRule`,
     `insertLabelDb`, `updateLabelDb`, `removeLabelDb`.
 
+### Fixed
+
+- IP location resolvers now coerce `(0.0, 0.0)` from ip2location to `None`
+  when mapping into our `IpLocation` struct, so private/unresolved IPs are not
+  treated as real coordinates.
+
 ## [0.29.4] - 2025-12-11
 
 ### Changed
@@ -189,9 +195,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Fixed
 
 - Fixed `FtpPlainText` threat level to Medium to match `review-database`.
-- IP location resolvers now coerce `(0.0, 0.0)` from ip2location to `None`
-  when mapping into our `IpLocation` struct, so private/unresolved IPs are not
-  treated as real coordinates.
 
 ## [0.28.0] - 2025-09-30
 
