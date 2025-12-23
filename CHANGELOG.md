@@ -23,6 +23,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- The `trustedDomainList` GraphQL API endpoint now exposes a `totalCount` field
+  that returns the total number of trusted domains in the database as a
+  `StringNumber<usize>`. This prevents potential overflow issues with GraphQL's
+  `Int` type by encoding the count as a string.
 - Updated the `serve` function signature to use `Arc<std::sync::RwLock<Store>>`
   instead of `Arc<tokio::sync::RwLock<Store>>`, following the removal of the
   `tokio` dependency from the `review-database` crate.

@@ -1,8 +1,10 @@
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    Context, InputObject, Object, Result, SimpleObject,
+    Context, InputObject, Object, Result, SimpleObject, StringNumber,
     connection::{Connection, EmptyFields},
 };
+use database::{Iterable, event::Direction};
+use review_database as database;
 use tracing::info;
 
 use super::{AgentManager, BoxedAgentManager, Role, RoleGuard};
@@ -26,7 +28,9 @@ impl TrustedDomainQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<OpaqueCursor<Vec<u8>>, TrustedDomain, EmptyFields, EmptyFields>> {
+    ) -> Result<
+        Connection<OpaqueCursor<Vec<u8>>, TrustedDomain, TrustedDomainTotalCount, EmptyFields>,
+    > {
         query_with_constraints(
             after,
             before,
@@ -171,16 +175,30 @@ impl From<TrustedDomainInput> for review_database::TrustedDomain {
     }
 }
 
+struct TrustedDomainTotalCount;
+
+#[Object]
+impl TrustedDomainTotalCount {
+    /// The total number of edges.
+    async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
+        let store = crate::graphql::get_store(ctx)?;
+        let map = store.trusted_domain_map();
+
+        Ok(StringNumber(map.iter(Direction::Forward, None).count()))
+    }
+}
+
 async fn load(
     ctx: &Context<'_>,
     after: Option<OpaqueCursor<Vec<u8>>>,
     before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<OpaqueCursor<Vec<u8>>, TrustedDomain, EmptyFields, EmptyFields>> {
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, TrustedDomain, TrustedDomainTotalCount, EmptyFields>>
+{
     let store = crate::graphql::get_store(ctx)?;
     let map = store.trusted_domain_map();
-    super::load_edges(&map, after, before, first, last, EmptyFields)
+    super::load_edges(&map, after, before, first, last, TrustedDomainTotalCount)
 }
 
 #[cfg(test)]
@@ -193,9 +211,12 @@ mod tests {
     async fn trusted_domain_list() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute_as_system_admin(r"{trustedDomainList{edges{node{name}}}}")
+            .execute_as_system_admin(r"{trustedDomainList{totalCount,edges{node{name}}}}")
             .await;
-        assert_eq!(res.data.to_string(), r"{trustedDomainList: {edges: []}}");
+        assert_eq!(
+            res.data.to_string(),
+            r#"{trustedDomainList: {totalCount: "0", edges: []}}"#
+        );
 
         let res = schema
             .execute_as_system_admin(
@@ -226,11 +247,11 @@ mod tests {
         );
 
         let res = schema
-            .execute_as_system_admin(r"{trustedDomainList{edges{node{name}}}}")
+            .execute_as_system_admin(r"{trustedDomainList{totalCount,edges{node{name}}}}")
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{trustedDomainList: {edges: [{node: {name: "example1.com"}}, {node: {name: "example2.org"}}, {node: {name: "example3.org"}}]}}"#
+            r#"{trustedDomainList: {totalCount: "3", edges: [{node: {name: "example1.com"}}, {node: {name: "example2.org"}}, {node: {name: "example3.org"}}]}}"#
         );
 
         let res = schema
@@ -244,11 +265,11 @@ mod tests {
         );
 
         let res = schema
-            .execute_as_system_admin(r"{trustedDomainList{edges{node{name}}}}")
+            .execute_as_system_admin(r"{trustedDomainList{totalCount,edges{node{name}}}}")
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{trustedDomainList: {edges: [{node: {name: "example3.org"}}]}}"#
+            r#"{trustedDomainList: {totalCount: "1", edges: [{node: {name: "example3.org"}}]}}"#
         );
     }
 
