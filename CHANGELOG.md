@@ -20,6 +20,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     SecurityAdministrator role.
   - All mutations validate input: `backupDuration` and `numOfBackupsToKeep`
     must be >= 1, and `backupTime` must be in valid HH:MM:SS format.
+- Added `unlockAccount` GraphQL mutation for system administrators to manually
+  unlock user accounts that are locked due to failed login attempts. This
+  allows administrators to reactivate locked accounts without waiting for the
+  automatic lockout period to expire.
+- Added `unsuspendAccount` GraphQL mutation for system administrators to manually
+  unsuspend user accounts. This provides the foundation for account suspension
+  management functionality.
 
 ### Changed
 
@@ -203,13 +210,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
-- Added `unlockAccount` GraphQL mutation for system administrators to manually
-  unlock user accounts that are locked due to failed login attempts. This
-  allows administrators to reactivate locked accounts without waiting for the
-  automatic lockout period to expire.
-- Added `unsuspendAccount` GraphQL mutation for system administrators to manually
-  unsuspend user accounts. This provides the foundation for account suspension
-  management functionality.
 - Added `TorConnectionConn` event detection for connection-level Tor network
   monitoring. This extends existing Tor detection capabilities beyond HTTP
   connections to include all connection types.
