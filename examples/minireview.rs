@@ -299,7 +299,7 @@ async fn main() -> Result<()> {
     let config = Config::load_config(parse().as_deref())?;
     let _guard = init_tracing(config.log_dir());
 
-    let run = run(config).await;
+    let run = run(&config);
     match run {
         Ok(web_srv_shutdown_handle) => {
             if let Err(e) = shutdown().await {
@@ -317,7 +317,7 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn run(config: Config) -> Result<Arc<Notify>> {
+fn run(config: &Config) -> Result<Arc<Notify>> {
     migrate_data_dir(config.data_dir(), config.backup_dir()).context("migration failed")?;
 
     let cert_manager: Arc<dyn CertManager> = Arc::new(MiniCertManager::new(

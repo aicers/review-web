@@ -23,7 +23,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt -- --check --config group_imports=StdExternalCrate
       - name: Clippy
-        run: cargo clippy --tests -- -D warnings
+        run: cargo clippy --tests --examples -- -D warnings
       - name: Check
         run: cargo check --examples
       - name: markdownlint
