@@ -1011,25 +1011,29 @@ impl AccountMutation {
             .get(&normalized_username)?
             .ok_or_else::<async_graphql::Error, _>(|| "User not found".into())?;
 
-        // Check if account is actually locked before unlocking
-        let was_locked = account
-            .locked_out_until
-            .is_some_and(|until| until > Utc::now());
-
-        // Clear the lockout fields
-        account.locked_out_until = None;
-        account.failed_login_attempts = 0;
-
-        // Persist changes to database
-        map.put(&account)?;
-
-        if was_locked {
-            info_with_username!(ctx, "User {normalized_username} has been manually unlocked");
-        } else {
-            info_with_username!(
-                ctx,
-                "User {normalized_username} was not locked, but lockout state has been reset"
-            );
+        let now = Utc::now();
+        match account.locked_out_until {
+            Some(until) if until > now => {
+                account.locked_out_until = None;
+                account.failed_login_attempts = 0;
+                map.put(&account)?;
+                info_with_username!(ctx, "User {normalized_username} has been manually unlocked");
+            }
+            Some(_) => {
+                account.locked_out_until = None;
+                account.failed_login_attempts = 0;
+                map.put(&account)?;
+                info_with_username!(
+                    ctx,
+                    "User {normalized_username} had an expired lockout; lockout state has been reset"
+                );
+            }
+            None => {
+                info_with_username!(
+                    ctx,
+                    "User {normalized_username} is not locked; no lockout state changes applied"
+                );
+            }
         }
 
         Ok(normalized_username)
@@ -4563,6 +4567,88 @@ mod tests {
 
         assert!(!res.errors.is_empty());
         assert_eq!(res.errors.first().unwrap().message, "User not found");
+    }
+
+    #[tokio::test]
+    async fn unlock_account_expired_lockout_resets_state() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertAccount(
+                        username: "expiredlock",
+                        password: "password123",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Expired Lock",
+                        department: "Test"
+                        customerIds: [0]
+                    )
+                }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "expiredlock"}"#);
+
+        let store = schema.store().await;
+        let map = store.account_map();
+        let mut account = map.get("expiredlock").unwrap().unwrap();
+        account.locked_out_until = Some(Utc::now() - chrono::Duration::minutes(5));
+        account.failed_login_attempts = 3;
+        map.put(&account).unwrap();
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { unlockAccount(username: "expiredlock") }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{unlockAccount: "expiredlock"}"#);
+
+        let account = map.get("expiredlock").unwrap().unwrap();
+        assert!(account.locked_out_until.is_none());
+        assert_eq!(account.failed_login_attempts, 0);
+    }
+
+    #[tokio::test]
+    async fn unlock_account_not_locked_no_changes() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertAccount(
+                        username: "notlocked",
+                        password: "password123",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Not Locked",
+                        department: "Test"
+                        customerIds: [0]
+                    )
+                }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "notlocked"}"#);
+
+        let store = schema.store().await;
+        let map = store.account_map();
+        let mut account = map.get("notlocked").unwrap().unwrap();
+        account.locked_out_until = None;
+        account.failed_login_attempts = 2;
+        map.put(&account).unwrap();
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { unlockAccount(username: "notlocked") }"#,
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{unlockAccount: "notlocked"}"#);
+
+        let account = map.get("notlocked").unwrap().unwrap();
+        assert!(account.locked_out_until.is_none());
+        assert_eq!(account.failed_login_attempts, 2);
     }
 
     #[tokio::test]
