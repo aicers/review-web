@@ -16,6 +16,7 @@ mod event;
 mod filter;
 pub(crate) mod indicator;
 mod ip_location;
+pub(crate) mod label_db;
 mod model;
 pub(crate) mod network;
 mod node;
@@ -27,7 +28,6 @@ mod statistics;
 mod status;
 mod tags;
 mod template;
-pub(crate) mod tidb;
 mod tor_exit_node;
 mod traffic_filter;
 mod triage;
@@ -140,7 +140,7 @@ struct SubQueryTwo(
     tags::WorkflowTagQuery,
     template::TemplateQuery,
     tor_exit_node::TorExitNodeQuery,
-    tidb::TidbQuery,
+    label_db::LabelDbQuery,
     triage::TriagePolicyQuery,
     triage::TriageExclusionReasonQuery,
     triage::TriageResponseQuery,
@@ -186,7 +186,7 @@ struct SubMutationTwo(
     tags::WorkflowTagMutation,
     template::TemplateMutation,
     tor_exit_node::TorExitNodeMutation,
-    tidb::TidbMutation,
+    label_db::LabelDbMutation,
     triage::TriagePolicyMutation,
     triage::TriageExclusionReasonMutation,
     triage::TriageResponseMutation,

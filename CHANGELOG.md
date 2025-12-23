@@ -22,6 +22,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     application consistent with the new model.
   - Added validation to prevent deleting customers or triage exclusion reasons
     when referenced by triage policies.
+- Renamed GraphQL APIs to reflect the renamed `tidb` to `labelDb` change in
+  review-database.
+  - Replaced the `tidb` schema module with `label_db`.
+  - Affected GraphQL APIs: `labelDb`, `labelDbList`, `labelDbRule`,
+    `insertLabelDb`, `updateLabelDb`, `removeLabelDb`.
 
 ## [0.29.4] - 2025-12-11
 
