@@ -47,13 +47,16 @@ ip2location = "/path/to/IP2LOCATON"         # path to a IP2LOCATION file
 key = "/path/to/key.pem"                    # path to a key file
 log_dir = "/path/to/log"                    # path to a log directory
 
-[[reverse_proxies]]
-base = "archive"                            # proxy name for Giganto
-uri = "https://localhost:8443/graphql"      # Giganto's GraphQL address
+# <SERVER_NAME>: Name of the central management server. This must match with
+# the DNS name in the certificate.
 
 [[reverse_proxies]]
-base = "tivan"                              # proxy name for Tivan
-uri = "https://localhost:8444/graphql"      # Tivan's GraphQL address
+base = "archive"                            # proxy name for Giganto
+uri = "https://<SERVER_NAME>:8443/graphql"  # Giganto's GraphQL address
+
+[[reverse_proxies]]
+base = "ti-container"                       # proxy name for ti-container
+uri = "https://<SERVER_NAME>:8444/graphql"  # ti-container's GraphQL address
 ```
 
 ## License
