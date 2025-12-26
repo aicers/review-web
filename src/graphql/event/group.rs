@@ -67,10 +67,10 @@ impl EventGroupQuery {
         Ok(EventCounts { values, counts })
     }
 
-    /// The number of events for each source and destination IP address pair,
+    /// The number of events for each originator and responder IP address pair,
     /// with timestamp on or after `start` and before `end`. Each entry in
-    /// `values` is a string representation of the source and destination IP
-    /// address pair. For example, source IP address 10.0.0.1 and destination IP
+    /// `values` is a string representation of the originator and responder IP
+    /// address pair. For example, originator IP address 10.0.0.1 and responder IP
     /// address 10.0.0.2 become "10.0.0.1-10.0.0.2".
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
@@ -96,11 +96,11 @@ impl EventGroupQuery {
         Ok(EventCounts { values, counts })
     }
 
-    /// The number of events for each source and destination IP address pair and
+    /// The number of events for each originator and responder IP address pair and
     /// event kind, with timestamp on or after `start` and before `end`. Each
-    /// entry in `values` is a string representation of the source and
-    /// destination IP address pair and kind. For example, a DNS covert channel
-    /// event with source IP address 10.0.0.1, destination IP address 10.0.0.2
+    /// entry in `values` is a string representation of the originator and
+    /// responder IP address pair and kind. For example, a DNS covert channel
+    /// event with originator IP address 10.0.0.1, responder IP address 10.0.0.2
     /// become "10.0.0.1-10.0.0.2-DNS Covert Channel".
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
@@ -128,13 +128,13 @@ impl EventGroupQuery {
         Ok(EventCounts { values, counts })
     }
 
-    /// The number of events for each source IP address, with timestamp on or
+    /// The number of events for each originator IP address, with timestamp on or
     /// after `start` and before `end`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
-    async fn event_counts_by_source_ip_address(
+    async fn event_counts_by_originator_ip_address(
         &self,
         ctx: &Context<'_>,
         filter: EventListFilterInput,
@@ -146,13 +146,13 @@ impl EventGroupQuery {
         Ok(EventCounts { values, counts })
     }
 
-    /// The number of events for each destination IP address, with timestamp on
+    /// The number of events for each responder IP address, with timestamp on
     /// or after `start` and before `end`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
-    async fn event_counts_by_destination_ip_address(
+    async fn event_counts_by_responder_ip_address(
         &self,
         ctx: &Context<'_>,
         filter: EventListFilterInput,
@@ -430,10 +430,10 @@ mod tests {
             sensor: "sensor1".to_string(),
             start_time: timestamp.timestamp_nanos_opt().unwrap(),
             duration: 0,
-            src_addr: Ipv4Addr::from(src).into(),
-            src_port: 10000,
-            dst_addr: Ipv4Addr::from(dst).into(),
-            dst_port: 53,
+            orig_addr: Ipv4Addr::from(src).into(),
+            orig_port: 10000,
+            resp_addr: Ipv4Addr::from(dst).into(),
+            resp_port: 53,
             proto: 17,
             orig_pkts: 0,
             resp_pkts: 0,

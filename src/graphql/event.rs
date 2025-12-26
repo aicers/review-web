@@ -1731,10 +1731,10 @@ mod tests {
             sensor: sensor.to_string(),
             start_time: timestamp.timestamp_nanos_opt().unwrap(),
             duration: 0,
-            src_addr: Ipv4Addr::from(src).into(),
-            src_port: 10000,
-            dst_addr: Ipv4Addr::from(dst).into(),
-            dst_port: 53,
+            orig_addr: Ipv4Addr::from(src).into(),
+            orig_port: 10000,
+            resp_addr: Ipv4Addr::from(dst).into(),
+            resp_port: 53,
             proto: 17,
             orig_pkts: 0,
             resp_pkts: 0,
@@ -2075,14 +2075,14 @@ mod tests {
         let query = format!(
             "{{ \
                 eventList(filter: {{ start:\"{ts1}\", end:\"{ts3}\", customers: [0] }}) {{ \
-                    edges {{ node {{... on DnsCovertChannel {{ srcAddr }} }} }} \
+                    edges {{ node {{... on DnsCovertChannel {{ origAddr }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1"}}]}}"#
+            r#"{eventList: {edges: [{node: {origAddr: "0.0.0.1"}}]}}"#
         );
     }
 
@@ -2141,14 +2141,14 @@ mod tests {
                     end:\"{ts3}\",
                     directions: [\"OUTBOUND\"],
                 }}) {{ \
-                    edges {{ node {{... on DnsCovertChannel {{ srcAddr }} }} }} \
+                    edges {{ node {{... on DnsCovertChannel {{ origAddr }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1"}}]}}"#
+            r#"{eventList: {edges: [{node: {origAddr: "0.0.0.1"}}]}}"#
         );
     }
 
@@ -2203,14 +2203,14 @@ mod tests {
                     end:\"{ts3}\",
                     endpoints: [{{predefined: \"0\"}}]
                 }}) {{ \
-                    edges {{ node {{... on DnsCovertChannel {{ srcAddr }} }} }} \
+                    edges {{ node {{... on DnsCovertChannel {{ origAddr }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.3"}}]}}"#
+            r#"{eventList: {edges: [{node: {origAddr: "0.0.0.3"}}]}}"#
         );
     }
 
@@ -2300,7 +2300,7 @@ mod tests {
             eventStream(start:"2018-01-28T00:00:00.000000000Z"){
               __typename
               ... on DnsCovertChannel{
-                srcAddr,
+                origAddr,
               }
             }
         }
@@ -2309,7 +2309,7 @@ mod tests {
         let res = stream.next().await;
         assert_eq!(
             res.unwrap().data.to_string(),
-            r#"{eventStream: {__typename: "DnsCovertChannel", srcAddr: "0.0.0.5"}}"#
+            r#"{eventStream: {__typename: "DnsCovertChannel", origAddr: "0.0.0.5"}}"#
         );
     }
 
@@ -2326,10 +2326,10 @@ mod tests {
             .unwrap();
         let fields = BlocklistDhcpFields {
             sensor: "sensor1".to_string(),
-            src_addr: Ipv4Addr::LOCALHOST.into(),
-            src_port: 68,
-            dst_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
-            dst_port: 67,
+            orig_addr: Ipv4Addr::LOCALHOST.into(),
+            orig_port: 68,
+            resp_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
+            resp_port: 67,
             proto: 17,
             start_time: timestamp.timestamp_nanos_opt().unwrap(),
             duration: 0,
@@ -2396,14 +2396,14 @@ mod tests {
                     customers: [0],
                     directions: [\"OUTBOUND\"],
                 }}) {{ \
-                    edges {{ node {{... on BlocklistDhcp {{ srcAddr,giaddr,reqIpAddr,classId,clientId }} }} }} \
+                    edges {{ node {{... on BlocklistDhcp {{ origAddr,giaddr,reqIpAddr,classId,clientId }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {srcAddr: "127.0.0.1", giaddr: "127.0.0.8", reqIpAddr: "127.0.0.100", classId: "04:05:06", clientId: "07:08:09"}}]}}"#
+            r#"{eventList: {edges: [{node: {origAddr: "127.0.0.1", giaddr: "127.0.0.8", reqIpAddr: "127.0.0.100", classId: "04:05:06", clientId: "07:08:09"}}]}}"#
         );
     }
 
@@ -2420,10 +2420,10 @@ mod tests {
             .unwrap();
         let fields = BlocklistBootpFields {
             sensor: "sensor1".to_string(),
-            src_addr: Ipv4Addr::LOCALHOST.into(),
-            src_port: 68,
-            dst_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
-            dst_port: 67,
+            orig_addr: Ipv4Addr::LOCALHOST.into(),
+            orig_port: 68,
+            resp_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
+            resp_port: 67,
             proto: 17,
             start_time: timestamp.timestamp_nanos_opt().unwrap(),
             duration: 0,
@@ -2483,14 +2483,14 @@ mod tests {
                     customers: [0],
                     directions: [\"INBOUND\"],
                 }}) {{ \
-                    edges {{ node {{... on BlocklistBootp {{ srcAddr,ciaddr,chaddr }} }} }} \
+                    edges {{ node {{... on BlocklistBootp {{ origAddr,ciaddr,chaddr }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {srcAddr: "127.0.0.1", ciaddr: "127.0.0.5", chaddr: "01:02:03:04:05:06"}}]}}"#
+            r#"{eventList: {edges: [{node: {origAddr: "127.0.0.1", ciaddr: "127.0.0.5", chaddr: "01:02:03:04:05:06"}}]}}"#
         );
     }
 
@@ -2509,10 +2509,10 @@ mod tests {
             sensor: "sensor1".to_string(),
             start_time: timestamp.timestamp_nanos_opt().unwrap(),
             duration: 0,
-            src_addr: Ipv4Addr::from(1).into(),
-            src_port: 10000,
-            dst_addr: Ipv4Addr::from(2).into(),
-            dst_port: 53,
+            orig_addr: Ipv4Addr::from(1).into(),
+            orig_port: 10000,
+            resp_addr: Ipv4Addr::from(2).into(),
+            resp_port: 53,
             proto: 17,
             orig_pkts: 0,
             resp_pkts: 0,
@@ -2544,14 +2544,14 @@ mod tests {
                 eventList(filter: {{
                     start:\"{timestamp}\"
                 }}) {{ \
-                    edges {{ node {{... on LockyRansomware {{ srcAddr,rtt,query }} }} }} \
+                    edges {{ node {{... on LockyRansomware {{ origAddr,rtt,query }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1", rtt: "10", query: "domain"}}]}}"#
+            r#"{eventList: {edges: [{node: {origAddr: "0.0.0.1", rtt: "10", query: "domain"}}]}}"#
         );
     }
 
@@ -2568,10 +2568,10 @@ mod tests {
             .unwrap();
         let fields = BlocklistTlsFields {
             sensor: "sensor1".to_string(),
-            src_addr: Ipv4Addr::from(1).into(),
-            src_port: 10000,
-            dst_addr: Ipv4Addr::from(2).into(),
-            dst_port: 443,
+            orig_addr: Ipv4Addr::from(1).into(),
+            orig_port: 10000,
+            resp_addr: Ipv4Addr::from(2).into(),
+            resp_port: 443,
             proto: 6,
             start_time: timestamp.timestamp_nanos_opt().unwrap(),
             duration: 0,
@@ -2615,14 +2615,14 @@ mod tests {
                 eventList(filter: {{
                     start:\"{timestamp}\"
                 }}) {{ \
-                    edges {{ node {{... on SuspiciousTlsTraffic {{ srcAddr,cipher,subjectCountry,confidence }} }} }} \
+                    edges {{ node {{... on SuspiciousTlsTraffic {{ origAddr,cipher,subjectCountry,confidence }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {srcAddr: "0.0.0.1", cipher: 1234, subjectCountry: "US", confidence: 0.800000011920929}}]}}"#
+            r#"{eventList: {edges: [{node: {origAddr: "0.0.0.1", cipher: 1234, subjectCountry: "US", confidence: 0.800000011920929}}]}}"#
         );
     }
 
@@ -2641,10 +2641,10 @@ mod tests {
             .unwrap();
         let fields = BlocklistRadiusFields {
             sensor: "sensor1".to_string(),
-            src_addr: Ipv4Addr::LOCALHOST.into(),
-            src_port: 1812,
-            dst_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
-            dst_port: 1812,
+            orig_addr: Ipv4Addr::LOCALHOST.into(),
+            orig_port: 1812,
+            resp_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
+            resp_port: 1812,
             proto: 17,
             start_time: timestamp.timestamp_nanos_opt().unwrap(),
             duration: 0,
@@ -2707,14 +2707,14 @@ mod tests {
                     customers: [0],
                     directions: [\"OUTBOUND\"],
                 }}) {{ \
-                    edges {{ node {{... on BlocklistRadius {{ srcAddr,nasIp,userName,message }} }} }} \
+                    edges {{ node {{... on BlocklistRadius {{ origAddr,nasIp,userName,message }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {srcAddr: "127.0.0.1", nasIp: "192.168.1.1", userName: "75:73:65:72", message: "RADIUS message"}}]}}"#
+            r#"{eventList: {edges: [{node: {origAddr: "127.0.0.1", nasIp: "192.168.1.1", userName: "75:73:65:72", message: "RADIUS message"}}]}}"#
         );
     }
 
@@ -2797,14 +2797,14 @@ mod tests {
                     customers: [0],
                     directions: [\"OUTBOUND\"],
                 }}) {{ \
-                    edges {{ node {{... on BlocklistMalformedDns {{ srcAddr,dstAddr,transId,queryBody,respBody }} }} }} \
+                    edges {{ node {{... on BlocklistMalformedDns {{ origAddr,respAddr,transId,queryBody,respBody }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {srcAddr: "127.0.0.1", dstAddr: "127.0.0.2", transId: 42, queryBody: ["de:ad"], respBody: ["ca:fe"]}}]}}"#
+            r#"{eventList: {edges: [{node: {origAddr: "127.0.0.1", respAddr: "127.0.0.2", transId: 42, queryBody: ["de:ad"], respBody: ["ca:fe"]}}]}}"#
         );
     }
 
@@ -2847,10 +2847,10 @@ mod tests {
             orig_l2_bytes: 0,
             resp_l2_bytes: 0,
             sensor: "sensor1".to_string(),
-            src_addr: Ipv4Addr::new(192, 168, 1, 1).into(),
-            src_port: 10001,
-            dst_addr: Ipv4Addr::new(10, 0, 0, 1).into(),
-            dst_port: 80,
+            orig_addr: Ipv4Addr::new(192, 168, 1, 1).into(),
+            orig_port: 10001,
+            resp_addr: Ipv4Addr::new(10, 0, 0, 1).into(),
+            resp_port: 80,
             proto: 6,
             method: "GET".to_string(),
             host: "unlabeled.com".to_string(),
@@ -2897,10 +2897,10 @@ mod tests {
             orig_l2_bytes: 0,
             resp_l2_bytes: 0,
             sensor: "sensor1".to_string(),
-            src_addr: Ipv4Addr::new(192, 168, 1, 1).into(),
-            src_port: 10001,
-            dst_addr: Ipv4Addr::new(10, 0, 0, 1).into(),
-            dst_port: 80,
+            orig_addr: Ipv4Addr::new(192, 168, 1, 1).into(),
+            orig_port: 10001,
+            resp_addr: Ipv4Addr::new(10, 0, 0, 1).into(),
+            resp_port: 80,
             proto: 6,
             method: "GET".to_string(),
             host: "http_threat.com".to_string(),
@@ -2948,10 +2948,10 @@ mod tests {
             resp_pkts: 0,
             orig_l2_bytes: 0,
             resp_l2_bytes: 0,
-            src_addr: Ipv4Addr::new(192, 168, 1, 2).into(),
-            src_port: 10002,
-            dst_addr: Ipv4Addr::new(8, 8, 8, 8).into(),
-            dst_port: 53,
+            orig_addr: Ipv4Addr::new(192, 168, 1, 2).into(),
+            orig_port: 10002,
+            resp_addr: Ipv4Addr::new(8, 8, 8, 8).into(),
+            resp_port: 53,
             proto: 17,
             query: "covert.example.com".to_string(),
             answer: vec![],
@@ -2984,10 +2984,10 @@ mod tests {
             orig_l2_bytes: 0,
             resp_l2_bytes: 0,
             sensor: "sensor1".to_string(),
-            src_addr: Ipv4Addr::new(192, 168, 1, 3).into(),
-            src_port: 10003,
-            dst_addr: Ipv4Addr::new(10, 0, 0, 2).into(),
-            dst_port: 80,
+            orig_addr: Ipv4Addr::new(192, 168, 1, 3).into(),
+            orig_port: 10003,
+            resp_addr: Ipv4Addr::new(10, 0, 0, 2).into(),
+            resp_port: 80,
             proto: 6,
             host: "dga.com".to_string(),
             method: "GET".to_string(),
@@ -3030,10 +3030,10 @@ mod tests {
             resp_pkts: 0,
             orig_l2_bytes: 0,
             resp_l2_bytes: 0,
-            src_addr: Ipv4Addr::new(192, 168, 1, 4).into(),
-            src_port: 10004,
-            dst_addr: Ipv4Addr::new(8, 8, 8, 8).into(),
-            dst_port: 53,
+            orig_addr: Ipv4Addr::new(192, 168, 1, 4).into(),
+            orig_port: 10004,
+            resp_addr: Ipv4Addr::new(8, 8, 8, 8).into(),
+            resp_port: 53,
             proto: 17,
             query: "locky.example.com".to_string(),
             answer: vec![],
@@ -3066,10 +3066,10 @@ mod tests {
             orig_l2_bytes: 0,
             resp_l2_bytes: 0,
             sensor: "sensor1".to_string(),
-            src_addr: Ipv4Addr::new(192, 168, 1, 5).into(),
-            src_port: 10005,
-            dst_addr: Ipv4Addr::new(10, 0, 0, 3).into(),
-            dst_port: 8080,
+            orig_addr: Ipv4Addr::new(192, 168, 1, 5).into(),
+            orig_port: 10005,
+            resp_addr: Ipv4Addr::new(10, 0, 0, 3).into(),
+            resp_port: 8080,
             proto: 6,
             host: "api.com".to_string(),
             method: "POST".to_string(),
@@ -3158,11 +3158,11 @@ mod tests {
                     triagePolicies: ["{policy_id}"]
                 }}, count: 10) {{
                     __typename
-                    ... on HttpThreat {{ srcAddr, clusterId }}
-                    ... on DnsCovertChannel {{ srcAddr }}
-                    ... on DomainGenerationAlgorithm {{ srcAddr }}
-                    ... on LockyRansomware {{ srcAddr }}
-                    ... on NonBrowser {{ srcAddr }}
+                    ... on HttpThreat {{ origAddr, clusterId }}
+                    ... on DnsCovertChannel {{ origAddr }}
+                    ... on DomainGenerationAlgorithm {{ origAddr }}
+                    ... on LockyRansomware {{ origAddr }}
+                    ... on NonBrowser {{ origAddr }}
                 }}
             }}"#
         );
@@ -3270,7 +3270,7 @@ mod tests {
                         node {{ \
                             ... on UnusualDestinationPattern {{ \
                                 sensor \
-                                dstAddrs \
+                                respAddrs \
                                 count \
                                 expectedMean \
                                 stdDeviation \

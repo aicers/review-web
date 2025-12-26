@@ -8,7 +8,7 @@ use crate::graphql::{
 };
 
 /// An event indicating an unusual pattern of connections to multiple
-/// destination IP addresses.
+/// responder IP addresses.
 pub(super) struct UnusualDestinationPattern {
     inner: database::UnusualDestinationPattern,
 }
@@ -35,8 +35,8 @@ impl UnusualDestinationPattern {
         self.inner.end_time
     }
 
-    /// Destination IP (Address) List
-    async fn dst_addrs(&self) -> Vec<String> {
+    /// Responder IP (Address) List
+    async fn resp_addrs(&self) -> Vec<String> {
         self.inner
             .destination_ips
             .iter()
@@ -44,31 +44,31 @@ impl UnusualDestinationPattern {
             .collect()
     }
 
-    /// Destination Country List
-    /// The two-letter country codes of the destination IP addresses. `"XX"` if
+    /// Responder Country List
+    /// The two-letter country codes of the responder IP addresses. `"XX"` if
     /// the location of an address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn dst_countries(&self, ctx: &Context<'_>) -> Vec<String> {
+    async fn resp_countries(&self, ctx: &Context<'_>) -> Vec<String> {
         self.inner
             .destination_ips
             .iter()
-            .map(|dst_addr| country_code(ctx, *dst_addr))
+            .map(|resp_addr| country_code(ctx, *resp_addr))
             .collect()
     }
 
-    /// Destination Customer List
-    async fn dst_customers(&self, ctx: &Context<'_>) -> Result<Vec<Option<Customer>>> {
+    /// Responder Customer List
+    async fn resp_customers(&self, ctx: &Context<'_>) -> Result<Vec<Option<Customer>>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
         let mut customers = vec![];
-        for dst_addr in &self.inner.destination_ips {
-            customers.push(find_ip_customer(&map, *dst_addr)?);
+        for resp_addr in &self.inner.destination_ips {
+            customers.push(find_ip_customer(&map, *resp_addr)?);
         }
         Ok(customers)
     }
 
-    /// Destination Network
-    async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
+    /// Responder Network
+    async fn resp_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         if let Some(first_ip) = self.inner.destination_ips.first() {

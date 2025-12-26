@@ -75,6 +75,30 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     networks corresponding to the agent information of the Semi-supervised Engine.
   - Added validation to prevent deleting customers when referenced by allow/block
     networks.
+- **BREAKING**: Unified event structure field names across all GraphQL APIs to
+  use `orig_addr`/`orig_port` and `resp_addr`/`resp_port` terminology instead
+  of `src_addr`/`src_port` and `dst_addr`/`dst_port`. This change standardizes
+  the naming convention with the originator/responder pattern used in network
+  event analysis. The following field renamings apply:
+  - `srcAddr` → `origAddr`
+  - `srcPort` → `origPort`
+  - `srcAddrs` → `origAddrs`
+  - `srcCountry` → `origCountry`
+  - `srcCustomer` → `origCustomer`
+  - `srcNetwork` → `origNetwork`
+  - `srcCountries` → `origCountries`
+  - `srcCustomers` → `origCustomers`
+  - `dstAddr` → `respAddr`
+  - `dstPort` → `respPort`
+  - `dstAddrs` → `respAddrs`
+  - `dstPorts` → `respPorts`
+  - `dstCountry` → `respCountry`
+  - `dstCustomer` → `respCustomer`
+  - `dstNetwork` → `respNetwork`
+  - `dstCountries` → `respCountries`
+  - `dstCustomers` → `respCustomers`
+- Updated `review-database` dependency to rev `6f84854` to align with the
+  unified event structure terminology changes.
 
 ### Fixed
 

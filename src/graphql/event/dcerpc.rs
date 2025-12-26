@@ -21,68 +21,68 @@ impl BlocklistDceRpc {
         &self.inner.sensor
     }
 
-    /// Source IP (Address)
-    async fn src_addr(&self) -> String {
-        self.inner.src_addr.to_string()
+    /// Originator IP (Address)
+    async fn orig_addr(&self) -> String {
+        self.inner.orig_addr.to_string()
     }
 
-    /// Source Country
-    /// The two-letter country code of the source IP address. `"XX"` if the
+    /// Originator Country
+    /// The two-letter country code of the originator IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn src_country(&self, ctx: &Context<'_>) -> String {
-        country_code(ctx, self.inner.src_addr)
+    async fn orig_country(&self, ctx: &Context<'_>) -> String {
+        country_code(ctx, self.inner.orig_addr)
     }
 
-    /// Source Customer
-    async fn src_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
+    /// Originator Customer
+    async fn orig_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
-        find_ip_customer(&map, self.inner.src_addr)
+        find_ip_customer(&map, self.inner.orig_addr)
     }
 
-    /// Source Network
-    async fn src_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
+    /// Originator Network
+    async fn orig_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
-        find_ip_network(&map, self.inner.src_addr)
+        find_ip_network(&map, self.inner.orig_addr)
     }
 
-    /// Source Port (Number)
-    async fn src_port(&self) -> u16 {
-        self.inner.src_port
+    /// Originator Port (Number)
+    async fn orig_port(&self) -> u16 {
+        self.inner.orig_port
     }
 
-    /// Destination IP (Address)
-    async fn dst_addr(&self) -> String {
-        self.inner.dst_addr.to_string()
+    /// Responder IP (Address)
+    async fn resp_addr(&self) -> String {
+        self.inner.resp_addr.to_string()
     }
 
-    /// Destination Country
-    /// The two-letter country code of the destination IP address. `"XX"` if the
+    /// Responder Country
+    /// The two-letter country code of the responder IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn dst_country(&self, ctx: &Context<'_>) -> String {
-        country_code(ctx, self.inner.dst_addr)
+    async fn resp_country(&self, ctx: &Context<'_>) -> String {
+        country_code(ctx, self.inner.resp_addr)
     }
 
-    /// Destination Customer
-    async fn dst_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
+    /// Responder Customer
+    async fn resp_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
-        find_ip_customer(&map, self.inner.dst_addr)
+        find_ip_customer(&map, self.inner.resp_addr)
     }
 
-    /// Destination Network
-    async fn dst_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
+    /// Responder Network
+    async fn resp_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
-        find_ip_network(&map, self.inner.dst_addr)
+        find_ip_network(&map, self.inner.resp_addr)
     }
 
-    /// Destination Port (Number)
-    async fn dst_port(&self) -> u16 {
-        self.inner.dst_port
+    /// Responder Port (Number)
+    async fn resp_port(&self) -> u16 {
+        self.inner.resp_port
     }
 
     /// Protocol Number
