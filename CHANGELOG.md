@@ -8,6 +8,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- Added SecurityAdministrator access to data source mutations.
 - Added GraphQL API for managing `BackupConfig` settings:
   - `backupConfig` query: Retrieves the current backup configuration. Returns
     default values (backup every 1 day at 23:59:59 UTC, keeping 5 backups) if
