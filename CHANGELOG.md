@@ -4,7 +4,7 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.30.0] - 2026-01-29
 
 ### Added
 
@@ -101,8 +101,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - `dstNetwork` → `respNetwork`
   - `dstCountries` → `respCountries`
   - `dstCustomers` → `respCustomers`
-- Updated `review-database` dependency to rev `6f84854` to align with the
-  unified event structure terminology changes.
+- Updated event struct terminologies to align with the unified event structure.
 - Updated `LockyRansomware` event threat level from `Medium` to `High` to match
   the definition in review-database.
 - Updated `LdapPlainText` event threat level from `Low` to `Medium`.
@@ -1351,7 +1350,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
-[Unreleased]: https://github.com/aicers/review-web/compare/0.29.4...main
+[0.30.0]: https://github.com/aicers/review-web/compare/0.29.4...0.30.0
 [0.29.4]: https://github.com/aicers/review-web/compare/0.29.3...0.29.4
 [0.29.3]: https://github.com/aicers/review-web/compare/0.29.2...0.29.3
 [0.29.2]: https://github.com/aicers/review-web/compare/0.29.1...0.29.2
