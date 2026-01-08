@@ -55,6 +55,7 @@ uri = "https://<SERVER_NAME>:8444/graphql"  # ti-container's GraphQL address
 
 ## License
 
+Copyright 2023–2026 ClumL Inc.
 Copyright 2018-2023 Petabi, Inc.
 
 Licensed under [Apache License, Version 2.0][apache-license] (the "License");
