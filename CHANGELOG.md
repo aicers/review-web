@@ -100,6 +100,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - `dstCustomers` → `respCustomers`
 - Updated `review-database` dependency to rev `6f84854` to align with the
   unified event structure terminology changes.
+- Updated `LockyRansomware` event threat level from `Medium` to `High` to match
+  the definition in review-database.
 
 ### Fixed
 
