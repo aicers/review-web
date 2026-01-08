@@ -91,6 +91,7 @@ const DEFAULT_TRIAGE_LIST_COUNT: usize = 100;
 pub(super) enum ThreatLevel {
     Low,
     Medium,
+    High,
 }
 
 #[derive(Default)]

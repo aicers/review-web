@@ -418,7 +418,7 @@ impl LockyRansomware {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        ThreatLevel::High
     }
 }
 
