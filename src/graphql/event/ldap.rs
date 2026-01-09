@@ -308,7 +308,7 @@ impl LdapPlainText {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Low
+        ThreatLevel::Medium
     }
 }
 
