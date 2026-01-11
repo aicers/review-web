@@ -421,6 +421,7 @@ mod tests {
     use chrono::{DateTime, NaiveDate, Utc};
     use review_database::{EventCategory, EventKind, EventMessage, event::DnsEventFields};
 
+    use crate::bincode_utils;
     use crate::graphql::TestSchema;
 
     /// Creates an event message at `timestamp` with the given source and
@@ -457,7 +458,7 @@ mod tests {
         EventMessage {
             time: timestamp,
             kind: EventKind::DnsCovertChannel,
-            fields: bincode::serialize(&fields).expect("serializable"),
+            fields: bincode_utils::serialize(&fields).expect("serializable"),
         }
     }
 

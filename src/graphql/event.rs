@@ -1706,6 +1706,7 @@ mod tests {
         },
     };
 
+    use crate::bincode_utils;
     use crate::graphql::TestSchema;
 
     /// Creates an event message at `timestamp` with the given sensor and
@@ -1758,7 +1759,7 @@ mod tests {
         EventMessage {
             time: timestamp,
             kind: EventKind::DnsCovertChannel,
-            fields: bincode::serialize(&fields).expect("serializable"),
+            fields: bincode_utils::serialize(&fields).expect("serializable"),
         }
     }
 
@@ -2362,7 +2363,7 @@ mod tests {
         let message = EventMessage {
             time: timestamp,
             kind: EventKind::BlocklistDhcp,
-            fields: bincode::serialize(&fields).expect("serializable"),
+            fields: bincode_utils::serialize(&fields).expect("serializable"),
         };
         db.put(&message).unwrap();
 
@@ -2449,7 +2450,7 @@ mod tests {
         let message = EventMessage {
             time: timestamp,
             kind: EventKind::BlocklistBootp,
-            fields: bincode::serialize(&fields).expect("serializable"),
+            fields: bincode_utils::serialize(&fields).expect("serializable"),
         };
         db.put(&message).unwrap();
 
@@ -2536,7 +2537,7 @@ mod tests {
         let message = EventMessage {
             time: timestamp,
             kind: EventKind::LockyRansomware,
-            fields: bincode::serialize(&fields).expect("serializable"),
+            fields: bincode_utils::serialize(&fields).expect("serializable"),
         };
         db.put(&message).unwrap();
         let query = format!(
@@ -2607,7 +2608,7 @@ mod tests {
         let message = EventMessage {
             time: timestamp,
             kind: EventKind::SuspiciousTlsTraffic,
-            fields: bincode::serialize(&fields).expect("serializable"),
+            fields: bincode_utils::serialize(&fields).expect("serializable"),
         };
         db.put(&message).unwrap();
         let query = format!(
@@ -2673,7 +2674,7 @@ mod tests {
         let message = EventMessage {
             time: timestamp,
             kind: EventKind::BlocklistRadius,
-            fields: bincode::serialize(&fields).expect("serializable"),
+            fields: bincode_utils::serialize(&fields).expect("serializable"),
         };
         db.put(&message).unwrap();
 
@@ -2763,7 +2764,7 @@ mod tests {
         let message = EventMessage {
             time: timestamp,
             kind: EventKind::BlocklistMalformedDns,
-            fields: bincode::serialize(&fields).expect("serializable"),
+            fields: bincode_utils::serialize(&fields).expect("serializable"),
         };
         db.put(&message).unwrap();
 
@@ -2883,7 +2884,7 @@ mod tests {
         db.put(&EventMessage {
             time: base_ts,
             kind: EventKind::HttpThreat,
-            fields: bincode::serialize(&unlabeled_outlier).unwrap(),
+            fields: bincode_utils::serialize(&unlabeled_outlier).unwrap(),
         })
         .unwrap();
 
@@ -2933,7 +2934,7 @@ mod tests {
         db.put(&EventMessage {
             time: base_ts,
             kind: EventKind::HttpThreat,
-            fields: bincode::serialize(&http_threat_fields).unwrap(),
+            fields: bincode_utils::serialize(&http_threat_fields).unwrap(),
         })
         .unwrap();
 
@@ -2971,7 +2972,7 @@ mod tests {
         db.put(&EventMessage {
             time: base_ts,
             kind: EventKind::DnsCovertChannel,
-            fields: bincode::serialize(&dns_fields).unwrap(),
+            fields: bincode_utils::serialize(&dns_fields).unwrap(),
         })
         .unwrap();
 
@@ -3015,7 +3016,7 @@ mod tests {
         db.put(&EventMessage {
             time: base_ts,
             kind: EventKind::DomainGenerationAlgorithm,
-            fields: bincode::serialize(&dga_fields).unwrap(),
+            fields: bincode_utils::serialize(&dga_fields).unwrap(),
         })
         .unwrap();
 
@@ -3053,7 +3054,7 @@ mod tests {
         db.put(&EventMessage {
             time: base_ts,
             kind: EventKind::LockyRansomware,
-            fields: bincode::serialize(&locky_fields).unwrap(),
+            fields: bincode_utils::serialize(&locky_fields).unwrap(),
         })
         .unwrap();
 
@@ -3097,7 +3098,7 @@ mod tests {
         db.put(&EventMessage {
             time: base_ts,
             kind: EventKind::NonBrowser,
-            fields: bincode::serialize(&non_browser_fields).unwrap(),
+            fields: bincode_utils::serialize(&non_browser_fields).unwrap(),
         })
         .unwrap();
 
@@ -3259,7 +3260,7 @@ mod tests {
         let message = EventMessage {
             time: timestamp,
             kind: EventKind::UnusualDestinationPattern,
-            fields: bincode::serialize(&fields).expect("serializable"),
+            fields: bincode_utils::serialize(&fields).expect("serializable"),
         };
         db.put(&message).unwrap();
 

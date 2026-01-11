@@ -99,6 +99,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - `dstCustomers` → `respCustomers`
 - Updated `review-database` dependency to rev `6f84854` to align with the
   unified event structure terminology changes.
+- Upgraded `bincode` dependency from v1 to v2. Added a `bincode_utils` module
+  with `serialize` and `deserialize` wrapper functions that use
+  `bincode::config::legacy()` to maintain v1 compatibility. This is a
+  compatibility wrapper; future updates may migrate to full v2 semantics.
 
 ### Fixed
 

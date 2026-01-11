@@ -8,7 +8,6 @@ use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
     types::ID,
 };
-use bincode::Options;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc, offset::LocalResult};
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
@@ -22,6 +21,7 @@ use tokio::time;
 use tracing::error;
 
 use super::{Role, RoleGuard, model::ModelDigest, query};
+use crate::bincode_utils;
 use crate::error_with_username;
 
 const MAX_EVENT_NUM_OF_OUTLIER: usize = 50;
@@ -505,16 +505,16 @@ async fn load(
     let after = after.map(|cursor| cursor.0);
     let before = before.map(|cursor| cursor.0);
 
-    let decoded_after = after
+    let decoded_after: Option<(Vec<u8>, Vec<u8>)> = after
         .as_deref()
-        .map(|input| bincode::DefaultOptions::new().deserialize(input))
-        .transpose()?
-        .map(|(_, from): (&[u8], &[u8])| from);
-    let decoded_before = before
+        .map(bincode_utils::deserialize)
+        .transpose()?;
+    let decoded_after = decoded_after.as_ref().map(|(_, from)| from.as_slice());
+    let decoded_before: Option<(Vec<u8>, Vec<u8>)> = before
         .as_deref()
-        .map(|input| bincode::DefaultOptions::new().deserialize(input))
-        .transpose()?
-        .map(|(from, _): (&[u8], &[u8])| from);
+        .map(bincode_utils::deserialize)
+        .transpose()?;
+    let decoded_before = decoded_before.as_ref().map(|(from, _)| from.as_slice());
     let (direction, count, from, to) = if let Some(first) = first {
         (Direction::Forward, first, decoded_after, decoded_before)
     } else if let Some(last) = last {
@@ -563,7 +563,7 @@ async fn load(
         (has_more, false)
     };
     let edges = batches.into_values().filter_map(|(from, to, mut ev)| {
-        let cursor = bincode::DefaultOptions::new().serialize(&(from, to)).ok()?;
+        let cursor = bincode_utils::serialize(&(from, to)).ok()?;
         let cursor = OpaqueCursor(cursor);
         ev.events.sort_unstable();
         Some(Edge::new(cursor, ev))

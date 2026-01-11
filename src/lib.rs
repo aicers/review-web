@@ -1,6 +1,7 @@
 pub mod archive;
 pub mod auth;
 pub mod backend;
+pub mod bincode_utils;
 pub mod graphql;
 
 use std::sync::RwLock;

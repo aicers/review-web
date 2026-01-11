@@ -9,7 +9,6 @@ use std::{borrow::Cow, time::Duration};
 use async_graphql::{
     ComplexObject, Context, Enum, Object, Result, SimpleObject, StringNumber, types::ID,
 };
-use bincode::Options;
 use chrono::{DateTime, TimeZone, Utc};
 #[allow(clippy::module_name_repetitions)]
 pub use crud::agent_keys_by_customer_id;
@@ -18,6 +17,8 @@ use input::NodeInput;
 use review_database as database;
 use roxy::Process as RoxyProcess;
 use serde::{Deserialize, Serialize};
+
+use crate::bincode_utils;
 
 const SENSOR_AGENT: &str = "piglet";
 const UNSUPERVISED_AGENT: &str = "reconverge";
@@ -377,9 +378,7 @@ impl Indexable for NodeStatus {
     }
 
     fn value(&self) -> Vec<u8> {
-        bincode::DefaultOptions::new()
-            .serialize(self)
-            .expect("serializable")
+        bincode_utils::serialize(self).expect("serializable")
     }
 
     fn set_index(&mut self, index: u32) {
