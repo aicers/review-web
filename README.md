@@ -55,8 +55,8 @@ base = "archive"                            # proxy name for Giganto
 uri = "https://<SERVER_NAME>:8443/graphql"  # Giganto's GraphQL address
 
 [[reverse_proxies]]
-base = "ti-container"                       # proxy name for ti-container
-uri = "https://<SERVER_NAME>:8444/graphql"  # ti-container's GraphQL address
+base = "ti-container"                       # proxy name for TI container
+uri = "https://<SERVER_NAME>:8444/graphql"  # TI container's GraphQL address
 ```
 
 ## License
