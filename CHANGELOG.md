@@ -28,6 +28,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Added `unsuspendAccount` GraphQL mutation for system administrators to manually
   unsuspend user accounts. This provides the foundation for account suspension
   management functionality.
+- Added `graphql::auth` module with customer-scoping utilities for GraphQL
+  authorization. Provides helpers for checking administrator status, customer
+  membership validation, filtering collections by customer access, and
+  creating canonical unauthorized errors.
 
 ### Changed
 

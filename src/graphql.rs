@@ -6,6 +6,7 @@
 #[cfg(not(feature = "auth-mtls"))]
 pub mod account;
 mod allow_network;
+pub mod auth;
 mod block_network;
 mod category;
 mod cert;
