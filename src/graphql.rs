@@ -6,12 +6,12 @@
 #[cfg(not(feature = "auth-mtls"))]
 pub mod account;
 mod allow_network;
-pub mod auth;
 mod block_network;
 mod category;
 mod cert;
 mod cluster;
 pub mod customer;
+pub mod customer_access;
 mod data_source;
 mod db_management;
 mod event;
@@ -407,6 +407,54 @@ where
     (nodes, has_previous, has_next)
 }
 
+#[allow(dead_code)] // It will be used in the sub-issues of #756
+fn process_load_edges_filtered<'a, T, I, R, P>(
+    table: &'a T,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
+    first: Option<usize>,
+    last: Option<usize>,
+    prefix: Option<&[u8]>,
+    predicate: P,
+) -> (Vec<anyhow::Result<R>>, bool, bool)
+where
+    T: database::Iterable<'a, I>,
+    I: Iterator<Item = anyhow::Result<R>>,
+    R: database::UniqueKey,
+    P: Fn(&R) -> bool,
+{
+    let after = after.map(|cursor| cursor.0);
+    let before = before.map(|cursor| cursor.0);
+
+    let (nodes, has_previous, has_next) = if let Some(first) = first {
+        let (nodes, has_more) = collect_edges_filtered(
+            table,
+            Direction::Forward,
+            after,
+            before,
+            prefix,
+            first,
+            &predicate,
+        );
+        (nodes, false, has_more)
+    } else {
+        let Some(last) = last else { unreachable!() };
+        let (mut nodes, has_more) = collect_edges_filtered(
+            table,
+            Direction::Reverse,
+            before,
+            after,
+            prefix,
+            last,
+            &predicate,
+        );
+        nodes.reverse();
+        (nodes, has_more, false)
+    };
+
+    (nodes, has_previous, has_next)
+}
+
 fn load_edges_interim<'a, T, I, R>(
     table: &'a T,
     after: Option<OpaqueCursor<Vec<u8>>>,
@@ -558,6 +606,90 @@ where
         edges
     };
     let mut nodes = edges.take(count + 1).collect::<Vec<_>>();
+    let has_more = nodes.len() > count;
+    if has_more {
+        nodes.pop();
+    }
+    (nodes, has_more)
+}
+
+fn collect_edges_filtered<'a, T, I, R, P>(
+    table: &'a T,
+    dir: Direction,
+    from: Option<Vec<u8>>,
+    to: Option<Vec<u8>>,
+    prefix: Option<&[u8]>,
+    count: usize,
+    predicate: &P,
+) -> (Vec<anyhow::Result<R>>, bool)
+where
+    T: database::Iterable<'a, I>,
+    I: Iterator<Item = anyhow::Result<R>>,
+    R: database::UniqueKey,
+    P: Fn(&R) -> bool,
+{
+    let edges: Box<dyn Iterator<Item = _>> = if let Some(cursor) = from {
+        let iter = if let Some(prefix) = prefix {
+            (*table).prefix_iter(dir, Some(&cursor), prefix)
+        } else {
+            (*table).iter(dir, Some(&cursor))
+        };
+        let mut edges: Box<dyn Iterator<Item = _>> = Box::new(iter.skip_while(move |item| {
+            if let Ok(x) = item {
+                x.unique_key().as_ref() == cursor.as_slice()
+            } else {
+                false
+            }
+        }));
+        if let Some(cursor) = to {
+            edges = Box::new(edges.take_while(move |item| {
+                if let Ok(x) = item {
+                    x.unique_key().as_ref() < cursor.as_slice()
+                } else {
+                    false
+                }
+            }));
+        }
+        edges
+    } else if let Some(cursor) = to {
+        let iter = if let Some(prefix) = prefix {
+            (*table).prefix_iter(dir, None, prefix)
+        } else {
+            (*table).iter(dir, None)
+        };
+        Box::new(iter.take_while(move |item| {
+            if let Ok(x) = item {
+                x.unique_key().as_ref() < cursor.as_slice()
+            } else {
+                false
+            }
+        }))
+    } else {
+        let iter = if let Some(prefix) = prefix {
+            (*table).prefix_iter(dir, None, prefix)
+        } else {
+            (*table).iter(dir, None)
+        };
+        let mut edges: Box<dyn Iterator<Item = _>> = Box::new(iter);
+        if let Some(cursor) = to {
+            edges = Box::new(edges.take_while(move |item| {
+                if let Ok(x) = item {
+                    x.unique_key().as_ref() < cursor.as_slice()
+                } else {
+                    false
+                }
+            }));
+        }
+        edges
+    };
+
+    let mut nodes = edges
+        .filter(|item| match item {
+            Ok(node) => predicate(node),
+            Err(_) => true, // Errors will be handled by the caller
+        })
+        .take(count + 1)
+        .collect::<Vec<_>>();
     let has_more = nodes.len() > count;
     if has_more {
         nodes.pop();
@@ -933,7 +1065,243 @@ impl TestSchema {
 
 #[cfg(test)]
 mod tests {
-    use super::AgentManager;
+    use super::{AgentManager, Direction, OpaqueCursor, database};
+
+    #[derive(Clone, Debug)]
+    struct MockRow {
+        key: Vec<u8>,
+        value: u32,
+    }
+
+    impl database::UniqueKey for MockRow {
+        type AsBytes<'a> = Vec<u8>;
+
+        fn unique_key(&self) -> Self::AsBytes<'_> {
+            self.key.clone()
+        }
+    }
+
+    struct MockTable {
+        rows: Vec<MockRow>,
+    }
+
+    impl MockTable {
+        fn new(values: &[u32]) -> Self {
+            let rows = values
+                .iter()
+                .map(|&value| MockRow {
+                    key: value.to_be_bytes().to_vec(),
+                    value,
+                })
+                .collect();
+            Self { rows }
+        }
+    }
+
+    impl<'i> database::Iterable<'i, std::vec::IntoIter<anyhow::Result<MockRow>>> for MockTable {
+        fn iter(
+            &'i self,
+            direction: Direction,
+            from: Option<&[u8]>,
+        ) -> std::vec::IntoIter<anyhow::Result<MockRow>> {
+            let mut rows = self.rows.clone();
+            rows.sort_by(|a, b| a.key.cmp(&b.key));
+            if let Some(from) = from {
+                rows.retain(|row| match direction {
+                    Direction::Forward => row.key.as_slice() >= from,
+                    Direction::Reverse => row.key.as_slice() <= from,
+                });
+            }
+            if matches!(direction, Direction::Reverse) {
+                rows.reverse();
+            }
+            rows.into_iter().map(Ok).collect::<Vec<_>>().into_iter()
+        }
+
+        fn prefix_iter(
+            &'i self,
+            direction: Direction,
+            from: Option<&[u8]>,
+            prefix: &[u8],
+        ) -> std::vec::IntoIter<anyhow::Result<MockRow>> {
+            let mut rows: Vec<MockRow> = self
+                .rows
+                .iter()
+                .filter(|&row| row.key.starts_with(prefix))
+                .cloned()
+                .collect();
+            rows.sort_by(|a, b| a.key.cmp(&b.key));
+            if let Some(from) = from {
+                rows.retain(|row| match direction {
+                    Direction::Forward => row.key.as_slice() >= from,
+                    Direction::Reverse => row.key.as_slice() <= from,
+                });
+            }
+            if matches!(direction, Direction::Reverse) {
+                rows.reverse();
+            }
+            rows.into_iter().map(Ok).collect::<Vec<_>>().into_iter()
+        }
+    }
+
+    struct PaginationCase {
+        table_values: Vec<u32>,
+        after: Option<u32>,
+        before: Option<u32>,
+        first: Option<usize>,
+        last: Option<usize>,
+        predicate: Box<dyn Fn(&MockRow) -> bool>,
+        expected_values: Vec<u32>,
+        expected_has_previous: bool,
+        expected_has_next: bool,
+    }
+
+    impl std::fmt::Display for PaginationCase {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "\ntable_values: {:?}, after: {:?}, before: {:?}, first: {:?}, last: {:?}, \
+                expected_values: {:?}, expected_has_previous: {}, expected_has_next: {}",
+                self.table_values,
+                self.after,
+                self.before,
+                self.first,
+                self.last,
+                self.expected_values,
+                self.expected_has_previous,
+                self.expected_has_next,
+            )
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn process_load_edges_filtered_various_pagination_cases() {
+        let cases = vec![
+            // first, no previous or next
+            PaginationCase {
+                table_values: vec![1, 2, 3, 4, 5, 6],
+                after: None,
+                before: None,
+                first: Some(3),
+                last: None,
+                predicate: Box::new(|row| row.value % 2 == 0),
+                expected_values: vec![2, 4, 6],
+                expected_has_previous: false,
+                expected_has_next: false,
+            },
+            // first with next
+            PaginationCase {
+                table_values: vec![1, 2, 3, 4, 5, 6],
+                after: None,
+                before: None,
+                first: Some(2),
+                last: None,
+                predicate: Box::new(|row| row.value % 2 == 0),
+                expected_values: vec![2, 4],
+                expected_has_previous: false,
+                expected_has_next: true,
+            },
+            // first after, no previous or next
+            PaginationCase {
+                table_values: vec![1, 2, 3, 4, 5, 6],
+                after: Some(2),
+                before: None,
+                first: Some(2),
+                last: None,
+                predicate: Box::new(|row| row.value % 2 == 0),
+                expected_values: vec![4, 6],
+                expected_has_previous: false,
+                expected_has_next: false,
+            },
+            // first after with next
+            PaginationCase {
+                table_values: vec![1, 2, 3, 4, 5, 6],
+                after: Some(2),
+                before: None,
+                first: Some(1),
+                last: None,
+                predicate: Box::new(|row| row.value % 2 == 0),
+                expected_values: vec![4],
+                expected_has_previous: false,
+                expected_has_next: true,
+            },
+            // last, no previous or next
+            PaginationCase {
+                table_values: vec![1, 2, 3, 4, 5, 6],
+                after: None,
+                before: None,
+                first: None,
+                last: Some(3),
+                predicate: Box::new(|row| row.value % 2 == 0),
+                expected_values: vec![2, 4, 6],
+                expected_has_previous: false,
+                expected_has_next: false,
+            },
+            // last with previous
+            PaginationCase {
+                table_values: vec![1, 2, 3, 4, 5, 6],
+                after: None,
+                before: None,
+                first: None,
+                last: Some(2),
+                predicate: Box::new(|row| row.value % 2 == 0),
+                expected_values: vec![4, 6],
+                expected_has_previous: true,
+                expected_has_next: false,
+            },
+            // last before, no previous or next
+            PaginationCase {
+                table_values: vec![1, 2, 3, 4, 5, 6],
+                after: None,
+                before: Some(5),
+                first: None,
+                last: Some(2),
+                predicate: Box::new(|row| row.value % 2 == 0),
+                expected_values: vec![2, 4],
+                expected_has_previous: false,
+                expected_has_next: false,
+            },
+            // last before with previous
+            PaginationCase {
+                table_values: vec![1, 2, 3, 4, 5, 6],
+                after: None,
+                before: Some(5),
+                first: None,
+                last: Some(1),
+                predicate: Box::new(|row| row.value % 2 == 0),
+                expected_values: vec![4],
+                expected_has_previous: true,
+                expected_has_next: false,
+            },
+            // empty values, no previous or next
+            PaginationCase {
+                table_values: vec![1, 2, 3, 4, 5, 6],
+                after: None,
+                before: None,
+                first: Some(1),
+                last: None,
+                predicate: Box::new(|row| row.value > 6),
+                expected_values: vec![],
+                expected_has_previous: false,
+                expected_has_next: false,
+            },
+        ];
+        for case in cases {
+            let table = MockTable::new(&case.table_values);
+            let after = case.after.map(|v| OpaqueCursor(v.to_be_bytes().to_vec()));
+            let before = case.before.map(|v| OpaqueCursor(v.to_be_bytes().to_vec()));
+            let predicate = case.predicate.as_ref();
+            let (nodes, has_previous, has_next) = super::process_load_edges_filtered(
+                &table, after, before, case.first, case.last, None, predicate,
+            );
+
+            let values: Vec<u32> = nodes.into_iter().map(|res| res.unwrap().value).collect();
+            assert_eq!(values, case.expected_values, "{case}");
+            assert_eq!(has_previous, case.expected_has_previous, "{case}");
+            assert_eq!(has_next, case.expected_has_next, "{case}");
+        }
+    }
 
     #[tokio::test]
     async fn unimplemented_agent_manager() {
