@@ -94,7 +94,8 @@ pub(super) struct DataSourceMutation;
 #[Object]
 impl DataSourceMutation {
     /// Inserts a new data source, returning the ID of the new data source.
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn insert_data_source(
         &self,
         ctx: &Context<'_>,
@@ -113,7 +114,8 @@ impl DataSourceMutation {
 
     /// Removes a data source, returning the name of the removed data source if
     /// it existed.
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn remove_data_source(&self, ctx: &Context<'_>, id: ID) -> Result<String> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
@@ -128,7 +130,8 @@ impl DataSourceMutation {
     }
 
     /// Updates the given data source.
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn update_data_source(
         &self,
         ctx: &Context<'_>,
@@ -289,7 +292,9 @@ async fn validate_policy(ctx: &Context<'_>, policy: &str, kind: database::DataTy
 
 #[cfg(test)]
 mod tests {
-    use crate::graphql::TestSchema;
+    use review_database::Role;
+
+    use crate::graphql::{RoleGuard, TestSchema};
 
     #[tokio::test]
     async fn remove_data_source() {
@@ -323,5 +328,68 @@ mod tests {
             .execute_as_system_admin(r"{dataSourceList{edges{node{name}}}}")
             .await;
         assert_eq!(res.data.to_string(), r"{dataSourceList: {edges: []}}");
+    }
+
+    #[tokio::test]
+    async fn security_admin_can_manage_data_sources() {
+        let schema = TestSchema::new().await;
+        let insert = r#"mutation {
+            insertDataSource(input: { name: "d1", dataType: "LOG", source: "test", kind: "Dns", description: "" })
+        }"#;
+        let res = schema
+            .execute_with_guard(insert, RoleGuard::Role(Role::SecurityAdministrator))
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "SecurityAdministrator insert should succeed: {:?}",
+            res.errors
+        );
+        assert_eq!(res.data.to_string(), r#"{insertDataSource: "0"}"#);
+
+        let update = r#"mutation {
+            updateDataSource(
+                id: "0",
+                old: { name: "d1", kind: "Dns", description: "" },
+                new: { description: "updated" }
+            )
+        }"#;
+        let res = schema
+            .execute_with_guard(update, RoleGuard::Role(Role::SecurityAdministrator))
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "SecurityAdministrator update should succeed: {:?}",
+            res.errors
+        );
+        assert_eq!(res.data.to_string(), r#"{updateDataSource: "0"}"#);
+
+        let res = schema
+            .execute_with_guard(
+                r"{dataSourceList{edges{node{name description kind}}}}",
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "SecurityAdministrator query should succeed: {:?}",
+            res.errors
+        );
+        assert_eq!(
+            res.data.to_string(),
+            r#"{dataSourceList: {edges: [{node: {name: "d1", description: "updated", kind: "Dns"}}]}}"#
+        );
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { removeDataSource(id: "0") }"#,
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "SecurityAdministrator remove should succeed: {:?}",
+            res.errors
+        );
+        assert_eq!(res.data.to_string(), r#"{removeDataSource: "d1"}"#);
     }
 }
