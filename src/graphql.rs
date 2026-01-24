@@ -3,6 +3,7 @@
 // async-graphql requires the API functions to be `async`.
 #![allow(clippy::unused_async)]
 
+#[cfg(not(feature = "auth-mtls"))]
 pub mod account;
 mod allow_network;
 mod block_network;
@@ -81,7 +82,7 @@ pub(super) fn schema<B>(
     agent_manager: B,
     ip_locator: Option<ip2location::DB>,
     cert_manager: Arc<dyn CertManager>,
-    cert_reload_handle: Arc<Notify>,
+    tls_reload_handle: Arc<Notify>,
 ) -> Schema
 where
     B: AgentManager + 'static,
@@ -95,7 +96,7 @@ where
     .data(store)
     .data(agent_manager)
     .data(cert_manager)
-    .data(cert_reload_handle);
+    .data(tls_reload_handle);
     if let Some(ip_locator) = ip_locator {
         builder = builder.data(ip_locator);
     }
@@ -106,6 +107,7 @@ where
 #[derive(MergedObject, Default)]
 pub(super) struct Query(SubQueryOne, SubQueryTwo);
 
+#[cfg(not(feature = "auth-mtls"))]
 #[derive(MergedObject, Default)]
 struct SubQueryOne(
     account::AccountQuery,
@@ -118,6 +120,27 @@ struct SubQueryOne(
     event::EventQuery,
     event::EventGroupQuery,
     filter::FilterQuery,
+    indicator::IndicatorQuery,
+    ip_location::IpLocationQuery,
+    model::ModelQuery,
+    network::NetworkQuery,
+    node::NodeQuery,
+    node::NodeStatusQuery,
+    qualifier::QualifierQuery,
+    outlier::OutlierQuery,
+);
+
+#[cfg(feature = "auth-mtls")]
+#[derive(MergedObject, Default)]
+struct SubQueryOne(
+    block_network::BlockNetworkQuery,
+    category::CategoryQuery,
+    cluster::ClusterQuery,
+    customer::CustomerQuery,
+    data_source::DataSourceQuery,
+    db_management::DbManagementQuery,
+    event::EventQuery,
+    event::EventGroupQuery,
     indicator::IndicatorQuery,
     ip_location::IpLocationQuery,
     model::ModelQuery,
@@ -155,6 +178,7 @@ struct SubQueryTwo(
 #[derive(MergedObject, Default)]
 pub(super) struct Mutation(SubMutationOne, SubMutationTwo);
 
+#[cfg(not(feature = "auth-mtls"))]
 #[derive(MergedObject, Default)]
 struct SubMutationOne(
     account::AccountMutation,
@@ -166,6 +190,24 @@ struct SubMutationOne(
     data_source::DataSourceMutation,
     db_management::DbManagementMutation,
     filter::FilterMutation,
+    indicator::IndicatorMutation,
+    model::ModelMutation,
+    network::NetworkMutation,
+    node::NodeControlMutation,
+    node::NodeMutation,
+    outlier::OutlierMutation,
+);
+
+#[cfg(feature = "auth-mtls")]
+#[derive(MergedObject, Default)]
+struct SubMutationOne(
+    block_network::BlockNetworkMutation,
+    category::CategoryMutation,
+    cert::CertMutation,
+    cluster::ClusterMutation,
+    customer::CustomerMutation,
+    data_source::DataSourceMutation,
+    db_management::DbManagementMutation,
     indicator::IndicatorMutation,
     model::ModelMutation,
     network::NetworkMutation,
@@ -528,6 +570,9 @@ pub(crate) enum RoleGuard {
     Local,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CustomerId(pub u32);
+
 impl RoleGuard {
     fn new(role: database::Role) -> Self {
         Self::Role(role)
@@ -702,7 +747,7 @@ struct TestSchema {
     test_addr: Option<SocketAddr>, // to simulate the client address
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "auth-jwt"))]
 const TEST_JWT_SECRET_DER: &[u8] = &[
     0x30, 0x82, 0x04, 0xbc, 0x02, 0x01, 0x00, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7,
     0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x04, 0x82, 0x04, 0xa6, 0x30, 0x82, 0x04, 0xa2, 0x02, 0x01,
@@ -782,7 +827,7 @@ const TEST_JWT_SECRET_DER: &[u8] = &[
     0xb2, 0x1e, 0x25, 0xe7, 0x5e, 0x62, 0x31, 0x86, 0x04, 0x4f, 0x7b, 0x10, 0xe2, 0x9a, 0x5f, 0x47,
 ];
 
-#[cfg(test)]
+#[cfg(all(test, feature = "auth-jwt"))]
 pub(crate) fn test_jwt_secret_der() -> &'static [u8] {
     TEST_JWT_SECRET_DER
 }
@@ -799,15 +844,20 @@ impl TestSchema {
         test_addr: Option<SocketAddr>,
         username: &str,
     ) -> Self {
-        use self::account::set_initial_admin_password;
-
         let db_dir = tempfile::tempdir().unwrap();
         let backup_dir = tempfile::tempdir().unwrap();
         let store = Store::new(db_dir.path(), backup_dir.path()).unwrap();
-        let _ = set_initial_admin_password(&store);
+        #[cfg(not(feature = "auth-mtls"))]
+        {
+            use self::account::set_initial_admin_password;
+            let _ = set_initial_admin_password(&store);
+        }
         let store = Arc::new(RwLock::new(store));
 
-        crate::auth::update_jwt_secret(test_jwt_secret_der().to_vec()).unwrap();
+        #[cfg(feature = "auth-jwt")]
+        {
+            crate::auth::update_jwt_secret(test_jwt_secret_der().to_vec()).unwrap();
+        }
 
         let schema = Schema::build(
             Query::default(),
