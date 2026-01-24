@@ -40,8 +40,8 @@ impl CertMutation {
         let cert_manager = ctx.data::<Arc<dyn CertManager>>()?;
         let parsed_certs = cert_manager.update_certificate(cert, key)?;
 
-        let cert_reload_handle = ctx.data::<Arc<Notify>>()?;
-        cert_reload_handle.notify_waiters();
+        let tls_reload_handle = ctx.data::<Arc<Notify>>()?;
+        tls_reload_handle.notify_waiters();
 
         Ok(CertificatePayload {
             parsed_certificate: parsed_certs,
