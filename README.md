@@ -17,6 +17,12 @@ Build as follows:
 cargo build --example minireview
 ```
 
+To build with mTLS + Context JWT:
+
+```sh
+cargo build --example minireview --features auth-mtls
+```
+
 ### Test
 
 Test as follows:

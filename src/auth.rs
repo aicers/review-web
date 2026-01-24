@@ -1,8 +1,15 @@
+#[cfg(feature = "auth-jwt")]
 mod jwt;
+#[cfg(feature = "auth-mtls")]
+mod mtls;
+#[cfg(feature = "auth-jwt")]
 mod store;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "auth-jwt"))]
 pub(crate) use jwt::ForceAimerTokenFailureGuard;
+#[cfg(feature = "auth-mtls")]
+pub use mtls::{MtlsAuthError, validate_client_cert, validate_context_jwt};
+#[cfg(feature = "auth-jwt")]
 pub use {
     jwt::{
         create_aimer_token, create_token, decode_token, update_jwt_expires_in, update_jwt_secret,
@@ -11,6 +18,7 @@ pub use {
     store::{insert_token, revoke_token},
 };
 
+#[cfg(feature = "auth-jwt")]
 #[derive(Debug, thiserror::Error)]
 #[allow(clippy::module_name_repetitions)]
 pub enum AuthError {
