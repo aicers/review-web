@@ -1,7 +1,13 @@
+#[cfg(feature = "auth-jwt")]
 pub mod archive;
 pub mod auth;
 pub mod backend;
 pub mod graphql;
+
+#[cfg(all(feature = "auth-mtls", feature = "auth-jwt"))]
+compile_error!("features \"auth-mtls\" and \"auth-jwt\" are mutually exclusive");
+#[cfg(not(any(feature = "auth-mtls", feature = "auth-jwt")))]
+compile_error!("either feature \"auth-mtls\" or \"auth-jwt\" must be enabled");
 
 use std::sync::RwLock;
 use std::{
@@ -28,27 +34,53 @@ use axum_extra::{
     headers::{Authorization, authorization::Bearer},
     typed_header::TypedHeaderRejection,
 };
+#[cfg(feature = "auth-mtls")]
+use futures::future::BoxFuture;
+#[cfg(feature = "auth-mtls")]
+use graphql::CustomerId;
 use graphql::RoleGuard;
 use review_database::Store;
+#[cfg(feature = "auth-jwt")]
+use rustls::ClientConfig;
 use rustls::{
-    ClientConfig, RootCertStore,
+    RootCertStore,
     pki_types::{CertificateDer, PrivateKeyDer},
 };
 use serde_json::json;
 use tokio::{sync::Notify, task::JoinHandle};
+#[cfg(feature = "auth-mtls")]
+use tower::Service;
 use tower_http::{services::ServeDir, trace::TraceLayer};
-use tracing::{error, warn};
+use tracing::error;
+#[cfg(feature = "auth-jwt")]
+use tracing::warn;
 
-use crate::auth::{AuthError, validate_token};
+#[cfg(feature = "auth-jwt")]
+use crate::auth::AuthError;
+#[cfg(feature = "auth-mtls")]
+use crate::auth::MtlsAuthError;
+#[cfg(feature = "auth-jwt")]
+use crate::auth::validate_token;
+#[cfg(feature = "auth-mtls")]
+use crate::auth::{validate_client_cert, validate_context_jwt};
 use crate::backend::{AgentManager, CertManager};
+
+#[cfg(feature = "auth-mtls")]
+const ERR_MTLS_REQUIRED: &str = "mTLS is required";
+#[cfg(feature = "auth-mtls")]
+const ERR_MTLS_MISSING_CERT: &str = "mTLS client certificate is missing";
+#[cfg(feature = "auth-mtls")]
+const ERR_MISSING_AUTHORIZATION: &str = "Missing Authorization";
+const DISABLE_LOCAL_AUTH_BYPASS_ENV: &str = "REVIEW_WEB_DISABLE_LOCAL_AUTH_BYPASS";
 
 /// Parameters for a web server.
 pub struct ServerConfig {
     pub addr: SocketAddr,
     pub document_root: PathBuf,
     pub cert_manager: Arc<dyn CertManager>,
-    pub cert_reload_handle: Arc<Notify>,
+    pub tls_reload_handle: Arc<Notify>,
     pub ca_certs: Vec<PathBuf>,
+    #[cfg(feature = "auth-jwt")]
     pub reverse_proxies: Vec<archive::Config>,
     pub client_cert_path: Option<PathBuf>,
     pub client_key_path: Option<PathBuf>,
@@ -59,6 +91,7 @@ pub struct ServerConfig {
 /// # Panics
 ///
 /// Panics if binding to the address fails.
+#[allow(clippy::too_many_lines)]
 pub fn serve<A>(
     config: ServerConfig,
     store: Arc<RwLock<Store>>,
@@ -71,15 +104,18 @@ where
     use axum_server::{Handle, tls_rustls::RustlsConfig};
     use tracing::info;
 
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let schema = graphql::schema(
         store.clone(),
         agent_manager,
         ip_locator,
         config.cert_manager.clone(),
-        config.cert_reload_handle.clone(),
+        config.tls_reload_handle.clone(),
     );
     let web_srv_shutdown_handle = Arc::new(Notify::new());
     let shutdown_handle = web_srv_shutdown_handle.clone();
+    #[cfg(feature = "auth-jwt")]
     let client = client(
         &config.ca_certs,
         config.client_cert_path.as_ref(),
@@ -89,13 +125,14 @@ where
         loop {
             let static_files = get_service(ServeDir::new(config.document_root.clone()));
 
+            #[cfg(feature = "auth-jwt")]
             let proxies_config = crate::archive::Config::configure_reverse_proxies(
                 &store,
                 client.as_ref(),
                 &config.reverse_proxies,
             );
 
-            let mut router = Router::new()
+            let router = Router::new()
                 .route("/graphql", get(graphql_ws_handler).post(graphql_handler))
                 .route(
                     "/graphql/playground",
@@ -104,9 +141,14 @@ where
                 .fallback_service(static_files.layer(TraceLayer::new_for_http()))
                 .layer(Extension(schema.clone()))
                 .layer(Extension(store.clone()));
-            for (s, p) in proxies_config {
-                router = router.nest(&s.base(), p.with_state(s));
-            }
+            #[cfg(feature = "auth-jwt")]
+            let router = {
+                let mut router = router;
+                for (s, p) in proxies_config {
+                    router = router.nest(&s.base(), p.with_state(s));
+                }
+                router
+            };
 
             let handle = Handle::new();
             let notify_shutdown = Arc::new(Notify::new());
@@ -115,13 +157,29 @@ where
                 config.cert_manager.cert_path()?,
                 config.cert_manager.key_path()?,
             );
+            #[cfg(feature = "auth-jwt")]
             let tls_config = RustlsConfig::from_pem_file(cert_path, key_path).await?;
+            #[cfg(feature = "auth-mtls")]
+            let tls_config = {
+                let server_config = build_mtls_server_config(
+                    cert_path.as_path(),
+                    key_path.as_path(),
+                    &config.ca_certs,
+                )?;
+                RustlsConfig::from_config(Arc::new(server_config))
+            };
 
             let wait_shutdown = notify_shutdown.clone();
             let completed = shutdown_completed.clone();
             tokio::spawn(graceful_shutdown(handle.clone(), wait_shutdown));
             tokio::spawn(async move {
-                if let Err(e) = axum_server::bind_rustls(config.addr, tls_config)
+                #[cfg(feature = "auth-jwt")]
+                let server = axum_server::bind_rustls(config.addr, tls_config);
+                #[cfg(feature = "auth-mtls")]
+                let server = axum_server::Server::bind(config.addr)
+                    .acceptor(TlsPeerAcceptor::new(tls_config));
+
+                if let Err(e) = server
                     .handle(handle)
                     .serve(router.into_make_service_with_connect_info::<SocketAddr>())
                     .await
@@ -133,7 +191,7 @@ where
             });
 
             let wait_shutdown = web_srv_shutdown_handle.notified();
-            let cert_reload = config.cert_reload_handle.notified();
+            let tls_reload = config.tls_reload_handle.notified();
 
             tokio::select! {
                 () = wait_shutdown => {
@@ -143,7 +201,7 @@ where
                     web_srv_shutdown_handle.notify_one();
                     return Ok(());
                 },
-                () = cert_reload => {
+                () = tls_reload => {
                     info!("Restarting Web server to reload certificates");
                     notify_shutdown.notify_one();
                     shutdown_completed.notified().await;
@@ -164,6 +222,7 @@ where
     shutdown_handle
 }
 
+#[cfg(feature = "auth-jwt")]
 pub(crate) fn client<P: AsRef<std::path::Path>>(
     ca_certs: &[P],
     client_cert_path: Option<&PathBuf>,
@@ -184,6 +243,108 @@ pub(crate) fn client<P: AsRef<std::path::Path>>(
         .ok()
 }
 
+#[cfg(feature = "auth-mtls")]
+#[derive(Debug)]
+struct TlsPeerInfo {
+    certs: Vec<CertificateDer<'static>>,
+}
+
+#[cfg(feature = "auth-mtls")]
+impl TlsPeerInfo {
+    fn leaf_cert(&self) -> Option<&CertificateDer<'static>> {
+        self.certs.first()
+    }
+}
+
+#[cfg(feature = "auth-mtls")]
+#[derive(Clone)]
+struct InjectTlsPeer<S> {
+    inner: S,
+    peer: Option<Arc<TlsPeerInfo>>,
+}
+
+#[cfg(feature = "auth-mtls")]
+impl<S> InjectTlsPeer<S> {
+    fn new(inner: S, peer: Option<Arc<TlsPeerInfo>>) -> Self {
+        Self { inner, peer }
+    }
+}
+
+#[cfg(feature = "auth-mtls")]
+impl<S, B> Service<http::Request<B>> for InjectTlsPeer<S>
+where
+    S: Service<http::Request<B>>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut req: http::Request<B>) -> Self::Future {
+        if let Some(peer) = &self.peer {
+            req.extensions_mut().insert(peer.clone());
+        }
+        self.inner.call(req)
+    }
+}
+
+#[cfg(feature = "auth-mtls")]
+#[derive(Clone)]
+struct TlsPeerAcceptor {
+    config: axum_server::tls_rustls::RustlsConfig,
+    handshake_timeout: std::time::Duration,
+}
+
+#[cfg(feature = "auth-mtls")]
+impl TlsPeerAcceptor {
+    fn new(config: axum_server::tls_rustls::RustlsConfig) -> Self {
+        Self {
+            config,
+            handshake_timeout: std::time::Duration::from_secs(10),
+        }
+    }
+}
+
+#[cfg(feature = "auth-mtls")]
+impl<S> axum_server::accept::Accept<tokio::net::TcpStream, S> for TlsPeerAcceptor
+where
+    S: Send + 'static,
+{
+    type Stream = tokio_rustls::server::TlsStream<tokio::net::TcpStream>;
+    type Service = InjectTlsPeer<S>;
+    type Future = BoxFuture<'static, io::Result<(Self::Stream, Self::Service)>>;
+
+    fn accept(&self, stream: tokio::net::TcpStream, service: S) -> Self::Future {
+        let config = self.config.clone();
+        let timeout = self.handshake_timeout;
+        Box::pin(async move {
+            let server_config = config.get_inner();
+            let acceptor = tokio_rustls::TlsAcceptor::from(server_config);
+            let tls = tokio::time::timeout(timeout, acceptor.accept(stream))
+                .await
+                .map_err(|e| io::Error::new(io::ErrorKind::TimedOut, e))??;
+
+            let peer = tls.get_ref().1.peer_certificates().map(|certs| {
+                let certs = certs
+                    .iter()
+                    .cloned()
+                    .map(CertificateDer::into_owned)
+                    .collect();
+                Arc::new(TlsPeerInfo { certs })
+            });
+            let service = InjectTlsPeer::new(service, peer);
+
+            Ok((tls, service))
+        })
+    }
+}
+
 async fn graceful_shutdown(handle: axum_server::Handle, notify: Arc<Notify>) {
     use std::time::Duration;
 
@@ -199,9 +360,13 @@ async fn graphql_playground() -> Result<impl IntoResponse, Error> {
 }
 
 fn is_local(addr: SocketAddr) -> bool {
+    if std::env::var_os(DISABLE_LOCAL_AUTH_BYPASS_ENV).is_some() {
+        return false;
+    }
     addr.ip().is_loopback()
 }
 
+#[cfg(feature = "auth-jwt")]
 async fn graphql_handler(
     Extension(schema): Extension<graphql::Schema>,
     Extension(store): Extension<Arc<RwLock<Store>>>,
@@ -234,6 +399,44 @@ async fn graphql_handler(
     }
 }
 
+#[cfg(feature = "auth-mtls")]
+async fn graphql_handler(
+    Extension(schema): Extension<graphql::Schema>,
+    Extension(_store): Extension<Arc<RwLock<Store>>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    peer: Option<Extension<Arc<TlsPeerInfo>>>,
+    auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
+    request: GraphQLRequest,
+) -> Result<GraphQLResponse, Error> {
+    let request = request.into_inner();
+    if is_local(addr) {
+        return Ok(schema
+            .execute(request.data(RoleGuard::Local).data(addr))
+            .await
+            .into());
+    }
+
+    let peer = peer
+        .map(|Extension(p)| p)
+        .ok_or_else(|| Error::Unauthorized(ERR_MTLS_REQUIRED.to_string()))?;
+    let cert = peer
+        .leaf_cert()
+        .ok_or_else(|| Error::Unauthorized(ERR_MTLS_MISSING_CERT.to_string()))?;
+    validate_client_cert(cert)?;
+
+    let auth = auth?;
+    let (role, customer_id) = validate_context_jwt(auth.token(), cert)?;
+    Ok(schema
+        .execute(
+            request
+                .data(RoleGuard::Role(role))
+                .data(CustomerId(customer_id)),
+        )
+        .await
+        .into())
+}
+
+#[cfg(feature = "auth-jwt")]
 #[allow(clippy::unused_async)]
 async fn graphql_ws_handler(
     Extension(schema): Extension<graphql::Schema>,
@@ -263,6 +466,63 @@ async fn graphql_ws_handler(
                         data.insert(username);
                     }
                     Ok(data)
+                })
+                .serve()
+        })
+}
+
+#[cfg(feature = "auth-mtls")]
+#[allow(clippy::unused_async)]
+async fn graphql_ws_handler(
+    Extension(schema): Extension<graphql::Schema>,
+    protocol: GraphQLProtocol,
+    websocket: WebSocketUpgrade,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    peer: Option<Extension<Arc<TlsPeerInfo>>>,
+) -> Response {
+    let peer = peer.map(|Extension(p)| p);
+    websocket
+        .protocols(["graphql-ws"])
+        .on_upgrade(move |socket| {
+            let peer = peer.clone();
+            GraphQLWebSocket::new(socket, schema.clone(), protocol)
+                .on_connection_init(move |value| {
+                    let peer = peer.clone();
+                    async move {
+                        #[derive(serde::Deserialize)]
+                        struct AuthData {
+                            #[serde(rename = "Authorization")]
+                            auth: String,
+                        }
+                        let mut data = Data::default();
+
+                        if is_local(addr) {
+                            data.insert(RoleGuard::Local);
+                            data.insert(addr);
+                            return Ok(data);
+                        }
+
+                        let peer =
+                            peer.ok_or_else(|| async_graphql::Error::new(ERR_MTLS_REQUIRED))?;
+                        let cert = peer
+                            .leaf_cert()
+                            .ok_or_else(|| async_graphql::Error::new(ERR_MTLS_MISSING_CERT))?;
+                        validate_client_cert(cert)
+                            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+                        let auth_data = serde_json::from_value::<AuthData>(value)?;
+                        let token = auth_data
+                            .auth
+                            .split_ascii_whitespace()
+                            .last()
+                            .ok_or_else(|| async_graphql::Error::new(ERR_MISSING_AUTHORIZATION))?;
+                        let (role, customer_id) = validate_context_jwt(token, cert)
+                            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+                        data.insert(RoleGuard::Role(role));
+                        data.insert(CustomerId(customer_id));
+                        Ok(data)
+                    }
                 })
                 .serve()
         })
@@ -308,8 +568,16 @@ impl IntoResponse for Error {
     }
 }
 
+#[cfg(feature = "auth-jwt")]
 impl From<AuthError> for Error {
     fn from(err: AuthError) -> Self {
+        Self::Unauthorized(err.to_string())
+    }
+}
+
+#[cfg(feature = "auth-mtls")]
+impl From<MtlsAuthError> for Error {
+    fn from(err: MtlsAuthError) -> Self {
         Self::Unauthorized(err.to_string())
     }
 }
@@ -351,6 +619,7 @@ impl From<http::Error> for Error {
     }
 }
 
+#[cfg(feature = "auth-jwt")]
 fn build_client_config<P: AsRef<Path>>(
     root_ca: &[P],
     with_platform_root: bool,
@@ -434,6 +703,35 @@ fn read_private_key_from_path<P: AsRef<Path>>(
         "No supported private key found in {}",
         path.as_ref().display()
     )
+}
+
+#[cfg(feature = "auth-mtls")]
+fn build_mtls_server_config(
+    cert_path: &Path,
+    key_path: &Path,
+    ca_certs: &[PathBuf],
+) -> Result<rustls::ServerConfig, anyhow::Error> {
+    let cert_chain = read_certificate_from_path(cert_path)?;
+    let key = read_private_key_from_path(key_path)?;
+
+    let mut root_store = RootCertStore::empty();
+    for root in ca_certs {
+        let certs = read_certificate_from_path(root)?;
+        for cert in certs {
+            root_store.add(cert)?;
+        }
+    }
+
+    let client_verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(root_store))
+        .allow_unauthenticated()
+        .build()
+        .map_err(|e| anyhow::anyhow!("Invalid client auth config: {e:?}"))?;
+
+    let mut config = rustls::ServerConfig::builder()
+        .with_client_cert_verifier(client_verifier)
+        .with_single_cert(cert_chain, key)?;
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
+    Ok(config)
 }
 
 #[macro_export]

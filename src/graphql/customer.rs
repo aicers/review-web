@@ -850,6 +850,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "auth-mtls"))]
     #[tokio::test]
     async fn remove_customers_with_account_reference() {
         let schema = TestSchema::new().await;

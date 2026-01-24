@@ -18,13 +18,12 @@ use futures::{
 };
 use ipnet::IpNet;
 use review_database::{HostNetworkGroup, Store, migrate_data_dir};
+#[cfg(not(feature = "auth-mtls"))]
+use review_web::graphql::account::set_initial_admin_password;
 use review_web::{
     self as web,
     backend::{AgentManager, CertManager},
-    graphql::{
-        Process, ResourceUsage, SamplingPolicy, account::set_initial_admin_password,
-        customer::NetworksTargetAgentKeysPair,
-    },
+    graphql::{Process, ResourceUsage, SamplingPolicy, customer::NetworksTargetAgentKeysPair},
 };
 use serde::Deserialize;
 use tokio::signal::unix::{SignalKind, signal};
@@ -161,6 +160,7 @@ pub struct Config {
     key: PathBuf,
     ca_certs: Vec<PathBuf>,
     ip2location: Option<PathBuf>,
+    #[cfg(feature = "auth-jwt")]
     reverse_proxies: Vec<review_web::archive::Config>,
     client_cert: Option<PathBuf>,
     client_key: Option<PathBuf>,
@@ -178,7 +178,9 @@ struct ConfigParser {
     key: PathBuf,
     ca_certs: Option<Vec<PathBuf>>,
     ip2location: Option<PathBuf>,
+    #[cfg(feature = "auth-jwt")]
     archive: Option<review_web::archive::Config>,
+    #[cfg(feature = "auth-jwt")]
     reverse_proxies: Option<Vec<review_web::archive::Config>>,
     client_cert: Option<PathBuf>,
     client_key: Option<PathBuf>,
@@ -220,6 +222,7 @@ impl Config {
 
         let graphql_srv_addr = config.graphql_srv_addr.parse()?;
 
+        #[cfg(feature = "auth-jwt")]
         let reverse_proxies = {
             let mut reverse_proxies = config.reverse_proxies.clone().unwrap_or_default();
             if let Some(archive) = config.archive {
@@ -239,6 +242,7 @@ impl Config {
             key: config.key,
             ca_certs: config.ca_certs.unwrap_or_default(),
             ip2location: config.ip2location,
+            #[cfg(feature = "auth-jwt")]
             reverse_proxies,
             client_cert: config.client_cert,
             client_key: config.client_key,
@@ -288,6 +292,7 @@ impl Config {
         self.ip2location.as_deref()
     }
 
+    #[cfg(feature = "auth-jwt")]
     #[must_use]
     pub(crate) fn reverse_proxies(&self) -> Vec<review_web::archive::Config> {
         self.reverse_proxies.clone()
@@ -299,7 +304,7 @@ async fn main() -> Result<()> {
     let config = Config::load_config(parse().as_deref())?;
     let _guard = init_tracing(config.log_dir());
 
-    let run = run(config).await;
+    let run = run(&config);
     match run {
         Ok(web_srv_shutdown_handle) => {
             if let Err(e) = shutdown().await {
@@ -317,7 +322,7 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn run(config: Config) -> Result<Arc<Notify>> {
+fn run(config: &Config) -> Result<Arc<Notify>> {
     migrate_data_dir(config.data_dir(), config.backup_dir()).context("migration failed")?;
 
     let cert_manager: Arc<dyn CertManager> = Arc::new(MiniCertManager::new(
@@ -333,23 +338,27 @@ async fn run(config: Config) -> Result<Arc<Notify>> {
         None
     };
     let store = Store::new(config.data_dir(), config.backup_dir())?;
-    // Ignores the error if the initial admin password is already set.
-    let _ = set_initial_admin_password(&store);
+    #[cfg(not(feature = "auth-mtls"))]
+    {
+        // Ignores the error if the initial admin password is already set.
+        let _ = set_initial_admin_password(&store);
+    }
     let store = Arc::new(RwLock::new(store));
 
     let agent_manager = Manager {};
-    let cert_reload_handle = Arc::new(Notify::new());
+    let tls_reload_handle = Arc::new(Notify::new());
 
     let web_config = web::ServerConfig {
         addr: config.graphql_srv_addr(),
         document_root: config.htdocs_dir().to_owned(),
         cert_manager,
-        cert_reload_handle,
+        tls_reload_handle,
         ca_certs: config
             .ca_certs()
             .into_iter()
             .map(Path::to_path_buf)
             .collect(),
+        #[cfg(feature = "auth-jwt")]
         reverse_proxies: config.reverse_proxies(),
         client_cert_path: config.client_cert.clone(),
         client_key_path: config.client_key.clone(),

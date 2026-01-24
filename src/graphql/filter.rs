@@ -1,23 +1,32 @@
+#[cfg(not(feature = "auth-mtls"))]
 use anyhow::{Context as AnyhowContext, anyhow};
-use async_graphql::{Context, Enum, ID, InputObject, Object, Result, SimpleObject};
+use async_graphql::Enum;
+#[cfg(not(feature = "auth-mtls"))]
+use async_graphql::{Context, ID, InputObject, Object, Result, SimpleObject};
+#[cfg(not(feature = "auth-mtls"))]
 use chrono::{DateTime, Utc};
 use review_database::{self as database};
+#[cfg(not(feature = "auth-mtls"))]
 use serde::{Deserialize, Serialize};
 
+#[cfg(not(feature = "auth-mtls"))]
 use super::{Role, RoleGuard, customer::HostNetworkGroup, event::EndpointInput};
 
+#[cfg(not(feature = "auth-mtls"))]
 #[derive(Clone, Eq, PartialEq, InputObject)]
 pub(super) struct PeriodForSearchInput {
     recent: Option<String>,
     custom: Option<PeriodInput>,
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 #[derive(Clone, Eq, PartialEq, InputObject)]
 pub(super) struct PeriodInput {
     start: DateTime<Utc>,
     end: DateTime<Utc>,
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 impl From<PeriodForSearchInput> for database::PeriodForSearch {
     fn from(input: PeriodForSearchInput) -> Self {
         match (input.recent, input.custom) {
@@ -28,9 +37,11 @@ impl From<PeriodForSearchInput> for database::PeriodForSearch {
     }
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 #[derive(Default)]
 pub(super) struct FilterQuery;
 
+#[cfg(not(feature = "auth-mtls"))]
 #[Object]
 impl FilterQuery {
     /// A list of filters
@@ -59,9 +70,11 @@ impl FilterQuery {
     }
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 #[derive(Default)]
 pub(super) struct FilterMutation;
 
+#[cfg(not(feature = "auth-mtls"))]
 #[Object]
 impl FilterMutation {
     /// Inserts a new filter to the current account.
@@ -192,6 +205,7 @@ impl FilterMutation {
     }
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 #[derive(Clone, Copy, Enum, Eq, PartialEq, Deserialize, Serialize)]
 enum EndpointKind {
     Source,
@@ -199,10 +213,12 @@ enum EndpointKind {
     Both,
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 struct Endpoint<'a> {
     inner: &'a database::event::FilterEndpoint,
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 impl PartialEq<EndpointInput> for database::event::FilterEndpoint {
     fn eq(&self, other: &EndpointInput) -> bool {
         let other_predefined = if let Some(id) = &other.predefined {
@@ -229,6 +245,7 @@ impl PartialEq<EndpointInput> for database::event::FilterEndpoint {
     }
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 impl TryFrom<EndpointInput> for database::event::FilterEndpoint {
     type Error = anyhow::Error;
 
@@ -253,6 +270,7 @@ impl TryFrom<EndpointInput> for database::event::FilterEndpoint {
     }
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 #[Object]
 impl Endpoint<'_> {
     async fn direction(&self) -> Option<TrafficDirection> {
@@ -270,22 +288,26 @@ impl Endpoint<'_> {
     }
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 impl<'a> From<&'a database::event::FilterEndpoint> for Endpoint<'a> {
     fn from(inner: &'a database::event::FilterEndpoint) -> Self {
         Self { inner }
     }
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 struct PeriodForSearch<'a> {
     inner: &'a database::PeriodForSearch,
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 #[derive(Clone, Eq, PartialEq, SimpleObject)]
 struct CustomPeriod {
     start: DateTime<Utc>,
     end: DateTime<Utc>,
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 #[Object]
 impl PeriodForSearch<'_> {
     async fn recent(&self) -> Option<String> {
@@ -306,16 +328,19 @@ impl PeriodForSearch<'_> {
     }
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 impl<'a> From<&'a database::PeriodForSearch> for PeriodForSearch<'a> {
     fn from(inner: &'a database::PeriodForSearch) -> Self {
         Self { inner }
     }
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 struct Filter {
     inner: database::Filter,
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 #[Object]
 impl Filter {
     async fn name(&self) -> &str {
@@ -454,12 +479,14 @@ impl Filter {
     }
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 impl From<database::Filter> for Filter {
     fn from(filter: database::Filter) -> Self {
         Self { inner: filter }
     }
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 impl TryFrom<FilterInput> for database::Filter {
     type Error = anyhow::Error;
 
@@ -517,6 +544,7 @@ impl TryFrom<FilterInput> for database::Filter {
     }
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 impl PartialEq<FilterInput> for &database::Filter {
     fn eq(&self, rhs: &FilterInput) -> bool {
         let network_eq = match (&self.endpoints, &rhs.endpoints) {
@@ -575,6 +603,7 @@ pub(super) enum LearningMethod {
 }
 
 #[derive(InputObject)]
+#[cfg(not(feature = "auth-mtls"))]
 struct FilterInput {
     name: String,
     directions: Option<Vec<FlowKind>>,
@@ -606,6 +635,7 @@ pub(super) enum TrafficDirection {
     To,
 }
 
+#[cfg(not(feature = "auth-mtls"))]
 fn cmp_option_vec_string_with_id(lhs: Option<&Vec<String>>, rhs: Option<&Vec<ID>>) -> bool {
     match (lhs, rhs) {
         (Some(lhs), Some(rhs)) => lhs
@@ -617,7 +647,7 @@ fn cmp_option_vec_string_with_id(lhs: Option<&Vec<String>>, rhs: Option<&Vec<ID>
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "auth-mtls")))]
 mod tests {
     use crate::graphql::TestSchema;
 
