@@ -533,8 +533,8 @@ pub(crate) enum RoleGuard {
     Local,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CustomerId(pub u32);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomerIds(pub Option<Vec<u32>>);
 
 impl RoleGuard {
     fn new(role: database::Role) -> Self {

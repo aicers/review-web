@@ -32,12 +32,13 @@ const ERR_UNSUPPORTED_EC_CURVE: &str = "Unsupported EC curve";
 const ERR_UNSUPPORTED_KEY_TYPE: &str = "Unsupported client certificate key type";
 const ERR_INVALID_EC_KEY: &str = "Invalid EC key";
 const ERR_INVALID_EC_ENCODING: &str = "Invalid EC public key encoding";
+const ERR_MISSING_CUSTOMER_IDS: &str = "Missing customer_ids claim for non-admin role";
 
 #[derive(Debug, serde::Deserialize)]
 struct ContextClaims {
     #[serde(deserialize_with = "deserialize_role")]
     role: database::Role,
-    customer_id: u32,
+    customer_ids: Option<Vec<u32>>,
     exp: i64,
 }
 
@@ -80,7 +81,7 @@ pub fn validate_client_cert(cert: &CertificateDer<'static>) -> Result<(), MtlsAu
 pub fn validate_context_jwt(
     token: &str,
     cert: &CertificateDer<'static>,
-) -> Result<(database::Role, u32), MtlsAuthError> {
+) -> Result<(database::Role, Option<Vec<u32>>), MtlsAuthError> {
     let cert = parse_cert(cert)?;
     let header = decode_header(token)
         .map_err(|e| MtlsAuthError::InvalidToken(format!("{ERR_INVALID_JWT_HEADER}: {e}")))?;
@@ -97,8 +98,15 @@ pub fn validate_context_jwt(
     // handled by decode().
     debug_assert!(exp > 0, "exp must be positive");
     let role = token_data.claims.role;
+    let customer_ids = token_data.claims.customer_ids;
 
-    Ok((role, token_data.claims.customer_id))
+    if customer_ids.is_none() && role != database::Role::SystemAdministrator {
+        return Err(MtlsAuthError::InvalidToken(
+            ERR_MISSING_CUSTOMER_IDS.to_string(),
+        ));
+    }
+
+    Ok((role, customer_ids))
 }
 
 fn parse_cert<'a>(cert: &'a CertificateDer<'static>) -> Result<X509Certificate<'a>, MtlsAuthError> {
@@ -212,12 +220,13 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        Algorithm, ERR_JWT_ALG_EC_MISMATCH, ERR_SAN_SERVICE_MISMATCH, MtlsAuthError,
-        validate_client_cert, validate_context_jwt,
+        Algorithm, ERR_JWT_ALG_EC_MISMATCH, ERR_MISSING_CUSTOMER_IDS, ERR_SAN_SERVICE_MISMATCH,
+        MtlsAuthError, validate_client_cert, validate_context_jwt,
     };
 
     const CUSTOMER_ID: u32 = 42;
     const ROLE: &str = "System Administrator";
+    const NON_ADMIN_ROLE: &str = "Security Administrator";
     const SERVICE_DNS: &str = "edge.aice-web-next.example.com";
     const OTHER_DNS: &str = "edge.other.example.com";
     const HEADER_ALG_RS256: &str = "RS256";
@@ -227,7 +236,13 @@ mod tests {
     #[derive(Serialize)]
     struct TestClaims<'a> {
         role: &'a str,
-        customer_id: u32,
+        customer_ids: Option<Vec<u32>>,
+        exp: i64,
+    }
+
+    #[derive(Serialize)]
+    struct MissingCustomerIdsClaims<'a> {
+        role: &'a str,
         exp: i64,
     }
 
@@ -244,10 +259,10 @@ mod tests {
         (cert_der, key_der)
     }
 
-    fn sign_token(exp: i64, key_der: &[u8]) -> String {
+    fn sign_token(exp: i64, customer_ids: Option<Vec<u32>>, key_der: &[u8]) -> String {
         let claims = TestClaims {
             role: ROLE,
-            customer_id: CUSTOMER_ID,
+            customer_ids,
             exp,
         };
         let header = Header::new(Algorithm::ES256);
@@ -262,7 +277,7 @@ mod tests {
         });
         let claims = json!({
             "role": ROLE,
-            "customer_id": CUSTOMER_ID,
+            "customer_ids": [CUSTOMER_ID],
             "exp": exp
         });
         let header = super::URL_SAFE_NO_PAD
@@ -294,25 +309,64 @@ mod tests {
     }
 
     #[test]
-    fn context_jwt_validates_role_and_customer_id() {
+    fn context_jwt_validates_role_and_customer_ids() {
         let (cert, key_der) = build_ec_cert(SERVICE_DNS);
         let exp = (Utc::now() + Duration::minutes(5)).timestamp();
-        let token = sign_token(exp, &key_der);
-        let (role, customer_id) =
+        let token = sign_token(exp, Some(vec![CUSTOMER_ID]), &key_der);
+        let (role, customer_ids) =
             validate_context_jwt(&token, &cert).expect("token is signed by the test key");
         assert_eq!(role, database::Role::SystemAdministrator);
-        assert_eq!(customer_id, CUSTOMER_ID);
+        assert_eq!(customer_ids, Some(vec![CUSTOMER_ID]));
     }
 
     #[test]
     fn context_jwt_rejects_expired_token() {
         let (cert, key_der) = build_ec_cert(SERVICE_DNS);
         let exp = (Utc::now() - Duration::minutes(5)).timestamp();
-        let token = sign_token(exp, &key_der);
+        let token = sign_token(exp, Some(vec![CUSTOMER_ID]), &key_der);
         let err = validate_context_jwt(&token, &cert).expect_err("token is already expired");
         match err {
             MtlsAuthError::InvalidToken(_) | MtlsAuthError::JsonWebToken(_) => {}
         }
+    }
+
+    #[test]
+    fn context_jwt_rejects_missing_customer_ids_for_non_admin() {
+        let (cert, key_der) = build_ec_cert(SERVICE_DNS);
+        let exp = (Utc::now() + Duration::minutes(5)).timestamp();
+        let claims = TestClaims {
+            role: NON_ADMIN_ROLE,
+            customer_ids: None,
+            exp,
+        };
+        let header = Header::new(Algorithm::ES256);
+        let token = encode(&header, &claims, &EncodingKey::from_ec_der(&key_der))
+            .expect("key_der was generated by rcgen and matches ES256");
+
+        let err = validate_context_jwt(&token, &cert).expect_err("non-admins require customer_ids");
+        match err {
+            MtlsAuthError::InvalidToken(msg) => {
+                assert_eq!(msg, ERR_MISSING_CUSTOMER_IDS);
+            }
+            MtlsAuthError::JsonWebToken(_) => {
+                panic!("missing customer_ids should be detected after JWT decoding");
+            }
+        }
+    }
+
+    #[test]
+    fn context_jwt_allows_missing_customer_ids_for_admin() {
+        let (cert, key_der) = build_ec_cert(SERVICE_DNS);
+        let exp = (Utc::now() + Duration::minutes(5)).timestamp();
+        let claims = MissingCustomerIdsClaims { role: ROLE, exp };
+        let header = Header::new(Algorithm::ES256);
+        let token = encode(&header, &claims, &EncodingKey::from_ec_der(&key_der))
+            .expect("key_der was generated by rcgen and matches ES256");
+
+        let (role, customer_ids) =
+            validate_context_jwt(&token, &cert).expect("admin can omit customer_ids");
+        assert_eq!(role, database::Role::SystemAdministrator);
+        assert_eq!(customer_ids, None);
     }
 
     #[test]
