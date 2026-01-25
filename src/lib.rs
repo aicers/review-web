@@ -37,7 +37,7 @@ use axum_extra::{
 #[cfg(feature = "auth-mtls")]
 use futures::future::BoxFuture;
 #[cfg(feature = "auth-mtls")]
-use graphql::CustomerId;
+use graphql::CustomerIds;
 use graphql::RoleGuard;
 use review_database::Store;
 #[cfg(feature = "auth-jwt")]
@@ -427,12 +427,12 @@ async fn graphql_handler(
     validate_client_cert(cert)?;
 
     let auth = auth?;
-    let (role, customer_id) = validate_context_jwt(auth.token(), cert)?;
+    let (role, customer_ids) = validate_context_jwt(auth.token(), cert)?;
     Ok(schema
         .execute(
             request
                 .data(RoleGuard::Role(role))
-                .data(CustomerId(customer_id)),
+                .data(CustomerIds(customer_ids)),
         )
         .await
         .into())
@@ -520,11 +520,11 @@ async fn graphql_ws_handler(
                             .split_ascii_whitespace()
                             .last()
                             .ok_or_else(|| async_graphql::Error::new(ERR_MISSING_AUTHORIZATION))?;
-                        let (role, customer_id) = validate_context_jwt(token, cert)
+                        let (role, customer_ids) = validate_context_jwt(token, cert)
                             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
                         data.insert(RoleGuard::Role(role));
-                        data.insert(CustomerId(customer_id));
+                        data.insert(CustomerIds(customer_ids));
                         Ok(data)
                     }
                 })
