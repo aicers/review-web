@@ -127,7 +127,7 @@ mod mtls_integration {
     #[derive(Serialize)]
     struct ContextClaims<'a> {
         role: &'a str,
-        customer_id: u32,
+        customer_ids: Option<Vec<u32>>,
         exp: i64,
     }
 
@@ -185,7 +185,7 @@ mod mtls_integration {
         let exp = (Utc::now() + ChronoDuration::minutes(5)).timestamp();
         let claims = ContextClaims {
             role: ROLE,
-            customer_id: CUSTOMER_ID,
+            customer_ids: Some(vec![CUSTOMER_ID]),
             exp,
         };
         let header = Header::new(Algorithm::ES256);
