@@ -16,7 +16,7 @@ mod mtls_integration {
         PKCS_ECDSA_P256_SHA256, SanType,
     };
     use reqwest::Certificate as ReqwestCertificate;
-    use review_database::{HostNetworkGroup, Store};
+    use review_database::Store;
     use review_web::{
         ServerConfig,
         backend::{AgentManager, CertManager},
@@ -65,16 +65,16 @@ mod mtls_integration {
             Ok(Vec::new())
         }
 
-        async fn broadcast_allow_networks(
+        async fn send_agent_specific_allow_networks(
             &self,
-            _networks: &HostNetworkGroup,
+            _networks: &[review_web::graphql::customer::NetworksTargetAgentKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             Ok(Vec::new())
         }
 
-        async fn broadcast_block_networks(
+        async fn send_agent_specific_block_networks(
             &self,
-            _networks: &HostNetworkGroup,
+            _networks: &[review_web::graphql::customer::NetworksTargetAgentKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             Ok(Vec::new())
         }
