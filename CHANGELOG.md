@@ -4,6 +4,15 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.1] - 2026-01-31
+
+### Added
+
+- Added mTLS authentication feature, including mutual TLS validation for client
+  connections and context JWT checks for authenticated requests. This entry
+  corrects a missing note from 0.30.0; the functionality is unchanged from
+  0.30.0 and only the CHANGELOG is updated.
+
 ## [0.30.0] - 2026-01-29
 
 ### Added
@@ -1350,6 +1359,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[0.30.1]: https://github.com/aicers/review-web/compare/0.30.0...0.30.1
 [0.30.0]: https://github.com/aicers/review-web/compare/0.29.4...0.30.0
 [0.29.4]: https://github.com/aicers/review-web/compare/0.29.3...0.29.4
 [0.29.3]: https://github.com/aicers/review-web/compare/0.29.2...0.29.3
