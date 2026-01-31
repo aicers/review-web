@@ -61,8 +61,8 @@ uri = "https://<SERVER_NAME>:8444/graphql"  # TI container's GraphQL address
 
 ## License
 
-Copyright 2018-2023 Petabi, Inc.
-Copyright 2023–2026 ClumL Inc.
+Copyright 2018-2023 Petabi, Inc.  
+Copyright 2023-2026 ClumL Inc.
 
 Licensed under [Apache License, Version 2.0][apache-license] (the "License");
 you may not use this crate except in compliance with the License.
@@ -79,4 +79,4 @@ for inclusion in the work by you, as defined in the [Apache-2.0
 license][apache-license], shall be licensed as above, without any additional
 terms or conditions.
 
-[apache-license]: http://www.apache.org/licenses/LICENSE-2.0
+[apache-license]: https://www.apache.org/licenses/LICENSE-2.0
