@@ -4,6 +4,14 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `networkGroup` duplicate validation to `insertCustomer` and
+  `updateCustomer` so that customer mutations now reject networks with identical
+  `networkGroup` values and return an error.
+
 ## [0.30.1] - 2026-01-31
 
 ### Added
@@ -1359,6 +1367,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.30.1...main
 [0.30.1]: https://github.com/aicers/review-web/compare/0.30.0...0.30.1
 [0.30.0]: https://github.com/aicers/review-web/compare/0.29.4...0.30.0
 [0.29.4]: https://github.com/aicers/review-web/compare/0.29.3...0.29.4
