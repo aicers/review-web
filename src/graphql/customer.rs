@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::convert::{TryFrom, TryInto};
 
 use anyhow::Context as AnyhowContext;
@@ -120,6 +121,7 @@ impl CustomerMutation {
         if networks.len() != original_count {
             return Err("duplicate network name".into());
         }
+        check_duplicate_network_group(&networks)?;
         let value = database::Customer {
             id: u32::MAX,
             name: name.clone(),
@@ -203,8 +205,11 @@ impl CustomerMutation {
         new: CustomerUpdateInput,
     ) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-        let old = old.try_into()?;
-        let new = new.try_into()?;
+        let old: review_database::CustomerUpdate = old.try_into()?;
+        let new: review_database::CustomerUpdate = new.try_into()?;
+        if let Some(new_networks) = new.networks.as_deref() {
+            check_duplicate_network_group(new_networks)?;
+        }
 
         let network_list = {
             let store = crate::graphql::get_store(ctx)?;
@@ -347,6 +352,16 @@ fn validate_customer_removal(store: &Store, customer_ids: &[u32]) -> Result<()> 
         }
     }
 
+    Ok(())
+}
+
+fn check_duplicate_network_group(networks: &[database::CustomerNetwork]) -> Result<()> {
+    let mut groups = BTreeSet::new();
+    for network in networks {
+        if !groups.insert(network.network_group.clone()) {
+            return Err(format!("Duplicate network group: {}", network.name).into());
+        }
+    }
     Ok(())
 }
 
@@ -1073,5 +1088,160 @@ mod tests {
                 .message
                 .contains("still referenced by block network")
         );
+    }
+
+    #[tokio::test]
+    async fn reject_duplicate_network_groups_on_insert() {
+        let schema = TestSchema::new().await;
+        let res: async_graphql::Response = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertCustomer(
+                        name: "c1",
+                        description: "",
+                        networks: [
+                            {
+                                name: "n1",
+                                description: "",
+                                networkType: INTRANET,
+                                networkGroup: {
+                                    hosts: ["10.0.0.1"],
+                                    networks: [],
+                                    ranges: []
+                                }
+                            },
+                            {
+                                name: "n2",
+                                description: "",
+                                networkType: INTRANET,
+                                networkGroup: {
+                                    hosts: ["10.0.0.1"],
+                                    networks: [],
+                                    ranges: []
+                                }
+                            }
+                        ]
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.is_err());
+        assert!(res.errors[0].message.contains("Duplicate network group:"));
+    }
+
+    #[tokio::test]
+    async fn reject_duplicate_network_groups_on_update() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertCustomer(
+                        name: "c1",
+                        description: "",
+                        networks: [
+                            {
+                                name: "n1",
+                                description: "",
+                                networkType: INTRANET,
+                                networkGroup: {
+                                    hosts: ["10.0.0.1"],
+                                    networks: ["192.168.0.0/24"],
+                                    ranges: [{ start: "10.0.0.1", end: "10.0.0.10" }]
+                                }
+                            }
+                        ]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res: async_graphql::Response = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateCustomer(
+                        id: "0",
+                        old: {
+                            networks: [
+                                {
+                                    name: "n1",
+                                    description: "",
+                                    networkType: INTRANET,
+                                    networkGroup: {
+                                        hosts: ["10.0.0.1"],
+                                        networks: ["192.168.0.0/24"],
+                                        ranges: [{ start: "10.0.0.1", end: "10.0.0.10" }]
+                                    }
+                                }
+                            ]
+                        },
+                        new: {
+                            networks: [
+                                {
+                                    name: "n1",
+                                    description: "",
+                                    networkType: INTRANET,
+                                    networkGroup: {
+                                        hosts: ["10.0.0.1"],
+                                        networks: ["192.168.0.0/24"],
+                                        ranges: [{ start: "10.0.0.1", end: "10.0.0.10" }]
+                                    }
+                                },
+                                {
+                                    name: "n2",
+                                    description: "",
+                                    networkType: INTRANET,
+                                    networkGroup: {
+                                        hosts: ["10.0.0.1"],
+                                        networks: ["192.168.0.0/24"],
+                                        ranges: [{ start: "10.0.0.1", end: "10.0.0.10" }]
+                                    }
+                                }
+                            ]
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.is_err());
+        assert!(res.errors[0].message.contains("Duplicate network group:"));
+    }
+
+    #[tokio::test]
+    async fn allow_same_range_with_different_network_groups() {
+        let schema = TestSchema::new().await;
+        let res: async_graphql::Response = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertCustomer(
+                        name: "c1",
+                        description: "",
+                        networks: [
+                            {
+                                name: "n1",
+                                description: "",
+                                networkType: INTRANET,
+                                networkGroup: {
+                                    hosts: ["10.0.0.1"],
+                                    networks: [],
+                                    ranges: [{ start: "10.0.0.1", end: "10.0.0.10" }]
+                                }
+                            },
+                            {
+                                name: "n2",
+                                description: "",
+                                networkType: INTRANET,
+                                networkGroup: {
+                                    hosts: ["10.0.0.2"],
+                                    networks: [],
+                                    ranges: [{ start: "10.0.0.1", end: "10.0.0.10" }]
+                                }
+                            }
+                        ]
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty());
     }
 }
