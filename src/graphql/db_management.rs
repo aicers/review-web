@@ -120,8 +120,7 @@ pub(super) struct DbManagementQuery;
 
 #[Object]
 impl DbManagementQuery {
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn backups(&self, ctx: &Context<'_>) -> Result<Vec<BackupInfo>> {
         let store = ctx.data::<Arc<std::sync::RwLock<Store>>>()?;
         info_with_username!(ctx, "Database backup list is being fetched");
@@ -152,8 +151,7 @@ impl DbManagementQuery {
     /// - `num_of_backups_to_keep`: 5
     ///
     /// Accessible to administrators only.
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn backup_config(&self, ctx: &Context<'_>) -> Result<BackupConfig> {
         let store = crate::graphql::get_store(ctx)?;
         let table = store.backup_config_map();
@@ -167,16 +165,14 @@ pub(super) struct DbManagementMutation;
 
 #[Object]
 impl DbManagementMutation {
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn backup(&self, ctx: &Context<'_>, num_of_backups_to_keep: u32) -> Result<bool> {
         let store = ctx.data::<Arc<std::sync::RwLock<Store>>>()?;
         info_with_username!(ctx, "Database backup is being executed");
         Ok(backup::create(store, false, num_of_backups_to_keep).is_ok())
     }
 
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn restore_from_latest_backup(&self, ctx: &Context<'_>) -> Result<bool> {
         let store = ctx.data::<Arc<std::sync::RwLock<Store>>>()?;
         info_with_username!(ctx, "Database is being restored from the latest backup");
@@ -192,8 +188,7 @@ impl DbManagementMutation {
     /// * The backup ID does not exist
     /// * The restore operation fails (e.g., corrupted backup, I/O errors)
     /// * Database is locked by another operation
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn restore_from_backup(&self, ctx: &Context<'_>, id: ID) -> Result<bool> {
         let id = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
         let store = ctx.data::<Arc<std::sync::RwLock<Store>>>()?;
@@ -221,8 +216,7 @@ impl DbManagementMutation {
     /// * The user is not an administrator
     /// * Input validation fails (e.g., invalid time format, zero values)
     /// * Database operation fails
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn set_backup_config(
         &self,
         ctx: &Context<'_>,
@@ -255,8 +249,7 @@ impl DbManagementMutation {
     /// * The old configuration doesn't match the current stored configuration
     /// * Input validation fails (e.g., invalid time format, zero values)
     /// * Database operation fails
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn update_backup_config(
         &self,
         ctx: &Context<'_>,
@@ -281,8 +274,73 @@ mod tests {
 
     use crate::graphql::{RoleGuard, TestSchema};
 
+    fn set_backup_config_mutation(
+        backup_duration: u16,
+        backup_time: &str,
+        num_of_backups_to_keep: u16,
+    ) -> String {
+        format!(
+            r#"
+            mutation {{
+                setBackupConfig(input: {{
+                    backupDuration: {backup_duration}
+                    backupTime: "{backup_time}"
+                    numOfBackupsToKeep: {num_of_backups_to_keep}
+                }}) {{
+                    backupDuration
+                    backupTime
+                    numOfBackupsToKeep
+                }}
+            }}
+        "#
+        )
+    }
+
+    fn update_backup_config_mutation(
+        old_backup_duration: u16,
+        old_backup_time: &str,
+        old_num_of_backups_to_keep: u16,
+        new_backup_duration: u16,
+        new_backup_time: &str,
+        new_num_of_backups_to_keep: u16,
+    ) -> String {
+        format!(
+            r#"
+            mutation {{
+                updateBackupConfig(
+                    old: {{
+                        backupDuration: {old_backup_duration}
+                        backupTime: "{old_backup_time}"
+                        numOfBackupsToKeep: {old_num_of_backups_to_keep}
+                    }}
+                    new: {{
+                        backupDuration: {new_backup_duration}
+                        backupTime: "{new_backup_time}"
+                        numOfBackupsToKeep: {new_num_of_backups_to_keep}
+                    }}
+                ) {{
+                    backupDuration
+                    backupTime
+                    numOfBackupsToKeep
+                }}
+            }}
+        "#
+        )
+    }
+
+    async fn assert_forbidden(schema: &TestSchema, role: Role, query: &str) {
+        let res = schema
+            .execute_with_guard(query, RoleGuard::Role(role))
+            .await;
+        assert!(
+            !res.errors.is_empty(),
+            "Role {role:?} should be forbidden for query: {query}"
+        );
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
     #[tokio::test]
-    async fn test_backups_query() {
+    async fn test_backups_query_success() {
         let schema = TestSchema::new().await;
 
         // Query for backups - this should work and return an empty array initially
@@ -290,35 +348,13 @@ mod tests {
             .execute_as_system_admin(r"{ backups { id timestamp size } }")
             .await;
 
-        // If there are errors, it might be due to RocksDB setup issues in test environment
-        // In that case, we should at least verify the query is properly structured
-        if res.errors.is_empty() {
-            // If no errors, should return empty array
-            assert_eq!(res.data.to_string(), r"{backups: []}");
-            println!("Test passed: Query returned empty backup list as expected");
-        } else {
-            // Check if it's a database-related error (not a GraphQL schema error)
-            let error_msg = res.errors[0].message.clone();
-            assert!(
-                error_msg.contains("IO error") || error_msg.contains("states.db"),
-                "Expected database IO error but got: {error_msg}"
-            );
-            println!(
-                "Test passed: Query structure is correct, but database not fully initialized in test environment"
-            );
-        }
+        assert!(res.errors.is_empty(), "GraphQL errors: {:?}", res.errors);
+        assert_eq!(res.data.to_string(), r"{backups: []}");
     }
 
     #[tokio::test]
     async fn test_backups_query_sorted_by_timestamp_desc() {
         let schema = TestSchema::new().await;
-
-        // Ensure initially empty
-        let res = schema
-            .execute_as_system_admin(r"{ backups { id timestamp } }")
-            .await;
-        assert!(res.errors.is_empty(), "GraphQL errors: {:?}", res.errors);
-        assert_eq!(res.data.to_string(), r"{backups: []}");
 
         // Create 3 backups to avoid accidental pass with 2 items
         // Add a delay between backups to ensure distinct timestamps
@@ -396,39 +432,36 @@ mod tests {
     async fn test_backup_config_query_admin_only() {
         let schema = TestSchema::new().await;
 
-        // Test that admin roles can access backup config
-        for role in [Role::SystemAdministrator, Role::SecurityAdministrator] {
-            let res = schema
-                .execute_with_guard(
-                    r"{ backupConfig { backupDuration backupTime numOfBackupsToKeep } }",
-                    RoleGuard::Role(role),
-                )
-                .await;
+        // Test that SystemAdministrator can access backup config
+        let res = schema
+            .execute_with_guard(
+                r"{ backupConfig { backupDuration backupTime numOfBackupsToKeep } }",
+                RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
 
-            assert!(
-                res.errors.is_empty(),
-                "Role {role:?} should have access. Errors: {:?}",
-                res.errors
-            );
-        }
+        assert!(
+            res.errors.is_empty(),
+            "Role SystemAdministrator should have access. Errors: {:?}",
+            res.errors
+        );
+
+        // Test that SecurityAdministrator is denied access
+        assert_forbidden(
+            &schema,
+            Role::SecurityAdministrator,
+            r"{ backupConfig { backupDuration backupTime numOfBackupsToKeep } }",
+        )
+        .await;
 
         // Test that non-admin roles are denied access
         for role in [Role::SecurityManager, Role::SecurityMonitor] {
-            let res = schema
-                .execute_with_guard(
-                    r"{ backupConfig { backupDuration backupTime numOfBackupsToKeep } }",
-                    RoleGuard::Role(role),
-                )
-                .await;
-
-            assert!(
-                !res.errors.is_empty(),
-                "Role {role:?} should not have access to backupConfig"
-            );
-            assert!(
-                res.errors[0].message.contains("Forbidden"),
-                "Expected Forbidden error for role {role:?}"
-            );
+            assert_forbidden(
+                &schema,
+                role,
+                r"{ backupConfig { backupDuration backupTime numOfBackupsToKeep } }",
+            )
+            .await;
         }
     }
 
@@ -436,23 +469,11 @@ mod tests {
     async fn test_set_backup_config_admin_only() {
         let schema = TestSchema::new().await;
 
-        // Test that SystemAdministrator and SecurityAdministrator can set backup config
-        let mutation = r#"
-            mutation {
-                setBackupConfig(input: {
-                    backupDuration: 7
-                    backupTime: "03:00:00"
-                    numOfBackupsToKeep: 10
-                }) {
-                    backupDuration
-                    backupTime
-                    numOfBackupsToKeep
-                }
-            }
-        "#;
+        // Test that SystemAdministrator can set backup config
+        let mutation = set_backup_config_mutation(7, "03:00:00", 10);
 
         // Should succeed for SystemAdministrator
-        let res = schema.execute_as_system_admin(mutation).await;
+        let res = schema.execute_as_system_admin(&mutation).await;
         assert!(res.errors.is_empty(), "GraphQL errors: {:?}", res.errors);
         assert_json_eq!(
             res.data.into_json().unwrap(),
@@ -465,29 +486,12 @@ mod tests {
             })
         );
 
-        // Should succeed for SecurityAdministrator
-        let res = schema
-            .execute_with_guard(mutation, RoleGuard::Role(Role::SecurityAdministrator))
-            .await;
-        assert!(
-            res.errors.is_empty(),
-            "SecurityAdministrator should have access. Errors: {:?}",
-            res.errors
-        );
+        // Should fail for SecurityAdministrator
+        assert_forbidden(&schema, Role::SecurityAdministrator, &mutation).await;
 
         // Should fail for non-admin roles
         for role in [Role::SecurityManager, Role::SecurityMonitor] {
-            let res = schema
-                .execute_with_guard(mutation, RoleGuard::Role(role))
-                .await;
-            assert!(
-                !res.errors.is_empty(),
-                "Role {role:?} should not have access to setBackupConfig"
-            );
-            assert!(
-                res.errors[0].message.contains("Forbidden"),
-                "Expected Forbidden error for role {role:?}"
-            );
+            assert_forbidden(&schema, role, &mutation).await;
         }
     }
 
@@ -496,44 +500,15 @@ mod tests {
         let schema = TestSchema::new().await;
 
         // First set a config
-        let set_mutation = r#"
-            mutation {
-                setBackupConfig(input: {
-                    backupDuration: 1
-                    backupTime: "23:59:59"
-                    numOfBackupsToKeep: 5
-                }) {
-                    backupDuration
-                }
-            }
-        "#;
-        let res = schema.execute_as_system_admin(set_mutation).await;
+        let set_mutation = set_backup_config_mutation(1, "23:59:59", 5);
+        let res = schema.execute_as_system_admin(&set_mutation).await;
         assert!(res.errors.is_empty(), "Setup failed: {:?}", res.errors);
 
         // Now update it
-        let update_mutation = r#"
-            mutation {
-                updateBackupConfig(
-                    old: {
-                        backupDuration: 1
-                        backupTime: "23:59:59"
-                        numOfBackupsToKeep: 5
-                    }
-                    new: {
-                        backupDuration: 14
-                        backupTime: "02:30:00"
-                        numOfBackupsToKeep: 7
-                    }
-                ) {
-                    backupDuration
-                    backupTime
-                    numOfBackupsToKeep
-                }
-            }
-        "#;
+        let update_mutation = update_backup_config_mutation(1, "23:59:59", 5, 14, "02:30:00", 7);
 
         // Should succeed for SystemAdministrator
-        let res = schema.execute_as_system_admin(update_mutation).await;
+        let res = schema.execute_as_system_admin(&update_mutation).await;
         assert!(res.errors.is_empty(), "GraphQL errors: {:?}", res.errors);
         assert_json_eq!(
             res.data.into_json().unwrap(),
@@ -547,36 +522,151 @@ mod tests {
         );
 
         // Reset config for SecurityAdministrator test
-        let res = schema.execute_as_system_admin(set_mutation).await;
+        let res = schema.execute_as_system_admin(&set_mutation).await;
         assert!(res.errors.is_empty(), "Reset failed: {:?}", res.errors);
 
-        // Should succeed for SecurityAdministrator
-        let res = schema
-            .execute_with_guard(
-                update_mutation,
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
-        assert!(
-            res.errors.is_empty(),
-            "SecurityAdministrator should have access. Errors: {:?}",
-            res.errors
-        );
+        // Should fail for SecurityAdministrator
+        assert_forbidden(&schema, Role::SecurityAdministrator, &update_mutation).await;
 
         // Should fail for non-admin roles
         for role in [Role::SecurityManager, Role::SecurityMonitor] {
-            let res = schema
-                .execute_with_guard(update_mutation, RoleGuard::Role(role))
-                .await;
-            assert!(
-                !res.errors.is_empty(),
-                "Role {role:?} should not have access to updateBackupConfig"
-            );
-            assert!(
-                res.errors[0].message.contains("Forbidden"),
-                "Expected Forbidden error for role {role:?}"
-            );
+            assert_forbidden(&schema, role, &update_mutation).await;
         }
+    }
+
+    #[tokio::test]
+    async fn test_backup_and_restore_security_admin_denied() {
+        let schema = TestSchema::new().await;
+
+        assert_forbidden(
+            &schema,
+            Role::SecurityAdministrator,
+            r"{ backups { id timestamp size } }",
+        )
+        .await;
+
+        assert_forbidden(
+            &schema,
+            Role::SecurityAdministrator,
+            r"mutation { backup(numOfBackupsToKeep: 5) }",
+        )
+        .await;
+
+        assert_forbidden(
+            &schema,
+            Role::SecurityAdministrator,
+            r"mutation { restoreFromLatestBackup }",
+        )
+        .await;
+
+        assert_forbidden(
+            &schema,
+            Role::SecurityAdministrator,
+            r#"mutation { restoreFromBackup(id: "1") }"#,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_restore_mutations_system_admin_success() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(r"mutation { backup(numOfBackupsToKeep: 5) }")
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Backup mutation failed: {:?}",
+            res.errors
+        );
+        assert_eq!(res.data.to_string(), r"{backup: true}");
+
+        let res = schema.execute_as_system_admin(r"{ backups { id } }").await;
+        assert!(
+            res.errors.is_empty(),
+            "Backups query failed: {:?}",
+            res.errors
+        );
+        let json = res.data.into_json().unwrap();
+        let id = json["backups"]
+            .as_array()
+            .and_then(|items| items.first())
+            .and_then(|item| item.get("id"))
+            .and_then(|v| v.as_str())
+            .expect("Expected at least one backup id after backup mutation");
+
+        let res = schema
+            .execute_as_system_admin(r"mutation { restoreFromLatestBackup }")
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "restoreFromLatestBackup failed: {:?}",
+            res.errors
+        );
+        assert_eq!(res.data.to_string(), r"{restoreFromLatestBackup: true}");
+
+        let res = schema
+            .execute_as_system_admin(&format!(r#"mutation {{ restoreFromBackup(id: "{id}") }}"#))
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "restoreFromBackup failed: {:?}",
+            res.errors
+        );
+        assert_eq!(res.data.to_string(), r"{restoreFromBackup: true}");
+    }
+
+    #[tokio::test]
+    async fn test_update_backup_config_old_mismatch_fails() {
+        let schema = TestSchema::new().await;
+
+        let set_mutation = set_backup_config_mutation(1, "23:59:59", 5);
+        let res = schema.execute_as_system_admin(&set_mutation).await;
+        assert!(res.errors.is_empty(), "Setup failed: {:?}", res.errors);
+
+        let update_mutation = update_backup_config_mutation(2, "23:59:59", 5, 3, "02:30:00", 7);
+        let res = schema.execute_as_system_admin(&update_mutation).await;
+        assert!(
+            !res.errors.is_empty(),
+            "Expected updateBackupConfig to fail when old config mismatches"
+        );
+        assert!(
+            res.errors[0].message.contains("old value mismatch"),
+            "Expected old value mismatch error, got: {}",
+            res.errors[0].message
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_backup_config_validation_time_format() {
+        let schema = TestSchema::new().await;
+
+        let set_mutation = set_backup_config_mutation(1, "23:59:59", 5);
+        let res = schema.execute_as_system_admin(&set_mutation).await;
+        assert!(res.errors.is_empty(), "Setup failed: {:?}", res.errors);
+
+        let update_mutation = update_backup_config_mutation(1, "23:59:59", 5, 1, "25:00:00", 5);
+        let res = schema.execute_as_system_admin(&update_mutation).await;
+        assert!(!res.errors.is_empty(), "Expected validation error");
+        assert!(
+            res.errors[0].message.contains("hour must be 0-23"),
+            "Expected time format validation error, got: {}",
+            res.errors[0].message
+        );
+    }
+
+    #[tokio::test]
+    async fn test_restore_from_backup_invalid_id_fails() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { restoreFromBackup(id: "not-a-number") }"#)
+            .await;
+        assert!(
+            !res.errors.is_empty(),
+            "Expected restoreFromBackup to fail with invalid ID"
+        );
+        assert_eq!(res.errors[0].message, "invalid ID");
     }
 
     #[tokio::test]
@@ -684,18 +774,8 @@ mod tests {
         let schema = TestSchema::new().await;
 
         // Set a custom config
-        let mutation = r#"
-            mutation {
-                setBackupConfig(input: {
-                    backupDuration: 30
-                    backupTime: "04:15:30"
-                    numOfBackupsToKeep: 20
-                }) {
-                    backupDuration
-                }
-            }
-        "#;
-        let res = schema.execute_as_system_admin(mutation).await;
+        let mutation = set_backup_config_mutation(30, "04:15:30", 20);
+        let res = schema.execute_as_system_admin(&mutation).await;
         assert!(res.errors.is_empty(), "Set failed: {:?}", res.errors);
 
         // Read it back
