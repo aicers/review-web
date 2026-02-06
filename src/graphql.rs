@@ -407,8 +407,7 @@ where
     (nodes, has_previous, has_next)
 }
 
-#[allow(dead_code)] // It will be used in the sub-issues of #756
-fn process_load_edges_filtered<'a, T, I, R, P>(
+pub(crate) fn process_load_edges_filtered<'a, T, I, R, P>(
     table: &'a T,
     after: Option<OpaqueCursor<Vec<u8>>>,
     before: Option<OpaqueCursor<Vec<u8>>>,
@@ -1037,6 +1036,20 @@ impl TestSchema {
         let request = self
             .request_with_guard(request, RoleGuard::Role(Role::SystemAdministrator))
             .data(data);
+        self.schema.execute(request).await
+    }
+
+    /// Execute a query with the given role guard **and** explicit
+    /// `CustomerIds` in the request context (simulates a customer-scoped
+    /// user).
+    async fn execute_with_guard_and_customer_ids(
+        &self,
+        query: &str,
+        guard: RoleGuard,
+        customer_ids: CustomerIds,
+    ) -> async_graphql::Response {
+        let request: async_graphql::Request = query.into();
+        let request = self.request_with_guard(request, guard).data(customer_ids);
         self.schema.execute(request).await
     }
 
