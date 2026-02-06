@@ -15,6 +15,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `host`, `domain`) extracted from a client certificate. (auth-mtls)
 - Added `authenticator` field of type `Arc<dyn MtlsAuthenticator>` to
   `ServerConfig`. (auth-mtls)
+- Added customer scoping to `TriageResponse` GraphQL resolvers. Non-admin
+  users can now only access triage responses whose sensor hostname maps to a
+  node belonging to one of their accessible customers. Affected APIs:
+  `triageResponse`, `triageResponseList`, `insertTriageResponse`,
+  `updateTriageResponse`, `removeTriageResponses`.
+- Added customer scoping to `EventTag` GraphQL resolvers. The `eventTagList`
+  query now filters tags to only those referenced by accessible triage
+  responses. The `removeEventTag` and `updateEventTag` mutations require
+  access to all customers whose triage responses reference the tag.
 
 ### Changed
 
