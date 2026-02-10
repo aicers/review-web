@@ -11,7 +11,8 @@ use tracing::info;
 
 use super::{Role, RoleGuard};
 use crate::graphql::customer_access::{
-    derive_customer_id_from_hostname, is_member, sensor_from_key, users_customers,
+    derive_customer_id_from_hostname, hostname_customer_id_map, is_member, sensor_from_key,
+    users_customers,
 };
 use crate::graphql::{
     cluster::try_id_args_into_ints, network::id_args_into_uints, query_with_constraints,
@@ -64,6 +65,7 @@ impl TriageResponseTotalCount {
             // Admin: count all
             map.iter(Direction::Forward, None).count()
         } else {
+            let hostname_map = hostname_customer_id_map(&store)?;
             // Scoped user: count only accessible responses
             map.iter(Direction::Forward, None)
                 .filter_map(std::result::Result::ok)
@@ -72,10 +74,7 @@ impl TriageResponseTotalCount {
                     let Ok(sensor) = sensor_from_key(&key_bytes) else {
                         return false;
                     };
-                    let Ok(cid) = derive_customer_id_from_hostname(&store, &sensor) else {
-                        return false;
-                    };
-                    match cid {
+                    match hostname_map.get(&sensor).copied() {
                         Some(c) => is_member(users_cids.as_deref(), c),
                         None => false,
                     }
@@ -205,19 +204,17 @@ async fn load(
         // Admin: no filtering needed
         crate::graphql::load_edges(&table, after, before, first, last, TriageResponseTotalCount)
     } else {
+        let hostname_map = hostname_customer_id_map(&store)?;
         // Scoped user: filter by customer access
         let predicate = |tr: &review_database::TriageResponse| {
             let key_bytes = tr.key();
             let Ok(sensor) = sensor_from_key(&key_bytes) else {
                 return false;
             };
-            let Ok(cid) = derive_customer_id_from_hostname(&store, &sensor) else {
-                return false;
-            };
-            match cid {
-                Some(c) => is_member(users_cids.as_deref(), c),
-                None => false,
-            }
+            hostname_map
+                .get(&sensor)
+                .copied()
+                .is_some_and(|c| is_member(users_cids.as_deref(), c))
         };
 
         let (nodes, has_previous, has_next) = crate::graphql::process_load_edges_filtered(
