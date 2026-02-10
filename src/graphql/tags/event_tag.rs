@@ -6,7 +6,7 @@ use review_database::{Indexable, Iterable, Store, event::Direction};
 use super::{Role, Tag};
 use crate::graphql::RoleGuard;
 use crate::graphql::customer_access::{
-    derive_customer_id_from_hostname, is_member, sensor_from_key, users_customers,
+    hostname_customer_id_map, is_member, sensor_from_key, users_customers,
 };
 
 /// Collects the set of event-tag IDs referenced by `TriageResponse`s that
@@ -19,6 +19,7 @@ fn accessible_tag_ids(store: &Store, users_cids: Option<&[u32]>) -> Result<Optio
         return Ok(None); // Admin: all tags are accessible
     }
 
+    let hostname_map = hostname_customer_id_map(store)?;
     let map = store.triage_response_map();
     let mut tag_ids = HashSet::new();
 
@@ -30,10 +31,7 @@ fn accessible_tag_ids(store: &Store, users_cids: Option<&[u32]>) -> Result<Optio
         let Ok(sensor) = sensor_from_key(&key_bytes) else {
             continue;
         };
-        let Ok(cid) = derive_customer_id_from_hostname(store, &sensor) else {
-            continue;
-        };
-        match cid {
+        match hostname_map.get(&sensor).copied() {
             Some(c) if is_member(users_cids, c) => {
                 tag_ids.extend(tr.tag_ids().iter().copied());
             }
@@ -55,6 +53,7 @@ fn check_tag_access(store: &Store, users_cids: Option<&[u32]>, tag_id: u32) -> R
         return Ok(()); // Admin bypass
     }
 
+    let hostname_map = hostname_customer_id_map(store)?;
     let map = store.triage_response_map();
 
     for entry in map.iter(Direction::Forward, None) {
@@ -68,10 +67,7 @@ fn check_tag_access(store: &Store, users_cids: Option<&[u32]>, tag_id: u32) -> R
         let Ok(sensor) = sensor_from_key(&key_bytes) else {
             return Err("Forbidden".into());
         };
-        let Ok(cid) = derive_customer_id_from_hostname(store, &sensor) else {
-            return Err("Forbidden".into());
-        };
-        match cid {
+        match hostname_map.get(&sensor).copied() {
             Some(c) if is_member(users_cids, c) => {}
             _ => return Err("Forbidden".into()),
         }

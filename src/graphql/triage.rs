@@ -816,6 +816,31 @@ mod tests {
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert!(res.errors.is_empty(), "insert node: {:?}", res.errors);
+        let node_id = res
+            .data
+            .to_string()
+            .split('"')
+            .nth(1)
+            .expect("extract node ID")
+            .to_string();
+
+        // Apply the node so the hostname is searchable via the active profile.
+        let query = format!(
+            r#"mutation {{
+                applyNode(
+                    id: "{node_id}"
+                    node: {{
+                        name: "{hostname}"
+                        nameDraft: "{hostname}"
+                        profileDraft: {{ customerId: {cid}, description: "", hostname: "{hostname}" }}
+                        agents: []
+                        externalServices: []
+                    }}
+                )
+            }}"#,
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        assert!(res.errors.is_empty(), "apply node: {:?}", res.errors);
 
         cid
     }

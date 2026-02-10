@@ -8,6 +8,8 @@
 //! - Context-based lookup of the current user's customer scope.
 //! - Hostname-to-customer derivation via node profile mapping.
 
+use std::collections::HashMap;
+
 use async_graphql::{Context, Result};
 use review_database::{Role, Store, event::Direction};
 
@@ -104,11 +106,7 @@ pub(crate) fn derive_customer_id_from_hostname(
     for entry in map.iter(Direction::Forward, None) {
         let node = entry
             .map_err(|e| async_graphql::Error::new(format!("failed to iterate nodes: {e}")))?;
-        // Check the active profile first, then fall back to the draft
-        // (a newly-inserted node has only a profile_draft until the admin
-        // calls `applyNode`).
-        let effective = node.profile.as_ref().or(node.profile_draft.as_ref());
-        if let Some(profile) = effective
+        if let Some(profile) = node.profile.as_ref()
             && profile.hostname == hostname
         {
             return Ok(Some(profile.customer_id));
@@ -116,6 +114,33 @@ pub(crate) fn derive_customer_id_from_hostname(
     }
 
     Ok(None)
+}
+
+/// Builds a hostname-to-customer map from the node profiles.
+///
+/// The map includes only active profiles (excluding drafts).
+///
+/// This helper exists primarily for performance: callers that need to
+/// resolve many sensors/hostnames (e.g., while iterating triage responses)
+/// can build this map once and then do O(1) lookups instead of repeatedly
+/// scanning the node map.
+///
+/// # Errors
+///
+/// Returns an error if a database iteration error occurs.
+pub(crate) fn hostname_customer_id_map(store: &Store) -> Result<HashMap<String, u32>> {
+    let map = store.node_map();
+    let mut hostname_map = HashMap::<String, u32>::new();
+
+    for entry in map.iter(Direction::Forward, None) {
+        let node = entry
+            .map_err(|e| async_graphql::Error::new(format!("failed to iterate nodes: {e}")))?;
+        if let Some(profile) = node.profile.as_ref() {
+            hostname_map.insert(profile.hostname.clone(), profile.customer_id);
+        }
+    }
+
+    Ok(hostname_map)
 }
 
 /// Extracts the sensor hostname from a `TriageResponse` key.
@@ -365,6 +390,56 @@ mod tests {
         let (_dir, _bdir, store) = create_store_with_node("host-a", 42);
         let result = derive_customer_id_from_hostname(&store, "host-unknown");
         assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn test_derive_customer_id_ignores_profile_draft() {
+        let db_dir = tempfile::tempdir().expect("create data dir");
+        let backup_dir = tempfile::tempdir().expect("create backup dir");
+        let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+        let node = review_database::Node {
+            id: u32::MAX,
+            name: "draft-only".to_string(),
+            name_draft: Some("draft-only".to_string()),
+            profile: None,
+            profile_draft: Some(review_database::NodeProfile {
+                customer_id: 7,
+                description: String::new(),
+                hostname: "host-draft".to_string(),
+            }),
+            agents: vec![],
+            external_services: vec![],
+            creation_time: Utc::now(),
+        };
+        store.node_map().put(&node).expect("insert node");
+
+        let result = derive_customer_id_from_hostname(&store, "host-draft").unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_hostname_customer_id_map_ignores_profile_draft() {
+        let db_dir = tempfile::tempdir().expect("create data dir");
+        let backup_dir = tempfile::tempdir().expect("create backup dir");
+        let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+        let node = review_database::Node {
+            id: u32::MAX,
+            name: "draft-only".to_string(),
+            name_draft: Some("draft-only".to_string()),
+            profile: None,
+            profile_draft: Some(review_database::NodeProfile {
+                customer_id: 7,
+                description: String::new(),
+                hostname: "host-draft".to_string(),
+            }),
+            agents: vec![],
+            external_services: vec![],
+            creation_time: Utc::now(),
+        };
+        store.node_map().put(&node).expect("insert node");
+
+        let hostname_map = hostname_customer_id_map(&store).unwrap();
+        assert!(!hostname_map.contains_key("host-draft"));
     }
 
     #[test]
