@@ -9,7 +9,7 @@
 //! - Hostname-to-customer derivation via node profile mapping.
 
 use async_graphql::{Context, Result};
-use review_database::{Store, event::Direction};
+use review_database::{Role, Store, event::Direction};
 
 /// Checks if a user is a member of a specific customer.
 ///
@@ -60,20 +60,27 @@ pub(crate) fn users_customers(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
         return Ok(cids.0.clone());
     }
 
+    // System administrators (and local auth bypass) are always unscoped.
+    // This also keeps test schemas (which may not populate account data) aligned
+    // with production behavior where system admins have full access.
+    if let Some(guard) = ctx.data_opt::<crate::graphql::RoleGuard>() {
+        match guard {
+            crate::graphql::RoleGuard::Role(Role::SystemAdministrator)
+            | crate::graphql::RoleGuard::Local => {
+                return Ok(None);
+            }
+            crate::graphql::RoleGuard::Role(_) => {}
+        }
+    }
+
     // Fall back to account lookup (JWT path)
-    let Ok(username) = ctx.data::<String>() else {
-        // No username in context; treat as admin (role guard
-        // already enforces access).
-        return Ok(None);
-    };
+    let username = ctx.data::<String>()?;
     let store = crate::graphql::get_store(ctx)?;
     let account_map = store.account_map();
-    match account_map.get(username)? {
-        Some(user) => Ok(user.customer_ids),
-        // User not found in account map; treat as admin since
-        // the role guard already validated access.
-        None => Ok(None),
-    }
+    let user = account_map
+        .get(username)?
+        .ok_or_else::<async_graphql::Error, _>(|| "User not found".into())?;
+    Ok(user.customer_ids)
 }
 
 /// Derives the customer ID from a sensor hostname by looking up the node
@@ -303,28 +310,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_users_customers_missing_user() {
-        // When a user is not found in the account map, `users_customers`
-        // returns `None` (admin access) because the role guard already
-        // validated access.
         let test_ctx = TestContext::new_without_account("missing_user");
         let res = test_ctx.execute("{ usersCustomers }").await;
-        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
-        assert_eq!(
-            res.data.into_json().unwrap(),
-            json!({"usersCustomers": null})
-        );
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "User not found");
     }
 
     #[tokio::test]
     async fn test_users_customers_missing_username_context() {
-        // When no username is in the context (e.g. mTLS without
-        // CustomerIds), `users_customers` returns `None` (admin access).
         let test_ctx = TestContext::new_without_username();
         let res = test_ctx.execute("{ usersCustomers }").await;
-        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(res.errors.len(), 1);
         assert_eq!(
-            res.data.into_json().unwrap(),
-            json!({"usersCustomers": null})
+            res.errors[0].message,
+            "Data `alloc::string::String` does not exist."
         );
     }
 
