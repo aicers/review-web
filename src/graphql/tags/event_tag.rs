@@ -259,6 +259,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_event_tag_list_scoped_shared_tag_visible_with_reachable_policy() {
+        let schema = TestSchema::new().await;
+        let cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+        let _cid_b = schema.setup_customer_and_node("cust-b", "sensor-b").await;
+        let cid_a_num: u32 = cid_a.parse().unwrap();
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { insertEventTag(name: "shared-tag") }"#)
+            .await;
+        assert!(res.errors.is_empty(), "insert shared-tag: {:?}", res.errors);
+        let tag_id = res.data.to_string().split('"').nth(1).unwrap().to_string();
+
+        for sensor in ["sensor-a", "sensor-b"] {
+            let query = format!(
+                r#"mutation {{
+                    insertTriageResponse(
+                        sensor: "{sensor}"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: [{tag_id}]
+                        remarks: "x"
+                    )
+                }}"#,
+            );
+            let res = schema.execute_as_system_admin(&query).await;
+            assert!(
+                res.errors.is_empty(),
+                "insert triage response for {sensor}: {:?}",
+                res.errors
+            );
+        }
+
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(
+                r"{ eventTagList { name } }",
+                vec![cid_a_num],
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+
+        let json = res.data.into_json().unwrap();
+        let names: Vec<&str> = json["eventTagList"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+
+        // Current list policy is reachable-based: visible if at least one
+        // accessible triage response references the tag.
+        assert!(names.contains(&"shared-tag"));
+    }
+
+    #[tokio::test]
     async fn test_event_tag_insert() {
         let schema = TestSchema::new().await;
 
@@ -410,6 +463,48 @@ mod tests {
         );
         let res = schema
             .execute_as_security_admin_with_customer_ids(&query, vec![cid_b_num])
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    #[tokio::test]
+    async fn test_event_tag_update_scoped_forbidden_with_shared_tag() {
+        let schema = TestSchema::new().await;
+        let cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+        let _cid_b = schema.setup_customer_and_node("cust-b", "sensor-b").await;
+        let cid_a_num: u32 = cid_a.parse().unwrap();
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { insertEventTag(name: "shared-tag") }"#)
+            .await;
+        assert!(res.errors.is_empty(), "insert shared-tag: {:?}", res.errors);
+        let tag_id = res.data.to_string().split('"').nth(1).unwrap().to_string();
+
+        for sensor in ["sensor-a", "sensor-b"] {
+            let query = format!(
+                r#"mutation {{
+                    insertTriageResponse(
+                        sensor: "{sensor}"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: [{tag_id}]
+                        remarks: "x"
+                    )
+                }}"#,
+            );
+            let res = schema.execute_as_system_admin(&query).await;
+            assert!(
+                res.errors.is_empty(),
+                "insert triage response for {sensor}: {:?}",
+                res.errors
+            );
+        }
+
+        let query = format!(
+            r#"mutation {{ updateEventTag(id: "{tag_id}", old: "shared-tag", new: "renamed") }}"#
+        );
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(&query, vec![cid_a_num])
             .await;
         assert_eq!(res.errors.len(), 1);
         assert_eq!(res.errors[0].message, "Forbidden");
