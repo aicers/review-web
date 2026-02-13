@@ -364,3 +364,578 @@ impl super::TriageResponseMutation {
         Ok(id)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::graphql::TestSchema;
+
+    #[tokio::test]
+    async fn test_triage_response_scoped_list_filtering() {
+        let schema = TestSchema::new().await;
+        let cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+        let _cid_b = schema.setup_customer_and_node("cust-b", "sensor-b").await;
+        let cid_a_num: u32 = cid_a.parse().unwrap();
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageResponse(
+                        sensor: "sensor-a"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: []
+                        remarks: "a"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "insert a: {:?}", res.errors);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageResponse(
+                        sensor: "sensor-b"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: []
+                        remarks: "b"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "insert b: {:?}", res.errors);
+
+        let res = schema
+            .execute_as_system_admin(r"{triageResponseList{totalCount}}")
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{triageResponseList: {totalCount: "2"}}"#
+        );
+
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(
+                r"{triageResponseList{totalCount}}",
+                vec![cid_a_num],
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{triageResponseList: {totalCount: "1"}}"#
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn test_triage_response_scoped_list_pagination_args() {
+        let schema = TestSchema::new().await;
+        let cid_a1 = schema.setup_customer_and_node("cust-a1", "sensor-a1").await;
+        let cid_a2 = schema.setup_customer_and_node("cust-a2", "sensor-a2").await;
+        let cid_a3 = schema.setup_customer_and_node("cust-a3", "sensor-a3").await;
+        let _cid_b = schema.setup_customer_and_node("cust-b", "sensor-b1").await;
+        let cid_a1_num: u32 = cid_a1.parse().unwrap();
+        let cid_a2_num: u32 = cid_a2.parse().unwrap();
+        let cid_a3_num: u32 = cid_a3.parse().unwrap();
+        let scoped_customer_ids = vec![cid_a1_num, cid_a2_num, cid_a3_num];
+
+        for (sensor, remarks) in [
+            ("sensor-a1", "a1"),
+            ("sensor-a2", "a2"),
+            ("sensor-a3", "a3"),
+            ("sensor-b1", "b1"),
+        ] {
+            let query = format!(
+                r#"mutation {{
+                    insertTriageResponse(
+                        sensor: "{sensor}"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: []
+                        remarks: "{remarks}"
+                    )
+                }}"#,
+            );
+            let res = schema.execute_as_system_admin(&query).await;
+            assert!(res.errors.is_empty(), "insert {sensor}: {:?}", res.errors);
+        }
+
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(
+                r"{
+                    triageResponseList(first: 10) {
+                        totalCount
+                        edges { cursor node { remarks } }
+                    }
+                }",
+                scoped_customer_ids.clone(),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "full list errors: {:?}", res.errors);
+        let json = res.data.into_json().unwrap();
+        assert_eq!(json["triageResponseList"]["totalCount"], "3");
+        let edges = json["triageResponseList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 3);
+        let visible_remarks: Vec<String> = edges
+            .iter()
+            .map(|edge| edge["node"]["remarks"].as_str().unwrap().to_string())
+            .collect();
+
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(
+                r"{
+                    triageResponseList(first: 1) {
+                        edges { cursor node { remarks } }
+                        pageInfo { endCursor hasNextPage }
+                    }
+                }",
+                scoped_customer_ids.clone(),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "first errors: {:?}", res.errors);
+        let json = res.data.into_json().unwrap();
+        let first_edges = json["triageResponseList"]["edges"].as_array().unwrap();
+        assert_eq!(first_edges.len(), 1);
+        assert_eq!(
+            first_edges[0]["node"]["remarks"].as_str().unwrap(),
+            visible_remarks[0]
+        );
+        assert_eq!(json["triageResponseList"]["pageInfo"]["hasNextPage"], true);
+        let after_cursor = json["triageResponseList"]["pageInfo"]["endCursor"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let query = format!(
+            r#"{{
+                triageResponseList(after: "{after_cursor}") {{
+                    edges {{ node {{ remarks }} }}
+                }}
+            }}"#,
+        );
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(&query, scoped_customer_ids.clone())
+            .await;
+        assert!(res.errors.is_empty(), "after errors: {:?}", res.errors);
+        let json = res.data.into_json().unwrap();
+        let after_remarks: Vec<String> = json["triageResponseList"]["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|edge| edge["node"]["remarks"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(after_remarks, visible_remarks[1..].to_vec());
+
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(
+                r"{
+                    triageResponseList(last: 1) {
+                        edges { cursor node { remarks } }
+                        pageInfo { startCursor hasPreviousPage }
+                    }
+                }",
+                scoped_customer_ids.clone(),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "last errors: {:?}", res.errors);
+        let json = res.data.into_json().unwrap();
+        let last_edges = json["triageResponseList"]["edges"].as_array().unwrap();
+        assert_eq!(last_edges.len(), 1);
+        assert_eq!(
+            last_edges[0]["node"]["remarks"].as_str().unwrap(),
+            visible_remarks.last().unwrap()
+        );
+        assert_eq!(
+            json["triageResponseList"]["pageInfo"]["hasPreviousPage"],
+            true
+        );
+        let before_cursor = json["triageResponseList"]["pageInfo"]["startCursor"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let query = format!(
+            r#"{{
+                triageResponseList(before: "{before_cursor}") {{
+                    edges {{ node {{ remarks }} }}
+                }}
+            }}"#,
+        );
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(&query, scoped_customer_ids)
+            .await;
+        assert!(res.errors.is_empty(), "before errors: {:?}", res.errors);
+        let json = res.data.into_json().unwrap();
+        let before_remarks: Vec<String> = json["triageResponseList"]["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|edge| edge["node"]["remarks"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            before_remarks,
+            visible_remarks[..visible_remarks.len() - 1].to_vec()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_triage_response_scoped_query_allowed() {
+        let schema = TestSchema::new().await;
+        let cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+        let cid_num: u32 = cid.parse().unwrap();
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageResponse(
+                        sensor: "sensor-a"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: [1]
+                        remarks: "visible"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "insert response: {:?}", res.errors);
+
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(
+                r#"{ triageResponse(sensor: "sensor-a", time: "2024-01-01T00:00:00Z") { id remarks } }"#,
+                vec![cid_num],
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let json = res.data.into_json().unwrap();
+        assert_eq!(json["triageResponse"]["id"], "0");
+        assert_eq!(json["triageResponse"]["remarks"], "visible");
+    }
+
+    #[tokio::test]
+    async fn test_triage_response_scoped_query_forbidden() {
+        let schema = TestSchema::new().await;
+        let _cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageResponse(
+                        sensor: "sensor-a"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: []
+                        remarks: "x"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty());
+
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(
+                r#"{ triageResponse(sensor: "sensor-a", time: "2024-01-01T00:00:00Z") { id } }"#,
+                vec![999],
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    #[tokio::test]
+    async fn test_triage_response_scoped_insert_allowed() {
+        let schema = TestSchema::new().await;
+        let cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+        let cid_num: u32 = cid.parse().unwrap();
+
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(
+                r#"mutation {
+                    insertTriageResponse(
+                        sensor: "sensor-a"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: []
+                        remarks: "ok"
+                    )
+                }"#,
+                vec![cid_num],
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+    }
+
+    #[tokio::test]
+    async fn test_triage_response_scoped_insert_forbidden() {
+        let schema = TestSchema::new().await;
+        let _cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(
+                r#"mutation {
+                    insertTriageResponse(
+                        sensor: "sensor-a"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: []
+                        remarks: "nope"
+                    )
+                }"#,
+                vec![999],
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    #[tokio::test]
+    async fn test_triage_response_scoped_remove_allowed() {
+        let schema = TestSchema::new().await;
+        let cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+        let cid_num: u32 = cid.parse().unwrap();
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageResponse(
+                        sensor: "sensor-a"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: []
+                        remarks: "x"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "insert response: {:?}", res.errors);
+        let id = res.data.to_string().split('"').nth(1).unwrap().to_string();
+
+        let query = format!(r"mutation {{ removeTriageResponses(ids: [{id}]) }}");
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(&query, vec![cid_num])
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{removeTriageResponses: ["{id}"]}}"#)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_triage_response_scoped_remove_forbidden() {
+        let schema = TestSchema::new().await;
+        let _cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageResponse(
+                        sensor: "sensor-a"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: []
+                        remarks: "x"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty());
+        let id = res.data.to_string().split('"').nth(1).unwrap().to_string();
+
+        let query = format!(r"mutation {{ removeTriageResponses(ids: [{id}]) }}");
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(&query, vec![999])
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    #[tokio::test]
+    async fn test_triage_response_scoped_update_allowed() {
+        let schema = TestSchema::new().await;
+        let cid = schema.setup_customer_and_node("cust-a", "sensor1").await;
+        let cid_num: u32 = cid.parse().unwrap();
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageResponse(
+                        sensor: "sensor1"
+                        time: "2023-02-14 14:54:46.083902898 +00:00"
+                        tagIds: [1, 2, 3]
+                        remarks: "before"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "insert response: {:?}", res.errors);
+        let id = res.data.to_string().split('"').nth(1).unwrap().to_string();
+
+        let query = format!(
+            r#"mutation {{
+                updateTriageResponse(
+                    id: "{id}"
+                    old: {{
+                        key: [115, 101, 110, 115, 111, 114, 49, 23, 67, 184, 160, 145, 75, 221, 178]
+                        tagIds: [1, 2, 3]
+                        remarks: "before"
+                    }}
+                    new: {{
+                        key: [115, 101, 110, 115, 111, 114, 49, 23, 67, 184, 160, 145, 75, 221, 178]
+                        tagIds: [2, 3]
+                        remarks: "after"
+                    }}
+                )
+            }}"#,
+        );
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(&query, vec![cid_num])
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{updateTriageResponse: "{id}"}}"#)
+        );
+
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(
+                r#"{ triageResponse(sensor: "sensor1", time: "2023-02-14 14:54:46.083902898 +00:00") { remarks tagIds } }"#,
+                vec![cid_num],
+            )
+            .await;
+        assert!(res.errors.is_empty(), "query errors: {:?}", res.errors);
+        let json = res.data.into_json().unwrap();
+        assert_eq!(json["triageResponse"]["remarks"], "after");
+        assert_eq!(json["triageResponse"]["tagIds"][0], "2");
+        assert_eq!(json["triageResponse"]["tagIds"][1], "3");
+    }
+
+    #[tokio::test]
+    async fn test_triage_response_scoped_update_forbidden() {
+        let schema = TestSchema::new().await;
+        let _cid = schema.setup_customer_and_node("cust-a", "sensor1").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageResponse(
+                        sensor: "sensor1"
+                        time: "2023-02-14 14:54:46.083902898 +00:00"
+                        tagIds: [1, 2, 3]
+                        remarks: "before"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "insert response: {:?}", res.errors);
+        let id = res.data.to_string().split('"').nth(1).unwrap().to_string();
+
+        let query = format!(
+            r#"mutation {{
+                updateTriageResponse(
+                    id: "{id}"
+                    old: {{
+                        key: [115, 101, 110, 115, 111, 114, 49, 23, 67, 184, 160, 145, 75, 221, 178]
+                        tagIds: [1, 2, 3]
+                        remarks: "before"
+                    }}
+                    new: {{
+                        key: [115, 101, 110, 115, 111, 114, 49, 23, 67, 184, 160, 145, 75, 221, 178]
+                        tagIds: [2, 3]
+                        remarks: "after"
+                    }}
+                )
+            }}"#,
+        );
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(&query, vec![999])
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    #[tokio::test]
+    async fn test_triage_response() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(r"{triageResponseList{totalCount}}")
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{triageResponseList: {totalCount: "0"}}"#
+        );
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertTriageResponse(
+                        sensor: "sensor1"
+                        time: "2023-02-14 14:54:46.083902898 +00:00"
+                        tagIds: [1, 2, 3]
+                        remarks: "Hello World"
+                    )
+                }
+                "#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTriageResponse: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    updateTriageResponse(
+                        id: "0"
+                        old: {
+                            key: [
+                                115,
+                                101,
+                                110,
+                                115,
+                                111,
+                                114,
+                                49,
+                                23,
+                                67,
+                                184,
+                                160,
+                                145,
+                                75,
+                                221,
+                                178
+                            ]
+                            tagIds:[1, 2, 3]
+                            remarks:"Hello World"
+                        }
+                        new: {
+                            key: [
+                                115,
+                                101,
+                                110,
+                                115,
+                                111,
+                                114,
+                                49,
+                                23,
+                                67,
+                                184,
+                                160,
+                                145,
+                                75,
+                                221,
+                                178
+                            ]
+                            tagIds:[2, 3]
+                        }
+                    )
+                }
+                "#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{updateTriageResponse: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r"
+                mutation {
+                    removeTriageResponses(ids: [0])
+                }
+                ",
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{removeTriageResponses: ["0"]}"#);
+    }
+}

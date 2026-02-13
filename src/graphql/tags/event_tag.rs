@@ -162,3 +162,256 @@ impl EventTagMutation {
         Ok(set.update(id_num, &old, &new)?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::graphql::TestSchema;
+
+    #[tokio::test]
+    async fn test_event_tag_list_scoped() {
+        let schema = TestSchema::new().await;
+        let cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+        let _cid_b = schema.setup_customer_and_node("cust-b", "sensor-b").await;
+        let cid_a_num: u32 = cid_a.parse().unwrap();
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { insertEventTag(name: "tag-alpha") }"#)
+            .await;
+        assert!(res.errors.is_empty(), "insert tag-alpha: {:?}", res.errors);
+        let tag_alpha_id: u32 = res
+            .data
+            .to_string()
+            .split('"')
+            .nth(1)
+            .unwrap()
+            .parse()
+            .unwrap();
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { insertEventTag(name: "tag-beta") }"#)
+            .await;
+        assert!(res.errors.is_empty(), "insert tag-beta: {:?}", res.errors);
+        let tag_beta_id: u32 = res
+            .data
+            .to_string()
+            .split('"')
+            .nth(1)
+            .unwrap()
+            .parse()
+            .unwrap();
+
+        let query_a = format!(
+            r#"mutation {{
+                insertTriageResponse(
+                    sensor: "sensor-a"
+                    time: "2024-01-01T00:00:00Z"
+                    tagIds: [{tag_alpha_id}]
+                    remarks: "a"
+                )
+            }}"#,
+        );
+        let res = schema.execute_as_system_admin(&query_a).await;
+        assert!(res.errors.is_empty(), "insert resp a: {:?}", res.errors);
+
+        let query_b = format!(
+            r#"mutation {{
+                insertTriageResponse(
+                    sensor: "sensor-b"
+                    time: "2024-01-01T00:00:00Z"
+                    tagIds: [{tag_beta_id}]
+                    remarks: "b"
+                )
+            }}"#,
+        );
+        let res = schema.execute_as_system_admin(&query_b).await;
+        assert!(res.errors.is_empty(), "insert resp b: {:?}", res.errors);
+
+        let res = schema
+            .execute_as_system_admin(r"{ eventTagList { name } }")
+            .await;
+        assert!(res.errors.is_empty());
+        let json = res.data.into_json().unwrap();
+        let names: Vec<&str> = json["eventTagList"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"tag-alpha"));
+        assert!(names.contains(&"tag-beta"));
+
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(
+                r"{ eventTagList { name } }",
+                vec![cid_a_num],
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let json = res.data.into_json().unwrap();
+        let names: Vec<&str> = json["eventTagList"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"tag-alpha"));
+        assert!(!names.contains(&"tag-beta"));
+    }
+
+    #[tokio::test]
+    async fn test_event_tag_insert() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { insertEventTag(name: "new-tag") }"#)
+            .await;
+        assert!(res.errors.is_empty(), "insert errors: {:?}", res.errors);
+        assert_eq!(res.data.to_string(), r#"{insertEventTag: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r"{ eventTagList { id name } }")
+            .await;
+        assert!(res.errors.is_empty(), "list errors: {:?}", res.errors);
+        let json = res.data.into_json().unwrap();
+        assert_eq!(json["eventTagList"][0]["id"], "0");
+        assert_eq!(json["eventTagList"][0]["name"], "new-tag");
+    }
+
+    #[tokio::test]
+    async fn test_event_tag_remove_scoped_allowed() {
+        let schema = TestSchema::new().await;
+        let cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+        let cid_a_num: u32 = cid_a.parse().unwrap();
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { insertEventTag(name: "only-a") }"#)
+            .await;
+        assert!(res.errors.is_empty());
+        let tag_id = res.data.to_string().split('"').nth(1).unwrap().to_string();
+
+        let query = format!(
+            r#"mutation {{
+                insertTriageResponse(
+                    sensor: "sensor-a"
+                    time: "2024-01-01T00:00:00Z"
+                    tagIds: [{tag_id}]
+                    remarks: "x"
+                )
+            }}"#,
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        assert!(res.errors.is_empty());
+
+        let query = format!(r#"mutation {{ removeEventTag(id: "{tag_id}") }}"#);
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(&query, vec![cid_a_num])
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        assert_eq!(res.data.to_string(), r#"{removeEventTag: "only-a"}"#);
+    }
+
+    #[tokio::test]
+    async fn test_event_tag_remove_scoped_forbidden() {
+        let schema = TestSchema::new().await;
+        let _cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+        let cid_b = schema.setup_customer_and_node("cust-b", "sensor-b").await;
+        let cid_b_num: u32 = cid_b.parse().unwrap();
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { insertEventTag(name: "only-a") }"#)
+            .await;
+        assert!(res.errors.is_empty());
+        let tag_id = res.data.to_string().split('"').nth(1).unwrap().to_string();
+
+        let query = format!(
+            r#"mutation {{
+                insertTriageResponse(
+                    sensor: "sensor-a"
+                    time: "2024-01-01T00:00:00Z"
+                    tagIds: [{tag_id}]
+                    remarks: "x"
+                )
+            }}"#,
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        assert!(res.errors.is_empty());
+
+        let query = format!(r#"mutation {{ removeEventTag(id: "{tag_id}") }}"#);
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(&query, vec![cid_b_num])
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    #[tokio::test]
+    async fn test_event_tag_update_scoped_allowed() {
+        let schema = TestSchema::new().await;
+        let cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+        let cid_a_num: u32 = cid_a.parse().unwrap();
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { insertEventTag(name: "rename-me") }"#)
+            .await;
+        assert!(res.errors.is_empty());
+        let tag_id = res.data.to_string().split('"').nth(1).unwrap().to_string();
+
+        let query = format!(
+            r#"mutation {{
+                insertTriageResponse(
+                    sensor: "sensor-a"
+                    time: "2024-01-01T00:00:00Z"
+                    tagIds: [{tag_id}]
+                    remarks: "x"
+                )
+            }}"#,
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        assert!(res.errors.is_empty());
+
+        let query = format!(
+            r#"mutation {{ updateEventTag(id: "{tag_id}", old: "rename-me", new: "renamed") }}"#
+        );
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(&query, vec![cid_a_num])
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        assert_eq!(res.data.to_string(), r"{updateEventTag: true}");
+    }
+
+    #[tokio::test]
+    async fn test_event_tag_update_scoped_forbidden() {
+        let schema = TestSchema::new().await;
+        let _cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+        let cid_b = schema.setup_customer_and_node("cust-b", "sensor-b").await;
+        let cid_b_num: u32 = cid_b.parse().unwrap();
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { insertEventTag(name: "rename-me") }"#)
+            .await;
+        assert!(res.errors.is_empty());
+        let tag_id = res.data.to_string().split('"').nth(1).unwrap().to_string();
+
+        let query = format!(
+            r#"mutation {{
+                insertTriageResponse(
+                    sensor: "sensor-a"
+                    time: "2024-01-01T00:00:00Z"
+                    tagIds: [{tag_id}]
+                    remarks: "x"
+                )
+            }}"#,
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        assert!(res.errors.is_empty());
+
+        let query = format!(
+            r#"mutation {{ updateEventTag(id: "{tag_id}", old: "rename-me", new: "renamed") }}"#
+        );
+        let res = schema
+            .execute_as_security_admin_with_customer_ids(&query, vec![cid_b_num])
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+}
