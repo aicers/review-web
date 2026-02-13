@@ -1053,6 +1053,78 @@ impl TestSchema {
         self.schema.execute(request).await
     }
 
+    async fn execute_as_security_admin_with_customer_ids(
+        &self,
+        query: &str,
+        customer_ids: Vec<u32>,
+    ) -> async_graphql::Response {
+        self.execute_with_guard_and_customer_ids(
+            query,
+            RoleGuard::Role(Role::SecurityAdministrator),
+            CustomerIds(Some(customer_ids)),
+        )
+        .await
+    }
+
+    /// Creates a customer and an applied node with the provided hostname.
+    ///
+    /// Returns the newly created customer ID.
+    async fn setup_customer_and_node(&self, customer_name: &str, hostname: &str) -> String {
+        let query = format!(
+            r#"mutation {{ insertCustomer(name: "{customer_name}", description: "", networks: []) }}"#,
+        );
+        let res = self.execute_as_system_admin(&query).await;
+        assert!(res.errors.is_empty(), "insert customer: {:?}", res.errors);
+        let cid = res
+            .data
+            .to_string()
+            .split('"')
+            .nth(1)
+            .expect("customer insert response always contains a quoted id")
+            .to_string();
+
+        let query = format!(
+            r#"mutation {{
+                insertNode(
+                    name: "{hostname}"
+                    customerId: {cid}
+                    description: ""
+                    hostname: "{hostname}"
+                    agents: []
+                    externalServices: []
+                )
+            }}"#,
+        );
+        let res = self.execute_as_system_admin(&query).await;
+        assert!(res.errors.is_empty(), "insert node: {:?}", res.errors);
+        let node_id = res
+            .data
+            .to_string()
+            .split('"')
+            .nth(1)
+            .expect("node insert response always contains a quoted id")
+            .to_string();
+
+        let query = format!(
+            r#"mutation {{
+                applyNode(
+                    id: "{node_id}"
+                    node: {{
+                        name: "{hostname}"
+                        nameDraft: "{hostname}"
+                        profileDraft: {{ customerId: {cid}, description: "", hostname: "{hostname}" }}
+                        agents: []
+                        externalServices: []
+                    }}
+                )
+            }}"#,
+        );
+        let res = self.execute_as_system_admin(&query).await;
+        assert!(res.errors.is_empty(), "apply node: {:?}", res.errors);
+
+        cid
+    }
+
     fn request_with_guard(
         &self,
         request: async_graphql::Request,
