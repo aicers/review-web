@@ -4,8 +4,10 @@ use itertools::Itertools;
 use tracing::{error, info, warn};
 
 use super::{
-    super::{BoxedAgentManager, Role, RoleGuard},
-    NodeControlMutation, SEMI_SUPERVISED_AGENT, gen_agent_key,
+    super::{BoxedAgentManager, Role, RoleGuard, customer_access},
+    NodeControlMutation, SEMI_SUPERVISED_AGENT,
+    crud::can_access_node,
+    gen_agent_key,
 };
 use crate::graphql::{
     customer::{NetworksTargetAgentKeysPair, send_agent_specific_customer_networks},
@@ -61,6 +63,19 @@ impl NodeControlMutation {
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_node(&self, ctx: &Context<'_>, id: ID, node: NodeInput) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
+
+        // Check customer scoping
+        {
+            let store = crate::graphql::get_store(ctx)?;
+            let users_customers = customer_access::users_customers(ctx)?;
+            let node_map = store.node_map();
+            let Some((db_node, _, _)) = node_map.get_by_id(i)? else {
+                return Err("no such node".into());
+            };
+            if !can_access_node(users_customers.as_deref(), &db_node) {
+                return Err("Forbidden".into());
+            }
+        }
 
         if node.name_draft.is_none() {
             // Since the `name` of the node is used as the key in the database, the `name_draft`

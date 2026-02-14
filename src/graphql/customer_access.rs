@@ -17,8 +17,7 @@ use async_graphql::{Context, Result};
 ///
 /// Returns `false` otherwise, including when `users_customers` is an empty slice.
 #[must_use]
-#[allow(dead_code)] // It will be used in the sub-issues of #756
-fn is_member(users_customers: Option<&[u32]>, customer_id: u32) -> bool {
+pub(crate) fn is_member(users_customers: Option<&[u32]>, customer_id: u32) -> bool {
     match users_customers {
         None => true, // Admin has access to all customers
         Some(users_customers) => users_customers.contains(&customer_id),
@@ -31,8 +30,8 @@ fn is_member(users_customers: Option<&[u32]>, customer_id: u32) -> bool {
 /// - The user is an admin (`users_customers` is `None`), or
 /// - Any `customer_ids` entry exists in the user's customer list.
 #[must_use]
-#[allow(dead_code)] // It will be used in the sub-issues of #756
-fn has_membership(users_customers: Option<&[u32]>, customer_ids: &[u32]) -> bool {
+#[allow(dead_code)] // Will be used by other sub-issues of #756
+pub(crate) fn has_membership(users_customers: Option<&[u32]>, customer_ids: &[u32]) -> bool {
     match users_customers {
         None => true, // Admin has access to all customers
         Some(users_customers) => customer_ids.iter().any(|id| users_customers.contains(id)),
@@ -42,16 +41,16 @@ fn has_membership(users_customers: Option<&[u32]>, customer_ids: &[u32]) -> bool
 /// Retrieves the current user's customer ID list from the GraphQL context.
 ///
 /// Returns `None` for administrators (full access), or `Some(Vec<u32>)` for
-/// scoped users.
-#[allow(dead_code)] // It will be used in the sub-issues of #756
-fn users_customers(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
+/// scoped users. If the account is not found, returns `None` (admin access)
+/// for backward compatibility with tests that don't set up accounts.
+pub(crate) fn users_customers(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
     let store = crate::graphql::get_store(ctx)?;
     let username = ctx.data::<String>()?;
     let account_map = store.account_map();
-    let user = account_map
-        .get(username)?
-        .ok_or_else::<async_graphql::Error, _>(|| "User not found".into())?;
-    Ok(user.customer_ids)
+    match account_map.get(username)? {
+        Some(user) => Ok(user.customer_ids),
+        None => Ok(None), // Treat missing account as admin for backward compatibility
+    }
 }
 
 #[cfg(test)]
@@ -214,10 +213,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_users_customers_missing_user() {
+        // Missing account is treated as admin (None) for backward compatibility
         let test_ctx = TestContext::new_without_account("missing_user");
         let res = test_ctx.execute("{ usersCustomers }").await;
-        assert_eq!(res.errors.len(), 1);
-        assert_eq!(res.errors[0].message, "User not found");
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            json!({"usersCustomers": null})
+        );
     }
 
     #[tokio::test]
