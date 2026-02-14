@@ -9,8 +9,9 @@ use review_database::UniqueKey;
 use roxy::ResourceUsage;
 use tracing::info;
 
+use super::crud::can_access_node;
 use super::{
-    super::{BoxedAgentManager, Role, RoleGuard},
+    super::{BoxedAgentManager, Role, RoleGuard, customer_access},
     NodeStatus, NodeStatusQuery, NodeStatusTotalCount, matches_manager_hostname,
 };
 use crate::graphql::query_with_constraints;
@@ -55,12 +56,18 @@ async fn load(
         super::super::load_edges_interim(&map, after, before, first, last, None)?
     };
 
+    let users_customers = customer_access::users_customers(ctx)?;
     let agent_manager = ctx.data::<BoxedAgentManager>()?;
 
     let mut connection =
         Connection::with_additional_fields(has_previous, has_next, NodeStatusTotalCount);
 
     for node in node_list {
+        // Filter by customer scoping
+        if !can_access_node(users_customers.as_deref(), &node) {
+            continue;
+        }
+
         let hostname = node
             .profile
             .as_ref()
