@@ -108,6 +108,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `review-database` DCE/RPC event schema. Removed legacy fields
   (`rtt`, `namedPipe`, `endpoint`, `operation`) and added
   `context: [DceRpcContext!]!` and `request: [String!]!`.
+- `updateCustomer` mutation now validates for duplicate network names, matching
+  the existing validation in `insertCustomer`.
 
 ### Fixed
 
