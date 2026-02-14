@@ -49,6 +49,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Removed `validate_client_cert()` and `has_service_name()` from `auth::mtls`.
   Callers that relied on these functions should implement `MtlsAuthenticator`
   instead. (auth-mtls)
+- Enforce customer scoping for Node operations. Non-admin users can only
+  access, create, update, and delete nodes that belong to their assigned
+  customers. Node list APIs now filter results based on the requester's
+  customer IDs. Administrators (with `customer_ids` = None) retain full access
+  to all nodes.
 
 ### Fixed
 
