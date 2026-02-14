@@ -346,12 +346,39 @@ impl From<&PacketAttrInput> for database::PacketAttr {
 
 #[cfg(test)]
 mod tests {
+    use review_database::{Role, types};
+
     use crate::graphql::TestSchema;
+
+    fn create_admin_account(
+        store: &std::sync::RwLockReadGuard<'_, review_database::Store>,
+        username: &str,
+    ) {
+        let account = types::Account::new(
+            username,
+            "password",
+            Role::SystemAdministrator,
+            "Test User".to_string(),
+            "Testing".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None, // No customer_ids = admin
+        )
+        .expect("create account");
+        store
+            .account_map()
+            .insert(&account)
+            .expect("insert account");
+    }
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn test_triage_policy() {
         let schema = TestSchema::new().await;
+        // Create admin testuser account for customer scoping
+        create_admin_account(&schema.store(), "testuser");
 
         // Prepare triage exclusion reasons
         let res = schema
@@ -561,6 +588,8 @@ mod tests {
     #[allow(clippy::too_many_lines)]
     async fn test_triage_policy_filter_by_customer() {
         let schema = TestSchema::new().await;
+        // Create admin testuser account for customer scoping
+        create_admin_account(&schema.store(), "testuser");
 
         // Prepare customers for validation
         let res = schema
