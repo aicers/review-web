@@ -12,7 +12,6 @@ use tracing::info;
 
 use super::{
     Role, RoleGuard,
-    cluster::try_id_args_into_ints,
     customer::{HostNetworkGroup, HostNetworkGroupInput},
 };
 use crate::graphql::query_with_constraints;
@@ -80,13 +79,11 @@ impl NetworkMutation {
         name: String,
         description: String,
         networks: HostNetworkGroupInput,
-        tag_ids: Vec<ID>,
     ) -> Result<ID> {
-        let tag_ids = id_args_into_uints(&tag_ids)?;
         let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         let entry =
-            review_database::Network::new(name.clone(), description, networks.try_into()?, tag_ids);
+            review_database::Network::new(name.clone(), description, networks.try_into()?);
         let id = map.insert(entry)?;
         info_with_username!(ctx, "Network {name} has been registered");
         Ok(ID(id.to_string()))
@@ -149,19 +146,16 @@ struct NetworkUpdateInput {
     name: Option<String>,
     description: Option<String>,
     networks: Option<HostNetworkGroupInput>,
-    tag_ids: Option<Vec<ID>>,
 }
 
 impl TryFrom<NetworkUpdateInput> for review_database::NetworkUpdate {
     type Error = async_graphql::Error;
 
     fn try_from(input: NetworkUpdateInput) -> Result<Self, Self::Error> {
-        let tag_ids = try_id_args_into_ints::<u32>(input.tag_ids)?;
         Ok(Self::new(
             input.name,
             input.description,
             input.networks.and_then(|v| v.try_into().ok()),
-            tag_ids,
         ))
     }
 }
@@ -186,14 +180,6 @@ impl Network {
 
     async fn networks(&self) -> HostNetworkGroup<'_> {
         (&self.inner.networks).into()
-    }
-
-    async fn tag_ids(&self) -> Vec<ID> {
-        self.inner
-            .tag_ids()
-            .iter()
-            .map(|&id| ID(id.to_string()))
-            .collect()
     }
 
     async fn creation_time(&self) -> DateTime<Utc> {
@@ -267,7 +253,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "desc", networks: {
                         hosts: ["1.1.1.1"], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
             )
             .await;
@@ -275,12 +261,12 @@ mod tests {
 
         let res = schema
             .execute_as_system_admin(
-                r"{networkList{edges{node{name description tagIds}}totalCount}}",
+                r"{networkList{edges{node{name description}}totalCount}}",
             )
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{networkList: {edges: [{node: {name: "n1", description: "desc", tagIds: []}}], totalCount: "1"}}"#
+            r#"{networkList: {edges: [{node: {name: "n1", description: "desc"}}], totalCount: "1"}}"#
         );
     }
 
@@ -305,18 +291,18 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "desc", networks: {
                         hosts: ["1.1.1.1"], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
 
         let res = schema
-            .execute_as_system_admin(r#"{network(id: "0") {name description tagIds}}"#)
+            .execute_as_system_admin(r#"{network(id: "0") {name description}}"#)
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{network: {name: "n1", description: "desc", tagIds: []}}"#
+            r#"{network: {name: "n1", description: "desc"}}"#
         );
     }
 
@@ -348,7 +334,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "", networks: {
                         hosts: [], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
             )
             .await;
@@ -389,7 +375,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n0", description: "", networks: {
                         hosts: ["1.1.1.1"], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
             )
             .await;
@@ -407,7 +393,6 @@ mod tests {
                             networks: [],
                             ranges: []
                         }
-                        tagIds: []
                     },
                     new: {
                         name: "n0",
@@ -416,7 +401,6 @@ mod tests {
                             networks: [],
                             ranges: []
                         }
-                        tagIds: []
                     }
                 )
             }"#,
