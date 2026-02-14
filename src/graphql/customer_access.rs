@@ -17,8 +17,7 @@ use async_graphql::{Context, Result};
 ///
 /// Returns `false` otherwise, including when `users_customers` is an empty slice.
 #[must_use]
-#[allow(dead_code)] // It will be used in the sub-issues of #756
-fn is_member(users_customers: Option<&[u32]>, customer_id: u32) -> bool {
+pub fn is_member(users_customers: Option<&[u32]>, customer_id: u32) -> bool {
     match users_customers {
         None => true, // Admin has access to all customers
         Some(users_customers) => users_customers.contains(&customer_id),
@@ -31,8 +30,7 @@ fn is_member(users_customers: Option<&[u32]>, customer_id: u32) -> bool {
 /// - The user is an admin (`users_customers` is `None`), or
 /// - Any `customer_ids` entry exists in the user's customer list.
 #[must_use]
-#[allow(dead_code)] // It will be used in the sub-issues of #756
-fn has_membership(users_customers: Option<&[u32]>, customer_ids: &[u32]) -> bool {
+pub fn has_membership(users_customers: Option<&[u32]>, customer_ids: &[u32]) -> bool {
     match users_customers {
         None => true, // Admin has access to all customers
         Some(users_customers) => customer_ids.iter().any(|id| users_customers.contains(id)),
@@ -43,8 +41,24 @@ fn has_membership(users_customers: Option<&[u32]>, customer_ids: &[u32]) -> bool
 ///
 /// Returns `None` for administrators (full access), or `Some(Vec<u32>)` for
 /// scoped users.
-#[allow(dead_code)] // It will be used in the sub-issues of #756
-fn users_customers(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
+///
+/// This function first checks for `CustomerIds` in the context (used in
+/// production), and falls back to account lookup if not found.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The `CustomerIds` is not in context AND
+///   - The store cannot be retrieved from context, or
+///   - The username cannot be retrieved from context, or
+///   - The user cannot be found in the account map
+pub fn users_customers(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
+    // First, try to get CustomerIds from context (production path)
+    if let Some(customer_ids) = ctx.data_opt::<crate::graphql::CustomerIds>() {
+        return Ok(customer_ids.0.clone());
+    }
+
+    // Fallback: look up from account map (for tests that don't set CustomerIds)
     let store = crate::graphql::get_store(ctx)?;
     let username = ctx.data::<String>()?;
     let account_map = store.account_map();
