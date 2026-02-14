@@ -407,8 +407,7 @@ where
     (nodes, has_previous, has_next)
 }
 
-#[allow(dead_code)] // It will be used in the sub-issues of #756
-fn process_load_edges_filtered<'a, T, I, R, P>(
+pub(crate) fn process_load_edges_filtered<'a, T, I, R, P>(
     table: &'a T,
     after: Option<OpaqueCursor<Vec<u8>>>,
     before: Option<OpaqueCursor<Vec<u8>>>,
@@ -1050,7 +1049,8 @@ impl TestSchema {
         } else {
             request
         };
-        request.data(guard)
+        // Add CustomerIds with None (admin access) by default for existing tests
+        request.data(guard).data(CustomerIds(None))
     }
 
     async fn execute_stream(
@@ -1060,6 +1060,54 @@ impl TestSchema {
         let request: async_graphql::Request = subscription.into();
         self.schema
             .execute_stream(request.data(RoleGuard::Role(Role::SystemAdministrator)))
+    }
+
+    fn create_user_account(&self, username: &str, role: Role, customer_ids: Option<Vec<u32>>) {
+        let account = database::types::Account::new(
+            username,
+            "password",
+            role,
+            "Test User".to_string(),
+            "Testing".to_string(),
+            None,
+            None,
+            None,
+            None,
+            customer_ids,
+        )
+        .expect("create account");
+        self.store()
+            .account_map()
+            .insert(&account)
+            .expect("insert account");
+    }
+
+    async fn execute_as_user(
+        &self,
+        query: &str,
+        username: &str,
+        role: Role,
+    ) -> async_graphql::Response {
+        // Look up the user's customer_ids from the account
+        let customer_ids = self
+            .store()
+            .account_map()
+            .get(username)
+            .ok()
+            .flatten()
+            .and_then(|account| account.customer_ids);
+
+        let request: async_graphql::Request = query.into();
+        let request = if let Some(addr) = self.test_addr {
+            request.data(addr)
+        } else {
+            request
+        };
+        let request = request
+            .data(RoleGuard::Role(role))
+            .data(CustomerIds(customer_ids))
+            .data(username.to_string());
+        self.schema.execute(request).await
     }
 }
 
