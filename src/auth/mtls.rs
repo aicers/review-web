@@ -6,7 +6,6 @@ use review_database as database;
 use rustls::pki_types::CertificateDer;
 use serde::Deserialize;
 use serde::de::Error as SerdeError;
-use x509_parser::extensions::GeneralName;
 use x509_parser::oid_registry::{
     OID_EC_P256, OID_KEY_TYPE_EC_PUBLIC_KEY, OID_NIST_EC_P384, OID_PKCS1_RSAENCRYPTION,
 };
@@ -20,10 +19,32 @@ pub enum MtlsAuthError {
     JsonWebToken(#[from] jsonwebtoken::errors::Error),
 }
 
-const SERVICE_NAME: &str = "aice-web-next";
-const ERR_INVALID_SAN_EXTENSION: &str = "Invalid SAN extension";
-const ERR_MISSING_DNS_SAN: &str = "Missing DNS SAN in client certificate";
-const ERR_SAN_SERVICE_MISMATCH: &str = "Client certificate SAN does not match service name";
+/// Represents the identity extracted from a client certificate's DNS SAN.
+///
+/// SAN format: `<instance>.<service>.<host>.<domain>`
+/// Example: `001.web-app.node-01.customer.internal`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtlsIdentity {
+    pub instance: String,
+    pub service: String,
+    pub host: String,
+    pub domain: String,
+}
+
+/// Validates a client certificate and extracts its identity.
+///
+/// Implementations live in the `review` crate and are injected at runtime,
+/// following the same pattern as [`crate::backend::CertManager`].
+pub trait MtlsAuthenticator: Send + Sync {
+    /// Validates the certificate and returns the parsed identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the certificate cannot be parsed or does not meet
+    /// the expected identity constraints (e.g., missing or invalid DNS SAN).
+    fn authenticate(&self, cert: &CertificateDer<'static>) -> Result<MtlsIdentity, MtlsAuthError>;
+}
+
 const ERR_INVALID_JWT_HEADER: &str = "Invalid JWT header";
 const ERR_MISSING_EC_PARAMS: &str = "Missing EC curve parameters";
 const ERR_JWT_ALG_RSA_MISMATCH: &str = "JWT algorithm does not match RSA key";
@@ -40,37 +61,6 @@ struct ContextClaims {
     role: database::Role,
     customer_ids: Option<Vec<u32>>,
     exp: i64,
-}
-
-/// Validates the client certificate against required DNS SAN constraints.
-///
-/// # Errors
-///
-/// Returns an error if the certificate cannot be parsed or the SAN does not match expectations.
-pub fn validate_client_cert(cert: &CertificateDer<'static>) -> Result<(), MtlsAuthError> {
-    let cert = parse_cert(cert)?;
-    let san = cert
-        .subject_alternative_name()
-        .map_err(|e| MtlsAuthError::InvalidToken(format!("{ERR_INVALID_SAN_EXTENSION}: {e:?}")))?;
-    let Some(san) = san else {
-        return Err(MtlsAuthError::InvalidToken(ERR_MISSING_DNS_SAN.to_string()));
-    };
-
-    let service_ok = san.value.general_names.iter().any(|name| {
-        if let GeneralName::DNSName(dns_name) = name {
-            has_service_name(dns_name)
-        } else {
-            false
-        }
-    });
-
-    if service_ok {
-        Ok(())
-    } else {
-        Err(MtlsAuthError::InvalidToken(
-            ERR_SAN_SERVICE_MISMATCH.to_string(),
-        ))
-    }
 }
 
 /// Validates a context JWT using the client certificate public key.
@@ -113,16 +103,6 @@ fn parse_cert<'a>(cert: &'a CertificateDer<'static>) -> Result<X509Certificate<'
     let (_, cert) = parse_x509_certificate(cert.as_ref())
         .map_err(|e| MtlsAuthError::InvalidToken(format!("Invalid client certificate: {e:?}")))?;
     Ok(cert)
-}
-
-fn has_service_name(dns_name: &str) -> bool {
-    let mut parts = dns_name.splitn(4, '.');
-    let _instance = parts.next();
-    let service = parts.next();
-    let hostname = parts.next();
-    let domain = parts.next();
-
-    service == Some(SERVICE_NAME) && hostname.is_some() && domain.is_some()
 }
 
 fn decoding_key_from_cert(
@@ -220,15 +200,14 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        Algorithm, ERR_JWT_ALG_EC_MISMATCH, ERR_MISSING_CUSTOMER_IDS, ERR_SAN_SERVICE_MISMATCH,
-        MtlsAuthError, validate_client_cert, validate_context_jwt,
+        Algorithm, ERR_JWT_ALG_EC_MISMATCH, ERR_MISSING_CUSTOMER_IDS, MtlsAuthError,
+        validate_context_jwt,
     };
 
     const CUSTOMER_ID: u32 = 42;
     const ROLE: &str = "System Administrator";
     const NON_ADMIN_ROLE: &str = "Security Administrator";
     const SERVICE_DNS: &str = "edge.aice-web-next.example.com";
-    const OTHER_DNS: &str = "edge.other.example.com";
     const HEADER_ALG_RS256: &str = "RS256";
     const HEADER_TYP_JWT: &str = "JWT";
     const SIGNATURE_PLACEHOLDER: &str = "signature";
@@ -286,26 +265,6 @@ mod tests {
             .encode(serde_json::to_vec(&claims).expect("claims are a valid JSON object"));
         let signature = super::URL_SAFE_NO_PAD.encode(SIGNATURE_PLACEHOLDER.as_bytes());
         format!("{header}.{claims}.{signature}")
-    }
-
-    #[test]
-    fn client_cert_accepts_service_san() {
-        let (cert, _) = build_ec_cert(SERVICE_DNS);
-        validate_client_cert(&cert).expect("SERVICE_DNS uses the expected service name");
-    }
-
-    #[test]
-    fn client_cert_rejects_mismatched_san() {
-        let (cert, _) = build_ec_cert(OTHER_DNS);
-        let err = validate_client_cert(&cert).expect_err("OTHER_DNS uses a different service name");
-        match err {
-            MtlsAuthError::InvalidToken(msg) => {
-                assert_eq!(msg, ERR_SAN_SERVICE_MISMATCH);
-            }
-            MtlsAuthError::JsonWebToken(_) => {
-                panic!("client certificate validation should not reach JWT errors");
-            }
-        }
     }
 
     #[test]

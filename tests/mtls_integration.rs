@@ -19,21 +19,30 @@ mod mtls_integration {
     use review_database::Store;
     use review_web::{
         ServerConfig,
+        auth::{MtlsAuthError, MtlsAuthenticator, MtlsIdentity},
         backend::{AgentManager, CertManager},
     };
     use serde::Serialize;
     use serde_json::json;
     use tokio::time::sleep;
 
-    const SERVICE_DNS: &str = "edge.aice-web-next.example.com";
+    const SERVICE_DNS: &str = "edge.web-app.example.com";
     const ROLE: &str = "System Administrator";
     const CUSTOMER_ID: u32 = 1;
     const GRAPHQL_QUERY: &str = "{__typename}";
     const LOCALHOST_IP: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
     const NON_ADMIN_ROLE: &str = "Security Administrator";
+    const EXPECTED_SERVICE: &str = "web-app";
+    const ERR_MISSING_SAN: &str = "Missing SAN";
+    const ERR_NO_DNS_SAN: &str = "No DNS SAN";
+    const ERR_MISSING_INSTANCE: &str = "Missing instance";
+    const ERR_MISSING_SERVICE: &str = "Missing service";
+    const ERR_MISSING_HOST: &str = "Missing host";
+    const ERR_MISSING_DOMAIN: &str = "Missing domain";
     const ERR_SAN_SERVICE_MISMATCH: &str = "Client certificate SAN does not match service name";
     const ERR_JWT_ALG_EC_MISMATCH: &str = "JWT algorithm does not match EC key";
     const ERR_MISSING_CUSTOMER_IDS: &str = "Missing customer_ids claim for non-admin role";
+    const WS_RECV_TIMEOUT: Duration = Duration::from_secs(5);
     // Fixed RSA private key used only to produce an RS256 JWT for alg-mismatch tests.
     const RSA_PRIVATE_KEY_PEM: &str = r"-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDL3Xrm3ySgvLcF
@@ -154,6 +163,61 @@ xvcNsYaYqk6sRk/INvcaN2E=
 
         async fn update_config(&self, _agent_key: &str) -> Result<(), anyhow::Error> {
             Ok(())
+        }
+    }
+
+    struct StubAuthenticator;
+
+    impl MtlsAuthenticator for StubAuthenticator {
+        fn authenticate(
+            &self,
+            cert: &rustls::pki_types::CertificateDer<'static>,
+        ) -> Result<MtlsIdentity, MtlsAuthError> {
+            use x509_parser::extensions::GeneralName;
+            use x509_parser::prelude::parse_x509_certificate;
+
+            let (_, x509) = parse_x509_certificate(cert.as_ref())
+                .map_err(|e| MtlsAuthError::InvalidToken(format!("Invalid certificate: {e:?}")))?;
+            let san = x509
+                .subject_alternative_name()
+                .map_err(|e| MtlsAuthError::InvalidToken(format!("Invalid SAN: {e:?}")))?
+                .ok_or_else(|| MtlsAuthError::InvalidToken(ERR_MISSING_SAN.to_string()))?;
+            let dns_name = san
+                .value
+                .general_names
+                .iter()
+                .find_map(|name| {
+                    if let GeneralName::DNSName(dns) = name {
+                        Some(*dns)
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| MtlsAuthError::InvalidToken(ERR_NO_DNS_SAN.to_string()))?;
+            let mut parts = dns_name.splitn(4, '.');
+            let instance = parts
+                .next()
+                .ok_or_else(|| MtlsAuthError::InvalidToken(ERR_MISSING_INSTANCE.to_string()))?;
+            let service = parts
+                .next()
+                .ok_or_else(|| MtlsAuthError::InvalidToken(ERR_MISSING_SERVICE.to_string()))?;
+            let host = parts
+                .next()
+                .ok_or_else(|| MtlsAuthError::InvalidToken(ERR_MISSING_HOST.to_string()))?;
+            let domain = parts
+                .next()
+                .ok_or_else(|| MtlsAuthError::InvalidToken(ERR_MISSING_DOMAIN.to_string()))?;
+            if service != EXPECTED_SERVICE {
+                return Err(MtlsAuthError::InvalidToken(
+                    ERR_SAN_SERVICE_MISMATCH.to_string(),
+                ));
+            }
+            Ok(MtlsIdentity {
+                instance: instance.to_string(),
+                service: service.to_string(),
+                host: host.to_string(),
+                domain: domain.to_string(),
+            })
         }
     }
 
@@ -297,6 +361,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
             ca_certs: vec![ca_path],
             client_cert_path: None,
             client_key_path: None,
+            authenticator: Arc::new(StubAuthenticator),
         };
 
         let shutdown = review_web::serve(config, store, None, StubAgentManager);
@@ -479,6 +544,227 @@ xvcNsYaYqk6sRk/INvcaN2E=
         let client = build_client_without_identity(&server.ca_cert)?;
         let response = send_graphql_request(&client, &server.url, None).await?;
         assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+        server.shutdown.notify_one();
+        server.shutdown.notified().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mtls_rejects_missing_authorization() -> anyhow::Result<()> {
+        let server = start_test_server()?;
+        let (client, _client_key) =
+            build_client_with_identity(&server.issuer, &server.ca_cert, SERVICE_DNS)?;
+
+        let response = send_graphql_request(&client, &server.url, None).await?;
+        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+        server.shutdown.notify_one();
+        server.shutdown.notified().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mtls_non_admin_with_customer_ids_succeeds() -> anyhow::Result<()> {
+        let server = start_test_server()?;
+        let (client, client_key) =
+            build_client_with_identity(&server.issuer, &server.ca_cert, SERVICE_DNS)?;
+        let token = sign_context_jwt_with_key(
+            &EncodingKey::from_ec_der(client_key.serialize_der().as_slice()),
+            Algorithm::ES256,
+            Some(vec![CUSTOMER_ID]),
+            NON_ADMIN_ROLE,
+        )?;
+
+        let response = send_graphql_request(&client, &server.url, Some(&token)).await?;
+        let body: serde_json::Value =
+            serde_json::from_str(&response.text().await.context("read response body")?)
+                .context("parse response JSON")?;
+        let typename = body
+            .get("data")
+            .and_then(|data| data.get("__typename"))
+            .and_then(|value| value.as_str())
+            .context("read __typename")?;
+        assert_eq!(typename, "Query");
+        server.shutdown.notify_one();
+        server.shutdown.notified().await;
+        Ok(())
+    }
+
+    #[test]
+    fn stub_authenticator_parses_identity_fields() {
+        let (cert, _key) = build_client_cert_self_signed(SERVICE_DNS);
+        let identity = StubAuthenticator
+            .authenticate(&cert)
+            .expect("valid SAN should authenticate");
+        assert_eq!(identity.instance, "edge");
+        assert_eq!(identity.service, EXPECTED_SERVICE);
+        assert_eq!(identity.host, "example");
+        assert_eq!(identity.domain, "com");
+    }
+
+    #[test]
+    fn stub_authenticator_rejects_wrong_service() {
+        let (cert, _key) = build_client_cert_self_signed("edge.other-service.example.com");
+        let err = StubAuthenticator
+            .authenticate(&cert)
+            .expect_err("wrong service should be rejected");
+        match err {
+            MtlsAuthError::InvalidToken(msg) => assert_eq!(msg, ERR_SAN_SERVICE_MISMATCH),
+            MtlsAuthError::JsonWebToken(_) => {
+                panic!("service mismatch should be InvalidToken, not JsonWebToken")
+            }
+        }
+    }
+
+    fn build_client_cert_self_signed(
+        dns_san: &str,
+    ) -> (rustls::pki_types::CertificateDer<'static>, KeyPair) {
+        let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
+            .expect("PKCS_ECDSA_P256_SHA256 is supported");
+        let params = CertificateParams::new(vec![dns_san.to_string()])
+            .expect("test DNS SAN is a valid name");
+        let cert = params
+            .self_signed(&key_pair)
+            .expect("key pair and params are valid for rcgen");
+        let cert_der = rustls::pki_types::CertificateDer::from(cert.der().to_vec());
+        (cert_der, key_pair)
+    }
+
+    async fn connect_ws(
+        server: &TestServer,
+        client_dns: &str,
+    ) -> anyhow::Result<(
+        tokio_tungstenite::WebSocketStream<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>,
+        KeyPair,
+    )> {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+        use tokio_rustls::TlsConnector;
+
+        let (client_cert, client_key) = build_client_cert(&server.issuer, client_dns)?;
+        let client_cert_der = CertificateDer::from(client_cert.der().to_vec());
+        let client_key_der =
+            PrivateKeyDer::try_from(client_key.serialize_der()).map_err(|e| anyhow::anyhow!(e))?;
+
+        let mut root_store = rustls::RootCertStore::empty();
+        let ca_der = CertificateDer::from(server.ca_cert.der().to_vec());
+        root_store.add(ca_der).context("add CA to root store")?;
+
+        let tls_config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_client_auth_cert(vec![client_cert_der], client_key_der)
+            .context("build client TLS config")?;
+        let connector = TlsConnector::from(Arc::new(tls_config));
+
+        let host_port = server
+            .url
+            .strip_prefix("https://")
+            .and_then(|s| s.split('/').next())
+            .context("extract host:port from URL")?;
+        let addr: SocketAddr = host_port.parse().context("parse server addr")?;
+        let mut tcp = None;
+        for _ in 0..20 {
+            match tokio::net::TcpStream::connect(addr).await {
+                Ok(stream) => {
+                    tcp = Some(stream);
+                    break;
+                }
+                Err(_) => sleep(Duration::from_millis(150)).await,
+            }
+        }
+        let tcp = tcp.context("TCP connect after retries")?;
+        let domain = ServerName::IpAddress(LOCALHOST_IP.into());
+        let tls_stream = connector
+            .connect(domain, tcp)
+            .await
+            .context("TLS handshake")?;
+
+        let ws_url = server.url.replace("https://", "wss://");
+        let request = http::Request::builder()
+            .uri(&ws_url)
+            .header("Host", addr.to_string())
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header(
+                "Sec-WebSocket-Key",
+                tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+            )
+            .header("Sec-WebSocket-Version", "13")
+            .header("Sec-WebSocket-Protocol", "graphql-ws")
+            .body(())
+            .context("build WS request")?;
+
+        let (ws_stream, _response) = tokio_tungstenite::client_async(request, tls_stream)
+            .await
+            .context("WebSocket handshake")?;
+
+        Ok((ws_stream, client_key))
+    }
+
+    async fn recv_ws_message(
+        ws: &mut tokio_tungstenite::WebSocketStream<
+            tokio_rustls::client::TlsStream<tokio::net::TcpStream>,
+        >,
+    ) -> anyhow::Result<tokio_tungstenite::tungstenite::Message> {
+        use futures::StreamExt;
+
+        tokio::time::timeout(WS_RECV_TIMEOUT, ws.next())
+            .await
+            .context("WebSocket recv timed out")?
+            .context("WebSocket stream ended")?
+            .context("WebSocket recv error")
+    }
+
+    #[tokio::test]
+    async fn mtls_ws_graphql_request_succeeds() -> anyhow::Result<()> {
+        use futures::SinkExt;
+        use tokio_tungstenite::tungstenite::Message;
+
+        let server = start_test_server()?;
+        let (mut ws, client_key) = connect_ws(&server, SERVICE_DNS).await?;
+
+        let token = sign_context_jwt(client_key.serialize_der().as_slice())?;
+        let init = json!({
+            "type": "connection_init",
+            "payload": { "Authorization": format!("Bearer {token}") }
+        });
+        ws.send(Message::Text(init.to_string().into())).await?;
+
+        let ack = recv_ws_message(&mut ws).await?;
+        let ack: serde_json::Value = serde_json::from_str(ack.to_text()?)?;
+        assert_eq!(ack["type"], "connection_ack");
+
+        let start = json!({
+            "type": "start",
+            "id": "1",
+            "payload": { "query": GRAPHQL_QUERY }
+        });
+        ws.send(Message::Text(start.to_string().into())).await?;
+
+        let data_msg = recv_ws_message(&mut ws).await?;
+        let data_msg: serde_json::Value = serde_json::from_str(data_msg.to_text()?)?;
+        assert_eq!(data_msg["type"], "data");
+        assert_eq!(data_msg["payload"]["data"]["__typename"], "Query");
+
+        ws.close(None).await?;
+        server.shutdown.notify_one();
+        server.shutdown.notified().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mtls_ws_rejects_missing_authorization() -> anyhow::Result<()> {
+        use futures::SinkExt;
+        use tokio_tungstenite::tungstenite::Message;
+
+        let server = start_test_server()?;
+        let (mut ws, _client_key) = connect_ws(&server, SERVICE_DNS).await?;
+
+        let init = json!({ "type": "connection_init", "payload": {} });
+        ws.send(Message::Text(init.to_string().into())).await?;
+
+        let msg = recv_ws_message(&mut ws).await?;
+        let parsed: serde_json::Value = serde_json::from_str(msg.to_text()?)?;
+        assert_eq!(parsed["type"], "connection_error");
+
         server.shutdown.notify_one();
         server.shutdown.notified().await;
         Ok(())

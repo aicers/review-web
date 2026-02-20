@@ -59,10 +59,12 @@ use tracing::warn;
 use crate::auth::AuthError;
 #[cfg(feature = "auth-mtls")]
 use crate::auth::MtlsAuthError;
+#[cfg(feature = "auth-mtls")]
+use crate::auth::MtlsAuthenticator;
+#[cfg(feature = "auth-mtls")]
+use crate::auth::validate_context_jwt;
 #[cfg(feature = "auth-jwt")]
 use crate::auth::validate_token;
-#[cfg(feature = "auth-mtls")]
-use crate::auth::{validate_client_cert, validate_context_jwt};
 use crate::backend::{AgentManager, CertManager};
 
 #[cfg(feature = "auth-mtls")]
@@ -84,6 +86,8 @@ pub struct ServerConfig {
     pub reverse_proxies: Vec<archive::Config>,
     pub client_cert_path: Option<PathBuf>,
     pub client_key_path: Option<PathBuf>,
+    #[cfg(feature = "auth-mtls")]
+    pub authenticator: Arc<dyn MtlsAuthenticator>,
 }
 
 /// Runs a web server.
@@ -141,6 +145,8 @@ where
                 .fallback_service(static_files.layer(TraceLayer::new_for_http()))
                 .layer(Extension(schema.clone()))
                 .layer(Extension(store.clone()));
+            #[cfg(feature = "auth-mtls")]
+            let router = router.layer(Extension(config.authenticator.clone()));
             #[cfg(feature = "auth-jwt")]
             let router = {
                 let mut router = router;
@@ -405,6 +411,7 @@ async fn graphql_handler(
 async fn graphql_handler(
     Extension(schema): Extension<graphql::Schema>,
     Extension(_store): Extension<Arc<RwLock<Store>>>,
+    Extension(authenticator): Extension<Arc<dyn MtlsAuthenticator>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     peer: Option<Extension<Arc<TlsPeerInfo>>>,
     auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
@@ -424,7 +431,7 @@ async fn graphql_handler(
     let cert = peer
         .leaf_cert()
         .ok_or_else(|| Error::Unauthorized(ERR_MTLS_MISSING_CERT.to_string()))?;
-    validate_client_cert(cert)?;
+    let identity = authenticator.authenticate(cert)?;
 
     let auth = auth?;
     let (role, customer_ids) = validate_context_jwt(auth.token(), cert)?;
@@ -432,7 +439,8 @@ async fn graphql_handler(
         .execute(
             request
                 .data(RoleGuard::Role(role))
-                .data(CustomerIds(customer_ids)),
+                .data(CustomerIds(customer_ids))
+                .data(identity),
         )
         .await
         .into())
@@ -479,6 +487,7 @@ async fn graphql_ws_handler(
 #[allow(clippy::unused_async)]
 async fn graphql_ws_handler(
     Extension(schema): Extension<graphql::Schema>,
+    Extension(authenticator): Extension<Arc<dyn MtlsAuthenticator>>,
     protocol: GraphQLProtocol,
     websocket: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -492,6 +501,7 @@ async fn graphql_ws_handler(
             GraphQLWebSocket::new(socket, schema.clone(), protocol)
                 .on_connection_init(move |value| {
                     let peer = peer.clone();
+                    let authenticator = authenticator.clone();
                     async move {
                         #[derive(serde::Deserialize)]
                         struct AuthData {
@@ -511,7 +521,8 @@ async fn graphql_ws_handler(
                         let cert = peer
                             .leaf_cert()
                             .ok_or_else(|| async_graphql::Error::new(ERR_MTLS_MISSING_CERT))?;
-                        validate_client_cert(cert)
+                        let identity = authenticator
+                            .authenticate(cert)
                             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
                         let auth_data = serde_json::from_value::<AuthData>(value)?;
@@ -525,6 +536,7 @@ async fn graphql_ws_handler(
 
                         data.insert(RoleGuard::Role(role));
                         data.insert(CustomerIds(customer_ids));
+                        data.insert(identity);
                         Ok(data)
                     }
                 })

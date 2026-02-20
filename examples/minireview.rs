@@ -18,6 +18,8 @@ use futures::{
 };
 use ipnet::IpNet;
 use review_database::{Store, migrate_data_dir};
+#[cfg(feature = "auth-mtls")]
+use review_web::auth::{MtlsAuthError, MtlsAuthenticator, MtlsIdentity};
 #[cfg(not(feature = "auth-mtls"))]
 use review_web::graphql::account::set_initial_admin_password;
 use review_web::{
@@ -60,6 +62,71 @@ impl CertManager for MiniCertManager {
         _key: String,
     ) -> async_graphql::Result<Vec<review_web::graphql::ParsedCertificate>, anyhow::Error> {
         bail!("Not supported")
+    }
+}
+
+#[cfg(feature = "auth-mtls")]
+const ERR_MISSING_SAN: &str = "Missing SAN";
+#[cfg(feature = "auth-mtls")]
+const ERR_NO_DNS_SAN: &str = "No DNS SAN";
+#[cfg(feature = "auth-mtls")]
+const ERR_MISSING_INSTANCE: &str = "Missing instance";
+#[cfg(feature = "auth-mtls")]
+const ERR_MISSING_SERVICE: &str = "Missing service";
+#[cfg(feature = "auth-mtls")]
+const ERR_MISSING_HOST: &str = "Missing host";
+#[cfg(feature = "auth-mtls")]
+const ERR_MISSING_DOMAIN: &str = "Missing domain";
+
+#[cfg(feature = "auth-mtls")]
+struct MiniAuthenticator;
+
+#[cfg(feature = "auth-mtls")]
+impl MtlsAuthenticator for MiniAuthenticator {
+    fn authenticate(
+        &self,
+        cert: &rustls::pki_types::CertificateDer<'static>,
+    ) -> Result<MtlsIdentity, MtlsAuthError> {
+        use x509_parser::extensions::GeneralName;
+        use x509_parser::prelude::parse_x509_certificate;
+
+        let (_, x509) = parse_x509_certificate(cert.as_ref())
+            .map_err(|e| MtlsAuthError::InvalidToken(format!("Invalid certificate: {e:?}")))?;
+        let san = x509
+            .subject_alternative_name()
+            .map_err(|e| MtlsAuthError::InvalidToken(format!("Invalid SAN: {e:?}")))?
+            .ok_or_else(|| MtlsAuthError::InvalidToken(ERR_MISSING_SAN.to_string()))?;
+        let dns_name = san
+            .value
+            .general_names
+            .iter()
+            .find_map(|name| {
+                if let GeneralName::DNSName(dns) = name {
+                    Some(*dns)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| MtlsAuthError::InvalidToken(ERR_NO_DNS_SAN.to_string()))?;
+        let mut parts = dns_name.splitn(4, '.');
+        let instance = parts
+            .next()
+            .ok_or_else(|| MtlsAuthError::InvalidToken(ERR_MISSING_INSTANCE.to_string()))?;
+        let service = parts
+            .next()
+            .ok_or_else(|| MtlsAuthError::InvalidToken(ERR_MISSING_SERVICE.to_string()))?;
+        let host = parts
+            .next()
+            .ok_or_else(|| MtlsAuthError::InvalidToken(ERR_MISSING_HOST.to_string()))?;
+        let domain = parts
+            .next()
+            .ok_or_else(|| MtlsAuthError::InvalidToken(ERR_MISSING_DOMAIN.to_string()))?;
+        Ok(MtlsIdentity {
+            instance: instance.to_string(),
+            service: service.to_string(),
+            host: host.to_string(),
+            domain: domain.to_string(),
+        })
     }
 }
 
@@ -362,6 +429,8 @@ fn run(config: &Config) -> Result<Arc<Notify>> {
         reverse_proxies: config.reverse_proxies(),
         client_cert_path: config.client_cert.clone(),
         client_key_path: config.client_key.clone(),
+        #[cfg(feature = "auth-mtls")]
+        authenticator: Arc::new(MiniAuthenticator),
     };
     let web_srv_shutdown_handle = web::serve(web_config, store, ip_locator, agent_manager);
 
