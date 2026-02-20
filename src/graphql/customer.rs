@@ -114,12 +114,7 @@ impl CustomerMutation {
             .into_iter()
             .map(TryFrom::try_from)
             .collect::<Result<Vec<_>>>()?;
-        networks.sort_by(|a, b| a.name.cmp(&b.name));
-        let original_count = networks.len();
-        networks.dedup_by(|a, b| a.name == b.name);
-        if networks.len() != original_count {
-            return Err("duplicate network name".into());
-        }
+        validate_no_duplicate_network_names(&mut networks)?;
         let value = database::Customer {
             id: u32::MAX,
             name: name.clone(),
@@ -206,14 +201,8 @@ impl CustomerMutation {
         let old = old.try_into()?;
         let mut new: review_database::CustomerUpdate = new.try_into()?;
 
-        // Validate duplicate network names if networks are being updated
         if let Some(ref mut networks) = new.networks {
-            networks.sort_by(|a, b| a.name.cmp(&b.name));
-            let original_count = networks.len();
-            networks.dedup_by(|a, b| a.name == b.name);
-            if networks.len() != original_count {
-                return Err("duplicate network name".into());
-            }
+            validate_no_duplicate_network_names(networks)?;
         }
 
         let network_list = {
@@ -261,6 +250,26 @@ impl CustomerMutation {
 
         Ok(id)
     }
+}
+
+/// Validates that there are no duplicate network names in the given list.
+///
+/// This function sorts the networks by name, removes duplicates, and returns an error
+/// if duplicates were detected.
+///
+/// # Errors
+///
+/// Returns an error with "duplicate network name" if duplicates are found.
+fn validate_no_duplicate_network_names(
+    networks: &mut Vec<review_database::CustomerNetwork>,
+) -> Result<()> {
+    networks.sort_by(|a, b| a.name.cmp(&b.name));
+    let original_count = networks.len();
+    networks.dedup_by(|a, b| a.name == b.name);
+    if networks.len() != original_count {
+        return Err("duplicate network name".into());
+    }
+    Ok(())
 }
 
 /// Validates that customers can be safely removed by checking for references in accounts and nodes.
