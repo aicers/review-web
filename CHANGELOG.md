@@ -4,6 +4,31 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `MtlsIdentity` struct and `MtlsAuthenticator` trait to `auth::mtls`
+  for dependency-inversion: the trait is defined in `review-web` and
+  implementations are injected from external crates (e.g. `review`).
+  `MtlsIdentity` represents the parsed DNS SAN fields (`instance`, `service`,
+  `host`, `domain`) extracted from a client certificate. (auth-mtls)
+- Added `authenticator` field of type `Arc<dyn MtlsAuthenticator>` to
+  `ServerConfig`. (auth-mtls)
+
+### Changed
+
+- `graphql_handler` and `graphql_ws_handler` now delegate certificate
+  validation to `authenticator.authenticate()` rather than the previously
+  internal `validate_client_cert()`, making the validation policy replaceable
+  at runtime. (auth-mtls)
+
+### Removed
+
+- Removed `validate_client_cert()` and `has_service_name()` from `auth::mtls`.
+  Callers that relied on these functions should implement `MtlsAuthenticator`
+  instead. (auth-mtls)
+
 ## [0.30.1] - 2026-01-31
 
 ### Added
@@ -1359,6 +1384,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.30.1...main
 [0.30.1]: https://github.com/aicers/review-web/compare/0.30.0...0.30.1
 [0.30.0]: https://github.com/aicers/review-web/compare/0.29.4...0.30.0
 [0.29.4]: https://github.com/aicers/review-web/compare/0.29.3...0.29.4
