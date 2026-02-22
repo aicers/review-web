@@ -1074,4 +1074,232 @@ mod tests {
                 .contains("still referenced by block network")
         );
     }
+
+    #[tokio::test]
+    async fn ensure_network_group_items_are_sorted() {
+        // The values inside networkGroup are stored in alphabetical order regardless of the input order.
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+            mutation {
+                insertCustomer(
+                    name: "c1", description: "",
+                    networks: [{
+                        name: "n1", description: "", networkType: INTRANET,
+                        networkGroup: {
+                            hosts: ["10.0.0.3", "10.0.0.1", "10.0.0.2"],
+                            networks: ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"],
+                            ranges: [
+                                { start: "10.0.0.5", end: "10.0.0.20" },
+                                { start: "10.0.0.1", end: "10.0.0.3" }
+                            ]
+                        }
+                    }]
+                )
+            }
+        "#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+        assert!(res.errors.is_empty());
+
+        let res = schema.execute_as_system_admin(
+            "{ customer(id: \"0\") { networks { networkGroup { hosts networks ranges { start end } } } } }"
+        ).await;
+
+        let expected = serde_json::json!({
+            "customer": {
+                "networks": [{
+                    "networkGroup": {
+                        "hosts": ["10.0.0.1", "10.0.0.2", "10.0.0.3"],
+                        "networks": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+                        "ranges": [
+                            { "start": "10.0.0.1", "end": "10.0.0.3" },
+                            { "start": "10.0.0.5", "end": "10.0.0.20" }
+                        ]
+                    }
+                }]
+            }
+        });
+
+        let actual = res
+            .data
+            .into_json()
+            .expect("response data should be valid JSON");
+        assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn ensure_network_group_items_are_deduplicated() {
+        // Duplicate values in the networkGroup fields should be removed before storing.
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+            mutation {
+                insertCustomer(
+                    name: "c1", description: "",
+                    networks: [{
+                        name: "n1", description: "", networkType: INTRANET,
+                        networkGroup: {
+                            hosts: ["10.0.0.1", "10.0.0.1"],
+                            networks: ["192.168.0.0/16", "192.168.0.0/16"],
+                            ranges: [
+                                { start: "10.0.0.1", end: "10.0.0.3" },
+                                { start: "10.0.0.1", end: "10.0.0.3" }
+                            ]
+                        }
+                    }]
+                )
+            }
+        "#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+        assert!(res.errors.is_empty());
+
+        let res = schema.execute_as_system_admin(
+            "{ customer(id: \"0\") { networks { networkGroup { hosts networks ranges { start end } } } } }"
+        ).await;
+
+        let expected = serde_json::json!({
+            "customer": {
+                "networks": [{
+                    "networkGroup": {
+                        "hosts": ["10.0.0.1"],
+                        "networks": ["192.168.0.0/16"],
+                        "ranges": [
+                            { "start": "10.0.0.1", "end": "10.0.0.3" }
+                        ]
+                    }
+                }]
+            }
+        });
+
+        let actual = res
+            .data
+            .into_json()
+            .expect("response data should be valid JSON");
+        assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn allow_duplicate_network_groups_on_insert() {
+        let schema = TestSchema::new().await;
+        let res: async_graphql::Response = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertCustomer(
+                        name: "c1",
+                        description: "",
+                        networks: [
+                            {
+                                name: "n1",
+                                description: "",
+                                networkType: INTRANET,
+                                networkGroup: {
+                                    hosts: ["10.0.0.1"],
+                                    networks: [],
+                                    ranges: []
+                                }
+                            },
+                            {
+                                name: "n2",
+                                description: "",
+                                networkType: INTRANET,
+                                networkGroup: {
+                                    hosts: ["10.0.0.1"],
+                                    networks: [],
+                                    ranges: []
+                                }
+                            }
+                        ]
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.is_ok());
+        assert!(res.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn allow_duplicate_network_groups_on_update() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertCustomer(
+                        name: "c1",
+                        description: "",
+                        networks: [
+                            {
+                                name: "n1",
+                                description: "",
+                                networkType: INTRANET,
+                                networkGroup: {
+                                    hosts: ["10.0.0.1"],
+                                    networks: ["192.168.0.0/24"],
+                                    ranges: [{ start: "10.0.0.1", end: "10.0.0.10" }]
+                                }
+                            }
+                        ]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res: async_graphql::Response = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateCustomer(
+                        id: "0",
+                        old: {
+                            networks: [
+                                {
+                                    name: "n1",
+                                    description: "",
+                                    networkType: INTRANET,
+                                    networkGroup: {
+                                        hosts: ["10.0.0.1"],
+                                        networks: ["192.168.0.0/24"],
+                                        ranges: [{ start: "10.0.0.1", end: "10.0.0.10" }]
+                                    }
+                                }
+                            ]
+                        },
+                        new: {
+                            networks: [
+                                {
+                                    name: "n1",
+                                    description: "",
+                                    networkType: INTRANET,
+                                    networkGroup: {
+                                        hosts: ["10.0.0.1"],
+                                        networks: ["192.168.0.0/24"],
+                                        ranges: [{ start: "10.0.0.1", end: "10.0.0.10" }]
+                                    }
+                                },
+                                {
+                                    name: "n2",
+                                    description: "",
+                                    networkType: INTRANET,
+                                    networkGroup: {
+                                        hosts: ["10.0.0.1"],
+                                        networks: ["192.168.0.0/24"],
+                                        ranges: [{ start: "10.0.0.1", end: "10.0.0.10" }]
+                                    }
+                                }
+                            ]
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.is_ok());
+        assert!(res.errors.is_empty());
+    }
 }
