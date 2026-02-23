@@ -12,8 +12,8 @@ use crate::graphql::customer_access::{
 /// Collects the set of event-tag IDs referenced by `TriageResponse`s that
 /// the current user is allowed to see.
 ///
-/// Returns `None` for administrators (no filtering needed), or
-/// `Some(HashSet)` for scoped users.
+/// Returns `Ok(None)` for administrators (no filtering needed), or
+/// `Ok(Some(HashSet))` for scoped users.
 fn accessible_tag_ids(store: &Store, users_cids: Option<&[u32]>) -> Result<Option<HashSet<u32>>> {
     if users_cids.is_none() {
         return Ok(None); // Admin: all tags are accessible
