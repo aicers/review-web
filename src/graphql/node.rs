@@ -13,7 +13,7 @@ use bincode::Options;
 use chrono::{DateTime, TimeZone, Utc};
 #[allow(clippy::module_name_repetitions)]
 pub use crud::agent_keys_by_customer_id;
-use database::Indexable;
+use database::{Indexable, event::Direction};
 use input::NodeInput;
 use review_database as database;
 use roxy::Process as RoxyProcess;
@@ -193,12 +193,31 @@ impl NodeProfile {
 
 struct NodeTotalCount;
 
+fn scoped_node_count(ctx: &Context<'_>) -> Result<usize> {
+    let users_customers = super::customer_access::users_customers(ctx)?;
+    let store = crate::graphql::get_store(ctx)?;
+    let map = store.node_map();
+
+    match users_customers.as_deref() {
+        None => Ok(map.count()?),
+        Some(users_customers) => {
+            let mut count = 0;
+            for entry in map.iter(Direction::Forward, None) {
+                let node = entry.map_err(|_| "invalid value in database")?;
+                if crud::can_access_node(Some(users_customers), &node) {
+                    count += 1;
+                }
+            }
+            Ok(count)
+        }
+    }
+}
+
 #[Object]
 impl NodeTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
-        let store = crate::graphql::get_store(ctx)?;
-        Ok(StringNumber(store.node_map().count()?))
+        Ok(StringNumber(scoped_node_count(ctx)?))
     }
 }
 
@@ -358,8 +377,7 @@ struct NodeStatusTotalCount;
 impl NodeStatusTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
-        let store = crate::graphql::get_store(ctx)?;
-        Ok(StringNumber(store.node_map().count()?))
+        Ok(StringNumber(scoped_node_count(ctx)?))
     }
 }
 
