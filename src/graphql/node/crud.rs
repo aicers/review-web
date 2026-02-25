@@ -272,19 +272,21 @@ async fn load(
     let store = crate::graphql::get_store(ctx)?;
     let users_customers = customer_access::users_customers(ctx)?;
     let map = store.node_map();
+    let users_customers = users_customers.as_deref();
 
-    // Load nodes with interim method to allow filtering
+    // Apply customer filtering while collecting edges to keep pagination metadata consistent.
     let (nodes, has_previous, has_next) =
-        super::super::load_edges_interim(&map, after, before, first, last, None)?;
+        super::super::process_load_edges_filtered(&map, after, before, first, last, None, |node| {
+            can_access_node(users_customers, node)
+        });
 
-    // Filter nodes by customer scoping
-    let filtered_nodes: Vec<review_database::Node> = nodes
+    let nodes = nodes
         .into_iter()
-        .filter(|node| can_access_node(users_customers.as_deref(), node))
-        .collect();
+        .map(|res| res.map_err(|e| format!("{e}").into()))
+        .collect::<Result<Vec<_>>>()?;
 
     let mut connection = Connection::with_additional_fields(has_previous, has_next, NodeTotalCount);
-    for node in filtered_nodes {
+    for node in nodes {
         let key = node.unique_key();
         connection
             .edges
@@ -1676,6 +1678,73 @@ mod tests {
         assert!(names.contains(&"node_customer_1_a"));
         assert!(names.contains(&"node_customer_1_b"));
         assert!(!names.contains(&"node_customer_2"));
+    }
+
+    /// Tests that pagination skips inaccessible nodes when fetching the first page.
+    #[tokio::test]
+    async fn node_customer_scoping_pagination_skips_inaccessible_prefix() {
+        let schema = TestSchema::new().await;
+
+        // Insert an inaccessible node that sorts first by name.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "a_forbidden_node",
+                        customerId: 2,
+                        description: "Forbidden node",
+                        hostname: "forbidden.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Insert an accessible node that sorts after the forbidden node.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "b_allowed_node",
+                        customerId: 1,
+                        description: "Allowed node",
+                        hostname: "allowed.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
+
+        // Scope the user to customer 1 only.
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        let res = schema
+            .execute_with_guard(
+                r"{nodeList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeList"]["edges"].as_array().unwrap();
+
+        // The first page must contain the first accessible node, not an empty page.
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["node"]["name"], "b_allowed_node");
+        assert_eq!(data["nodeList"]["pageInfo"]["hasNextPage"], json!(false));
+        assert_eq!(
+            data["nodeList"]["pageInfo"]["hasPreviousPage"],
+            json!(false)
+        );
     }
 
     /// Test insert denied for non-matching `customer_id`

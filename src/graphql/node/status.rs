@@ -50,24 +50,34 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, NodeStatus, NodeStatusTotalCount, EmptyFields>> {
+    let users_customers = customer_access::users_customers(ctx)?;
+    let users_customers = users_customers.as_deref();
     let (node_list, has_previous, has_next) = {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.node_map();
-        super::super::load_edges_interim(&map, after, before, first, last, None)?
+        // Apply customer filtering while collecting edges to keep pagination metadata consistent.
+        let (node_list, has_previous, has_next) = super::super::process_load_edges_filtered(
+            &map,
+            after,
+            before,
+            first,
+            last,
+            None,
+            |node| can_access_node(users_customers, node),
+        );
+        let node_list = node_list
+            .into_iter()
+            .map(|res| res.map_err(|e| format!("{e}").into()))
+            .collect::<Result<Vec<_>>>()?;
+        (node_list, has_previous, has_next)
     };
 
-    let users_customers = customer_access::users_customers(ctx)?;
     let agent_manager = ctx.data::<BoxedAgentManager>()?;
 
     let mut connection =
         Connection::with_additional_fields(has_previous, has_next, NodeStatusTotalCount);
 
     for node in node_list {
-        // Filter by customer scoping
-        if !can_access_node(users_customers.as_deref(), &node) {
-            continue;
-        }
-
         let hostname = node
             .profile
             .as_ref()
@@ -121,7 +131,7 @@ mod tests {
     use serde_json::json;
 
     use crate::graphql::{
-        AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema,
+        AgentManager, BoxedAgentManager, CustomerIds, SamplingPolicy, TestSchema,
         customer::NetworksTargetAgentKeysPair,
     };
 
@@ -654,5 +664,76 @@ mod tests {
         let res = schema.execute_as_system_admin(r#"{nodeStatusList(first:2, before:"WzExNiwxMDEsMTE1LDExNiw1M10"){edges{node{name}}}}"#)
             .await;
         assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn node_status_customer_scoping_pagination_skips_inaccessible_prefix() {
+        let mut online_apps_by_host_id = HashMap::new();
+        insert_apps("allowed-host", &["sensor"], &mut online_apps_by_host_id);
+        insert_apps("forbidden-host", &["sensor"], &mut online_apps_by_host_id);
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id,
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // Insert an inaccessible node that sorts first by name.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "a_forbidden_status",
+                        customerId: 2,
+                        description: "Forbidden node",
+                        hostname: "forbidden-host",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Insert an accessible node that sorts after the forbidden node.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "b_allowed_status",
+                        customerId: 1,
+                        description: "Allowed node",
+                        hostname: "allowed-host",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
+
+        let res = schema
+            .execute_as_system_admin_with_data(
+                r"{nodeStatusList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
+                CustomerIds(Some(vec![1])),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeStatusList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["node"]["name"], "b_allowed_status");
+        assert_eq!(
+            data["nodeStatusList"]["pageInfo"]["hasNextPage"],
+            json!(false)
+        );
+        assert_eq!(
+            data["nodeStatusList"]["pageInfo"]["hasPreviousPage"],
+            json!(false)
+        );
     }
 }
