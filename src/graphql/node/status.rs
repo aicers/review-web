@@ -736,4 +736,62 @@ mod tests {
             json!(false)
         );
     }
+
+    #[tokio::test]
+    async fn node_status_customer_scoping_total_count_should_be_scoped() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "status_count_customer_1",
+                        customerId: 1,
+                        description: "Node for customer 1",
+                        hostname: "host1.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "status_count_customer_2",
+                        customerId: 2,
+                        description: "Node for customer 2",
+                        hostname: "host2.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
+
+        let res = schema
+            .execute_as_system_admin_with_data(
+                r"{nodeStatusList(first: 10){totalCount edges{node{name}}}}",
+                CustomerIds(Some(vec![1])),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeStatusList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["node"]["name"], "status_count_customer_1");
+        assert_eq!(data["nodeStatusList"]["totalCount"], json!("1"));
+    }
 }
