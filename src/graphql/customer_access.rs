@@ -8,6 +8,7 @@
 //! - Context-based lookup of the current user's customer scope.
 
 use async_graphql::{Context, Result};
+use review_database::Role;
 
 /// Checks if a user is a member of a specific customer.
 ///
@@ -40,17 +41,45 @@ pub(crate) fn has_membership(users_customers: Option<&[u32]>, customer_ids: &[u3
 
 /// Retrieves the current user's customer ID list from the GraphQL context.
 ///
-/// Returns `None` for administrators (full access), or `Some(Vec<u32>)` for
-/// scoped users. If the account is not found, returns `None` (admin access)
-/// for backward compatibility with tests that don't set up accounts.
+/// Returns `Ok(None)` for administrators (full access), or `Ok(Some(Vec<u32>))` for
+/// scoped users.
+///
+/// The function first checks for an explicit `CustomerIds` in the context
+/// (set by mTLS auth). If not present, it looks up the user's account by
+/// username to determine their customer scope.
+///
+/// # Errors
+///
+/// Returns an error if required context data is missing (e.g., username),
+/// the store cannot be accessed, account lookup fails, or the user account
+/// does not exist.
 pub(crate) fn users_customers(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
-    let store = crate::graphql::get_store(ctx)?;
-    let username = ctx.data::<String>()?;
-    let account_map = store.account_map();
-    match account_map.get(username)? {
-        Some(user) => Ok(user.customer_ids),
-        None => Ok(None), // Treat missing account as admin for backward compatibility
+    // Check if CustomerIds is explicitly set in context (mTLS path)
+    if let Some(cids) = ctx.data_opt::<crate::graphql::CustomerIds>() {
+        return Ok(cids.0.clone());
     }
+
+    // System administrators (and local auth bypass) are always unscoped.
+    // This also keeps test schemas (which may not populate account data) aligned
+    // with production behavior where system admins have full access.
+    if let Some(guard) = ctx.data_opt::<crate::graphql::RoleGuard>() {
+        match guard {
+            crate::graphql::RoleGuard::Role(Role::SystemAdministrator)
+            | crate::graphql::RoleGuard::Local => {
+                return Ok(None);
+            }
+            crate::graphql::RoleGuard::Role(_) => {}
+        }
+    }
+
+    // Fall back to account lookup (JWT path)
+    let username = ctx.data::<String>()?;
+    let store = crate::graphql::get_store(ctx)?;
+    let account_map = store.account_map();
+    let user = account_map
+        .get(username)?
+        .ok_or_else::<async_graphql::Error, _>(|| "User not found".into())?;
+    Ok(user.customer_ids)
 }
 
 #[cfg(test)]
@@ -213,14 +242,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_users_customers_missing_user() {
-        // Missing account is treated as admin (None) for backward compatibility
         let test_ctx = TestContext::new_without_account("missing_user");
         let res = test_ctx.execute("{ usersCustomers }").await;
-        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
-        assert_eq!(
-            res.data.into_json().unwrap(),
-            json!({"usersCustomers": null})
-        );
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "User not found");
     }
 
     #[tokio::test]
