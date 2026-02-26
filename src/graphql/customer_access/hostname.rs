@@ -108,6 +108,29 @@ pub(crate) fn sensor_from_key(key: &[u8]) -> Result<String> {
         .map_err(|_| "TriageResponse key contains invalid UTF-8 sensor".into())
 }
 
+/// Extracts the customer ID from a node's active profile.
+#[must_use]
+fn node_customer_id(node: &review_database::Node) -> Option<u32> {
+    node.profile.as_ref().map(|profile| profile.customer_id)
+}
+
+/// Checks whether the requester can access the given node.
+///
+/// Returns `true` if:
+/// - The requester is admin (`users_customers` is `None`), or
+/// - The node has an active profile and its customer ID is in the requester's scope.
+#[must_use]
+pub(crate) fn can_access_node(
+    users_customers: Option<&[u32]>,
+    node: &review_database::Node,
+) -> bool {
+    match users_customers {
+        None => true,
+        Some(users_customers) => node_customer_id(node)
+            .is_some_and(|customer_id| is_member(Some(users_customers), customer_id)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
