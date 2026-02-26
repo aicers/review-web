@@ -8,7 +8,7 @@
 //! - Context-based lookup of the current user's customer scope.
 
 use async_graphql::{Context, Result};
-use review_database::Role;
+use review_database::{Role, Store, event::Direction};
 
 /// Checks if a user is a member of a specific customer.
 ///
@@ -82,11 +82,60 @@ pub(crate) fn users_customers(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
     Ok(user.customer_ids)
 }
 
+/// Derives the customer ID from a node hostname.
+///
+/// Returns:
+/// - `Ok(Some(customer_id))` if a node with matching hostname exists.
+/// - `Ok(None)` if no matching node exists.
+///
+/// # Errors
+///
+/// Returns an error if node iteration fails.
+pub(crate) fn derive_customer_id_from_hostname(
+    store: &Store,
+    hostname: &str,
+) -> Result<Option<u32>> {
+    let node_map = store.node_map();
+    for entry in node_map.iter(Direction::Forward, None) {
+        let node = entry.map_err(|_| "invalid value in database")?;
+        if let Some(profile) = node.profile.as_ref()
+            && profile.hostname == hostname
+        {
+            return Ok(Some(profile.customer_id));
+        }
+    }
+    Ok(None)
+}
+
+/// Checks whether the requester can access a node identified by hostname.
+///
+/// Returns `Ok(true)` if:
+/// - The requester is an admin (`users_customers` is `None`), or
+/// - A node with the given hostname exists and its customer is in the requester's scope.
+///
+/// Returns `Ok(false)` otherwise.
+///
+/// # Errors
+///
+/// Returns an error if context data is missing or node iteration fails.
+pub(crate) fn can_access_hostname(ctx: &Context<'_>, hostname: &str) -> Result<bool> {
+    let users_customers = users_customers(ctx)?;
+    let Some(users_customers) = users_customers.as_deref() else {
+        // Admin is unscoped.
+        return Ok(true);
+    };
+
+    let store = crate::graphql::get_store(ctx)?;
+    let customer_id = derive_customer_id_from_hostname(&store, hostname)?;
+    Ok(customer_id.is_some_and(|customer_id| is_member(Some(users_customers), customer_id)))
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, RwLock};
 
     use async_graphql::{EmptyMutation, EmptySubscription, Object, Schema};
+    use chrono::Utc;
     use review_database::{Role, Store, types};
     use serde_json::json;
 
@@ -130,6 +179,73 @@ mod tests {
         let users_customers = vec![10, 20, 30];
         let customer_ids = vec![1, 2, 3];
         assert!(!has_membership(Some(&users_customers), &customer_ids));
+    }
+
+    fn create_store_with_node(
+        hostname: &str,
+        customer_id: u32,
+    ) -> (tempfile::TempDir, tempfile::TempDir, Store) {
+        let db_dir = tempfile::tempdir().expect("create data dir");
+        let backup_dir = tempfile::tempdir().expect("create backup dir");
+        let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+        let node = review_database::Node {
+            id: u32::MAX,
+            name: hostname.to_string(),
+            name_draft: Some(hostname.to_string()),
+            profile: Some(review_database::NodeProfile {
+                customer_id,
+                description: String::new(),
+                hostname: hostname.to_string(),
+            }),
+            profile_draft: None,
+            agents: vec![],
+            external_services: vec![],
+            creation_time: Utc::now(),
+        };
+        store.node_map().put(&node).expect("insert node");
+        (db_dir, backup_dir, store)
+    }
+
+    #[test]
+    fn test_derive_customer_id_single_match() {
+        let (_dir, _bdir, store) = create_store_with_node("host-a", 42);
+        let customer_id = derive_customer_id_from_hostname(&store, "host-a")
+            .expect("derive customer id should succeed");
+        assert_eq!(customer_id, Some(42));
+    }
+
+    #[test]
+    fn test_derive_customer_id_no_match() {
+        let (_dir, _bdir, store) = create_store_with_node("host-a", 42);
+        let customer_id = derive_customer_id_from_hostname(&store, "host-missing")
+            .expect("derive customer id should succeed");
+        assert_eq!(customer_id, None);
+    }
+
+    #[test]
+    fn test_derive_customer_id_ignores_profile_draft() {
+        let db_dir = tempfile::tempdir().expect("create data dir");
+        let backup_dir = tempfile::tempdir().expect("create backup dir");
+        let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+        let node = review_database::Node {
+            id: u32::MAX,
+            name: "draft-only".to_string(),
+            name_draft: Some("draft-only".to_string()),
+            profile: None,
+            profile_draft: Some(review_database::NodeProfile {
+                customer_id: 7,
+                description: String::new(),
+                hostname: "host-draft".to_string(),
+            }),
+            agents: vec![],
+            external_services: vec![],
+            creation_time: Utc::now(),
+        };
+        store.node_map().put(&node).expect("insert node");
+
+        let customer_id = derive_customer_id_from_hostname(&store, "host-draft")
+            .expect("derive customer id should succeed");
+        assert_eq!(customer_id, None);
     }
 
     #[derive(Default)]

@@ -22,6 +22,10 @@ impl NodeControlMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn node_reboot(&self, ctx: &Context<'_>, hostname: String) -> Result<String> {
+        if !customer_access::can_access_hostname(ctx, &hostname)? {
+            return Err("Forbidden".into());
+        }
+
         let agents = ctx.data::<BoxedAgentManager>()?;
         let review_hostname = roxy::hostname();
         if !review_hostname.is_empty() && review_hostname == hostname {
@@ -37,6 +41,10 @@ impl NodeControlMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
     .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn node_shutdown(&self, ctx: &Context<'_>, hostname: String) -> Result<String> {
+        if !customer_access::can_access_hostname(ctx, &hostname)? {
+            return Err("Forbidden".into());
+        }
+
         let agents = ctx.data::<BoxedAgentManager>()?;
         let review_hostname = roxy::hostname();
         if !review_hostname.is_empty() && review_hostname == hostname {
@@ -348,6 +356,7 @@ mod tests {
     use assert_json_diff::assert_json_eq;
     use async_trait::async_trait;
     use ipnet::IpNet;
+    use review_database::{Role, types};
     use serde_json::json;
 
     use crate::graphql::{
@@ -2532,6 +2541,40 @@ mod tests {
         map.insert(host.to_string(), entries);
     }
 
+    fn create_account_with_customers(
+        store: &review_database::Store,
+        username: &str,
+        customer_ids: Option<Vec<u32>>,
+    ) {
+        let account = types::Account::new(
+            username,
+            "password",
+            Role::SecurityAdministrator,
+            "Test User".to_string(),
+            "Testing".to_string(),
+            None,
+            None,
+            None,
+            None,
+            customer_ids,
+        )
+        .expect("create account");
+        store
+            .account_map()
+            .insert(&account)
+            .expect("insert account");
+    }
+
+    fn update_account_customers(
+        store: &review_database::Store,
+        username: &str,
+        customer_ids: Option<Vec<u32>>,
+    ) {
+        let account_map = store.account_map();
+        let _ = account_map.delete(username);
+        create_account_with_customers(store, username, customer_ids);
+    }
+
     struct FailingMockAgentManager {
         pub online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,
     }
@@ -2646,5 +2689,93 @@ mod tests {
             .await;
 
         assert_eq!(res.data.to_string(), r#"{nodeShutdown: "analysis"}"#);
+    }
+
+    #[tokio::test]
+    async fn node_shutdown_customer_scoping_denied() {
+        let mut online_apps_by_host_id = HashMap::new();
+        insert_apps(
+            "host-customer-2",
+            &["semi-supervised"],
+            &mut online_apps_by_host_id,
+        );
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id,
+            available_agents: vec!["semi-supervised@host-customer-2"],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // Insert a node owned by customer 2.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "shutdown_target",
+                        customerId: 2,
+                        description: "Target node",
+                        hostname: "host-customer-2",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Scoped user with customer 1 cannot shutdown customer 2 node.
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { nodeShutdown(hostname: "host-customer-2") }"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    #[tokio::test]
+    async fn node_reboot_customer_scoping_denied() {
+        let mut online_apps_by_host_id = HashMap::new();
+        insert_apps(
+            "host-customer-2",
+            &["semi-supervised"],
+            &mut online_apps_by_host_id,
+        );
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id,
+            available_agents: vec!["semi-supervised@host-customer-2"],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // Insert a node owned by customer 2.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "reboot_target",
+                        customerId: 2,
+                        description: "Target node",
+                        hostname: "host-customer-2",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Scoped user with customer 1 cannot reboot customer 2 node.
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { nodeReboot(hostname: "host-customer-2") }"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
     }
 }
