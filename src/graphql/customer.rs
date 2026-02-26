@@ -114,12 +114,7 @@ impl CustomerMutation {
             .into_iter()
             .map(TryFrom::try_from)
             .collect::<Result<Vec<_>>>()?;
-        networks.sort_by(|a, b| a.name.cmp(&b.name));
-        let original_count = networks.len();
-        networks.dedup_by(|a, b| a.name == b.name);
-        if networks.len() != original_count {
-            return Err("duplicate network name".into());
-        }
+        validate_no_duplicate_network_names(&mut networks)?;
         let value = database::Customer {
             id: u32::MAX,
             name: name.clone(),
@@ -204,7 +199,11 @@ impl CustomerMutation {
     ) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
         let old = old.try_into()?;
-        let new = new.try_into()?;
+        let mut new: review_database::CustomerUpdate = new.try_into()?;
+
+        if let Some(ref mut networks) = new.networks {
+            validate_no_duplicate_network_names(networks)?;
+        }
 
         let network_list = {
             let store = crate::graphql::get_store(ctx)?;
@@ -251,6 +250,26 @@ impl CustomerMutation {
 
         Ok(id)
     }
+}
+
+/// Validates that there are no duplicate network names in the given list.
+///
+/// This function sorts the networks by name, removes duplicates, and returns an error
+/// if duplicates were detected.
+///
+/// # Errors
+///
+/// Returns an error with "duplicate network name" if duplicates are found.
+fn validate_no_duplicate_network_names(
+    networks: &mut Vec<review_database::CustomerNetwork>,
+) -> Result<()> {
+    networks.sort_by(|a, b| a.name.cmp(&b.name));
+    let original_count = networks.len();
+    networks.dedup_by(|a, b| a.name == b.name);
+    if networks.len() != original_count {
+        return Err("duplicate network name".into());
+    }
+    Ok(())
 }
 
 /// Validates that customers can be safely removed by checking for references in accounts and nodes.
@@ -1072,6 +1091,122 @@ mod tests {
             res.errors[0]
                 .message
                 .contains("still referenced by block network")
+        );
+    }
+
+    #[tokio::test]
+    async fn insert_customer_with_duplicate_network_names() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertCustomer(
+                        name: "c1"
+                        description: ""
+                        networks: [
+                            {
+                                name: "net1"
+                                description: ""
+                                networkType: INTRANET
+                                networkGroup: { hosts: [], networks: [], ranges: [] }
+                            },
+                            {
+                                name: "net1"
+                                description: "different desc"
+                                networkType: EXTRANET
+                                networkGroup: { hosts: [], networks: [], ranges: [] }
+                            }
+                        ]
+                    )
+                }"#,
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(res.errors[0].message.contains("duplicate network name"));
+
+        // Verify no customer was created
+        let res = schema
+            .execute_as_system_admin(r"{customerList{totalCount}}")
+            .await;
+        assert_eq!(res.data.to_string(), r#"{customerList: {totalCount: "0"}}"#);
+    }
+
+    #[tokio::test]
+    async fn update_customer_with_duplicate_network_names() {
+        let schema = TestSchema::new().await;
+
+        // First, create a customer with unique networks
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertCustomer(
+                        name: "c1"
+                        description: "test"
+                        networks: [
+                            {
+                                name: "net1"
+                                description: ""
+                                networkType: INTRANET
+                                networkGroup: { hosts: [], networks: [], ranges: [] }
+                            }
+                        ]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        // Try to update with duplicate network names - should fail
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateCustomer(
+                        id: "0"
+                        old: {
+                            name: "c1"
+                            description: "test"
+                            networks: [
+                                {
+                                    name: "net1"
+                                    description: ""
+                                    networkType: INTRANET
+                                    networkGroup: { hosts: [], networks: [], ranges: [] }
+                                }
+                            ]
+                        }
+                        new: {
+                            name: "c1"
+                            description: "test"
+                            networks: [
+                                {
+                                    name: "net2"
+                                    description: ""
+                                    networkType: INTRANET
+                                    networkGroup: { hosts: [], networks: [], ranges: [] }
+                                },
+                                {
+                                    name: "net2"
+                                    description: "duplicate"
+                                    networkType: EXTRANET
+                                    networkGroup: { hosts: [], networks: [], ranges: [] }
+                                }
+                            ]
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(res.errors[0].message.contains("duplicate network name"));
+
+        // Verify the customer still has original network (update was rejected)
+        let res = schema
+            .execute_as_system_admin(r#"{customer(id: "0"){networks{name}}}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{customer: {networks: [{name: "net1"}]}}"#
         );
     }
 }
