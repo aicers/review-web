@@ -1520,6 +1520,48 @@ mod tests {
         );
     }
 
+    /// Test that scoped users can access draft-only nodes matching their `customer_ids`.
+    #[tokio::test]
+    async fn node_customer_scoping_draft_profile_allowed_access() {
+        let schema = TestSchema::new().await;
+
+        // Insert node first; inserted nodes start as draft-only (`profile` = null).
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_1_draft_only",
+                        customerId: 1,
+                        description: "Draft-only node for customer 1",
+                        hostname: "draft-host1.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        // Scoped user should be able to read a draft-only node for their customer.
+        let res = schema
+            .execute_with_guard(
+                r#"{node(id: "0") { id name }}"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({"node": {"id": "0", "name": "node_customer_1_draft_only"}})
+        );
+    }
+
     /// Test that scoped users are denied access to nodes not matching their `customer_ids`
     #[tokio::test]
     async fn node_customer_scoping_denied_access() {
