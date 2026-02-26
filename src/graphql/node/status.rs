@@ -9,7 +9,6 @@ use review_database::UniqueKey;
 use roxy::ResourceUsage;
 use tracing::info;
 
-use super::crud::can_access_node;
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard, customer_access},
     NodeStatus, NodeStatusQuery, NodeStatusTotalCount, matches_manager_hostname,
@@ -63,7 +62,7 @@ async fn load(
             first,
             last,
             None,
-            |node| can_access_node(users_customers, node),
+            |node| customer_access::can_access_node(users_customers, node),
         );
         let node_list = node_list
             .into_iter()
@@ -127,6 +126,7 @@ mod tests {
 
     use assert_json_diff::assert_json_include;
     use async_trait::async_trait;
+    use chrono::Utc;
     use roxy::ResourceUsage;
     use serde_json::json;
 
@@ -218,6 +218,29 @@ mod tests {
             .map(|&app| (format!("{app}@{host}"), app.to_string()))
             .collect();
         map.insert(host.to_string(), entries);
+    }
+
+    fn insert_active_node(
+        store: &review_database::Store,
+        name: &str,
+        customer_id: u32,
+        hostname: &str,
+    ) -> u32 {
+        let node = review_database::Node {
+            id: u32::MAX,
+            name: name.to_string(),
+            name_draft: Some(name.to_string()),
+            profile: Some(review_database::NodeProfile {
+                customer_id,
+                description: format!("Node for customer {customer_id}"),
+                hostname: hostname.to_string(),
+            }),
+            profile_draft: None,
+            agents: vec![],
+            external_services: vec![],
+            creation_time: Utc::now(),
+        };
+        store.node_map().put(&node).expect("insert node")
     }
 
     #[tokio::test]
@@ -677,39 +700,10 @@ mod tests {
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
-        // Insert an inaccessible node that sorts first by name.
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNode(
-                        name: "a_forbidden_status",
-                        customerId: 2,
-                        description: "Forbidden node",
-                        hostname: "forbidden-host",
-                        agents: [],
-                        externalServices: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
-
-        // Insert an accessible node that sorts after the forbidden node.
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNode(
-                        name: "b_allowed_status",
-                        customerId: 1,
-                        description: "Allowed node",
-                        hostname: "allowed-host",
-                        agents: [],
-                        externalServices: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
+        let id0 = insert_active_node(&schema.store(), "a_forbidden_status", 2, "forbidden-host");
+        let id1 = insert_active_node(&schema.store(), "b_allowed_status", 1, "allowed-host");
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
 
         let res = schema
             .execute_as_system_admin_with_data(
@@ -744,37 +738,20 @@ mod tests {
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNode(
-                        name: "status_count_customer_1",
-                        customerId: 1,
-                        description: "Node for customer 1",
-                        hostname: "host1.example.com",
-                        agents: [],
-                        externalServices: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNode(
-                        name: "status_count_customer_2",
-                        customerId: 2,
-                        description: "Node for customer 2",
-                        hostname: "host2.example.com",
-                        agents: [],
-                        externalServices: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
+        let id0 = insert_active_node(
+            &schema.store(),
+            "status_count_customer_1",
+            1,
+            "host1.example.com",
+        );
+        let id1 = insert_active_node(
+            &schema.store(),
+            "status_count_customer_2",
+            2,
+            "host2.example.com",
+        );
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
 
         let res = schema
             .execute_as_system_admin_with_data(

@@ -204,7 +204,7 @@ fn scoped_node_count(ctx: &Context<'_>) -> Result<usize> {
             let mut count = 0;
             for entry in map.iter(Direction::Forward, None) {
                 let node = entry.map_err(|_| "invalid value in database")?;
-                if crud::can_access_node(Some(users_customers), &node) {
+                if super::customer_access::can_access_node(Some(users_customers), &node) {
                     count += 1;
                 }
             }

@@ -130,6 +130,32 @@ pub(crate) fn can_access_hostname(ctx: &Context<'_>, hostname: &str) -> Result<b
     Ok(customer_id.is_some_and(|customer_id| is_member(Some(users_customers), customer_id)))
 }
 
+/// Extracts the customer ID from a node's active profile.
+#[must_use]
+fn node_customer_id(node: &review_database::Node) -> Option<u32> {
+    node.profile.as_ref().map(|profile| profile.customer_id)
+}
+
+/// Checks whether the requester can access the given node.
+///
+/// Returns `true` if:
+/// - The requester is admin (`users_customers` is `None`), or
+/// - The node has an active profile and its customer ID is in the requester's scope.
+#[must_use]
+pub(crate) fn can_access_node(
+    users_customers: Option<&[u32]>,
+    node: &review_database::Node,
+) -> bool {
+    match users_customers {
+        None => true,
+        Some(users_customers) => {
+            node_customer_id(node).is_some_and(|customer_id| {
+                is_member(Some(users_customers), customer_id)
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, RwLock};
@@ -246,6 +272,26 @@ mod tests {
         let customer_id = derive_customer_id_from_hostname(&store, "host-draft")
             .expect("derive customer id should succeed");
         assert_eq!(customer_id, None);
+    }
+
+    #[test]
+    fn test_can_access_node_ignores_profile_draft() {
+        let node = review_database::Node {
+            id: u32::MAX,
+            name: "draft-only".to_string(),
+            name_draft: Some("draft-only".to_string()),
+            profile: None,
+            profile_draft: Some(review_database::NodeProfile {
+                customer_id: 7,
+                description: String::new(),
+                hostname: "host-draft".to_string(),
+            }),
+            agents: vec![],
+            external_services: vec![],
+            creation_time: Utc::now(),
+        };
+
+        assert!(!can_access_node(Some(&[7]), &node));
     }
 
     #[derive(Default)]

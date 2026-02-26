@@ -5,9 +5,7 @@ use tracing::{error, info, warn};
 
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard, customer_access},
-    NodeControlMutation, SEMI_SUPERVISED_AGENT,
-    crud::can_access_node,
-    gen_agent_key,
+    NodeControlMutation, SEMI_SUPERVISED_AGENT, gen_agent_key,
 };
 use crate::graphql::{
     customer::{NetworksTargetAgentKeysPair, send_agent_specific_customer_networks},
@@ -80,7 +78,7 @@ impl NodeControlMutation {
             let Some((db_node, _, _)) = node_map.get_by_id(i)? else {
                 return Err("no such node".into());
             };
-            if !can_access_node(users_customers.as_deref(), &db_node) {
+            if !customer_access::can_access_node(users_customers.as_deref(), &db_node) {
                 return Err("Forbidden".into());
             }
         }
