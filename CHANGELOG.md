@@ -22,15 +22,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   validation to `authenticator.authenticate()` rather than the previously
   internal `validate_client_cert()`, making the validation policy replaceable
   at runtime. (auth-mtls)
-
-### Removed
-
-- Removed `validate_client_cert()` and `has_service_name()` from `auth::mtls`.
-  Callers that relied on these functions should implement `MtlsAuthenticator`
-  instead. (auth-mtls)
-
-### Changed
-
 - Unified all `cluster_id` and `model_id` types to `u32` across the codebase,
   replacing previous uses of `i32`, `String`, and `usize`. This change aligns
   with the corresponding type unification in `review-database`.
@@ -46,6 +37,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   the `NetworkUpdateInput` input type.
 - **BREAKING**: Removed the `customerList` field from the `Network` GraphQL
   type. Customer-network associations are now managed differently.
+
+### Removed
+
+- Removed `validate_client_cert()` and `has_service_name()` from `auth::mtls`.
+  Callers that relied on these functions should implement `MtlsAuthenticator`
+  instead. (auth-mtls)
 
 ## [0.30.1] - 2026-01-31
 
