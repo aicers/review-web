@@ -985,6 +985,7 @@ impl TestSchema {
             use self::account::set_initial_admin_password;
             let _ = set_initial_admin_password(&store);
         }
+
         let store = Arc::new(RwLock::new(store));
 
         #[cfg(feature = "auth-jwt")]

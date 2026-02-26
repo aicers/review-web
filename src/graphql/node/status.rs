@@ -10,7 +10,7 @@ use roxy::ResourceUsage;
 use tracing::info;
 
 use super::{
-    super::{BoxedAgentManager, Role, RoleGuard},
+    super::{BoxedAgentManager, Role, RoleGuard, customer_access},
     NodeStatus, NodeStatusQuery, NodeStatusTotalCount, matches_manager_hostname,
 };
 use crate::graphql::query_with_constraints;
@@ -49,10 +49,26 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, NodeStatus, NodeStatusTotalCount, EmptyFields>> {
+    let users_customers = customer_access::users_customers(ctx)?;
+    let users_customers = users_customers.as_deref();
     let (node_list, has_previous, has_next) = {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.node_map();
-        super::super::load_edges_interim(&map, after, before, first, last, None)?
+        // Apply customer filtering while collecting edges to keep pagination metadata consistent.
+        let (node_list, has_previous, has_next) = super::super::process_load_edges_filtered(
+            &map,
+            after,
+            before,
+            first,
+            last,
+            None,
+            |node| customer_access::can_access_node(users_customers, node),
+        );
+        let node_list = node_list
+            .into_iter()
+            .map(|res| res.map_err(|e| format!("{e}").into()))
+            .collect::<Result<Vec<_>>>()?;
+        (node_list, has_previous, has_next)
     };
 
     let agent_manager = ctx.data::<BoxedAgentManager>()?;
@@ -110,11 +126,12 @@ mod tests {
 
     use assert_json_diff::assert_json_include;
     use async_trait::async_trait;
+    use chrono::Utc;
     use roxy::ResourceUsage;
     use serde_json::json;
 
     use crate::graphql::{
-        AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema,
+        AgentManager, BoxedAgentManager, CustomerIds, SamplingPolicy, TestSchema,
         customer::NetworksTargetAgentKeysPair,
     };
 
@@ -201,6 +218,29 @@ mod tests {
             .map(|&app| (format!("{app}@{host}"), app.to_string()))
             .collect();
         map.insert(host.to_string(), entries);
+    }
+
+    fn insert_active_node(
+        store: &review_database::Store,
+        name: &str,
+        customer_id: u32,
+        hostname: &str,
+    ) -> u32 {
+        let node = review_database::Node {
+            id: u32::MAX,
+            name: name.to_string(),
+            name_draft: Some(name.to_string()),
+            profile: Some(review_database::NodeProfile {
+                customer_id,
+                description: format!("Node for customer {customer_id}"),
+                hostname: hostname.to_string(),
+            }),
+            profile_draft: None,
+            agents: vec![],
+            external_services: vec![],
+            creation_time: Utc::now(),
+        };
+        store.node_map().put(&node).expect("insert node")
     }
 
     #[tokio::test]
@@ -647,5 +687,88 @@ mod tests {
         let res = schema.execute_as_system_admin(r#"{nodeStatusList(first:2, before:"WzExNiwxMDEsMTE1LDExNiw1M10"){edges{node{name}}}}"#)
             .await;
         assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn node_status_customer_scoping_pagination_skips_inaccessible_prefix() {
+        let mut online_apps_by_host_id = HashMap::new();
+        insert_apps("allowed-host", &["sensor"], &mut online_apps_by_host_id);
+        insert_apps("forbidden-host", &["sensor"], &mut online_apps_by_host_id);
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id,
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let id0 = insert_active_node(&schema.store(), "a_forbidden_status", 2, "forbidden-host");
+        let id1 = insert_active_node(&schema.store(), "b_allowed_status", 1, "allowed-host");
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+
+        let res = schema
+            .execute_as_system_admin_with_data(
+                r"{nodeStatusList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
+                CustomerIds(Some(vec![1])),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeStatusList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["node"]["name"], "b_allowed_status");
+        assert_eq!(
+            data["nodeStatusList"]["pageInfo"]["hasNextPage"],
+            json!(false)
+        );
+        assert_eq!(
+            data["nodeStatusList"]["pageInfo"]["hasPreviousPage"],
+            json!(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn node_status_customer_scoping_total_count_should_be_scoped() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let id0 = insert_active_node(
+            &schema.store(),
+            "status_count_customer_1",
+            1,
+            "host1.example.com",
+        );
+        let id1 = insert_active_node(
+            &schema.store(),
+            "status_count_customer_2",
+            2,
+            "host2.example.com",
+        );
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+
+        let res = schema
+            .execute_as_system_admin_with_data(
+                r"{nodeStatusList(first: 10){totalCount edges{node{name}}}}",
+                CustomerIds(Some(vec![1])),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeStatusList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["node"]["name"], "status_count_customer_1");
+        assert_eq!(data["nodeStatusList"]["totalCount"], json!("1"));
     }
 }

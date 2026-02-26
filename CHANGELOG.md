@@ -28,6 +28,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Removed `validate_client_cert()` and `has_service_name()` from `auth::mtls`.
   Callers that relied on these functions should implement `MtlsAuthenticator`
   instead. (auth-mtls)
+- Enforce customer scoping for Node operations. Non-admin users can only
+  access, create, update, and delete nodes that belong to their assigned
+  customers. Node list APIs now filter results based on the requester's
+  customer IDs. Administrators (with `customer_ids` = None) retain full access
+  to all nodes.
 
 ## [0.30.1] - 2026-01-31
 
@@ -581,10 +586,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `updateSamplingPolicy`.
   - The API returns the following error message when a value cannot be parsed as
     an `IpAddr` (e.g., when "abc" is given):
+
     ```text
     Failed to parse "IpAddress": Invalid IP address: abc (occurred while
     parsing "[IpAddress!]")
     ```
+
 - Added the `theme` field to the `Account` struct to store the user's selected
   screen color mode. Accordingly, the functions for inserting and updating
   accounts have been modified, and new APIs have been added to retrieve and
