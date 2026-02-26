@@ -22,6 +22,21 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   validation to `authenticator.authenticate()` rather than the previously
   internal `validate_client_cert()`, making the validation policy replaceable
   at runtime. (auth-mtls)
+- Unified all `cluster_id` and `model_id` types to `u32` across the codebase,
+  replacing previous uses of `i32`, `String`, and `usize`. This change aligns
+  with the corresponding type unification in `review-database`.
+- Updated `review-database` dependency to include commits that unify ID types
+  to `u32` and implement customer-scoped network tags.
+- **BREAKING**: Network tags are now customer-scoped. The `networkTagList`,
+  `insertNetworkTag`, `removeNetworkTag`, and `updateNetworkTag` GraphQL APIs
+  now require a `customerId` parameter to identify which customer's tags to
+  operate on.
+- **BREAKING**: Removed the `tagIds` parameter from the `insertNetwork` GraphQL
+  API as network tags are now managed separately per customer.
+- **BREAKING**: Removed the `tagIds` field from the `Network` GraphQL type and
+  the `NetworkUpdateInput` input type.
+- **BREAKING**: Removed the `customerList` field from the `Network` GraphQL
+  type. Customer-network associations are now managed differently.
 
 ### Removed
 
@@ -581,10 +596,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `updateSamplingPolicy`.
   - The API returns the following error message when a value cannot be parsed as
     an `IpAddr` (e.g., when "abc" is given):
+
     ```text
     Failed to parse "IpAddress": Invalid IP address: abc (occurred while
     parsing "[IpAddress!]")
     ```
+
 - Added the `theme` field to the `Account` struct to store the user's selected
   screen color mode. Accordingly, the functions for inserting and updating
   accounts have been modified, and new APIs have been added to retrieve and

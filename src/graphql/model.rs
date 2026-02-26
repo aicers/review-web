@@ -55,15 +55,19 @@ impl ModelQuery {
     async fn csv_column_extra(
         &self,
         ctx: &Context<'_>,
-        model: i32,
+        model: ID,
     ) -> Result<Option<CsvColumnExtraConfig>> {
+        let model_id = model
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid model id")?;
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
             .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
         let map = db.csv_column_extra_map();
         Ok(map
-            .get_by_model(model)?
+            .get_by_model(model_id)?
             .map(|config| CsvColumnExtraConfig { inner: config }))
     }
 
@@ -173,7 +177,7 @@ impl ModelQuery {
     async fn top_clusters_by_score(
         &self,
         _ctx: &Context<'_>,
-        model: i32,
+        model: ID,
         size: Option<i32>,
         time: Option<NaiveDateTime>,
     ) -> Result<ClusterScoreSet> {
@@ -201,21 +205,17 @@ impl ModelQuery {
             .unwrap_or(DEFAULT_SIZE)
             .to_usize()
             .ok_or("invalid size")?;
-        let model_id_to_i32 = model
-            .as_str()
-            .parse::<i32>()
-            .map_err(|_| "invalid model id(i32)")?;
         let model_id = model
             .as_str()
             .parse::<u32>()
-            .map_err(|_| "invalid model id(u32)")?;
+            .map_err(|_| "invalid model id")?;
 
         let store = crate::graphql::get_store(ctx)?;
         let cluster_ids = load_cluster_ids_with_size_limit(&store, model_id, portion_of_clusters)?;
 
         let csv_column_extra_map = store.csv_column_extra_map();
         let Some(csv_extra) = csv_column_extra_map
-            .get_by_model(model_id_to_i32)
+            .get_by_model(model_id)
             .map_err(|e| format!("Failed to get csv column extra: {e}"))?
         else {
             return Ok(Vec::new());
@@ -295,21 +295,17 @@ impl ModelQuery {
             .unwrap_or(DEFAULT_MIN_MAP_SIZE)
             .to_usize()
             .ok_or("invalid minMapSize")?;
-        let model_id_to_i32 = model
-            .as_str()
-            .parse::<i32>()
-            .map_err(|_| "invalid model id(i32)")?;
         let model_id = model
             .as_str()
             .parse::<u32>()
-            .map_err(|_| "invalid model id(u32)")?;
+            .map_err(|_| "invalid model id")?;
 
         let store = crate::graphql::get_store(ctx)?;
         let cluster_ids = load_cluster_ids(&store, model_id, None)?;
 
         let csv_column_extra_map = store.csv_column_extra_map();
         let csv_extra = csv_column_extra_map
-            .get_by_model(model_id_to_i32)
+            .get_by_model(model_id)
             .map_err(|e| format!("Failed to get csv column extra: {e}"))?;
         let (column_1, column_n) = if let Some(csv_extra) = csv_extra {
             (csv_extra.column_1, csv_extra.column_n)
@@ -341,13 +337,17 @@ impl ModelMutation {
     async fn add_csv_column_extra(
         &self,
         ctx: &Context<'_>,
-        model: i32,
+        model: ID,
         column_alias: Option<Vec<String>>,
         column_display: Option<Vec<bool>>,
         column_top_n: Option<Vec<bool>>,
         column_1: Option<Vec<bool>>,
         column_n: Option<Vec<bool>>,
     ) -> Result<ID> {
+        let model_id = model
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid model id")?;
         let db = ctx
             .data::<Arc<RwLock<Store>>>()?
             .read()
@@ -355,7 +355,7 @@ impl ModelMutation {
         let map = db.csv_column_extra_map();
         Ok(ID(map
             .insert(
-                model,
+                model_id,
                 column_alias.as_deref(),
                 column_display.as_deref(),
                 column_top_n.as_deref(),
@@ -1026,7 +1026,7 @@ const DEFAULT_NUMBER_OF_CLUSTER: usize = 10;
 fn load_cluster_ids(
     store: &database::Store,
     model_id: u32,
-    cluster_id: Option<i32>,
+    cluster_id: Option<u32>,
 ) -> Result<Vec<u32>> {
     let map = store.cluster_map();
     let clusters = map.load_clusters(
@@ -1045,7 +1045,7 @@ fn load_cluster_ids(
         .into_iter()
         .filter(|c| c.category_id != UNCATEGORIZED)
         .filter(|c| cluster_id.is_none_or(|id| c.id == id))
-        .filter_map(|c| c.id.to_u32())
+        .map(|c| c.id)
         .collect();
 
     Ok(ids)
@@ -1105,7 +1105,7 @@ fn load_cluster_ids_with_size_limit(
     let cluster_ids: Vec<u32> = clusters
         .iter()
         .take(index_included + 1)
-        .filter_map(|c| c.id.to_u32())
+        .map(|c| c.id)
         .collect();
 
     Ok(cluster_ids)
