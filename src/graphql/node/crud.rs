@@ -18,39 +18,6 @@ use super::{
 };
 use crate::{graphql::query_with_constraints, info_with_username};
 
-/// Extracts the `customer_id` from a node.
-///
-/// Uses `profile.customer_id` if available (applied nodes),
-/// falls back to `profile_draft.customer_id` for draft-only nodes.
-fn node_customer_id(node: &review_database::Node) -> Option<u32> {
-    node.profile
-        .as_ref()
-        .map(|p| p.customer_id)
-        .or_else(|| node.profile_draft.as_ref().map(|p| p.customer_id))
-}
-
-/// Checks if the requester has access to the given node.
-///
-/// Returns `true` if:
-/// - The requester is an admin (`users_customers` is `None`), or
-/// - The node's `customer_id` is in the requester's customer list.
-///
-/// Returns `false` if the requester is not an admin and the node's
-/// `customer_id` is not in their customer list, or if the node has no
-/// `customer_id`.
-pub(super) fn can_access_node(
-    users_customers: Option<&[u32]>,
-    node: &review_database::Node,
-) -> bool {
-    match users_customers {
-        None => true, // Admin has access to all nodes
-        Some(customers) => {
-            // Non-admin: check if node's customer_id is in the user's customers
-            node_customer_id(node).is_some_and(|cid| customers.contains(&cid))
-        }
-    }
-}
-
 #[Object]
 impl NodeQuery {
     /// A list of nodes.
@@ -89,7 +56,7 @@ impl NodeQuery {
         };
 
         // Check customer scoping
-        if !can_access_node(users_customers.as_deref(), &node) {
+        if !customer_access::can_access_node(users_customers.as_deref(), &node) {
             return Err("Forbidden".into());
         }
 
@@ -215,7 +182,7 @@ impl NodeMutation {
             let Some((node, _, _)) = map.get_by_id(i)? else {
                 return Err("no such node".into());
             };
-            if !can_access_node(users_customers.as_deref(), &node) {
+            if !customer_access::can_access_node(users_customers.as_deref(), &node) {
                 return Err("Forbidden".into());
             }
 
@@ -250,7 +217,7 @@ impl NodeMutation {
         let Some((node, _, _)) = map.get_by_id(i)? else {
             return Err("no such node".into());
         };
-        if !can_access_node(users_customers.as_deref(), &node) {
+        if !customer_access::can_access_node(users_customers.as_deref(), &node) {
             return Err("Forbidden".into());
         }
 
@@ -277,7 +244,7 @@ async fn load(
     // Apply customer filtering while collecting edges to keep pagination metadata consistent.
     let (nodes, has_previous, has_next) =
         super::super::process_load_edges_filtered(&map, after, before, first, last, None, |node| {
-            can_access_node(users_customers, node)
+            customer_access::can_access_node(users_customers, node)
         });
 
     let nodes = nodes
@@ -326,6 +293,7 @@ pub fn agent_keys_by_customer_id(db: &Store) -> Result<HashMap<u32, Vec<String>>
 #[cfg(test)]
 mod tests {
     use assert_json_diff::assert_json_eq;
+    use chrono::Utc;
     use review_database::{Role, types};
     use serde_json::json;
 
@@ -367,6 +335,30 @@ mod tests {
         let _ = account_map.delete(username);
         // Create new account with updated customer_ids
         create_account_with_customers(store, username, customer_ids);
+    }
+
+    /// Helper to insert a node with an active profile.
+    fn insert_active_node(
+        store: &review_database::Store,
+        name: &str,
+        customer_id: u32,
+        hostname: &str,
+    ) -> u32 {
+        let node = review_database::Node {
+            id: u32::MAX,
+            name: name.to_string(),
+            name_draft: Some(name.to_string()),
+            profile: Some(review_database::NodeProfile {
+                customer_id,
+                description: format!("Node for customer {customer_id}"),
+                hostname: hostname.to_string(),
+            }),
+            profile_draft: None,
+            agents: vec![],
+            external_services: vec![],
+            creation_time: Utc::now(),
+        };
+        store.node_map().put(&node).expect("insert node")
     }
 
     // test scenario : insert node -> update node with different name -> remove node
@@ -1502,40 +1494,10 @@ mod tests {
     async fn node_customer_scoping_allowed_access() {
         let schema = TestSchema::new().await;
 
-        // TestSchema creates an admin account - insert nodes first
-
-        // Insert nodes with different customer_ids (as admin)
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNode(
-                        name: "node_customer_1",
-                        customerId: 1,
-                        description: "Node for customer 1",
-                        hostname: "host1.example.com",
-                        agents: [],
-                        externalServices: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNode(
-                        name: "node_customer_2",
-                        customerId: 2,
-                        description: "Node for customer 2",
-                        hostname: "host2.example.com",
-                        agents: [],
-                        externalServices: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
+        let id0 = insert_active_node(&schema.store(), "node_customer_1", 1, "host1.example.com");
+        let id1 = insert_active_node(&schema.store(), "node_customer_2", 2, "host2.example.com");
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
 
         // Update account to be scoped to customer 1 only
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
@@ -1601,56 +1563,22 @@ mod tests {
     async fn node_customer_scoping_list_filtering() {
         let schema = TestSchema::new().await;
 
-        // TestSchema creates an admin account - insert nodes first
-
-        // Insert nodes with different customer_ids (as admin)
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNode(
-                        name: "node_customer_1_a",
-                        customerId: 1,
-                        description: "Node A for customer 1",
-                        hostname: "host1a.example.com",
-                        agents: [],
-                        externalServices: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNode(
-                        name: "node_customer_2",
-                        customerId: 2,
-                        description: "Node for customer 2",
-                        hostname: "host2.example.com",
-                        agents: [],
-                        externalServices: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNode(
-                        name: "node_customer_1_b",
-                        customerId: 1,
-                        description: "Node B for customer 1",
-                        hostname: "host1b.example.com",
-                        agents: [],
-                        externalServices: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "2"}"#);
+        let id0 = insert_active_node(
+            &schema.store(),
+            "node_customer_1_a",
+            1,
+            "host1a.example.com",
+        );
+        let id1 = insert_active_node(&schema.store(), "node_customer_2", 2, "host2.example.com");
+        let id2 = insert_active_node(
+            &schema.store(),
+            "node_customer_1_b",
+            1,
+            "host1b.example.com",
+        );
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
 
         // Update account to be scoped to customer 1 only
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
@@ -1685,39 +1613,15 @@ mod tests {
     async fn node_customer_scoping_pagination_skips_inaccessible_prefix() {
         let schema = TestSchema::new().await;
 
-        // Insert an inaccessible node that sorts first by name.
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNode(
-                        name: "a_forbidden_node",
-                        customerId: 2,
-                        description: "Forbidden node",
-                        hostname: "forbidden.example.com",
-                        agents: [],
-                        externalServices: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
-
-        // Insert an accessible node that sorts after the forbidden node.
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNode(
-                        name: "b_allowed_node",
-                        customerId: 1,
-                        description: "Allowed node",
-                        hostname: "allowed.example.com",
-                        agents: [],
-                        externalServices: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
+        let id0 = insert_active_node(
+            &schema.store(),
+            "a_forbidden_node",
+            2,
+            "forbidden.example.com",
+        );
+        let id1 = insert_active_node(&schema.store(), "b_allowed_node", 1, "allowed.example.com");
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
 
         // Scope the user to customer 1 only.
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
@@ -1780,37 +1684,20 @@ mod tests {
     async fn node_customer_scoping_total_count_should_be_scoped() {
         let schema = TestSchema::new().await;
 
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNode(
-                        name: "count_node_customer_1",
-                        customerId: 1,
-                        description: "Node for customer 1",
-                        hostname: "host1.example.com",
-                        agents: [],
-                        externalServices: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNode(
-                        name: "count_node_customer_2",
-                        customerId: 2,
-                        description: "Node for customer 2",
-                        hostname: "host2.example.com",
-                        agents: [],
-                        externalServices: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
+        let id0 = insert_active_node(
+            &schema.store(),
+            "count_node_customer_1",
+            1,
+            "host1.example.com",
+        );
+        let id1 = insert_active_node(
+            &schema.store(),
+            "count_node_customer_2",
+            2,
+            "host2.example.com",
+        );
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
 
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
