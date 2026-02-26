@@ -130,17 +130,34 @@ pub(crate) fn can_access_hostname(ctx: &Context<'_>, hostname: &str) -> Result<b
     Ok(customer_id.is_some_and(|customer_id| is_member(Some(users_customers), customer_id)))
 }
 
-/// Extracts the customer ID from a node's active profile.
+/// Extracts the customer ID for node-level CRUD authorization.
+///
+/// Uses `profile.customer_id` if available and falls back to
+/// `profile_draft.customer_id` for draft-only nodes.
+///
+/// This is intentional for node CRUD operations (read/update/delete):
+/// before `applyNode`, scoped users must still be able to access nodes
+/// whose customer is recorded only in draft.
+///
+/// This differs from [`derive_customer_id_from_hostname`], which is
+/// hostname-based and intentionally uses only the active `profile`.
 #[must_use]
 fn node_customer_id(node: &review_database::Node) -> Option<u32> {
-    node.profile.as_ref().map(|profile| profile.customer_id)
+    node.profile
+        .as_ref()
+        .map(|profile| profile.customer_id)
+        .or_else(|| {
+            node.profile_draft
+                .as_ref()
+                .map(|profile| profile.customer_id)
+        })
 }
 
 /// Checks whether the requester can access the given node.
 ///
 /// Returns `true` if:
 /// - The requester is admin (`users_customers` is `None`), or
-/// - The node has an active profile and its customer ID is in the requester's scope.
+/// - The node has a customer ID (from `profile` or `profile_draft`) in the requester's scope.
 #[must_use]
 pub(crate) fn can_access_node(
     users_customers: Option<&[u32]>,
@@ -148,11 +165,8 @@ pub(crate) fn can_access_node(
 ) -> bool {
     match users_customers {
         None => true,
-        Some(users_customers) => {
-            node_customer_id(node).is_some_and(|customer_id| {
-                is_member(Some(users_customers), customer_id)
-            })
-        }
+        Some(users_customers) => node_customer_id(node)
+            .is_some_and(|customer_id| is_member(Some(users_customers), customer_id)),
     }
 }
 
@@ -275,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn test_can_access_node_ignores_profile_draft() {
+    fn test_can_access_node_allows_profile_draft() {
         let node = review_database::Node {
             id: u32::MAX,
             name: "draft-only".to_string(),
@@ -291,7 +305,7 @@ mod tests {
             creation_time: Utc::now(),
         };
 
-        assert!(!can_access_node(Some(&[7]), &node));
+        assert!(can_access_node(Some(&[7]), &node));
     }
 
     #[derive(Default)]
