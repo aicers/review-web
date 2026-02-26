@@ -80,7 +80,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `nodeShutdown`. Administrators (`customer_ids = None`) retain full access.
 
 ### Changed
-
 - Unified all `cluster_id` and `model_id` types to `u32` across the codebase,
   replacing previous uses of `i32`, `String`, and `usize`. This change aligns
   with the corresponding type unification in `review-database`.
