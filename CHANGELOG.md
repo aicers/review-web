@@ -8,6 +8,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- Added `customerId` field to the `AllowNetwork` and `BlockNetwork`
+  GraphQL object types so each list item explicitly indicates its
+  owner customer.
 - Added `MtlsIdentity` struct and `MtlsAuthenticator` trait to `auth::mtls`
   for dependency-inversion: the trait is defined in `review-web` and
   implementations are injected from external crates (e.g. `review`).
@@ -41,6 +44,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `customerId` is provided.
 - Restricted backup/restore GraphQL queries and mutations to
   SystemAdministrator, denying SecurityAdministrator access.
+- `allowNetworkList` and `blockNetworkList` GraphQL queries now accept
+  `customerIds: [ID]` (multiple customer IDs) instead of the previous
+  `customerId: ID`. The input list is deduplicated and sorted by ID
+  for deterministic ordering and pagination. Omitting `customerIds`
+  still returns results for all customers.
 - Restricted `updateNetwork` and `removeNetworks` GraphQL mutations
   to `SystemAdministrator` only. `insertNetwork`, `networkList`, and
   `network(id)` guards remain unchanged.
