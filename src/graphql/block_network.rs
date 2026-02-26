@@ -10,7 +10,9 @@ use super::{
     BoxedAgentManager, Role, RoleGuard,
     customer::{HostNetworkGroup, HostNetworkGroupInput, NetworksTargetAgentKeysPair},
 };
-use crate::graphql::{node::SEMI_SUPERVISED_AGENT, query_with_constraints};
+use crate::graphql::{
+    node::SEMI_SUPERVISED_AGENT, parse_and_validate_customer_ids, query_with_constraints,
+};
 use crate::{error_with_username, info_with_username};
 
 #[derive(Default)]
@@ -18,7 +20,12 @@ pub(super) struct BlockNetworkQuery;
 
 #[Object]
 impl BlockNetworkQuery {
-    /// A list of blocked networks.
+    /// A list of blocked networks, optionally filtered by customer IDs.
+    ///
+    /// When `customerIds` is provided, results are filtered to those
+    /// customers (deduplicated and sorted by ID for deterministic
+    /// ordering and pagination). When omitted, all customers are
+    /// included.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -26,34 +33,21 @@ impl BlockNetworkQuery {
     async fn block_network_list(
         &self,
         ctx: &Context<'_>,
-        customer_id: Option<ID>,
+        customer_ids: Option<Vec<ID>>,
         after: Option<String>,
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<OpaqueCursor<Vec<u8>>, BlockNetwork, BlockNetworkTotalCount, EmptyFields>>
     {
-        let customer_id = customer_id
-            .map(|id| {
-                id.as_str()
-                    .parse::<u32>()
-                    .map_err(|_| "invalid customer ID")
-            })
-            .transpose()?;
-        if let Some(customer_id) = customer_id {
-            let store = crate::graphql::get_store(ctx)?;
-            let customer_map = store.customer_map();
-            if customer_map.get_by_id(customer_id)?.is_none() {
-                return Err("no such customer".into());
-            }
-        }
+        let customer_ids = parse_and_validate_customer_ids(ctx, customer_ids)?;
         query_with_constraints(
             after,
             before,
             first,
             last,
             |after, before, first, last| async move {
-                load(ctx, customer_id, after, before, first, last).await
+                load(ctx, customer_ids, after, before, first, last).await
             },
         )
         .await
@@ -286,6 +280,10 @@ impl BlockNetwork {
         ID(self.inner.id.to_string())
     }
 
+    async fn customer_id(&self) -> ID {
+        ID(self.inner.customer_id.to_string())
+    }
+
     async fn name(&self) -> &str {
         &self.inner.name
     }
@@ -327,7 +325,7 @@ impl TryFrom<BlockNetworkInput> for review_database::BlockNetworkUpdate {
 }
 
 struct BlockNetworkTotalCount {
-    customer_id: Option<u32>,
+    customer_ids: Option<Vec<u32>>,
 }
 
 #[Object]
@@ -336,11 +334,15 @@ impl BlockNetworkTotalCount {
     async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.block_network_map();
-        let total_count = if let Some(customer_id) = self.customer_id {
-            let key = customer_id.to_be_bytes();
-            map.prefix_iter(Direction::Forward, None, &key).count()
-        } else {
-            map.count()?
+        let total_count = match &self.customer_ids {
+            None => map.count()?,
+            Some(ids) => ids
+                .iter()
+                .map(|&id| {
+                    let key = id.to_be_bytes();
+                    map.prefix_iter(Direction::Forward, None, &key).count()
+                })
+                .sum(),
         };
         Ok(StringNumber(total_count))
     }
@@ -348,7 +350,7 @@ impl BlockNetworkTotalCount {
 
 async fn load(
     ctx: &Context<'_>,
-    customer_id: Option<u32>,
+    customer_ids: Option<Vec<u32>>,
     after: Option<OpaqueCursor<Vec<u8>>>,
     before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
@@ -356,16 +358,47 @@ async fn load(
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, BlockNetwork, BlockNetworkTotalCount, EmptyFields>> {
     let store = crate::graphql::get_store(ctx)?;
     let map = store.block_network_map();
-    let prefix = customer_id.map(|id| id.to_be_bytes().to_vec());
-    super::load_edges_with_prefix(
-        &map,
-        after,
-        before,
-        first,
-        last,
-        prefix.as_deref(),
-        BlockNetworkTotalCount { customer_id },
-    )
+    let additional_fields = BlockNetworkTotalCount {
+        customer_ids: customer_ids.clone(),
+    };
+
+    match customer_ids.as_deref() {
+        None => {
+            super::load_edges_with_prefix(&map, after, before, first, last, None, additional_fields)
+        }
+        Some([]) => Ok(Connection::with_additional_fields(
+            false,
+            false,
+            additional_fields,
+        )),
+        Some([single_id]) => {
+            let prefix = single_id.to_be_bytes().to_vec();
+            super::load_edges_with_prefix(
+                &map,
+                after,
+                before,
+                first,
+                last,
+                Some(&prefix),
+                additional_fields,
+            )
+        }
+        Some(ids) => {
+            let id_set: std::collections::HashSet<u32> = ids.iter().copied().collect();
+            super::load_edges_with_prefix_filtered(
+                &map,
+                after,
+                before,
+                first,
+                last,
+                None,
+                additional_fields,
+                move |network: &review_database::BlockNetwork| {
+                    id_set.contains(&network.customer_id)
+                },
+            )
+        }
+    }
 }
 
 /// Returns the block network list.
@@ -407,23 +440,29 @@ mod tests {
     use crate::graphql::TestSchema;
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn test_block_network() {
         let schema = TestSchema::new().await;
 
+        // Query with non-existent customer should fail.
         let res = schema
-            .execute_as_system_admin(r"{blockNetworkList(customerId: 0){totalCount}}")
+            .execute_as_system_admin(r"{blockNetworkList(customerIds: [0]){totalCount}}")
             .await;
         assert!(!res.errors.is_empty());
 
         let res = schema
             .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+                r#"mutation {
+                    insertCustomer(
+                        name: "c0", description: "", networks: []
+                    )
+                }"#,
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
 
         let res = schema
-            .execute_as_system_admin(r"{blockNetworkList(customerId: 0){totalCount}}")
+            .execute_as_system_admin(r"{blockNetworkList(customerIds: [0]){totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
@@ -447,7 +486,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertBlockNetwork: "0"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertBlockNetwork: "0"}"#,);
 
         let res = schema
             .execute_as_system_admin(
@@ -479,23 +518,20 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{updateBlockNetwork: "0"}"#);
+        assert_eq!(res.data.to_string(), r#"{updateBlockNetwork: "0"}"#,);
 
         let res = schema
             .execute_as_system_admin(
-                r"
-                query {
-                    blockNetworkList(customerId: 0, first: 10) {
-                        nodes {
-                            name
-                        }
+                r"query {
+                    blockNetworkList(customerIds: [0], first: 10) {
+                        nodes { name customerId }
                     }
                 }",
             )
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{blockNetworkList: {nodes: [{name: "Name 2"}]}}"#
+            r#"{blockNetworkList: {nodes: [{name: "Name 2", customerId: "0"}]}}"#
         );
 
         let res = schema
@@ -505,6 +541,165 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{removeBlockNetworks: ["Name 2"]}"#);
+        assert_eq!(res.data.to_string(), r#"{removeBlockNetworks: ["Name 2"]}"#,);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn test_block_network_multi_customer() {
+        let schema = TestSchema::new().await;
+
+        // Create two customers.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertCustomer(
+                        name: "c0", description: "", networks: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertCustomer(
+                        name: "c1", description: "", networks: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
+
+        // Insert networks for each customer.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertBlockNetwork(
+                        name: "Net A"
+                        customerId: 0
+                        networks: {
+                            hosts: ["1.1.1.1"]
+                            networks: []
+                            ranges: []
+                        }
+                        description: "Desc A"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertBlockNetwork: "0"}"#,);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertBlockNetwork(
+                        name: "Net B"
+                        customerId: 1
+                        networks: {
+                            hosts: ["2.2.2.2"]
+                            networks: []
+                            ranges: []
+                        }
+                        description: "Desc B"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertBlockNetwork: "1"}"#,);
+
+        // Multi-customer query returns both, sorted by customer ID.
+        let res = schema
+            .execute_as_system_admin(
+                r"query {
+                    blockNetworkList(customerIds: [0, 1], first: 10) {
+                        totalCount
+                        nodes { name customerId }
+                    }
+                }",
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{blockNetworkList: {totalCount: "2", nodes: [{name: "Net A", customerId: "0"}, {name: "Net B", customerId: "1"}]}}"#
+        );
+
+        // Reversed order input still produces same sorted result.
+        let res = schema
+            .execute_as_system_admin(
+                r"query {
+                    blockNetworkList(customerIds: [1, 0], first: 10) {
+                        totalCount
+                        nodes { name customerId }
+                    }
+                }",
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{blockNetworkList: {totalCount: "2", nodes: [{name: "Net A", customerId: "0"}, {name: "Net B", customerId: "1"}]}}"#
+        );
+
+        // Duplicates in input are deduplicated.
+        let res = schema
+            .execute_as_system_admin(
+                r"query {
+                    blockNetworkList(
+                        customerIds: [0, 0, 1, 1], first: 10
+                    ) {
+                        totalCount
+                    }
+                }",
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{blockNetworkList: {totalCount: "2"}}"#
+        );
+
+        // None (omitted) returns all customers.
+        let res = schema
+            .execute_as_system_admin(
+                r"query {
+                    blockNetworkList(first: 10) {
+                        totalCount
+                        nodes { name }
+                    }
+                }",
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{blockNetworkList: {totalCount: "2", nodes: [{name: "Net A"}, {name: "Net B"}]}}"#
+        );
+
+        // Empty customerIds returns empty result.
+        let res = schema
+            .execute_as_system_admin(
+                r"query {
+                    blockNetworkList(customerIds: [], first: 10) {
+                        totalCount
+                        nodes { name }
+                    }
+                }",
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{blockNetworkList: {totalCount: "0", nodes: []}}"#
+        );
+
+        // Invalid customer ID returns error.
+        let res = schema
+            .execute_as_system_admin(
+                r"query {
+                    blockNetworkList(customerIds: [999]) {
+                        totalCount
+                    }
+                }",
+            )
+            .await;
+        assert!(!res.errors.is_empty());
     }
 }

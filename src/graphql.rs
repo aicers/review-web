@@ -48,7 +48,7 @@ use async_graphql::connection::{
     Connection, ConnectionNameType, CursorType, Edge, EdgeNameType, EmptyFields, OpaqueCursor,
 };
 use async_graphql::{
-    Context, Guard, InputValueError, InputValueResult, MergedObject, MergedSubscription,
+    Context, Guard, ID, InputValueError, InputValueResult, MergedObject, MergedSubscription,
     ObjectType, OutputType, Result, Scalar, ScalarType, Value,
 };
 use num_traits::ToPrimitive;
@@ -375,6 +375,44 @@ pub(crate) fn get_store<'a>(ctx: &'a Context<'a>) -> Result<std::sync::RwLockRea
         .unwrap_or_else(|e| panic!("RwLock poisoned: {e}")))
 }
 
+/// Parses, deduplicates, sorts, and validates customer IDs from a
+/// GraphQL `Option<Vec<ID>>`.
+///
+/// # Errors
+///
+/// Returns an error if any ID cannot be parsed as `u32` or if a
+/// customer with the given ID does not exist in the store.
+fn parse_and_validate_customer_ids(
+    ctx: &Context<'_>,
+    customer_ids: Option<Vec<ID>>,
+) -> Result<Option<Vec<u32>>> {
+    let Some(ids) = customer_ids else {
+        return Ok(None);
+    };
+
+    let mut parsed = Vec::with_capacity(ids.len());
+    for id in &ids {
+        parsed.push(
+            id.as_str()
+                .parse::<u32>()
+                .map_err(|_| "invalid customer ID")?,
+        );
+    }
+
+    parsed.sort_unstable();
+    parsed.dedup();
+
+    let store = get_store(ctx)?;
+    let customer_map = store.customer_map();
+    for &id in &parsed {
+        if customer_map.get_by_id(id)?.is_none() {
+            return Err(format!("no such customer: {id}").into());
+        }
+    }
+
+    Ok(Some(parsed))
+}
+
 #[allow(clippy::type_complexity)]
 fn process_load_edges<'a, T, I, R>(
     table: &'a T,
@@ -407,7 +445,6 @@ where
     (nodes, has_previous, has_next)
 }
 
-#[allow(dead_code)] // It will be used in the sub-issues of #756
 fn process_load_edges_filtered<'a, T, I, R, P>(
     table: &'a T,
     after: Option<OpaqueCursor<Vec<u8>>>,
@@ -534,6 +571,45 @@ where
 {
     let (nodes, has_previous, has_next) =
         process_load_edges(table, after, before, first, last, prefix);
+
+    for node in &nodes {
+        let Err(e) = node else { continue };
+        warn!("Failed to load from DB: {}", e);
+        return Err("database error".into());
+    }
+
+    let mut connection =
+        Connection::with_additional_fields(has_previous, has_next, additional_fields);
+    connection.edges.extend(nodes.into_iter().map(|node| {
+        let Ok(node) = node else { unreachable!() };
+        let key = node.unique_key().as_ref().to_vec();
+        Edge::new(OpaqueCursor(key), node.into())
+    }));
+    Ok(connection)
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn load_edges_with_prefix_filtered<'a, T, I, R, N, A, NodesField, P>(
+    table: &'a T,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
+    first: Option<usize>,
+    last: Option<usize>,
+    prefix: Option<&[u8]>,
+    additional_fields: A,
+    predicate: P,
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, N, A, EmptyFields, NodesField>>
+where
+    T: database::Iterable<'a, I>,
+    I: Iterator<Item = anyhow::Result<R>>,
+    R: database::UniqueKey,
+    N: From<R> + OutputType,
+    A: ObjectType,
+    NodesField: ConnectionNameType,
+    P: Fn(&R) -> bool,
+{
+    let (nodes, has_previous, has_next) =
+        process_load_edges_filtered(table, after, before, first, last, prefix, predicate);
 
     for node in &nodes {
         let Err(e) = node else { continue };
