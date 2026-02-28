@@ -73,15 +73,15 @@ fn normalize_rsa_der(secret: &[u8]) -> Vec<u8> {
     secret.to_vec()
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "auth-mtls")))]
 pub(crate) fn set_force_aimer_token_failure(enabled: bool) {
     FORCE_AIMER_TOKEN_FAILURE.store(enabled, Ordering::SeqCst);
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "auth-mtls")))]
 pub(crate) struct ForceAimerTokenFailureGuard;
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "auth-mtls")))]
 impl ForceAimerTokenFailureGuard {
     pub(crate) fn new() -> Self {
         set_force_aimer_token_failure(true);
@@ -89,7 +89,7 @@ impl ForceAimerTokenFailureGuard {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "auth-mtls")))]
 impl Drop for ForceAimerTokenFailureGuard {
     fn drop(&mut self) {
         set_force_aimer_token_failure(false);
