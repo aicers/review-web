@@ -4,8 +4,6 @@ pub mod auth;
 pub mod backend;
 pub mod graphql;
 
-#[cfg(all(feature = "auth-mtls", feature = "auth-jwt"))]
-compile_error!("features \"auth-mtls\" and \"auth-jwt\" are mutually exclusive");
 #[cfg(not(any(feature = "auth-mtls", feature = "auth-jwt")))]
 compile_error!("either feature \"auth-mtls\" or \"auth-jwt\" must be enabled");
 
@@ -63,7 +61,7 @@ use crate::auth::MtlsAuthError;
 use crate::auth::MtlsAuthenticator;
 #[cfg(feature = "auth-mtls")]
 use crate::auth::validate_context_jwt;
-#[cfg(feature = "auth-jwt")]
+#[cfg(not(feature = "auth-mtls"))]
 use crate::auth::validate_token;
 use crate::backend::{AgentManager, CertManager};
 
@@ -163,7 +161,7 @@ where
                 config.cert_manager.cert_path()?,
                 config.cert_manager.key_path()?,
             );
-            #[cfg(feature = "auth-jwt")]
+            #[cfg(not(feature = "auth-mtls"))]
             let tls_config = RustlsConfig::from_pem_file(cert_path, key_path).await?;
             #[cfg(feature = "auth-mtls")]
             let tls_config = {
@@ -179,7 +177,7 @@ where
             let completed = shutdown_completed.clone();
             tokio::spawn(graceful_shutdown(handle.clone(), wait_shutdown));
             tokio::spawn(async move {
-                #[cfg(feature = "auth-jwt")]
+                #[cfg(not(feature = "auth-mtls"))]
                 let server = axum_server::bind_rustls(config.addr, tls_config);
                 #[cfg(feature = "auth-mtls")]
                 let server = axum_server::Server::bind(config.addr)
@@ -372,7 +370,7 @@ fn is_local(addr: SocketAddr) -> bool {
     addr.ip().is_loopback()
 }
 
-#[cfg(feature = "auth-jwt")]
+#[cfg(not(feature = "auth-mtls"))]
 async fn graphql_handler(
     Extension(schema): Extension<graphql::Schema>,
     Extension(store): Extension<Arc<RwLock<Store>>>,
@@ -446,7 +444,7 @@ async fn graphql_handler(
         .into())
 }
 
-#[cfg(feature = "auth-jwt")]
+#[cfg(not(feature = "auth-mtls"))]
 #[allow(clippy::unused_async)]
 async fn graphql_ws_handler(
     Extension(schema): Extension<graphql::Schema>,
