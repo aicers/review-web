@@ -359,6 +359,8 @@ xvcNsYaYqk6sRk/INvcaN2E=
             }),
             tls_reload_handle: Arc::new(tokio::sync::Notify::new()),
             ca_certs: vec![ca_path],
+            #[cfg(feature = "auth-jwt")]
+            reverse_proxies: vec![],
             client_cert_path: None,
             client_key_path: None,
             authenticator: Arc::new(StubAuthenticator),

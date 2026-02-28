@@ -4,8 +4,6 @@ pub mod auth;
 pub mod backend;
 pub mod graphql;
 
-#[cfg(all(feature = "auth-mtls", feature = "auth-jwt"))]
-compile_error!("features \"auth-mtls\" and \"auth-jwt\" are mutually exclusive");
 #[cfg(not(any(feature = "auth-mtls", feature = "auth-jwt")))]
 compile_error!("either feature \"auth-mtls\" or \"auth-jwt\" must be enabled");
 
