@@ -5,7 +5,7 @@ mod mtls;
 #[cfg(feature = "auth-jwt")]
 mod store;
 
-#[cfg(all(test, feature = "auth-jwt"))]
+#[cfg(all(test, feature = "auth-jwt", not(feature = "auth-mtls")))]
 pub(crate) use jwt::ForceAimerTokenFailureGuard;
 #[cfg(feature = "auth-mtls")]
 pub use mtls::{MtlsAuthError, MtlsAuthenticator, MtlsIdentity, validate_context_jwt};
