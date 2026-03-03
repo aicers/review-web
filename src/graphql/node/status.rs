@@ -131,7 +131,7 @@ mod tests {
     use serde_json::json;
 
     use crate::graphql::{
-        AgentManager, BoxedAgentManager, CustomerIds, SamplingPolicy, TestSchema,
+        AgentManager, BoxedAgentManager, CustomerIds, Role, SamplingPolicy, TestSchema,
         customer::NetworksTargetAgentKeysPair,
     };
 
@@ -690,7 +690,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn node_status_customer_scoping_pagination_skips_inaccessible_prefix() {
+    async fn node_status_customer_scoping_pagination_admin_allowed() {
+        let mut online_apps_by_host_id = HashMap::new();
+        insert_apps("allowed-host", &["sensor"], &mut online_apps_by_host_id);
+        insert_apps("customer2-host", &["sensor"], &mut online_apps_by_host_id);
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id,
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let id0 = insert_active_node(&schema.store(), "a_customer2_status", 2, "customer2-host");
+        let id1 = insert_active_node(&schema.store(), "b_customer1_status", 1, "allowed-host");
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+
+        let res = schema
+            .execute_as_system_admin(
+                r"{nodeStatusList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeStatusList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["node"]["name"], "a_customer2_status");
+        assert_eq!(
+            data["nodeStatusList"]["pageInfo"]["hasNextPage"],
+            json!(true)
+        );
+        assert_eq!(
+            data["nodeStatusList"]["pageInfo"]["hasPreviousPage"],
+            json!(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn node_status_customer_scoping_pagination_allowed() {
         let mut online_apps_by_host_id = HashMap::new();
         insert_apps("allowed-host", &["sensor"], &mut online_apps_by_host_id);
         insert_apps("forbidden-host", &["sensor"], &mut online_apps_by_host_id);
@@ -706,8 +747,9 @@ mod tests {
         assert_eq!(id1, 1);
 
         let res = schema
-            .execute_as_system_admin_with_data(
+            .execute_with_guard_and_data(
                 r"{nodeStatusList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
                 CustomerIds(Some(vec![1])),
             )
             .await;
@@ -732,7 +774,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn node_status_customer_scoping_total_count_should_be_scoped() {
+    async fn node_status_customer_scoping_pagination_forbidden() {
+        let mut online_apps_by_host_id = HashMap::new();
+        insert_apps("forbidden-host", &["sensor"], &mut online_apps_by_host_id);
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id,
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let id0 = insert_active_node(&schema.store(), "a_forbidden_status", 2, "forbidden-host");
+        assert_eq!(id0, 0);
+
+        let res = schema
+            .execute_with_guard_and_data(
+                r"{nodeStatusList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                CustomerIds(Some(vec![1])),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeStatusList"]["edges"].as_array().unwrap();
+        assert!(edges.is_empty());
+        assert_eq!(
+            data["nodeStatusList"]["pageInfo"]["hasNextPage"],
+            json!(false)
+        );
+        assert_eq!(
+            data["nodeStatusList"]["pageInfo"]["hasPreviousPage"],
+            json!(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn node_status_customer_scoping_total_count_admin_allowed() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
         });
@@ -754,8 +835,46 @@ mod tests {
         assert_eq!(id1, 1);
 
         let res = schema
-            .execute_as_system_admin_with_data(
+            .execute_as_system_admin(r"{nodeStatusList(first: 10){totalCount edges{node{name}}}}")
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeStatusList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 2);
+        assert_eq!(data["nodeStatusList"]["totalCount"], json!("2"));
+    }
+
+    #[tokio::test]
+    async fn node_status_customer_scoping_total_count_allowed() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let id0 = insert_active_node(
+            &schema.store(),
+            "status_count_customer_1",
+            1,
+            "host1.example.com",
+        );
+        let id1 = insert_active_node(
+            &schema.store(),
+            "status_count_customer_2",
+            2,
+            "host2.example.com",
+        );
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+
+        let res = schema
+            .execute_with_guard_and_data(
                 r"{nodeStatusList(first: 10){totalCount edges{node{name}}}}",
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
                 CustomerIds(Some(vec![1])),
             )
             .await;
@@ -770,5 +889,39 @@ mod tests {
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0]["node"]["name"], "status_count_customer_1");
         assert_eq!(data["nodeStatusList"]["totalCount"], json!("1"));
+    }
+
+    #[tokio::test]
+    async fn node_status_customer_scoping_total_count_forbidden() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let id0 = insert_active_node(
+            &schema.store(),
+            "status_count_customer_2",
+            2,
+            "host2.example.com",
+        );
+        assert_eq!(id0, 0);
+
+        let res = schema
+            .execute_with_guard_and_data(
+                r"{nodeStatusList(first: 10){totalCount edges{node{name}}}}",
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                CustomerIds(Some(vec![1])),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeStatusList"]["edges"].as_array().unwrap();
+        assert!(edges.is_empty());
+        assert_eq!(data["nodeStatusList"]["totalCount"], json!("0"));
     }
 }
