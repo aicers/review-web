@@ -54,11 +54,6 @@ pub(crate) fn has_membership(users_customers: Option<&[u32]>, customer_ids: &[u3
 /// the store cannot be accessed, account lookup fails, or the user account
 /// does not exist.
 pub(crate) fn users_customers(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
-    // Check if CustomerIds is explicitly set in context (mTLS path)
-    if let Some(cids) = ctx.data_opt::<crate::graphql::CustomerIds>() {
-        return Ok(cids.0.clone());
-    }
-
     // System administrators (and local auth bypass) are always unscoped.
     // This also keeps test schemas (which may not populate account data) aligned
     // with production behavior where system admins have full access.
@@ -70,6 +65,11 @@ pub(crate) fn users_customers(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
             }
             crate::graphql::RoleGuard::Role(_) => {}
         }
+    }
+
+    // Check if CustomerIds is explicitly set in context (mTLS path)
+    if let Some(cids) = ctx.data_opt::<crate::graphql::CustomerIds>() {
+        return Ok(cids.0.clone());
     }
 
     // Fall back to account lookup (JWT path)
@@ -174,7 +174,7 @@ pub(crate) fn can_access_node(
 mod tests {
     use std::sync::{Arc, RwLock};
 
-    use async_graphql::{EmptyMutation, EmptySubscription, Object, Schema};
+    use async_graphql::{EmptyMutation, EmptySubscription, Object, Request, Schema};
     use chrono::Utc;
     use review_database::{Role, Store, types};
     use serde_json::json;
@@ -289,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn test_can_access_node_allows_profile_draft() {
+    fn test_can_access_node_profile_draft_allowed() {
         let node = review_database::Node {
             id: u32::MAX,
             name: "draft-only".to_string(),
@@ -306,6 +306,26 @@ mod tests {
         };
 
         assert!(can_access_node(Some(&[7]), &node));
+    }
+
+    #[test]
+    fn test_can_access_node_profile_draft_forbidden() {
+        let node = review_database::Node {
+            id: u32::MAX,
+            name: "draft-only".to_string(),
+            name_draft: Some("draft-only".to_string()),
+            profile: None,
+            profile_draft: Some(review_database::NodeProfile {
+                customer_id: 7,
+                description: String::new(),
+                hostname: "host-draft".to_string(),
+            }),
+            agents: vec![],
+            external_services: vec![],
+            creation_time: Utc::now(),
+        };
+
+        assert!(!can_access_node(Some(&[1]), &node));
     }
 
     #[derive(Default)]
@@ -392,6 +412,18 @@ mod tests {
         async fn execute(&self, query: &str) -> async_graphql::Response {
             self.schema.execute(query).await
         }
+
+        async fn execute_with_guard_and_customer_ids(
+            &self,
+            query: &str,
+            guard: crate::graphql::RoleGuard,
+            customer_ids: Option<Vec<u32>>,
+        ) -> async_graphql::Response {
+            let request = Request::new(query)
+                .data(guard)
+                .data(crate::graphql::CustomerIds(customer_ids));
+            self.schema.execute(request).await
+        }
     }
 
     #[tokio::test]
@@ -409,6 +441,23 @@ mod tests {
     async fn test_users_customers_admin_user() {
         let test_ctx = TestContext::new_with_account("admin_user", None);
         let res = test_ctx.execute("{ usersCustomers }").await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            json!({"usersCustomers": null})
+        );
+    }
+
+    #[tokio::test]
+    async fn test_users_customers_system_admin_ignores_customer_ids_context() {
+        let test_ctx = TestContext::new_without_account("admin_user");
+        let res = test_ctx
+            .execute_with_guard_and_customer_ids(
+                "{ usersCustomers }",
+                crate::graphql::RoleGuard::Role(crate::graphql::Role::SystemAdministrator),
+                Some(vec![1, 2, 3]),
+            )
+            .await;
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
         assert_eq!(
             res.data.into_json().unwrap(),
