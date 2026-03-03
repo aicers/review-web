@@ -1073,6 +1073,17 @@ impl TestSchema {
         self.schema.execute(request).await
     }
 
+    async fn execute_with_guard_and_data(
+        &self,
+        query: &str,
+        guard: RoleGuard,
+        data: impl Send + Sync + 'static,
+    ) -> async_graphql::Response {
+        let request: async_graphql::Request = query.into();
+        let request = self.request_with_guard(request, guard).data(data);
+        self.schema.execute(request).await
+    }
+
     async fn execute_as_system_admin_with_data(
         &self,
         query: &str,
