@@ -1,5 +1,8 @@
 //! The GraphQL API schema and implementation.
 
+// Temporary for shared utilities used across sub-issues of #756.
+// Remove this allow when the last #756 sub-issue is completed.
+#![allow(dead_code)]
 // async-graphql requires the API functions to be `async`.
 #![allow(clippy::unused_async)]
 
@@ -1022,8 +1025,17 @@ impl TestSchema {
     }
 
     async fn execute_with_guard(&self, query: &str, guard: RoleGuard) -> async_graphql::Response {
+        self.execute_with_context(query, guard, None).await
+    }
+
+    async fn execute_with_guard_and_data(
+        &self,
+        query: &str,
+        guard: RoleGuard,
+        data: impl Send + Sync + 'static,
+    ) -> async_graphql::Response {
         let request: async_graphql::Request = query.into();
-        let request = self.request_with_guard(request, guard);
+        let request = self.request_with_context(request, guard, None).data(data);
         self.schema.execute(request).await
     }
 
@@ -1032,36 +1044,32 @@ impl TestSchema {
         query: &str,
         data: impl Send + Sync + 'static,
     ) -> async_graphql::Response {
-        let request: async_graphql::Request = query.into();
-        let request = self
-            .request_with_guard(request, RoleGuard::Role(Role::SystemAdministrator))
-            .data(data);
-        self.schema.execute(request).await
+        self.execute_with_guard_and_data(query, RoleGuard::Role(Role::SystemAdministrator), data)
+            .await
     }
 
-    /// Execute a query with the given role guard **and** explicit
-    /// `CustomerIds` in the request context (simulates a customer-scoped
-    /// user).
-    async fn execute_with_guard_and_customer_ids(
+    /// Executes a query with the given role guard and optional `CustomerIds`.
+    async fn execute_with_context(
         &self,
         query: &str,
         guard: RoleGuard,
-        customer_ids: CustomerIds,
+        customer_ids: Option<CustomerIds>,
     ) -> async_graphql::Response {
         let request: async_graphql::Request = query.into();
-        let request = self.request_with_guard(request, guard).data(customer_ids);
+        let request = self.request_with_context(request, guard, customer_ids);
         self.schema.execute(request).await
     }
 
-    async fn execute_as_security_admin_with_customer_ids(
+    async fn execute_as_scoped_user(
         &self,
         query: &str,
-        customer_ids: Vec<u32>,
+        role: Role,
+        customer_ids: Option<Vec<u32>>,
     ) -> async_graphql::Response {
-        self.execute_with_guard_and_customer_ids(
+        self.execute_with_context(
             query,
-            RoleGuard::Role(Role::SecurityAdministrator),
-            CustomerIds(Some(customer_ids)),
+            RoleGuard::Role(role),
+            Some(CustomerIds(customer_ids)),
         )
         .await
     }
@@ -1136,6 +1144,20 @@ impl TestSchema {
             request
         };
         request.data(guard)
+    }
+
+    fn request_with_context(
+        &self,
+        request: async_graphql::Request,
+        guard: RoleGuard,
+        customer_ids: Option<CustomerIds>,
+    ) -> async_graphql::Request {
+        let request = self.request_with_guard(request, guard);
+        if let Some(customer_ids) = customer_ids {
+            request.data(customer_ids)
+        } else {
+            request
+        }
     }
 
     async fn execute_stream(

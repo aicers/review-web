@@ -165,7 +165,7 @@ impl EventTagMutation {
 
 #[cfg(test)]
 mod tests {
-    use crate::graphql::TestSchema;
+    use crate::graphql::{Role, TestSchema};
 
     #[tokio::test]
     async fn test_event_tag_list_scoped() {
@@ -241,9 +241,10 @@ mod tests {
         assert!(names.contains(&"tag-beta"));
 
         let res = schema
-            .execute_as_security_admin_with_customer_ids(
+            .execute_as_scoped_user(
                 r"{ eventTagList { name } }",
-                vec![cid_a_num],
+                Role::SecurityAdministrator,
+                Some(vec![cid_a_num]),
             )
             .await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
@@ -291,9 +292,10 @@ mod tests {
         }
 
         let res = schema
-            .execute_as_security_admin_with_customer_ids(
+            .execute_as_scoped_user(
                 r"{ eventTagList { name } }",
-                vec![cid_a_num],
+                Role::SecurityAdministrator,
+                Some(vec![cid_a_num]),
             )
             .await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
@@ -357,7 +359,7 @@ mod tests {
 
         let query = format!(r#"mutation {{ removeEventTag(id: "{tag_id}") }}"#);
         let res = schema
-            .execute_as_security_admin_with_customer_ids(&query, vec![cid_a_num])
+            .execute_as_scoped_user(&query, Role::SecurityAdministrator, Some(vec![cid_a_num]))
             .await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
         assert_eq!(res.data.to_string(), r#"{removeEventTag: "only-a"}"#);
@@ -391,7 +393,7 @@ mod tests {
 
         let query = format!(r#"mutation {{ removeEventTag(id: "{tag_id}") }}"#);
         let res = schema
-            .execute_as_security_admin_with_customer_ids(&query, vec![cid_b_num])
+            .execute_as_scoped_user(&query, Role::SecurityAdministrator, Some(vec![cid_b_num]))
             .await;
         assert_eq!(res.errors.len(), 1);
         assert_eq!(res.errors[0].message, "Forbidden");
@@ -426,7 +428,7 @@ mod tests {
             r#"mutation {{ updateEventTag(id: "{tag_id}", old: "rename-me", new: "renamed") }}"#
         );
         let res = schema
-            .execute_as_security_admin_with_customer_ids(&query, vec![cid_a_num])
+            .execute_as_scoped_user(&query, Role::SecurityAdministrator, Some(vec![cid_a_num]))
             .await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
         assert_eq!(res.data.to_string(), r"{updateEventTag: true}");
@@ -462,7 +464,7 @@ mod tests {
             r#"mutation {{ updateEventTag(id: "{tag_id}", old: "rename-me", new: "renamed") }}"#
         );
         let res = schema
-            .execute_as_security_admin_with_customer_ids(&query, vec![cid_b_num])
+            .execute_as_scoped_user(&query, Role::SecurityAdministrator, Some(vec![cid_b_num]))
             .await;
         assert_eq!(res.errors.len(), 1);
         assert_eq!(res.errors[0].message, "Forbidden");
@@ -504,7 +506,7 @@ mod tests {
             r#"mutation {{ updateEventTag(id: "{tag_id}", old: "shared-tag", new: "renamed") }}"#
         );
         let res = schema
-            .execute_as_security_admin_with_customer_ids(&query, vec![cid_a_num])
+            .execute_as_scoped_user(&query, Role::SecurityAdministrator, Some(vec![cid_a_num]))
             .await;
         assert_eq!(res.errors.len(), 1);
         assert_eq!(res.errors[0].message, "Forbidden");

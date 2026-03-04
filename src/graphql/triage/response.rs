@@ -11,8 +11,8 @@ use tracing::info;
 
 use super::{Role, RoleGuard};
 use crate::graphql::customer_access::{
-    derive_customer_id_from_hostname, hostname_customer_id_map, is_member, sensor_from_key,
-    users_customers,
+    check_hostname_access, derive_customer_id_from_hostname, hostname_customer_id_map, is_member,
+    sensor_from_key, users_customers,
 };
 use crate::graphql::{
     cluster::try_id_args_into_ints, network::id_args_into_uints, query_with_constraints,
@@ -101,29 +101,6 @@ impl TryFrom<TriageResponseInput> for review_database::TriageResponseUpdate {
     }
 }
 
-/// Checks customer access for a triage response identified by its sensor
-/// hostname. Returns `Ok(())` if:
-/// - The user is an admin (`users_customers` is `None`), or
-/// - The derived customer from the sensor hostname is in the user's
-///   accessible customers.
-///
-/// # Errors
-///
-/// Returns `Forbidden` if the user does not have access, or if the sensor
-/// hostname cannot be resolved to a customer.
-fn check_sensor_access(ctx: &Context<'_>, sensor: &str) -> Result<()> {
-    let users_cids = users_customers(ctx)?;
-    if users_cids.is_none() {
-        return Ok(()); // Admin bypass
-    }
-    let store = crate::graphql::get_store(ctx)?;
-    let derived = derive_customer_id_from_hostname(&store, sensor)?;
-    match derived {
-        Some(cid) if is_member(users_cids.as_deref(), cid) => Ok(()),
-        Some(_) | None => Err("Forbidden".into()),
-    }
-}
-
 #[Object]
 impl super::TriageResponseQuery {
     /// A list of triage responses.
@@ -158,7 +135,7 @@ impl super::TriageResponseQuery {
         sensor: String,
         time: DateTime<Utc>,
     ) -> Result<Option<TriageResponse>> {
-        check_sensor_access(ctx, &sensor)?;
+        check_hostname_access(ctx, &sensor)?;
 
         let store = crate::graphql::get_store(ctx)?;
         let map = store.triage_response_map();
@@ -253,7 +230,7 @@ impl super::TriageResponseMutation {
         tag_ids: Vec<ID>,
         remarks: String,
     ) -> Result<ID> {
-        check_sensor_access(ctx, &sensor)?;
+        check_hostname_access(ctx, &sensor)?;
 
         let tag_ids_converted = id_args_into_uints(&tag_ids)?;
         let tag_ids_str = tag_ids_converted.iter().join(", ");
@@ -333,7 +310,7 @@ impl super::TriageResponseMutation {
 
         // Check customer access from the key in the old input
         let sensor = sensor_from_key(&old.key)?;
-        check_sensor_access(ctx, &sensor)?;
+        check_hostname_access(ctx, &sensor)?;
 
         let old_tag_ids_str = old.tag_ids.as_ref().map_or_else(
             || "None".to_string(),
@@ -367,7 +344,7 @@ impl super::TriageResponseMutation {
 
 #[cfg(test)]
 mod tests {
-    use crate::graphql::TestSchema;
+    use crate::graphql::{Role, TestSchema};
 
     #[tokio::test]
     async fn test_triage_response_scoped_list_filtering() {
@@ -413,9 +390,10 @@ mod tests {
         );
 
         let res = schema
-            .execute_as_security_admin_with_customer_ids(
+            .execute_as_scoped_user(
                 r"{triageResponseList{totalCount}}",
-                vec![cid_a_num],
+                Role::SecurityAdministrator,
+                Some(vec![cid_a_num]),
             )
             .await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
@@ -459,14 +437,15 @@ mod tests {
         }
 
         let res = schema
-            .execute_as_security_admin_with_customer_ids(
+            .execute_as_scoped_user(
                 r"{
                     triageResponseList(first: 10) {
                         totalCount
                         edges { cursor node { remarks } }
                     }
                 }",
-                scoped_customer_ids.clone(),
+                Role::SecurityAdministrator,
+                Some(scoped_customer_ids.clone()),
             )
             .await;
         assert!(res.errors.is_empty(), "full list errors: {:?}", res.errors);
@@ -480,14 +459,15 @@ mod tests {
             .collect();
 
         let res = schema
-            .execute_as_security_admin_with_customer_ids(
+            .execute_as_scoped_user(
                 r"{
                     triageResponseList(first: 1) {
                         edges { cursor node { remarks } }
                         pageInfo { endCursor hasNextPage }
                     }
                 }",
-                scoped_customer_ids.clone(),
+                Role::SecurityAdministrator,
+                Some(scoped_customer_ids.clone()),
             )
             .await;
         assert!(res.errors.is_empty(), "first errors: {:?}", res.errors);
@@ -512,7 +492,11 @@ mod tests {
             }}"#,
         );
         let res = schema
-            .execute_as_security_admin_with_customer_ids(&query, scoped_customer_ids.clone())
+            .execute_as_scoped_user(
+                &query,
+                Role::SecurityAdministrator,
+                Some(scoped_customer_ids.clone()),
+            )
             .await;
         assert!(res.errors.is_empty(), "after errors: {:?}", res.errors);
         let json = res.data.into_json().unwrap();
@@ -525,14 +509,15 @@ mod tests {
         assert_eq!(after_remarks, visible_remarks[1..].to_vec());
 
         let res = schema
-            .execute_as_security_admin_with_customer_ids(
+            .execute_as_scoped_user(
                 r"{
                     triageResponseList(last: 1) {
                         edges { cursor node { remarks } }
                         pageInfo { startCursor hasPreviousPage }
                     }
                 }",
-                scoped_customer_ids.clone(),
+                Role::SecurityAdministrator,
+                Some(scoped_customer_ids.clone()),
             )
             .await;
         assert!(res.errors.is_empty(), "last errors: {:?}", res.errors);
@@ -560,7 +545,11 @@ mod tests {
             }}"#,
         );
         let res = schema
-            .execute_as_security_admin_with_customer_ids(&query, scoped_customer_ids)
+            .execute_as_scoped_user(
+                &query,
+                Role::SecurityAdministrator,
+                Some(scoped_customer_ids),
+            )
             .await;
         assert!(res.errors.is_empty(), "before errors: {:?}", res.errors);
         let json = res.data.into_json().unwrap();
@@ -597,9 +586,10 @@ mod tests {
         assert!(res.errors.is_empty(), "insert response: {:?}", res.errors);
 
         let res = schema
-            .execute_as_security_admin_with_customer_ids(
+            .execute_as_scoped_user(
                 r#"{ triageResponse(sensor: "sensor-a", time: "2024-01-01T00:00:00Z") { id remarks } }"#,
-                vec![cid_num],
+                Role::SecurityAdministrator,
+                Some(vec![cid_num]),
             )
             .await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
@@ -628,9 +618,10 @@ mod tests {
         assert!(res.errors.is_empty());
 
         let res = schema
-            .execute_as_security_admin_with_customer_ids(
+            .execute_as_scoped_user(
                 r#"{ triageResponse(sensor: "sensor-a", time: "2024-01-01T00:00:00Z") { id } }"#,
-                vec![999],
+                Role::SecurityAdministrator,
+                Some(vec![999]),
             )
             .await;
         assert_eq!(res.errors.len(), 1);
@@ -644,7 +635,7 @@ mod tests {
         let cid_num: u32 = cid.parse().unwrap();
 
         let res = schema
-            .execute_as_security_admin_with_customer_ids(
+            .execute_as_scoped_user(
                 r#"mutation {
                     insertTriageResponse(
                         sensor: "sensor-a"
@@ -653,7 +644,8 @@ mod tests {
                         remarks: "ok"
                     )
                 }"#,
-                vec![cid_num],
+                Role::SecurityAdministrator,
+                Some(vec![cid_num]),
             )
             .await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
@@ -665,7 +657,7 @@ mod tests {
         let _cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
 
         let res = schema
-            .execute_as_security_admin_with_customer_ids(
+            .execute_as_scoped_user(
                 r#"mutation {
                     insertTriageResponse(
                         sensor: "sensor-a"
@@ -674,7 +666,8 @@ mod tests {
                         remarks: "nope"
                     )
                 }"#,
-                vec![999],
+                Role::SecurityAdministrator,
+                Some(vec![999]),
             )
             .await;
         assert_eq!(res.errors.len(), 1);
@@ -704,7 +697,7 @@ mod tests {
 
         let query = format!(r"mutation {{ removeTriageResponses(ids: [{id}]) }}");
         let res = schema
-            .execute_as_security_admin_with_customer_ids(&query, vec![cid_num])
+            .execute_as_scoped_user(&query, Role::SecurityAdministrator, Some(vec![cid_num]))
             .await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
         assert_eq!(
@@ -735,7 +728,7 @@ mod tests {
 
         let query = format!(r"mutation {{ removeTriageResponses(ids: [{id}]) }}");
         let res = schema
-            .execute_as_security_admin_with_customer_ids(&query, vec![999])
+            .execute_as_scoped_user(&query, Role::SecurityAdministrator, Some(vec![999]))
             .await;
         assert_eq!(res.errors.len(), 1);
         assert_eq!(res.errors[0].message, "Forbidden");
@@ -780,7 +773,7 @@ mod tests {
             }}"#,
         );
         let res = schema
-            .execute_as_security_admin_with_customer_ids(&query, vec![cid_num])
+            .execute_as_scoped_user(&query, Role::SecurityAdministrator, Some(vec![cid_num]))
             .await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
         assert_eq!(
@@ -789,9 +782,10 @@ mod tests {
         );
 
         let res = schema
-            .execute_as_security_admin_with_customer_ids(
+            .execute_as_scoped_user(
                 r#"{ triageResponse(sensor: "sensor1", time: "2023-02-14 14:54:46.083902898 +00:00") { remarks tagIds } }"#,
-                vec![cid_num],
+                Role::SecurityAdministrator,
+                Some(vec![cid_num]),
             )
             .await;
         assert!(res.errors.is_empty(), "query errors: {:?}", res.errors);
@@ -839,7 +833,7 @@ mod tests {
             }}"#,
         );
         let res = schema
-            .execute_as_security_admin_with_customer_ids(&query, vec![999])
+            .execute_as_scoped_user(&query, Role::SecurityAdministrator, Some(vec![999]))
             .await;
         assert_eq!(res.errors.len(), 1);
         assert_eq!(res.errors[0].message, "Forbidden");
