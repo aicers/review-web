@@ -1,5 +1,8 @@
 //! The GraphQL API schema and implementation.
 
+// Temporary for shared utilities used across sub-issues of #756.
+// Remove this allow when the last #756 sub-issue is completed.
+#![allow(dead_code)]
 // async-graphql requires the API functions to be `async`.
 #![allow(clippy::unused_async)]
 
