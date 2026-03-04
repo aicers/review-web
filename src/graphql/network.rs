@@ -14,7 +14,7 @@ use super::{
     Role, RoleGuard,
     cluster::try_id_args_into_ints,
     customer::{Customer, HostNetworkGroup, HostNetworkGroupInput},
-    customer_access::{has_membership, users_customers},
+    customer_access::{has_any_membership, users_customers},
 };
 use crate::graphql::query_with_constraints;
 use crate::info_with_username;
@@ -66,8 +66,8 @@ impl NetworkQuery {
         };
 
         let user_customers = users_customers(ctx)?;
-        if !has_membership(user_customers.as_deref(), &inner.customer_ids) {
-            return Err("Forbidden: access denied".into());
+        if !has_any_membership(user_customers.as_deref(), &inner.customer_ids) {
+            return Err("Forbidden".into());
         }
 
         info_with_username!(ctx, "Network configuration for {} retrieved", inner.name);
@@ -97,8 +97,8 @@ impl NetworkMutation {
         let tag_ids = id_args_into_uints(&tag_ids)?;
 
         let user_customers = users_customers(ctx)?;
-        if !has_membership(user_customers.as_deref(), &customer_ids) {
-            return Err("Forbidden: access denied".into());
+        if !has_any_membership(user_customers.as_deref(), &customer_ids) {
+            return Err("Forbidden".into());
         }
 
         let store = crate::graphql::get_store(ctx)?;
@@ -137,8 +137,8 @@ impl NetworkMutation {
             let Some(network) = map.get_by_id(i)? else {
                 return Err("no such network".into());
             };
-            if !has_membership(user_customers.as_deref(), &network.customer_ids) {
-                return Err("Forbidden: access denied".into());
+            if !has_any_membership(user_customers.as_deref(), &network.customer_ids) {
+                return Err("Forbidden".into());
             }
 
             let name = network.name.clone();
@@ -169,14 +169,14 @@ impl NetworkMutation {
         let Some(network) = map.get_by_id(i)? else {
             return Err("no such network".into());
         };
-        if !has_membership(user_customers.as_deref(), &network.customer_ids) {
-            return Err("Forbidden: access denied".into());
+        if !has_any_membership(user_customers.as_deref(), &network.customer_ids) {
+            return Err("Forbidden".into());
         }
 
         if let Some(new_customer_ids) = &new.customer_ids {
             let new_customer_ids = id_args_into_uints(new_customer_ids)?;
-            if !has_membership(user_customers.as_deref(), &new_customer_ids) {
-                return Err("Forbidden: access denied".into());
+            if !has_any_membership(user_customers.as_deref(), &new_customer_ids) {
+                return Err("Forbidden".into());
             }
         }
 
@@ -304,7 +304,7 @@ impl NetworkTotalCount {
             .iter(Direction::Forward, None)
             .filter(|res| match res {
                 Ok(network) => {
-                    has_membership(self.user_customers.as_deref(), &network.customer_ids)
+                    has_any_membership(self.user_customers.as_deref(), &network.customer_ids)
                 }
                 Err(_) => true,
             })
@@ -337,7 +337,7 @@ async fn load(
 
     let user_customers_ref = user_customers.as_deref();
     let predicate = |network: &database::Network| -> bool {
-        has_membership(user_customers_ref, &network.customer_ids)
+        has_any_membership(user_customers_ref, &network.customer_ids)
     };
 
     let (nodes, has_previous, has_next) =
@@ -532,14 +532,13 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "1"}"#);
 
         // Create admin user (customer_ids = None)
-        schema.create_user_account("admin_user", Role::SecurityAdministrator, None);
 
         // Admin should see all networks
         let res = schema
-            .execute_as_user(
+            .execute_as_scoped_user(
                 r"{networkList{edges{node{name}}totalCount}}",
-                "admin_user",
                 Role::SecurityAdministrator,
+                None,
             )
             .await;
         assert_eq!(
@@ -591,14 +590,13 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "1"}"#);
 
         // Create user with access to customer 0 only
-        schema.create_user_account("scoped_user", Role::SecurityMonitor, Some(vec![0]));
 
         // Scoped user should only see network belonging to customer 0
         let res = schema
-            .execute_as_user(
+            .execute_as_scoped_user(
                 r"{networkList{edges{node{name}}totalCount}}",
-                "scoped_user",
                 Role::SecurityMonitor,
+                Some(vec![0]),
             )
             .await;
         assert_eq!(
@@ -632,18 +630,17 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
 
         // Create user with access to different customer
-        schema.create_user_account("other_user", Role::SecurityMonitor, Some(vec![99]));
 
         // User should be denied access to network
         let res = schema
-            .execute_as_user(
+            .execute_as_scoped_user(
                 r#"{network(id: "0") {name}}"#,
-                "other_user",
                 Role::SecurityMonitor,
+                Some(vec![99]),
             )
             .await;
         assert!(!res.errors.is_empty());
-        assert!(res.errors[0].message.contains("access denied"));
+        assert_eq!(res.errors[0].message, "Forbidden");
     }
 
     #[tokio::test]
@@ -671,11 +668,10 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
 
         // Create user with access to different customer
-        schema.create_user_account("other_user", Role::SecurityManager, Some(vec![99]));
 
         // User should be denied update access to network
         let res = schema
-            .execute_as_user(
+            .execute_as_scoped_user(
                 r#"mutation {
                     updateNetwork(
                         id: "0",
@@ -688,12 +684,12 @@ mod tests {
                         }
                     )
                 }"#,
-                "other_user",
                 Role::SecurityManager,
+                Some(vec![99]),
             )
             .await;
         assert!(!res.errors.is_empty());
-        assert!(res.errors[0].message.contains("access denied"));
+        assert_eq!(res.errors[0].message, "Forbidden");
     }
 
     #[tokio::test]
@@ -721,18 +717,17 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
 
         // Create user with access to different customer
-        schema.create_user_account("other_user", Role::SecurityManager, Some(vec![99]));
 
         // User should be denied delete access to network
         let res = schema
-            .execute_as_user(
+            .execute_as_scoped_user(
                 r#"mutation { removeNetworks(ids: ["0"]) }"#,
-                "other_user",
                 Role::SecurityManager,
+                Some(vec![99]),
             )
             .await;
         assert!(!res.errors.is_empty());
-        assert!(res.errors[0].message.contains("access denied"));
+        assert_eq!(res.errors[0].message, "Forbidden");
     }
 
     #[tokio::test]
@@ -748,22 +743,21 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
 
         // Create user with access to different customer
-        schema.create_user_account("other_user", Role::SecurityManager, Some(vec![99]));
 
         // User should be denied insert with customer they don't have access to
         let res = schema
-            .execute_as_user(
+            .execute_as_scoped_user(
                 r#"mutation {
                     insertNetwork(name: "net_c1", description: "", networks: {
                         hosts: [], networks: [], ranges: []
                     }, customerIds: ["0"], tagIds: [])
                 }"#,
-                "other_user",
                 Role::SecurityManager,
+                Some(vec![99]),
             )
             .await;
         assert!(!res.errors.is_empty());
-        assert!(res.errors[0].message.contains("access denied"));
+        assert_eq!(res.errors[0].message, "Forbidden");
     }
 
     #[tokio::test]
@@ -779,18 +773,17 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
 
         // Create user with access to customer 0
-        schema.create_user_account("scoped_user", Role::SecurityManager, Some(vec![0]));
 
         // User should be allowed to insert with their own customer
         let res = schema
-            .execute_as_user(
+            .execute_as_scoped_user(
                 r#"mutation {
                     insertNetwork(name: "net_c1", description: "", networks: {
                         hosts: [], networks: [], ranges: []
                     }, customerIds: ["0"], tagIds: [])
                 }"#,
-                "scoped_user",
                 Role::SecurityManager,
+                Some(vec![0]),
             )
             .await;
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
@@ -822,14 +815,13 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
 
         // Create user with access to customer 0
-        schema.create_user_account("scoped_user", Role::SecurityMonitor, Some(vec![0]));
 
         // User should be allowed to read network
         let res = schema
-            .execute_as_user(
+            .execute_as_scoped_user(
                 r#"{network(id: "0") {name}}"#,
-                "scoped_user",
                 Role::SecurityMonitor,
+                Some(vec![0]),
             )
             .await;
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
@@ -861,11 +853,10 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
 
         // Create user with access to customer 0
-        schema.create_user_account("scoped_user", Role::SecurityManager, Some(vec![0]));
 
         // User should be allowed to update network
         let res = schema
-            .execute_as_user(
+            .execute_as_scoped_user(
                 r#"mutation {
                     updateNetwork(
                         id: "0",
@@ -878,8 +869,8 @@ mod tests {
                         }
                     )
                 }"#,
-                "scoped_user",
                 Role::SecurityManager,
+                Some(vec![0]),
             )
             .await;
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
@@ -911,14 +902,13 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
 
         // Create user with access to customer 0
-        schema.create_user_account("scoped_user", Role::SecurityManager, Some(vec![0]));
 
         // User should be allowed to delete network
         let res = schema
-            .execute_as_user(
+            .execute_as_scoped_user(
                 r#"mutation { removeNetworks(ids: ["0"]) }"#,
-                "scoped_user",
                 Role::SecurityManager,
+                Some(vec![0]),
             )
             .await;
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);

@@ -1,5 +1,8 @@
 //! The GraphQL API schema and implementation.
 
+// Temporary for shared utilities used across sub-issues of #756.
+// Remove this allow when the last #756 sub-issue is completed.
+#![allow(dead_code)]
 // async-graphql requires the API functions to be `async`.
 #![allow(clippy::unused_async)]
 
@@ -1022,8 +1025,17 @@ impl TestSchema {
     }
 
     async fn execute_with_guard(&self, query: &str, guard: RoleGuard) -> async_graphql::Response {
+        self.execute_with_context(query, guard, None).await
+    }
+
+    async fn execute_with_guard_and_data(
+        &self,
+        query: &str,
+        guard: RoleGuard,
+        data: impl Send + Sync + 'static,
+    ) -> async_graphql::Response {
         let request: async_graphql::Request = query.into();
-        let request = self.request_with_guard(request, guard);
+        let request = self.request_with_context(request, guard, None).data(data);
         self.schema.execute(request).await
     }
 
@@ -1032,11 +1044,93 @@ impl TestSchema {
         query: &str,
         data: impl Send + Sync + 'static,
     ) -> async_graphql::Response {
+        self.execute_with_guard_and_data(query, RoleGuard::Role(Role::SystemAdministrator), data)
+            .await
+    }
+
+    /// Executes a query with the given role guard and optional `CustomerIds`.
+    async fn execute_with_context(
+        &self,
+        query: &str,
+        guard: RoleGuard,
+        customer_ids: Option<CustomerIds>,
+    ) -> async_graphql::Response {
         let request: async_graphql::Request = query.into();
-        let request = self
-            .request_with_guard(request, RoleGuard::Role(Role::SystemAdministrator))
-            .data(data);
+        let request = self.request_with_context(request, guard, customer_ids);
         self.schema.execute(request).await
+    }
+
+    async fn execute_as_scoped_user(
+        &self,
+        query: &str,
+        role: Role,
+        customer_ids: Option<Vec<u32>>,
+    ) -> async_graphql::Response {
+        self.execute_with_context(
+            query,
+            RoleGuard::Role(role),
+            Some(CustomerIds(customer_ids)),
+        )
+        .await
+    }
+
+    /// Creates a customer and an applied node with the provided hostname.
+    ///
+    /// Returns the newly created customer ID.
+    async fn setup_customer_and_node(&self, customer_name: &str, hostname: &str) -> String {
+        let query = format!(
+            r#"mutation {{ insertCustomer(name: "{customer_name}", description: "", networks: []) }}"#,
+        );
+        let res = self.execute_as_system_admin(&query).await;
+        assert!(res.errors.is_empty(), "insert customer: {:?}", res.errors);
+        let cid = res
+            .data
+            .to_string()
+            .split('"')
+            .nth(1)
+            .expect("customer insert response always contains a quoted id")
+            .to_string();
+
+        let query = format!(
+            r#"mutation {{
+                insertNode(
+                    name: "{hostname}"
+                    customerId: {cid}
+                    description: ""
+                    hostname: "{hostname}"
+                    agents: []
+                    externalServices: []
+                )
+            }}"#,
+        );
+        let res = self.execute_as_system_admin(&query).await;
+        assert!(res.errors.is_empty(), "insert node: {:?}", res.errors);
+        let node_id = res
+            .data
+            .to_string()
+            .split('"')
+            .nth(1)
+            .expect("node insert response always contains a quoted id")
+            .to_string();
+
+        let query = format!(
+            r#"mutation {{
+                applyNode(
+                    id: "{node_id}"
+                    node: {{
+                        name: "{hostname}"
+                        nameDraft: "{hostname}"
+                        profileDraft: {{ customerId: {cid}, description: "", hostname: "{hostname}" }}
+                        agents: []
+                        externalServices: []
+                    }}
+                )
+            }}"#,
+        );
+        let res = self.execute_as_system_admin(&query).await;
+        assert!(res.errors.is_empty(), "apply node: {:?}", res.errors);
+
+        cid
     }
 
     fn request_with_guard(
@@ -1049,8 +1143,21 @@ impl TestSchema {
         } else {
             request
         };
-        // Add CustomerIds with None (admin access) by default for existing tests
-        request.data(guard).data(CustomerIds(None))
+        request.data(guard)
+    }
+
+    fn request_with_context(
+        &self,
+        request: async_graphql::Request,
+        guard: RoleGuard,
+        customer_ids: Option<CustomerIds>,
+    ) -> async_graphql::Request {
+        let request = self.request_with_guard(request, guard);
+        if let Some(customer_ids) = customer_ids {
+            request.data(customer_ids)
+        } else {
+            request
+        }
     }
 
     async fn execute_stream(
@@ -1060,54 +1167,6 @@ impl TestSchema {
         let request: async_graphql::Request = subscription.into();
         self.schema
             .execute_stream(request.data(RoleGuard::Role(Role::SystemAdministrator)))
-    }
-
-    fn create_user_account(&self, username: &str, role: Role, customer_ids: Option<Vec<u32>>) {
-        let account = database::types::Account::new(
-            username,
-            "password",
-            role,
-            "Test User".to_string(),
-            "Testing".to_string(),
-            None,
-            None,
-            None,
-            None,
-            customer_ids,
-        )
-        .expect("create account");
-        self.store()
-            .account_map()
-            .insert(&account)
-            .expect("insert account");
-    }
-
-    async fn execute_as_user(
-        &self,
-        query: &str,
-        username: &str,
-        role: Role,
-    ) -> async_graphql::Response {
-        // Look up the user's customer_ids from the account
-        let customer_ids = self
-            .store()
-            .account_map()
-            .get(username)
-            .ok()
-            .flatten()
-            .and_then(|account| account.customer_ids);
-
-        let request: async_graphql::Request = query.into();
-        let request = if let Some(addr) = self.test_addr {
-            request.data(addr)
-        } else {
-            request
-        };
-        let request = request
-            .data(RoleGuard::Role(role))
-            .data(CustomerIds(customer_ids))
-            .data(username.to_string());
-        self.schema.execute(request).await
     }
 }
 

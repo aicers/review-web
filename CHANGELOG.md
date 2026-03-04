@@ -22,19 +22,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   validation to `authenticator.authenticate()` rather than the previously
   internal `validate_client_cert()`, making the validation policy replaceable
   at runtime. (auth-mtls)
+- Enforced customer scoping for Network and NetworkTag GraphQL operations.
+  Affected APIs: `networkList`, `network`, `insertNetwork`, `updateNetwork`,
+  `removeNetworks`, `networkTagList`, `updateNetworkTag`, `removeNetworkTag`.
 
 ### Removed
 
 - Removed `validate_client_cert()` and `has_service_name()` from `auth::mtls`.
   Callers that relied on these functions should implement `MtlsAuthenticator`
   instead. (auth-mtls)
-
-### Changed
-
-- Network GraphQL operations now enforce customer scoping. Non-admin users can
-  only access, create, update, and delete networks associated with their
-  assigned customers. Admin users (with no customer restriction) retain full
-  access to all networks.
 
 ## [0.30.1] - 2026-01-31
 
