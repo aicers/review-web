@@ -168,7 +168,77 @@ mod tests {
     use crate::graphql::{Role, TestSchema};
 
     #[tokio::test]
-    async fn test_event_tag_list_scoped() {
+    async fn event_tag_list_customer_scoping_admin_allowed() {
+        let schema = TestSchema::new().await;
+        let _cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+        let _cid_b = schema.setup_customer_and_node("cust-b", "sensor-b").await;
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { insertEventTag(name: "tag-alpha") }"#)
+            .await;
+        assert!(res.errors.is_empty(), "insert tag-alpha: {:?}", res.errors);
+        let tag_alpha_id: u32 = res
+            .data
+            .to_string()
+            .split('"')
+            .nth(1)
+            .unwrap()
+            .parse()
+            .unwrap();
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { insertEventTag(name: "tag-beta") }"#)
+            .await;
+        assert!(res.errors.is_empty(), "insert tag-beta: {:?}", res.errors);
+        let tag_beta_id: u32 = res
+            .data
+            .to_string()
+            .split('"')
+            .nth(1)
+            .unwrap()
+            .parse()
+            .unwrap();
+
+        for (sensor, tag_id) in [("sensor-a", tag_alpha_id), ("sensor-b", tag_beta_id)] {
+            let query = format!(
+                r#"mutation {{
+                    insertTriageResponse(
+                        sensor: "{sensor}"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: [{tag_id}]
+                        remarks: "x"
+                    )
+                }}"#,
+            );
+            let res = schema.execute_as_system_admin(&query).await;
+            assert!(
+                res.errors.is_empty(),
+                "insert response for {sensor}: {:?}",
+                res.errors
+            );
+        }
+
+        let res = schema
+            .execute_as_scoped_user(
+                r"{ eventTagList { name } }",
+                Role::SecurityAdministrator,
+                None,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let json = res.data.into_json().unwrap();
+        let names: Vec<&str> = json["eventTagList"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"tag-alpha"));
+        assert!(names.contains(&"tag-beta"));
+    }
+
+    #[tokio::test]
+    async fn event_tag_list_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
         let cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
         let _cid_b = schema.setup_customer_and_node("cust-b", "sensor-b").await;
@@ -260,7 +330,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_event_tag_list_scoped_shared_tag_visible_with_reachable_policy() {
+    async fn event_tag_list_customer_scoping_forbidden() {
+        let schema = TestSchema::new().await;
+        let _cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+        let cid_b = schema.setup_customer_and_node("cust-b", "sensor-b").await;
+        let cid_b_num: u32 = cid_b.parse().unwrap();
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { insertEventTag(name: "only-a") }"#)
+            .await;
+        assert!(res.errors.is_empty(), "insert tag: {:?}", res.errors);
+        let tag_id = res.data.to_string().split('"').nth(1).unwrap().to_string();
+
+        let query = format!(
+            r#"mutation {{
+                insertTriageResponse(
+                    sensor: "sensor-a"
+                    time: "2024-01-01T00:00:00Z"
+                    tagIds: [{tag_id}]
+                    remarks: "x"
+                )
+            }}"#,
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        assert!(res.errors.is_empty(), "insert response: {:?}", res.errors);
+
+        let res = schema
+            .execute_as_scoped_user(
+                r"{ eventTagList { name } }",
+                Role::SecurityAdministrator,
+                Some(vec![cid_b_num]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let json = res.data.into_json().unwrap();
+        let names = json["eventTagList"].as_array().unwrap();
+        assert!(names.is_empty());
+    }
+
+    #[tokio::test]
+    async fn event_tag_list_shared_tag_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
         let cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
         let _cid_b = schema.setup_customer_and_node("cust-b", "sensor-b").await;
@@ -333,7 +442,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_event_tag_remove_scoped_allowed() {
+    async fn event_tag_remove_customer_scoping_admin_allowed() {
+        let schema = TestSchema::new().await;
+        let _cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { insertEventTag(name: "only-a") }"#)
+            .await;
+        assert!(res.errors.is_empty());
+        let tag_id = res.data.to_string().split('"').nth(1).unwrap().to_string();
+
+        let query = format!(
+            r#"mutation {{
+                insertTriageResponse(
+                    sensor: "sensor-a"
+                    time: "2024-01-01T00:00:00Z"
+                    tagIds: [{tag_id}]
+                    remarks: "x"
+                )
+            }}"#,
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        assert!(res.errors.is_empty());
+
+        let query = format!(r#"mutation {{ removeEventTag(id: "{tag_id}") }}"#);
+        let res = schema
+            .execute_as_scoped_user(&query, Role::SecurityAdministrator, None)
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        assert_eq!(res.data.to_string(), r#"{removeEventTag: "only-a"}"#);
+    }
+
+    #[tokio::test]
+    async fn event_tag_remove_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
         let cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
         let cid_a_num: u32 = cid_a.parse().unwrap();
@@ -366,7 +507,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_event_tag_remove_scoped_forbidden() {
+    async fn event_tag_remove_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
         let _cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
         let cid_b = schema.setup_customer_and_node("cust-b", "sensor-b").await;
@@ -400,7 +541,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_event_tag_update_scoped_allowed() {
+    async fn event_tag_update_customer_scoping_admin_allowed() {
+        let schema = TestSchema::new().await;
+        let _cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { insertEventTag(name: "rename-me") }"#)
+            .await;
+        assert!(res.errors.is_empty());
+        let tag_id = res.data.to_string().split('"').nth(1).unwrap().to_string();
+
+        let query = format!(
+            r#"mutation {{
+                insertTriageResponse(
+                    sensor: "sensor-a"
+                    time: "2024-01-01T00:00:00Z"
+                    tagIds: [{tag_id}]
+                    remarks: "x"
+                )
+            }}"#,
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        assert!(res.errors.is_empty());
+
+        let query = format!(
+            r#"mutation {{ updateEventTag(id: "{tag_id}", old: "rename-me", new: "renamed") }}"#
+        );
+        let res = schema
+            .execute_as_scoped_user(&query, Role::SecurityAdministrator, None)
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        assert_eq!(res.data.to_string(), r"{updateEventTag: true}");
+    }
+
+    #[tokio::test]
+    async fn event_tag_update_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
         let cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
         let cid_a_num: u32 = cid_a.parse().unwrap();
@@ -435,7 +610,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_event_tag_update_scoped_forbidden() {
+    async fn event_tag_update_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
         let _cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
         let cid_b = schema.setup_customer_and_node("cust-b", "sensor-b").await;
@@ -471,7 +646,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_event_tag_update_scoped_forbidden_with_shared_tag() {
+    async fn event_tag_update_shared_tag_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
         let cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
         let _cid_b = schema.setup_customer_and_node("cust-b", "sensor-b").await;
