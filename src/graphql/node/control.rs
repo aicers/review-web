@@ -20,9 +20,7 @@ impl NodeControlMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn node_reboot(&self, ctx: &Context<'_>, hostname: String) -> Result<String> {
-        if !customer_access::can_access_hostname(ctx, &hostname)? {
-            return Err("Forbidden".into());
-        }
+        customer_access::check_hostname_access(ctx, &hostname)?;
 
         let agents = ctx.data::<BoxedAgentManager>()?;
         let review_hostname = roxy::hostname();
@@ -39,9 +37,7 @@ impl NodeControlMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
     .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn node_shutdown(&self, ctx: &Context<'_>, hostname: String) -> Result<String> {
-        if !customer_access::can_access_hostname(ctx, &hostname)? {
-            return Err("Forbidden".into());
-        }
+        customer_access::check_hostname_access(ctx, &hostname)?;
 
         let agents = ctx.data::<BoxedAgentManager>()?;
         let review_hostname = roxy::hostname();
@@ -78,9 +74,7 @@ impl NodeControlMutation {
             let Some((db_node, _, _)) = node_map.get_by_id(i)? else {
                 return Err("no such node".into());
             };
-            if !customer_access::can_access_node(users_customers.as_deref(), &db_node) {
-                return Err("Forbidden".into());
-            }
+            customer_access::check_node_access(users_customers.as_deref(), &db_node)?;
         }
 
         if node.name_draft.is_none() {
