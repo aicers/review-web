@@ -22,6 +22,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   validation to `authenticator.authenticate()` rather than the previously
   internal `validate_client_cert()`, making the validation policy replaceable
   at runtime. (auth-mtls)
+- Enforced customer scoping for Node GraphQL operations for non-admin users.
+  Affected APIs: `node`, `nodeList`, `nodeStatusList`, `insertNode`,
+  `updateNodeDraft`, `removeNodes`, `applyNode`, `nodeReboot`,
+  `nodeShutdown`. Administrators (`customer_ids = None`) retain full access.
 
 ### Removed
 
@@ -581,10 +585,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `updateSamplingPolicy`.
   - The API returns the following error message when a value cannot be parsed as
     an `IpAddr` (e.g., when "abc" is given):
+
     ```text
     Failed to parse "IpAddress": Invalid IP address: abc (occurred while
     parsing "[IpAddress!]")
     ```
+
 - Added the `theme` field to the `Account` struct to store the user's selected
   screen color mode. Accordingly, the functions for inserting and updating
   accounts have been modified, and new APIs have been added to retrieve and
