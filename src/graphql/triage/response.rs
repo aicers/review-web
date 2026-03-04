@@ -347,7 +347,42 @@ mod tests {
     use crate::graphql::{Role, TestSchema};
 
     #[tokio::test]
-    async fn test_triage_response_scoped_list_filtering() {
+    async fn triage_response_list_customer_scoping_admin_allowed() {
+        let schema = TestSchema::new().await;
+        let _cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+        let _cid_b = schema.setup_customer_and_node("cust-b", "sensor-b").await;
+
+        for (sensor, remarks) in [("sensor-a", "a"), ("sensor-b", "b")] {
+            let query = format!(
+                r#"mutation {{
+                    insertTriageResponse(
+                        sensor: "{sensor}"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: []
+                        remarks: "{remarks}"
+                    )
+                }}"#,
+            );
+            let res = schema.execute_as_system_admin(&query).await;
+            assert!(res.errors.is_empty(), "insert {sensor}: {:?}", res.errors);
+        }
+
+        let res = schema
+            .execute_as_scoped_user(
+                r"{triageResponseList{totalCount}}",
+                Role::SecurityAdministrator,
+                None,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{triageResponseList: {totalCount: "2"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn triage_response_list_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
         let cid_a = schema.setup_customer_and_node("cust-a", "sensor-a").await;
         let _cid_b = schema.setup_customer_and_node("cust-b", "sensor-b").await;
@@ -404,8 +439,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn triage_response_list_customer_scoping_forbidden() {
+        let schema = TestSchema::new().await;
+        let _cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageResponse(
+                        sensor: "sensor-a"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: []
+                        remarks: "a"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "insert response: {:?}", res.errors);
+
+        let res = schema
+            .execute_as_scoped_user(
+                r"{triageResponseList{totalCount}}",
+                Role::SecurityAdministrator,
+                Some(vec![999]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{triageResponseList: {totalCount: "0"}}"#
+        );
+    }
+
+    #[tokio::test]
     #[allow(clippy::too_many_lines)]
-    async fn test_triage_response_scoped_list_pagination_args() {
+    async fn triage_response_list_pagination_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
         let cid_a1 = schema.setup_customer_and_node("cust-a1", "sensor-a1").await;
         let cid_a2 = schema.setup_customer_and_node("cust-a2", "sensor-a2").await;
@@ -566,7 +634,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_triage_response_scoped_query_allowed() {
+    async fn triage_response_customer_scoping_admin_allowed() {
+        let schema = TestSchema::new().await;
+        let _cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageResponse(
+                        sensor: "sensor-a"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: [1]
+                        remarks: "visible"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "insert response: {:?}", res.errors);
+
+        let res = schema
+            .execute_as_scoped_user(
+                r#"{ triageResponse(sensor: "sensor-a", time: "2024-01-01T00:00:00Z") { id remarks } }"#,
+                Role::SecurityAdministrator,
+                None,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let json = res.data.into_json().unwrap();
+        assert_eq!(json["triageResponse"]["id"], "0");
+        assert_eq!(json["triageResponse"]["remarks"], "visible");
+    }
+
+    #[tokio::test]
+    async fn triage_response_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
         let cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
         let cid_num: u32 = cid.parse().unwrap();
@@ -599,7 +699,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_triage_response_scoped_query_forbidden() {
+    async fn triage_response_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
         let _cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
 
@@ -629,7 +729,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_triage_response_scoped_insert_allowed() {
+    async fn triage_response_insert_customer_scoping_admin_allowed() {
+        let schema = TestSchema::new().await;
+        let _cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {
+                    insertTriageResponse(
+                        sensor: "sensor-a"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: []
+                        remarks: "ok"
+                    )
+                }"#,
+                Role::SecurityAdministrator,
+                None,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+    }
+
+    #[tokio::test]
+    async fn triage_response_insert_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
         let cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
         let cid_num: u32 = cid.parse().unwrap();
@@ -652,7 +774,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_triage_response_scoped_insert_forbidden() {
+    async fn triage_response_insert_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
         let _cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
 
@@ -675,7 +797,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_triage_response_scoped_remove_allowed() {
+    async fn triage_response_remove_customer_scoping_admin_allowed() {
+        let schema = TestSchema::new().await;
+        let _cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageResponse(
+                        sensor: "sensor-a"
+                        time: "2024-01-01T00:00:00Z"
+                        tagIds: []
+                        remarks: "x"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "insert response: {:?}", res.errors);
+        let id = res.data.to_string().split('"').nth(1).unwrap().to_string();
+
+        let query = format!(r"mutation {{ removeTriageResponses(ids: [{id}]) }}");
+        let res = schema
+            .execute_as_scoped_user(&query, Role::SecurityAdministrator, None)
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{removeTriageResponses: ["{id}"]}}"#)
+        );
+    }
+
+    #[tokio::test]
+    async fn triage_response_remove_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
         let cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
         let cid_num: u32 = cid.parse().unwrap();
@@ -707,7 +860,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_triage_response_scoped_remove_forbidden() {
+    async fn triage_response_remove_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
         let _cid = schema.setup_customer_and_node("cust-a", "sensor-a").await;
 
@@ -735,7 +888,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_triage_response_scoped_update_allowed() {
+    async fn triage_response_update_customer_scoping_admin_allowed() {
+        let schema = TestSchema::new().await;
+        let _cid = schema.setup_customer_and_node("cust-a", "sensor1").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageResponse(
+                        sensor: "sensor1"
+                        time: "2023-02-14 14:54:46.083902898 +00:00"
+                        tagIds: [1, 2, 3]
+                        remarks: "before"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "insert response: {:?}", res.errors);
+        let id = res.data.to_string().split('"').nth(1).unwrap().to_string();
+
+        let query = format!(
+            r#"mutation {{
+                updateTriageResponse(
+                    id: "{id}"
+                    old: {{
+                        key: [115, 101, 110, 115, 111, 114, 49, 23, 67, 184, 160, 145, 75, 221, 178]
+                        tagIds: [1, 2, 3]
+                        remarks: "before"
+                    }}
+                    new: {{
+                        key: [115, 101, 110, 115, 111, 114, 49, 23, 67, 184, 160, 145, 75, 221, 178]
+                        tagIds: [2, 3]
+                        remarks: "after"
+                    }}
+                )
+            }}"#,
+        );
+        let res = schema
+            .execute_as_scoped_user(&query, Role::SecurityAdministrator, None)
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{updateTriageResponse: "{id}"}}"#)
+        );
+    }
+
+    #[tokio::test]
+    async fn triage_response_update_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
         let cid = schema.setup_customer_and_node("cust-a", "sensor1").await;
         let cid_num: u32 = cid.parse().unwrap();
@@ -796,7 +996,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_triage_response_scoped_update_forbidden() {
+    async fn triage_response_update_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
         let _cid = schema.setup_customer_and_node("cust-a", "sensor1").await;
 
