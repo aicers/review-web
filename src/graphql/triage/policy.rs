@@ -1,5 +1,3 @@
-use std::cmp;
-
 use async_graphql::{
     Context, ID, Object, Result, StringNumber,
     connection::{Connection, Edge, EmptyFields, OpaqueCursor},
@@ -17,7 +15,6 @@ use crate::graphql::customer_access::{is_member, users_customers};
 use crate::graphql::query_with_constraints;
 use crate::info_with_username;
 
-const DEFAULT_CONNECTION_SIZE: usize = 100;
 type PolicyEdge = (Vec<u8>, TriagePolicy);
 
 struct TriagePolicyTotalCount {
@@ -61,7 +58,6 @@ impl TriagePolicyQuery {
         customer_id: Option<ID>,
     ) -> Result<Connection<OpaqueCursor<Vec<u8>>, TriagePolicy, TriagePolicyTotalCount, EmptyFields>>
     {
-        let users_customers = users_customers(ctx)?;
         let customer_id = customer_id
             .map(|id| {
                 id.as_str()
@@ -82,16 +78,7 @@ impl TriagePolicyQuery {
             first,
             last,
             |after, before, first, last| async move {
-                load(
-                    ctx,
-                    after,
-                    before,
-                    first,
-                    last,
-                    customer_id,
-                    users_customers,
-                )
-                .await
+                load(ctx, after, before, first, last, customer_id).await
             },
         )
         .await
@@ -125,40 +112,29 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
     customer_id: Option<u32>,
-    users_customers: Option<Vec<u32>>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, TriagePolicy, TriagePolicyTotalCount, EmptyFields>> {
+    let users_customers = users_customers(ctx)?;
     let store = crate::graphql::get_store(ctx)?;
     let map = store.triage_policy_map();
-    let after = after.map(|c| c.0);
-    let before = before.map(|c| c.0);
-
-    let (policies, has_previous, has_next) = if let Some(last) = last {
-        let (mut policies, has_more) = iter_to_policies(
-            &map,
-            Direction::Reverse,
-            before.as_deref(),
-            after.as_deref(),
-            cmp::Ordering::is_ge,
-            last,
-            customer_id,
-            users_customers.as_deref(),
-        )?;
-        policies.reverse();
-        (policies, has_more, false)
-    } else {
-        let first = first.unwrap_or(DEFAULT_CONNECTION_SIZE);
-        let (policies, has_more) = iter_to_policies(
-            &map,
-            Direction::Forward,
-            after.as_deref(),
-            before.as_deref(),
-            cmp::Ordering::is_le,
-            first,
-            customer_id,
-            users_customers.as_deref(),
-        )?;
-        (policies, false, has_more)
-    };
+    let (policies, has_previous, has_next) = crate::graphql::process_load_edges_filtered(
+        &map,
+        after,
+        before,
+        first,
+        last,
+        None,
+        |policy: &database::TriagePolicy| {
+            matches_customer(policy, customer_id)
+                && can_access_policy(users_customers.as_deref(), policy)
+        },
+    );
+    let policies = policies
+        .into_iter()
+        .map(|res| {
+            let policy = res?;
+            Ok((policy.unique_key(), policy.into()))
+        })
+        .collect::<anyhow::Result<Vec<PolicyEdge>>>()?;
 
     let mut connection = Connection::with_additional_fields(
         has_previous,
@@ -174,49 +150,6 @@ async fn load(
             .map(|(key, policy)| Edge::new(OpaqueCursor(key), policy)),
     );
     Ok(connection)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn iter_to_policies(
-    map: &database::IndexedTable<'_, database::TriagePolicy>,
-    direction: Direction,
-    start: Option<&[u8]>,
-    bound: Option<&[u8]>,
-    cond: fn(cmp::Ordering) -> bool,
-    len: usize,
-    customer_id: Option<u32>,
-    users_customers: Option<&[u32]>,
-) -> anyhow::Result<(Vec<PolicyEdge>, bool)> {
-    let mut policies = Vec::new();
-    let mut exceeded = false;
-    let mut iter = map.iter(direction, start);
-    // exclusive start cursor: skip the first item when a start is provided
-    if start.is_some() {
-        iter.next();
-    }
-    for item in iter {
-        let policy = item?;
-        let key = policy.unique_key();
-
-        if let Some(b) = bound
-            && !(cond)(key.as_slice().cmp(b))
-        {
-            break;
-        }
-        // Filter by explicit customer_id parameter and by user's customer scope
-        if !matches_customer(&policy, customer_id) || !can_access_policy(users_customers, &policy) {
-            continue;
-        }
-        policies.push((key, policy.into()));
-        exceeded = policies.len() > len;
-        if exceeded {
-            break;
-        }
-    }
-    if exceeded {
-        policies.pop();
-    }
-    Ok((policies, exceeded))
 }
 
 /// Checks if the user can access a policy based on their customer scope.
@@ -401,6 +334,11 @@ impl TriagePolicyMutation {
                 "Customer not found for updated policy (customerId: {customer_id})"
             )
             .into());
+        }
+        if let Some(customer_id) = new.customer_id
+            && !is_member(users_customers.as_deref(), customer_id)
+        {
+            return Err("access denied: policy belongs to a different customer".into());
         }
 
         let exclusion_map = store.triage_exclusion_reason_map();
@@ -1074,6 +1012,108 @@ mod tests {
             res.errors[0].message.contains("access denied"),
             "Expected access denied error: {:?}",
             res.errors
+        );
+    }
+
+    #[tokio::test]
+    async fn test_triage_policy_update_denied_when_reassigning_to_different_customer() {
+        let schema = TestSchema::new().await;
+        create_account(&schema.store(), "testuser", Some(vec![0]));
+
+        // Create customers
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c2", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason"
+                        description: "reason"
+                        domain: ["example.com"]
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        // Create a policy for customer 0 (user's customer)
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriagePolicy(
+                        name: "Customer 0 Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "0"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
+
+        // Scoped user should not be able to move policy to customer 1
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    updateTriagePolicy(
+                        id: 0
+                        old: {
+                            name: "Customer 0 Policy"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                            customerId: "0"
+                        }
+                        new: {
+                            name: "Moved Policy"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                            customerId: "1"
+                        }
+                    )
+                }"#,
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(
+            res.errors[0].message.contains("access denied"),
+            "Expected access denied error: {:?}",
+            res.errors
+        );
+
+        // Ensure the policy was not updated
+        let res = schema
+            .execute_as_system_admin(r#"{ triagePolicy(id: "0") { name customerId } }"#)
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors when querying policy: {:?}",
+            res.errors
+        );
+        assert_eq!(
+            res.data.to_string(),
+            r#"{triagePolicy: {name: "Customer 0 Policy", customerId: "0"}}"#
         );
     }
 
