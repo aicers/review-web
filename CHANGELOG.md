@@ -43,17 +43,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   validation to `authenticator.authenticate()` rather than the previously
   internal `validate_client_cert()`, making the validation policy replaceable
   at runtime. (auth-mtls)
+- Enforced customer scoping for Node GraphQL operations for non-admin users.
+  Affected APIs: `node`, `nodeList`, `nodeStatusList`, `insertNode`,
+  `updateNodeDraft`, `removeNodes`, `applyNode`, `nodeReboot`,
+  `nodeShutdown`. Administrators (`customer_ids = None`) retain full access.
 
 ### Removed
 
 - Removed `validate_client_cert()` and `has_service_name()` from `auth::mtls`.
   Callers that relied on these functions should implement `MtlsAuthenticator`
   instead. (auth-mtls)
-- Enforce customer scoping for Node operations. Non-admin users can only
-  access, create, update, and delete nodes that belong to their assigned
-  customers. Node list APIs now filter results based on the requester's
-  customer IDs. Administrators (with `customer_ids` = None) retain full access
-  to all nodes.
 
 ### Fixed
 
