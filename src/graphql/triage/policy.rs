@@ -97,9 +97,7 @@ impl TriagePolicyQuery {
             return Err("no such triage policy".into());
         };
 
-        if !can_access_policy(users_customers.as_deref(), &inner) {
-            return Err("access denied: policy belongs to a different customer".into());
-        }
+        check_policy_access(users_customers.as_deref(), &inner)?;
 
         Ok(TriagePolicy { inner })
     }
@@ -168,6 +166,17 @@ fn can_access_policy(users_customers: Option<&[u32]>, policy: &database::TriageP
     }
 }
 
+/// Returns an error when the user cannot access the given policy.
+fn check_policy_access(
+    users_customers: Option<&[u32]>,
+    policy: &database::TriagePolicy,
+) -> Result<()> {
+    if can_access_policy(users_customers, policy) {
+        return Ok(());
+    }
+    Err("Forbidden".into())
+}
+
 // Matches a policy against the caller's customer scope:
 //
 // customer_id Some: allow global policies (customer None) or policies for that specific customer.
@@ -215,6 +224,7 @@ impl TriagePolicyMutation {
             .map(Into::into)
             .collect::<Vec<database::Response>>();
         response.sort_unstable();
+        let users_customers = users_customers(ctx)?;
         let store = crate::graphql::get_store(ctx)?;
         let customer_id = customer_id
             .map(|id| id.as_str().parse::<u32>())
@@ -224,6 +234,9 @@ impl TriagePolicyMutation {
             let customer_map = store.customer_map();
             if customer_map.get_by_id(customer_id)?.is_none() {
                 return Err("no such customer".into());
+            }
+            if !is_member(users_customers.as_deref(), customer_id) {
+                return Err("Forbidden".into());
             }
         }
         let exclusion_map = store.triage_exclusion_reason_map();
@@ -265,28 +278,23 @@ impl TriagePolicyMutation {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.triage_policy_map();
 
-        // Check access for all policies before removing any
+        let mut parsed_ids = Vec::with_capacity(ids.len());
+        let mut removed = Vec::<String>::with_capacity(ids.len());
+
+        // Check access for all policies and capture names before removing any.
         for id in &ids {
             let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
             let Some(policy) = map.get_by_id(i)? else {
                 return Err("no such triage policy".into());
             };
-            if !can_access_policy(users_customers.as_deref(), &policy) {
-                return Err("access denied: policy belongs to a different customer".into());
-            }
+            check_policy_access(users_customers.as_deref(), &policy)?;
+            parsed_ids.push(i);
+            removed.push(policy.name);
         }
 
-        let mut removed = Vec::<String>::with_capacity(ids.len());
-        for id in ids {
-            let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-            let key = map.remove(i)?;
-
-            let name = match String::from_utf8(key) {
-                Ok(key) => key,
-                Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
-            };
+        for (id, name) in parsed_ids.into_iter().zip(removed.iter()) {
+            map.remove(id)?;
             info_with_username!(ctx, "Triage policy {name} has been deleted");
-            removed.push(name);
         }
 
         Ok(removed)
@@ -314,9 +322,7 @@ impl TriagePolicyMutation {
         let Some(policy) = policy_map.get_by_id(i)? else {
             return Err("no such triage policy".into());
         };
-        if !can_access_policy(users_customers.as_deref(), &policy) {
-            return Err("access denied: policy belongs to a different customer".into());
-        }
+        check_policy_access(users_customers.as_deref(), &policy)?;
 
         let customer_map = store.customer_map();
         if let Some(customer_id) = old.customer_id
@@ -338,7 +344,7 @@ impl TriagePolicyMutation {
         if let Some(customer_id) = new.customer_id
             && !is_member(users_customers.as_deref(), customer_id)
         {
-            return Err("access denied: policy belongs to a different customer".into());
+            return Err("Forbidden".into());
         }
 
         let exclusion_map = store.triage_exclusion_reason_map();
@@ -403,7 +409,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_triage_policy_read_allowed_for_admin() {
+    async fn triage_policy_customer_scoping_admin_allowed() {
         let schema = TestSchema::new().await;
         // Create admin account with no customer_ids (admin)
         create_account(&schema.store(), "testuser", None);
@@ -465,7 +471,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_triage_policy_read_allowed_for_matching_customer() {
+    async fn triage_policy_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
         // Create scoped user with customer_ids = [0]
         create_account(&schema.store(), "testuser", Some(vec![0]));
@@ -530,7 +536,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_triage_policy_read_denied_for_different_customer() {
+    async fn triage_policy_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
         // Create scoped user with customer_ids = [0]
         create_account(&schema.store(), "testuser", Some(vec![0]));
@@ -592,14 +598,192 @@ mod tests {
             .await;
         assert_eq!(res.errors.len(), 1);
         assert!(
-            res.errors[0].message.contains("access denied"),
-            "Expected access denied error: {:?}",
+            res.errors[0].message.contains("Forbidden"),
+            "Expected Forbidden error: {:?}",
             res.errors
         );
     }
 
     #[tokio::test]
-    async fn test_triage_policy_read_global_allowed_for_scoped_user() {
+    async fn triage_policy_insert_customer_scoping_admin_allowed() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c2", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason"
+                        description: "reason"
+                        domain: ["example.com"]
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        // Admin can insert policy for any customer
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriagePolicy(
+                        name: "Admin Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "1"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
+    }
+
+    #[tokio::test]
+    async fn triage_policy_insert_customer_scoping_allowed() {
+        let schema = TestSchema::new().await;
+        create_account(&schema.store(), "testuser", Some(vec![0]));
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason"
+                        description: "reason"
+                        domain: ["example.com"]
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertTriagePolicy(
+                        name: "Allowed Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "0"
+                    )
+                }"#,
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
+    }
+
+    #[tokio::test]
+    async fn triage_policy_insert_customer_scoping_forbidden() {
+        let schema = TestSchema::new().await;
+        create_account(&schema.store(), "testuser", Some(vec![0]));
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c2", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason"
+                        description: "reason"
+                        domain: ["example.com"]
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertTriagePolicy(
+                        name: "Forbidden Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "1"
+                    )
+                }"#,
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(
+            res.errors[0].message.contains("Forbidden"),
+            "Expected Forbidden error: {:?}",
+            res.errors
+        );
+
+        // Ensure policy was not created
+        let res = schema
+            .execute_as_system_admin(r"{ triagePolicyList(first: 10) { totalCount } }")
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        let json = res.data.into_json().unwrap();
+        assert_eq!(json["triagePolicyList"]["totalCount"], "0");
+    }
+
+    #[tokio::test]
+    async fn triage_policy_global_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
         create_account(&schema.store(), "testuser", Some(vec![0]));
 
@@ -654,7 +838,125 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_triage_policy_delete_denied_for_different_customer() {
+    async fn triage_policy_remove_customer_scoping_admin_allowed() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason"
+                        description: "reason"
+                        domain: ["example.com"]
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriagePolicy(
+                        name: "Customer Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "0"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { removeTriagePolicies(ids: ["0"]) }"#)
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(
+            res.data.to_string(),
+            r#"{removeTriagePolicies: ["Customer Policy"]}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn triage_policy_remove_customer_scoping_allowed() {
+        let schema = TestSchema::new().await;
+        create_account(&schema.store(), "testuser", Some(vec![0]));
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason"
+                        description: "reason"
+                        domain: ["example.com"]
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriagePolicy(
+                        name: "Customer Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "0"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { removeTriagePolicies(ids: ["0"]) }"#,
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(
+            res.data.to_string(),
+            r#"{removeTriagePolicies: ["Customer Policy"]}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn triage_policy_remove_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
         create_account(&schema.store(), "testuser", Some(vec![0]));
 
@@ -715,14 +1017,114 @@ mod tests {
             .await;
         assert_eq!(res.errors.len(), 1);
         assert!(
-            res.errors[0].message.contains("access denied"),
-            "Expected access denied error: {:?}",
+            res.errors[0].message.contains("Forbidden"),
+            "Expected Forbidden error: {:?}",
             res.errors
         );
     }
 
     #[tokio::test]
-    async fn test_triage_policy_list_filters_by_user_scope() {
+    async fn triage_policy_list_customer_scoping_admin_allowed() {
+        let schema = TestSchema::new().await;
+        create_account(&schema.store(), "testuser", None);
+
+        // Create customers
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c2", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason"
+                        description: "reason"
+                        domain: ["example.com"]
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        // Create policies for different customers
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriagePolicy(
+                        name: "Global Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriagePolicy(
+                        name: "Customer 0 Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "0"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "1"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriagePolicy(
+                        name: "Customer 1 Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "1"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "2"}"#);
+
+        // Admin should see all policies
+        let res = schema
+            .execute_with_guard(
+                r"{ triagePolicyList(first: 10) { totalCount nodes { name customerId } } }",
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        let json = res.data.into_json().unwrap();
+        assert_eq!(json["triagePolicyList"]["totalCount"], "3");
+    }
+
+    #[tokio::test]
+    async fn triage_policy_list_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
         create_account(&schema.store(), "testuser", Some(vec![0]));
 
@@ -829,24 +1231,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_triage_policy_admin_sees_all_policies() {
+    async fn triage_policy_list_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
-        create_account(&schema.store(), "testuser", None);
+        create_account(&schema.store(), "testuser", Some(vec![99]));
 
-        // Create customers
         let res = schema
             .execute_as_system_admin(
                 r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c2", description: "", networks: []) }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
 
         let res = schema
             .execute_as_system_admin(
@@ -864,22 +1258,6 @@ mod tests {
             r#"{insertTriageExclusionReason: "0"}"#
         );
 
-        // Create policies for different customers
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertTriagePolicy(
-                        name: "Global Policy"
-                        triageExclusionId: ["0"]
-                        packetAttr: []
-                        confidence: []
-                        response: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
-
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
@@ -894,28 +1272,12 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "1"}"#);
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
 
         let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertTriagePolicy(
-                        name: "Customer 1 Policy"
-                        triageExclusionId: ["0"]
-                        packetAttr: []
-                        confidence: []
-                        response: []
-                        customerId: "1"
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "2"}"#);
-
-        // Admin should see all policies
-        let res = schema
-            .execute_as_system_admin(
-                r"{ triagePolicyList(first: 10) { totalCount nodes { name } } }",
+            .execute_with_guard(
+                r"{ triagePolicyList(first: 10) { totalCount nodes { name customerId } } }",
+                RoleGuard::Role(Role::SecurityAdministrator),
             )
             .await;
         assert!(
@@ -924,201 +1286,15 @@ mod tests {
             res.errors
         );
         let json = res.data.into_json().unwrap();
-        assert_eq!(json["triagePolicyList"]["totalCount"], "3");
-    }
-
-    #[tokio::test]
-    async fn test_triage_policy_update_denied_for_different_customer() {
-        let schema = TestSchema::new().await;
-        create_account(&schema.store(), "testuser", Some(vec![0]));
-
-        // Create customers
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c2", description: "", networks: []) }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertTriageExclusionReason(input: {
-                        name: "Reason"
-                        description: "reason"
-                        domain: ["example.com"]
-                    })
-                }"#,
-            )
-            .await;
+        assert_eq!(json["triagePolicyList"]["totalCount"], "0");
         assert_eq!(
-            res.data.to_string(),
-            r#"{insertTriageExclusionReason: "0"}"#
-        );
-
-        // Create a policy for customer 1
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertTriagePolicy(
-                        name: "Other Customer Policy"
-                        triageExclusionId: ["0"]
-                        packetAttr: []
-                        confidence: []
-                        response: []
-                        customerId: "1"
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
-
-        // Scoped user should be denied from updating
-        let res = schema
-            .execute_with_guard(
-                r#"mutation {
-                    updateTriagePolicy(
-                        id: 0
-                        old: {
-                            name: "Other Customer Policy"
-                            triageExclusionId: ["0"]
-                            packetAttr: []
-                            confidence: []
-                            response: []
-                            customerId: "1"
-                        }
-                        new: {
-                            name: "Updated Policy"
-                            triageExclusionId: ["0"]
-                            packetAttr: []
-                            confidence: []
-                            response: []
-                            customerId: "1"
-                        }
-                    )
-                }"#,
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
-        assert_eq!(res.errors.len(), 1);
-        assert!(
-            res.errors[0].message.contains("access denied"),
-            "Expected access denied error: {:?}",
-            res.errors
+            json["triagePolicyList"]["nodes"].as_array().unwrap().len(),
+            0
         );
     }
 
     #[tokio::test]
-    async fn test_triage_policy_update_denied_when_reassigning_to_different_customer() {
-        let schema = TestSchema::new().await;
-        create_account(&schema.store(), "testuser", Some(vec![0]));
-
-        // Create customers
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c2", description: "", networks: []) }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertTriageExclusionReason(input: {
-                        name: "Reason"
-                        description: "reason"
-                        domain: ["example.com"]
-                    })
-                }"#,
-            )
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{insertTriageExclusionReason: "0"}"#
-        );
-
-        // Create a policy for customer 0 (user's customer)
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertTriagePolicy(
-                        name: "Customer 0 Policy"
-                        triageExclusionId: ["0"]
-                        packetAttr: []
-                        confidence: []
-                        response: []
-                        customerId: "0"
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
-
-        // Scoped user should not be able to move policy to customer 1
-        let res = schema
-            .execute_with_guard(
-                r#"mutation {
-                    updateTriagePolicy(
-                        id: 0
-                        old: {
-                            name: "Customer 0 Policy"
-                            triageExclusionId: ["0"]
-                            packetAttr: []
-                            confidence: []
-                            response: []
-                            customerId: "0"
-                        }
-                        new: {
-                            name: "Moved Policy"
-                            triageExclusionId: ["0"]
-                            packetAttr: []
-                            confidence: []
-                            response: []
-                            customerId: "1"
-                        }
-                    )
-                }"#,
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
-        assert_eq!(res.errors.len(), 1);
-        assert!(
-            res.errors[0].message.contains("access denied"),
-            "Expected access denied error: {:?}",
-            res.errors
-        );
-
-        // Ensure the policy was not updated
-        let res = schema
-            .execute_as_system_admin(r#"{ triagePolicy(id: "0") { name customerId } }"#)
-            .await;
-        assert!(
-            res.errors.is_empty(),
-            "Expected no errors when querying policy: {:?}",
-            res.errors
-        );
-        assert_eq!(
-            res.data.to_string(),
-            r#"{triagePolicy: {name: "Customer 0 Policy", customerId: "0"}}"#
-        );
-    }
-
-    #[tokio::test]
-    async fn test_triage_policy_user_with_multiple_customers() {
+    async fn triage_policy_list_multiple_customers_scoping_allowed() {
         let schema = TestSchema::new().await;
         create_account(&schema.store(), "testuser", Some(vec![0, 2]));
 
@@ -1231,7 +1407,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_triage_policy_empty_customer_ids_sees_only_global() {
+    async fn triage_policy_list_empty_scope_scoping_allowed() {
         let schema = TestSchema::new().await;
         create_account(&schema.store(), "testuser", Some(vec![]));
 
@@ -1310,6 +1486,350 @@ mod tests {
                 .as_str()
                 .unwrap(),
             "Global Policy"
+        );
+    }
+
+    #[tokio::test]
+    async fn triage_policy_update_customer_scoping_admin_allowed() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason"
+                        description: "reason"
+                        domain: ["example.com"]
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriagePolicy(
+                        name: "Customer Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "0"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateTriagePolicy(
+                        id: 0
+                        old: {
+                            name: "Customer Policy"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                            customerId: "0"
+                        }
+                        new: {
+                            name: "Updated Policy"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                            customerId: "0"
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(res.data.to_string(), r#"{updateTriagePolicy: "0"}"#);
+    }
+
+    #[tokio::test]
+    async fn triage_policy_update_customer_scoping_allowed() {
+        let schema = TestSchema::new().await;
+        create_account(&schema.store(), "testuser", Some(vec![0]));
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason"
+                        description: "reason"
+                        domain: ["example.com"]
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriagePolicy(
+                        name: "Customer Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "0"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    updateTriagePolicy(
+                        id: 0
+                        old: {
+                            name: "Customer Policy"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                            customerId: "0"
+                        }
+                        new: {
+                            name: "Updated Policy"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                            customerId: "0"
+                        }
+                    )
+                }"#,
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(res.data.to_string(), r#"{updateTriagePolicy: "0"}"#);
+    }
+
+    #[tokio::test]
+    async fn triage_policy_update_customer_scoping_forbidden() {
+        let schema = TestSchema::new().await;
+        create_account(&schema.store(), "testuser", Some(vec![0]));
+
+        // Create customers
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c2", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason"
+                        description: "reason"
+                        domain: ["example.com"]
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        // Create a policy for customer 1
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriagePolicy(
+                        name: "Other Customer Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "1"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
+
+        // Scoped user should be denied from updating
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    updateTriagePolicy(
+                        id: 0
+                        old: {
+                            name: "Other Customer Policy"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                            customerId: "1"
+                        }
+                        new: {
+                            name: "Updated Policy"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                            customerId: "1"
+                        }
+                    )
+                }"#,
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(
+            res.errors[0].message.contains("Forbidden"),
+            "Expected Forbidden error: {:?}",
+            res.errors
+        );
+    }
+
+    #[tokio::test]
+    async fn triage_policy_update_reassign_customer_scoping_forbidden() {
+        let schema = TestSchema::new().await;
+        create_account(&schema.store(), "testuser", Some(vec![0]));
+
+        // Create customers
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c2", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason"
+                        description: "reason"
+                        domain: ["example.com"]
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        // Create a policy for customer 0 (user's customer)
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriagePolicy(
+                        name: "Customer 0 Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "0"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
+
+        // Scoped user should not be able to move policy to customer 1
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    updateTriagePolicy(
+                        id: 0
+                        old: {
+                            name: "Customer 0 Policy"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                            customerId: "0"
+                        }
+                        new: {
+                            name: "Moved Policy"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                            customerId: "1"
+                        }
+                    )
+                }"#,
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(
+            res.errors[0].message.contains("Forbidden"),
+            "Expected Forbidden error: {:?}",
+            res.errors
+        );
+
+        // Ensure the policy was not updated
+        let res = schema
+            .execute_as_system_admin(r#"{ triagePolicy(id: "0") { name customerId } }"#)
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors when querying policy: {:?}",
+            res.errors
+        );
+        assert_eq!(
+            res.data.to_string(),
+            r#"{triagePolicy: {name: "Customer 0 Policy", customerId: "0"}}"#
         );
     }
 }
