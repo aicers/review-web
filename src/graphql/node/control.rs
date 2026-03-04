@@ -115,9 +115,7 @@ impl NodeControlMutation {
             let Some((db_node, _, _)) = node_map.get_by_id(i)? else {
                 return Err("no such node".into());
             };
-            if !customer_access::can_access_node(users_customers.as_deref(), &db_node) {
-                return Err("Forbidden".into());
-            }
+            customer_access::check_node_access(users_customers.as_deref(), &db_node)?;
         }
 
         if node.name_draft.is_none() {
@@ -2829,7 +2827,6 @@ mod tests {
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
-<<<<<<< HEAD
         // Insert a node with hostname "analysis" and an agent with ENABLED status
         let res = schema
             .execute_as_system_admin(

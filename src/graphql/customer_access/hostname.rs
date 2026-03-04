@@ -108,46 +108,6 @@ pub(crate) fn sensor_from_key(key: &[u8]) -> Result<String> {
         .map_err(|_| "TriageResponse key contains invalid UTF-8 sensor".into())
 }
 
-/// Extracts the customer ID for node-level CRUD authorization.
-///
-/// Uses `profile.customer_id` if available and falls back to
-/// `profile_draft.customer_id` for draft-only nodes.
-///
-/// This is intentional for node CRUD operations (read/update/delete):
-/// before `applyNode`, scoped users must still be able to access nodes
-/// whose customer is recorded only in draft.
-///
-/// This differs from [`derive_customer_id_from_hostname`], which is
-/// hostname-based and intentionally uses only the active `profile`.
-#[must_use]
-fn node_customer_id(node: &review_database::Node) -> Option<u32> {
-    node.profile
-        .as_ref()
-        .map(|profile| profile.customer_id)
-        .or_else(|| {
-            node.profile_draft
-                .as_ref()
-                .map(|profile| profile.customer_id)
-        })
-}
-
-/// Checks whether the requester can access the given node.
-///
-/// Returns `true` if:
-/// - The requester is admin (`users_customers` is `None`), or
-/// - The node has an active profile and its customer ID is in the requester's scope.
-#[must_use]
-pub(crate) fn can_access_node(
-    users_customers: Option<&[u32]>,
-    node: &review_database::Node,
-) -> bool {
-    match users_customers {
-        None => true,
-        Some(users_customers) => node_customer_id(node)
-            .is_some_and(|customer_id| is_member(Some(users_customers), customer_id)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use chrono::Utc;

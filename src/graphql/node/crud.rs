@@ -56,9 +56,7 @@ impl NodeQuery {
         };
 
         // Check customer scoping
-        if !customer_access::can_access_node(users_customers.as_deref(), &node) {
-            return Err("Forbidden".into());
-        }
+        customer_access::check_node_access(users_customers.as_deref(), &node)?;
 
         Ok(node.into())
     }
@@ -182,9 +180,7 @@ impl NodeMutation {
             let Some((node, _, _)) = map.get_by_id(i)? else {
                 return Err("no such node".into());
             };
-            if !customer_access::can_access_node(users_customers.as_deref(), &node) {
-                return Err("Forbidden".into());
-            }
+            customer_access::check_node_access(users_customers.as_deref(), &node)?;
 
             let (key, _invalid_agents, _invalid_external_services) = map.remove(i)?;
 
@@ -217,9 +213,7 @@ impl NodeMutation {
         let Some((node, _, _)) = map.get_by_id(i)? else {
             return Err("no such node".into());
         };
-        if !customer_access::can_access_node(users_customers.as_deref(), &node) {
-            return Err("Forbidden".into());
-        }
+        customer_access::check_node_access(users_customers.as_deref(), &node)?;
 
         let new = super::input::create_draft_update(&old, new)?;
         let old = old.try_into()?;

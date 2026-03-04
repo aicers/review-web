@@ -1,5 +1,8 @@
 //! The GraphQL API schema and implementation.
 
+// Temporary for shared utilities used across sub-issues of #756.
+// Remove this allow when the last #756 sub-issue is completed.
+#![allow(dead_code)]
 // async-graphql requires the API functions to be `async`.
 #![allow(clippy::unused_async)]
 
@@ -1020,7 +1023,6 @@ impl TestSchema {
             use self::account::set_initial_admin_password;
             let _ = set_initial_admin_password(&store);
         }
-
         let store = Arc::new(RwLock::new(store));
 
         #[cfg(feature = "auth-jwt")]
@@ -1070,17 +1072,6 @@ impl TestSchema {
     ) -> async_graphql::Response {
         let request: async_graphql::Request = query.into();
         let request = self.request_with_context(request, guard, None).data(data);
-        self.schema.execute(request).await
-    }
-
-    async fn execute_with_guard_and_data(
-        &self,
-        query: &str,
-        guard: RoleGuard,
-        data: impl Send + Sync + 'static,
-    ) -> async_graphql::Response {
-        let request: async_graphql::Request = query.into();
-        let request = self.request_with_guard(request, guard).data(data);
         self.schema.execute(request).await
     }
 
