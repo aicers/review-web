@@ -265,28 +265,28 @@ impl super::TriageResponseMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
-        let users_cids = users_customers(ctx)?;
         let store = crate::graphql::get_store(ctx)?;
         let map = store.triage_response_map();
+        let users_cids = users_customers(ctx)?;
+        let ids = try_id_args_into_ints::<u32>(Some(ids))?.unwrap_or_default();
 
-        let mut removed = Vec::<String>::with_capacity(ids.len());
-        for id in ids {
-            let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-
-            // Check customer access before removing
-            if users_cids.is_some() {
-                let Some(tr) = map.get_by_id(i)? else {
+        if users_cids.is_some() {
+            for i in &ids {
+                let Some(tr) = map.get_by_id(*i)? else {
                     return Err("no such triage response".into());
                 };
                 let key_bytes = tr.key().into_owned();
                 let sensor = sensor_from_key(&key_bytes)?;
-                let derived = derive_customer_id_from_hostname(&store, &sensor)?;
-                match derived {
+                let target_cid = derive_customer_id_from_hostname(&store, &sensor)?;
+                match target_cid {
                     Some(cid) if is_member(users_cids.as_deref(), cid) => {}
                     _ => return Err("Forbidden".into()),
                 }
             }
+        }
 
+        let mut removed = Vec::<String>::with_capacity(ids.len());
+        for i in ids {
             let _key = map.remove(i)?;
             info_with_username!(ctx, "Triage response {i} has been deleted");
 
@@ -308,7 +308,6 @@ impl super::TriageResponseMutation {
     ) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
-        // Check customer access from the key in the old input
         let sensor = sensor_from_key(&old.key)?;
         check_hostname_access(ctx, &sensor)?;
 
