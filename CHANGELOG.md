@@ -20,10 +20,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   node belonging to one of their accessible customers. Affected APIs:
   `triageResponse`, `triageResponseList`, `insertTriageResponse`,
   `updateTriageResponse`, `removeTriageResponses`.
-- Added customer scoping to `EventTag` GraphQL resolvers. The `eventTagList`
-  query now filters tags to only those referenced by accessible triage
-  responses. The `removeEventTag` and `updateEventTag` mutations require
-  access to all customers whose triage responses reference the tag.
+- Changed `EventTag` GraphQL authorization so `removeEventTag` and
+  `updateEventTag` are now restricted to `SystemAdministrator`.
 
 ### Changed
 
