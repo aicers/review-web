@@ -18,6 +18,21 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- Updated `review-database` dependency to track the
+  `BackupConfig` refactor: config is now stored via
+  `init_backup_config`/`update_backup_config`/`backup_config`
+  methods on `Store` instead of a dedicated table.
+  `setBackupConfig` performs an upsert (init or update).
+- Removed `customerIds` parameter from `insertNetwork` and
+  `updateNetwork` mutations, matching upstream removal of
+  the `customer_ids` field from `Network`.
+- `networkTagList`, `insertNetworkTag`, `removeNetworkTag`,
+  and `updateNetworkTag` now require a `customerId` argument
+  for customer-scoped tag management.
+- Cluster IDs changed from `i32` to `u32` in GraphQL
+  pagination cursors and internal types.
+- `csvColumnExtra` and `addCsvColumnExtra` model parameter
+  changed from `i32` to `u32`.
 - `graphql_handler` and `graphql_ws_handler` now delegate certificate
   validation to `authenticator.authenticate()` rather than the previously
   internal `validate_client_cert()`, making the validation policy replaceable
@@ -581,10 +596,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `updateSamplingPolicy`.
   - The API returns the following error message when a value cannot be parsed as
     an `IpAddr` (e.g., when "abc" is given):
+
     ```text
     Failed to parse "IpAddress": Invalid IP address: abc (occurred while
     parsing "[IpAddress!]")
     ```
+
 - Added the `theme` field to the `Account` struct to store the user's selected
   screen color mode. Accordingly, the functions for inserting and updating
   accounts have been modified, and new APIs have been added to retrieve and

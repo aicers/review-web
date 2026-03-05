@@ -693,6 +693,7 @@ async fn fetch_events(
                         unusual_destination_pattern_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                     }
                 }
+                _ => {}
             }
         }
     }
@@ -2190,7 +2191,6 @@ mod tests {
                             networks: [],
                             ranges: []
                         },
-                        customerIds: [],
                         tagIds: []
                     )
                 }"#,
