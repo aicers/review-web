@@ -80,20 +80,13 @@ impl NetworkMutation {
         name: String,
         description: String,
         networks: HostNetworkGroupInput,
-        customer_ids: Vec<ID>,
         tag_ids: Vec<ID>,
     ) -> Result<ID> {
-        let customer_ids = id_args_into_uints(&customer_ids)?;
         let tag_ids = id_args_into_uints(&tag_ids)?;
         let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
-        let entry = review_database::Network::new(
-            name.clone(),
-            description,
-            networks.try_into()?,
-            customer_ids,
-            tag_ids,
-        );
+        let entry =
+            review_database::Network::new(name.clone(), description, networks.try_into()?, tag_ids);
         let id = map.insert(entry)?;
         info_with_username!(ctx, "Network {name} has been registered");
         Ok(ID(id.to_string()))
@@ -167,7 +160,6 @@ struct NetworkUpdateInput {
     name: Option<String>,
     description: Option<String>,
     networks: Option<HostNetworkGroupInput>,
-    customer_ids: Option<Vec<ID>>,
     tag_ids: Option<Vec<ID>>,
 }
 
@@ -175,13 +167,11 @@ impl TryFrom<NetworkUpdateInput> for review_database::NetworkUpdate {
     type Error = async_graphql::Error;
 
     fn try_from(input: NetworkUpdateInput) -> Result<Self, Self::Error> {
-        let customer_ids = try_id_args_into_ints::<u32>(input.customer_ids)?;
         let tag_ids = try_id_args_into_ints::<u32>(input.tag_ids)?;
         Ok(Self::new(
             input.name,
             input.description,
             input.networks.and_then(|v| v.try_into().ok()),
-            customer_ids,
             tag_ids,
         ))
     }
@@ -210,19 +200,8 @@ impl Network {
     }
 
     #[graphql(name = "customerList")]
-    async fn customer_ids(&self, ctx: &Context<'_>) -> Result<Vec<Customer>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.customer_map();
-        let mut customers = Vec::new();
-
-        for &id in &self.inner.customer_ids {
-            #[allow(clippy::cast_sign_loss)] // u32 stored as i32 in database
-            let Some(customer) = map.get_by_id(id)? else {
-                continue;
-            };
-            customers.push(customer.into());
-        }
-        Ok(customers)
+    async fn customer_ids(&self, _ctx: &Context<'_>) -> Result<Vec<Customer>> {
+        Ok(Vec::new())
     }
 
     async fn tag_ids(&self) -> Vec<ID> {
@@ -296,7 +275,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "", networks: {
                         hosts: [], networks: [], ranges: []
-                    }, customerIds: [], tagIds: [])
+                    }, tagIds: [])
                 }"#,
             )
             .await;
@@ -337,7 +316,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n0", description: "", networks: {
                         hosts: ["1.1.1.1"], networks: [], ranges: []
-                    }, customerIds: [], tagIds: [])
+                    }, tagIds: [])
                 }"#,
             )
             .await;
@@ -355,7 +334,6 @@ mod tests {
                             networks: [],
                             ranges: []
                         }
-                        customerIds: [],
                         tagIds: []
                     },
                     new: {
@@ -365,7 +343,6 @@ mod tests {
                             networks: [],
                             ranges: []
                         }
-                        customerIds: [],
                         tagIds: []
                     }
                 )
@@ -383,7 +360,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "", networks: {
                         hosts: [], networks: [], ranges: []
-                    }, customerIds: [], tagIds: [0, 1, 2])
+                    }, tagIds: [0, 1, 2])
                 }"#,
             )
             .await;
