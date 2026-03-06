@@ -8,6 +8,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- Added `customerId` field to the `AllowNetwork` and `BlockNetwork`
+  GraphQL object types so each list item explicitly indicates its
+  owner customer.
 - Added `MtlsIdentity` struct and `MtlsAuthenticator` trait to `auth::mtls`
   for dependency-inversion: the trait is defined in `review-web` and
   implementations are injected from external crates (e.g. `review`).
@@ -18,6 +21,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- `allowNetworkList` and `blockNetworkList` GraphQL queries now accept
+  `customerIds: [ID]` (multiple customer IDs) instead of the previous
+  `customerId: ID`. The input list is deduplicated and sorted by ID
+  for deterministic ordering and pagination. Omitting `customerIds`
+  still returns results for all customers.
 - `graphql_handler` and `graphql_ws_handler` now delegate certificate
   validation to `authenticator.authenticate()` rather than the previously
   internal `validate_client_cert()`, making the validation policy replaceable
