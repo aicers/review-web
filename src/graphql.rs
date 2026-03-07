@@ -106,11 +106,11 @@ where
 
 /// A set of queries defined in the schema.
 #[derive(MergedObject, Default)]
-pub(super) struct Query(SubQueryOne, SubQueryTwo);
+pub(super) struct Query(SubQueryOneA, SubQueryOneB, SubQueryTwoA, SubQueryTwoB);
 
 #[cfg(not(feature = "auth-mtls"))]
 #[derive(MergedObject, Default)]
-struct SubQueryOne(
+struct SubQueryOneA(
     account::AccountQuery,
     block_network::BlockNetworkQuery,
     category::CategoryQuery,
@@ -120,6 +120,11 @@ struct SubQueryOne(
     db_management::DbManagementQuery,
     event::EventQuery,
     event::EventGroupQuery,
+);
+
+#[cfg(not(feature = "auth-mtls"))]
+#[derive(MergedObject, Default)]
+struct SubQueryOneB(
     filter::FilterQuery,
     indicator::IndicatorQuery,
     ip_location::IpLocationQuery,
@@ -133,7 +138,7 @@ struct SubQueryOne(
 
 #[cfg(feature = "auth-mtls")]
 #[derive(MergedObject, Default)]
-struct SubQueryOne(
+struct SubQueryOneA(
     block_network::BlockNetworkQuery,
     category::CategoryQuery,
     cluster::ClusterQuery,
@@ -142,6 +147,11 @@ struct SubQueryOne(
     db_management::DbManagementQuery,
     event::EventQuery,
     event::EventGroupQuery,
+);
+
+#[cfg(feature = "auth-mtls")]
+#[derive(MergedObject, Default)]
+struct SubQueryOneB(
     indicator::IndicatorQuery,
     ip_location::IpLocationQuery,
     model::ModelQuery,
@@ -153,7 +163,7 @@ struct SubQueryOne(
 );
 
 #[derive(MergedObject, Default)]
-struct SubQueryTwo(
+struct SubQueryTwoA(
     sampling::SamplingPolicyQuery,
     statistics::StatisticsQuery,
     status::StatusQuery,
@@ -163,6 +173,10 @@ struct SubQueryTwo(
     template::TemplateQuery,
     tor_exit_node::TorExitNodeQuery,
     label_db::LabelDbQuery,
+);
+
+#[derive(MergedObject, Default)]
+struct SubQueryTwoB(
     triage::TriagePolicyQuery,
     triage::TriageExclusionReasonQuery,
     triage::TriageResponseQuery,
@@ -177,11 +191,16 @@ struct SubQueryTwo(
 ///
 /// This is exposed only for [`Schema`], and not used directly.
 #[derive(MergedObject, Default)]
-pub(super) struct Mutation(SubMutationOne, SubMutationTwo);
+pub(super) struct Mutation(
+    SubMutationOneA,
+    SubMutationOneB,
+    SubMutationTwoA,
+    SubMutationTwoB,
+);
 
 #[cfg(not(feature = "auth-mtls"))]
 #[derive(MergedObject, Default)]
-struct SubMutationOne(
+struct SubMutationOneA(
     account::AccountMutation,
     block_network::BlockNetworkMutation,
     category::CategoryMutation,
@@ -190,6 +209,11 @@ struct SubMutationOne(
     customer::CustomerMutation,
     data_source::DataSourceMutation,
     db_management::DbManagementMutation,
+);
+
+#[cfg(not(feature = "auth-mtls"))]
+#[derive(MergedObject, Default)]
+struct SubMutationOneB(
     filter::FilterMutation,
     indicator::IndicatorMutation,
     model::ModelMutation,
@@ -201,7 +225,7 @@ struct SubMutationOne(
 
 #[cfg(feature = "auth-mtls")]
 #[derive(MergedObject, Default)]
-struct SubMutationOne(
+struct SubMutationOneA(
     block_network::BlockNetworkMutation,
     category::CategoryMutation,
     cert::CertMutation,
@@ -209,6 +233,11 @@ struct SubMutationOne(
     customer::CustomerMutation,
     data_source::DataSourceMutation,
     db_management::DbManagementMutation,
+);
+
+#[cfg(feature = "auth-mtls")]
+#[derive(MergedObject, Default)]
+struct SubMutationOneB(
     indicator::IndicatorMutation,
     model::ModelMutation,
     network::NetworkMutation,
@@ -218,7 +247,7 @@ struct SubMutationOne(
 );
 
 #[derive(MergedObject, Default)]
-struct SubMutationTwo(
+struct SubMutationTwoA(
     qualifier::QualifierMutation,
     sampling::SamplingPolicyMutation,
     status::StatusMutation,
@@ -227,6 +256,10 @@ struct SubMutationTwo(
     tags::WorkflowTagMutation,
     template::TemplateMutation,
     tor_exit_node::TorExitNodeMutation,
+);
+
+#[derive(MergedObject, Default)]
+struct SubMutationTwoB(
     label_db::LabelDbMutation,
     triage::TriagePolicyMutation,
     triage::TriageExclusionReasonMutation,
