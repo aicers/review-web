@@ -46,17 +46,7 @@ impl NodeQuery {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn node(&self, ctx: &Context<'_>, id: ID) -> Result<Node> {
-        let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-
-        let store = crate::graphql::get_store(ctx)?;
-        let users_customers = customer_access::users_customers(ctx)?;
-        let map = store.node_map();
-        let Some((node, _invalid_agents, _invalid_external_services)) = map.get_by_id(i)? else {
-            return Err("no such node".into());
-        };
-
-        // Check customer scoping
-        customer_access::check_node_access(users_customers.as_deref(), &node)?;
+        let node = customer_access::load_accessible_node(ctx, &id)?;
 
         Ok(node.into())
     }
@@ -180,7 +170,9 @@ impl NodeMutation {
             let Some((node, _, _)) = map.get_by_id(i)? else {
                 return Err("no such node".into());
             };
-            customer_access::check_node_access(users_customers.as_deref(), &node)?;
+            if !customer_access::can_access_node(users_customers.as_deref(), &node) {
+                return Err("Forbidden".into());
+            }
 
             let (key, _invalid_agents, _invalid_external_services) = map.remove(i)?;
 
@@ -204,16 +196,10 @@ impl NodeMutation {
         old: NodeInput,
         new: NodeDraftInput,
     ) -> Result<ID> {
+        customer_access::load_accessible_node(ctx, &id)?;
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
         let store = crate::graphql::get_store(ctx)?;
-        let users_customers = customer_access::users_customers(ctx)?;
         let mut map = store.node_map();
-
-        // Check customer scoping before updating
-        let Some((node, _, _)) = map.get_by_id(i)? else {
-            return Err("no such node".into());
-        };
-        customer_access::check_node_access(users_customers.as_deref(), &node)?;
 
         let new = super::input::create_draft_update(&old, new)?;
         let old = old.try_into()?;
