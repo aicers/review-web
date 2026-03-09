@@ -108,15 +108,7 @@ impl NodeControlMutation {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
         // Check customer scoping
-        {
-            let store = crate::graphql::get_store(ctx)?;
-            let users_customers = customer_access::users_customers(ctx)?;
-            let node_map = store.node_map();
-            let Some((db_node, _, _)) = node_map.get_by_id(i)? else {
-                return Err("no such node".into());
-            };
-            customer_access::check_node_access(users_customers.as_deref(), &db_node)?;
-        }
+        customer_access::load_accessible_node(ctx, &id)?;
 
         if node.name_draft.is_none() {
             // Since the `name` of the node is used as the key in the database, the `name_draft`
