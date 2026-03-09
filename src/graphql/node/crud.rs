@@ -2378,7 +2378,7 @@ mod tests {
         assert_eq!(res.errors[0].message, "Forbidden");
 
         let res = schema
-            .execute_as_system_admin(r#"{nodeList{totalCount edges{node{id name}}}}"#)
+            .execute_as_system_admin(r"{nodeList{totalCount edges{node{id name}}}}")
             .await;
         assert!(
             res.errors.is_empty(),
@@ -2414,7 +2414,7 @@ mod tests {
         assert_eq!(res.errors[0].message, "no such node");
 
         let res = schema
-            .execute_as_system_admin(r#"{nodeList{totalCount edges{node{id name}}}}"#)
+            .execute_as_system_admin(r"{nodeList{totalCount edges{node{id name}}}}")
             .await;
         assert!(
             res.errors.is_empty(),
