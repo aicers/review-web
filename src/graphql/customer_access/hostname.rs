@@ -110,8 +110,11 @@ pub(crate) fn sensor_from_key(key: &[u8]) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, RwLock};
+
+    use async_graphql::{Context, EmptyMutation, EmptySubscription, Object, Result, Schema};
     use chrono::Utc;
-    use review_database::Store;
+    use review_database::{Role, Store, types};
 
     use super::*;
 
@@ -139,6 +142,85 @@ mod tests {
         let map = store.node_map();
         map.put(&node).expect("insert node");
         (db_dir, backup_dir, store)
+    }
+
+    #[derive(Default)]
+    struct QueryRoot;
+
+    #[Object]
+    impl QueryRoot {
+        async fn check_hostname_access(&self, ctx: &Context<'_>, hostname: String) -> Result<bool> {
+            super::check_hostname_access(ctx, &hostname)?;
+            Ok(true)
+        }
+    }
+
+    struct TestContext {
+        _dir: tempfile::TempDir,
+        _backup_dir: tempfile::TempDir,
+        schema: Schema<QueryRoot, EmptyMutation, EmptySubscription>,
+    }
+
+    impl TestContext {
+        fn new(username: &str, customer_ids: Option<Vec<u32>>, nodes: &[(&str, u32)]) -> Self {
+            let db_dir = tempfile::tempdir().expect("create data dir");
+            let backup_dir = tempfile::tempdir().expect("create backup dir");
+            let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+            let account = types::Account::new(
+                username,
+                "password",
+                Role::SecurityMonitor,
+                "Test User".to_string(),
+                "Testing".to_string(),
+                None,
+                None,
+                None,
+                None,
+                customer_ids,
+            )
+            .expect("create account");
+            store
+                .account_map()
+                .insert(&account)
+                .expect("insert account");
+
+            let node_map = store.node_map();
+            for (hostname, customer_id) in nodes {
+                let node = review_database::Node {
+                    id: u32::MAX,
+                    name: (*hostname).to_string(),
+                    name_draft: Some((*hostname).to_string()),
+                    profile: Some(review_database::NodeProfile {
+                        customer_id: *customer_id,
+                        description: String::new(),
+                        hostname: (*hostname).to_string(),
+                    }),
+                    profile_draft: None,
+                    agents: vec![],
+                    external_services: vec![],
+                    creation_time: Utc::now(),
+                };
+                node_map.put(&node).expect("insert node");
+            }
+
+            let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
+                .data(Arc::new(RwLock::new(store)))
+                .data(username.to_string())
+                .finish();
+            Self {
+                _dir: db_dir,
+                _backup_dir: backup_dir,
+                schema,
+            }
+        }
+
+        async fn execute_check_hostname_access(&self, hostname: &str) -> async_graphql::Response {
+            self.schema
+                .execute(format!(
+                    "{{ checkHostnameAccess(hostname: \"{hostname}\") }}"
+                ))
+                .await
+        }
     }
 
     #[test]
@@ -242,6 +324,52 @@ mod tests {
         map.put(&node1).expect("insert node1");
         // The database enforces hostname uniqueness.
         assert!(map.put(&node2).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_check_hostname_access_scoped_user_allowed() {
+        let test_ctx = TestContext::new("scoped_user", Some(vec![42]), &[("host-a", 42)]);
+
+        let response = test_ctx.execute_check_hostname_access("host-a").await;
+
+        assert!(
+            response.errors.is_empty(),
+            "unexpected errors: {:?}",
+            response.errors
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_hostname_access_scoped_user_forbidden() {
+        let test_ctx = TestContext::new("scoped_user", Some(vec![7]), &[("host-a", 42)]);
+
+        let response = test_ctx.execute_check_hostname_access("host-a").await;
+
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(response.errors[0].message, "Forbidden");
+    }
+
+    #[tokio::test]
+    async fn test_check_hostname_access_unknown_hostname_forbidden() {
+        let test_ctx = TestContext::new("scoped_user", Some(vec![42]), &[("host-a", 42)]);
+
+        let response = test_ctx.execute_check_hostname_access("host-missing").await;
+
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(response.errors[0].message, "Forbidden");
+    }
+
+    #[tokio::test]
+    async fn test_check_hostname_access_admin_bypasses_lookup() {
+        let test_ctx = TestContext::new("admin_user", None, &[]);
+
+        let response = test_ctx.execute_check_hostname_access("host-missing").await;
+
+        assert!(
+            response.errors.is_empty(),
+            "unexpected errors: {:?}",
+            response.errors
+        );
     }
 
     #[test]
