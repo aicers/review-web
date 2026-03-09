@@ -109,6 +109,9 @@ impl NodeControlMutation {
 
         // Check customer scoping
         customer_access::load_accessible_node(ctx, &id)?;
+        if let Some(profile_draft) = node.profile_draft.as_ref() {
+            customer_access::check_customer_membership(ctx, &profile_draft.customer_id)?;
+        }
 
         if node.name_draft.is_none() {
             // Since the `name` of the node is used as the key in the database, the `name_draft`
@@ -3167,6 +3170,57 @@ mod tests {
                         customerId: 2,
                         description: "Target node",
                         hostname: "host-customer-2",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "apply_target",
+                            nameDraft: "apply_target",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 2,
+                                description: "Target node",
+                                hostname: "host-customer-2",
+                            },
+                            agents: [],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    #[tokio::test]
+    async fn apply_node_customer_scoping_profile_draft_customer_change_forbidden() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "apply_target",
+                        customerId: 1,
+                        description: "Target node",
+                        hostname: "host-customer-1",
                         agents: [],
                         externalServices: []
                     )
