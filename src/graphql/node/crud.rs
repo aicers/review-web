@@ -201,6 +201,9 @@ impl NodeMutation {
         new: NodeDraftInput,
     ) -> Result<ID> {
         customer_access::load_accessible_node(ctx, &id)?;
+        if let Some(profile_draft) = new.profile_draft.as_ref() {
+            customer_access::check_customer_membership(ctx, &profile_draft.customer_id)?;
+        }
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
         let store = crate::graphql::get_store(ctx)?;
         let mut map = store.node_map();
@@ -2232,6 +2235,65 @@ mod tests {
                         new: {
                             nameDraft: "updated_name",
                             profileDraft: null,
+                            agents: null,
+                            externalServices: null
+                        }
+                    )
+                }"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    /// Test update denied when a scoped user changes the draft customer to an inaccessible one.
+    #[tokio::test]
+    async fn node_customer_scoping_update_draft_customer_change_forbidden() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_1",
+                        customerId: 1,
+                        description: "Node for customer 1",
+                        hostname: "host1.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    updateNodeDraft(
+                        id: "0"
+                        old: {
+                            name: "node_customer_1",
+                            nameDraft: "node_customer_1",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 1,
+                                description: "Node for customer 1",
+                                hostname: "host1.example.com",
+                            },
+                            agents: [],
+                            externalServices: []
+                        },
+                        new: {
+                            nameDraft: "updated_name",
+                            profileDraft: {
+                                customerId: 2,
+                                description: "Moved to customer 2",
+                                hostname: "host2.example.com",
+                            },
                             agents: null,
                             externalServices: null
                         }
