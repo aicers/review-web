@@ -2,7 +2,7 @@
 // Remove this allow when the last #756 sub-issue is completed.
 #![allow(dead_code)]
 
-use async_graphql::{Context, Result};
+use async_graphql::{Context, Result, types::ID};
 use review_database::Role;
 
 /// Checks if a user is a member of a specific customer.
@@ -87,6 +87,27 @@ pub(crate) fn users_customers(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
         .get(username)?
         .ok_or_else::<async_graphql::Error, _>(|| "User not found".into())?;
     Ok(user.customer_ids)
+}
+
+/// Checks whether the current user can access the given customer ID.
+///
+/// Returns `Ok(())` if the current user is unscoped or belongs to the given customer.
+///
+/// # Errors
+///
+/// Returns an error if required context data is missing, the customer ID is invalid,
+/// or the current user is not allowed to access the customer.
+pub(crate) fn check_customer_membership(ctx: &Context<'_>, customer_id: &ID) -> Result<()> {
+    let users_customers = users_customers(ctx)?;
+    let customer_id = customer_id
+        .as_str()
+        .parse::<u32>()
+        .map_err(|_| "invalid customer ID")?;
+    if is_member(users_customers.as_deref(), customer_id) {
+        Ok(())
+    } else {
+        Err("Forbidden".into())
+    }
 }
 
 #[cfg(test)]
@@ -201,6 +222,15 @@ mod tests {
         async fn users_customers(&self, ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
             super::users_customers(ctx)
         }
+
+        async fn check_customer_membership(
+            &self,
+            ctx: &Context<'_>,
+            customer_id: ID,
+        ) -> Result<bool> {
+            super::check_customer_membership(ctx, &customer_id)?;
+            Ok(true)
+        }
     }
 
     struct TestContext {
@@ -289,6 +319,17 @@ mod tests {
                 .data(crate::graphql::CustomerIds(customer_ids));
             self.schema.execute(request).await
         }
+
+        async fn execute_check_customer_membership(
+            &self,
+            customer_id: &str,
+        ) -> async_graphql::Response {
+            self.schema
+                .execute(format!(
+                    "{{ checkCustomerMembership(customerId: \"{customer_id}\") }}"
+                ))
+                .await
+        }
     }
 
     #[tokio::test]
@@ -336,6 +377,40 @@ mod tests {
         let res = test_ctx.execute("{ usersCustomers }").await;
         assert_eq!(res.errors.len(), 1);
         assert_eq!(res.errors[0].message, "User not found");
+    }
+
+    #[tokio::test]
+    async fn test_check_customer_membership_scoped_user_allowed() {
+        let test_ctx = TestContext::new_with_account("scoped_user", Some(vec![1, 2, 3]));
+        let res = test_ctx.execute_check_customer_membership("2").await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+    }
+
+    #[tokio::test]
+    async fn test_check_customer_membership_scoped_user_forbidden() {
+        let test_ctx = TestContext::new_with_account("scoped_user", Some(vec![1]));
+        let res = test_ctx.execute_check_customer_membership("2").await;
+
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    #[tokio::test]
+    async fn test_check_customer_membership_invalid_customer_id() {
+        let test_ctx = TestContext::new_with_account("scoped_user", Some(vec![1]));
+        let res = test_ctx.execute_check_customer_membership("abc").await;
+
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "invalid customer ID");
+    }
+
+    #[tokio::test]
+    async fn test_check_customer_membership_admin_allowed() {
+        let test_ctx = TestContext::new_with_account("admin_user", None);
+        let res = test_ctx.execute_check_customer_membership("999").await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
     }
 
     #[tokio::test]
