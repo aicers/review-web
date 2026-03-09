@@ -280,73 +280,10 @@ pub fn agent_keys_by_customer_id(db: &Store) -> Result<HashMap<u32, Vec<String>>
 #[cfg(test)]
 mod tests {
     use assert_json_diff::assert_json_eq;
-    use chrono::Utc;
-    use review_database::{Role, types};
     use serde_json::json;
 
-    use crate::graphql::TestSchema;
-
-    /// Helper to create an account with specific `customer_ids`
-    fn create_account_with_customers(
-        store: &review_database::Store,
-        username: &str,
-        customer_ids: Option<Vec<u32>>,
-    ) {
-        let account = types::Account::new(
-            username,
-            "password",
-            Role::SecurityAdministrator,
-            "Test User".to_string(),
-            "Testing".to_string(),
-            None,
-            None,
-            None,
-            None,
-            customer_ids,
-        )
-        .expect("create account");
-        store
-            .account_map()
-            .insert(&account)
-            .expect("insert account");
-    }
-
-    /// Helper to update an existing account's `customer_ids`
-    fn update_account_customers(
-        store: &review_database::Store,
-        username: &str,
-        customer_ids: Option<Vec<u32>>,
-    ) {
-        let account_map = store.account_map();
-        // Remove existing account
-        let _ = account_map.delete(username);
-        // Create new account with updated customer_ids
-        create_account_with_customers(store, username, customer_ids);
-    }
-
-    /// Helper to insert a node with an active profile.
-    fn insert_active_node(
-        store: &review_database::Store,
-        name: &str,
-        customer_id: u32,
-        hostname: &str,
-    ) -> u32 {
-        let node = review_database::Node {
-            id: u32::MAX,
-            name: name.to_string(),
-            name_draft: Some(name.to_string()),
-            profile: Some(review_database::NodeProfile {
-                customer_id,
-                description: format!("Node for customer {customer_id}"),
-                hostname: hostname.to_string(),
-            }),
-            profile_draft: None,
-            agents: vec![],
-            external_services: vec![],
-            creation_time: Utc::now(),
-        };
-        store.node_map().put(&node).expect("insert node")
-    }
+    use super::super::test_support::{insert_active_node, update_account_customers};
+    use crate::graphql::{Role, TestSchema};
 
     // test scenario : insert node -> update node with different name -> remove node
     #[tokio::test]
