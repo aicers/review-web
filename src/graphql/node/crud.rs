@@ -150,7 +150,7 @@ impl NodeMutation {
 
     /// Removes nodes, returning the node keys that no longer exist.
     ///
-    /// On error, some nodes may have been removed.
+    /// Validates all requested nodes before deleting any of them.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn remove_nodes(
@@ -161,20 +161,24 @@ impl NodeMutation {
         let store = crate::graphql::get_store(ctx)?;
         let users_customers = customer_access::users_customers(ctx)?;
         let map = store.node_map();
+        let ids = ids
+            .into_iter()
+            .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID".into()))
+            .collect::<Result<Vec<u32>>>()?;
 
-        let mut removed = Vec::<String>::with_capacity(ids.len());
-        for id in ids {
-            let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-
+        for id in &ids {
             // Check customer scoping before removing
-            let Some((node, _, _)) = map.get_by_id(i)? else {
+            let Some((node, _, _)) = map.get_by_id(*id)? else {
                 return Err("no such node".into());
             };
             if !customer_access::can_access_node(users_customers.as_deref(), &node) {
                 return Err("Forbidden".into());
             }
+        }
 
-            let (key, _invalid_agents, _invalid_external_services) = map.remove(i)?;
+        let mut removed = Vec::<String>::with_capacity(ids.len());
+        for id in ids {
+            let (key, _invalid_agents, _invalid_external_services) = map.remove(id)?;
 
             let name = match String::from_utf8(key) {
                 Ok(key) => key,
@@ -2351,6 +2355,84 @@ mod tests {
             .await;
         assert_eq!(res.errors.len(), 1);
         assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    /// Test remove validates all IDs before deleting any nodes for scoped users.
+    #[tokio::test]
+    async fn node_customer_scoping_remove_forbidden_keeps_all_nodes() {
+        let schema = TestSchema::new().await;
+
+        let id0 = insert_active_node(&schema.store(), "node_customer_1", 1, "host1.example.com");
+        let id1 = insert_active_node(&schema.store(), "node_customer_2", 2, "host2.example.com");
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { removeNodes(ids: ["0", "1"]) }"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+
+        let res = schema
+            .execute_as_system_admin(r#"{nodeList{totalCount edges{node{id name}}}}"#)
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeList": {
+                    "totalCount": "2",
+                    "edges": [
+                        {"node": {"id": "0", "name": "node_customer_1"}},
+                        {"node": {"id": "1", "name": "node_customer_2"}}
+                    ]
+                }
+            })
+        );
+    }
+
+    /// Test remove validates all IDs before deleting any nodes when a later ID is missing.
+    #[tokio::test]
+    async fn node_remove_missing_id_keeps_existing_nodes() {
+        let schema = TestSchema::new().await;
+
+        let id0 = insert_active_node(&schema.store(), "node_customer_1", 1, "host1.example.com");
+        assert_eq!(id0, 0);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { removeNodes(ids: ["0", "999"]) }"#)
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "no such node");
+
+        let res = schema
+            .execute_as_system_admin(r#"{nodeList{totalCount edges{node{id name}}}}"#)
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeList": {
+                    "totalCount": "1",
+                    "edges": [
+                        {"node": {"id": "0", "name": "node_customer_1"}}
+                    ]
+                }
+            })
+        );
     }
 
     /// Test that system administrators remain unscoped even when account has empty `customer_ids`.
