@@ -247,6 +247,19 @@ async fn load(
 #[cfg(test)]
 mod tests {
     use crate::graphql::TestSchema;
+
+    #[tokio::test]
+    async fn network_customer_list_field_is_removed() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(r#"{network(id: "0") {customerList{name}}}"#)
+            .await;
+
+        assert_eq!(res.errors.len(), 1);
+        assert!(res.errors[0].message.contains("customerList"));
+    }
+
     #[tokio::test]
     async fn remove_networks() {
         let schema = TestSchema::new().await;

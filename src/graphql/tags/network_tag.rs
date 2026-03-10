@@ -1,6 +1,7 @@
 use async_graphql::{Context, ID, Object, Result};
+use review_database::{Iterable, Role, Store, event::Direction};
 
-use super::{Role, Tag};
+use super::Tag;
 use crate::graphql::RoleGuard;
 
 #[derive(Default)]
@@ -13,12 +14,26 @@ impl NetworkTagQuery {
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
-    async fn network_tag_list(&self, ctx: &Context<'_>, customer_id: ID) -> Result<Vec<Tag>> {
+    async fn network_tag_list(
+        &self,
+        ctx: &Context<'_>,
+        customer_id: Option<ID>,
+    ) -> Result<Vec<Tag>> {
+        let store = crate::graphql::get_store(ctx)?;
+        let role = match ctx.data_opt::<RoleGuard>() {
+            Some(RoleGuard::Role(role)) => *role,
+            _ => return Err("Forbidden".into()),
+        };
+
+        if role == Role::SystemAdministrator {
+            return load_all_network_tags(&store);
+        }
+
         let customer_id = customer_id
+            .ok_or("customer ID is required")?
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid customer ID")?;
-        let store = crate::graphql::get_store(ctx)?;
         let tags = store.network_tag_set(customer_id)?;
         Ok(tags
             .tags()
@@ -104,17 +119,41 @@ impl NetworkTagMutation {
     }
 }
 
+fn load_all_network_tags(store: &Store) -> Result<Vec<Tag>> {
+    let customer_map = store.customer_map();
+    let mut tags = Vec::new();
+
+    for customer in customer_map.iter(Direction::Forward, None) {
+        let customer = customer?;
+        let tag_set = store.network_tag_set(customer.id)?;
+        tags.extend(tag_set.tags().map(|tag| Tag {
+            id: tag.id,
+            name: tag.name.clone(),
+        }));
+    }
+
+    tags.sort_by(|lhs, rhs| lhs.id.cmp(&rhs.id).then_with(|| lhs.name.cmp(&rhs.name)));
+    Ok(tags)
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::graphql::TestSchema;
+    use crate::graphql::{Role, RoleGuard, TestSchema};
 
     #[tokio::test]
     async fn network_tag() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute_as_system_admin(r"{networkTagList(customerId: 0){name}}")
+            .execute_as_system_admin(r"{networkTagList{name}}")
             .await;
         assert_eq!(res.data.to_string(), r"{networkTagList: []}");
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
 
         let res = schema
             .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "foo")}"#)
@@ -122,7 +161,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "0"}"#);
 
         let res = schema
-            .execute_as_system_admin(r"{networkTagList(customerId: 0){name}}")
+            .execute_as_system_admin(r"{networkTagList{name}}")
             .await;
         assert_eq!(res.data.to_string(), r#"{networkTagList: [{name: "foo"}]}"#);
 
@@ -155,5 +194,102 @@ mod tests {
             .execute_as_system_admin(r#"{network(id: "0") {tagIds}}"#)
             .await;
         assert_eq!(res.data.to_string(), r"{network: {tagIds: []}}");
+    }
+
+    #[tokio::test]
+    async fn network_tags_are_scoped_by_customer() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "alpha")}"#)
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 1, name: "alpha")}"#)
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "1"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "beta")}"#)
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "2"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r"{networkTagList(customerId: 0){id name}}")
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{networkTagList: [{id: "0", name: "alpha"}, {id: "1", name: "alpha"}, {id: "2", name: "beta"}]}"#
+        );
+
+        let res = schema
+            .execute_as_system_admin(r"{networkTagList(customerId: 1){id name}}")
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{networkTagList: [{id: "0", name: "alpha"}, {id: "1", name: "alpha"}, {id: "2", name: "beta"}]}"#
+        );
+
+        let res = schema
+            .execute_as_system_admin(r"{networkTagList{id name}}")
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{networkTagList: [{id: "0", name: "alpha"}, {id: "1", name: "alpha"}, {id: "2", name: "beta"}]}"#
+        );
+
+        let res = schema
+            .execute_with_guard(
+                r"{networkTagList(customerId: 0){id name}}",
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{networkTagList: [{id: "0", name: "alpha"}, {id: "2", name: "beta"}]}"#
+        );
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateNetworkTag(customerId: 0, id: "0", old: "alpha", new: "zero-alpha")
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r"{updateNetworkTag: true}");
+
+        let res = schema
+            .execute_as_system_admin(r"{networkTagList{name}}")
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{networkTagList: [{name: "zero-alpha"}, {name: "alpha"}, {name: "beta"}]}"#
+        );
+
+        let res = schema
+            .execute_with_guard(
+                r"{networkTagList(customerId: 1){name}}",
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{networkTagList: [{name: "alpha"}]}"#
+        );
     }
 }

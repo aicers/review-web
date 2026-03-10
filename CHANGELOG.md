@@ -27,7 +27,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Updated network tag GraphQL APIs to use customer-scoped tag sets.
   - Affected GraphQL APIs: `networkTagList`, `insertNetworkTag`,
     `removeNetworkTag`, `updateNetworkTag`.
-  - Added required `customerId` argument to all network tag APIs above.
+  - Added required `customerId` to `insertNetworkTag`, `removeNetworkTag`,
+    and `updateNetworkTag`.
+  - `networkTagList` now returns all tags for `SystemAdministrator`, and uses
+    `customerId` for customer-scoped lookups by other roles.
 - `graphql_handler` and `graphql_ws_handler` now delegate certificate
   validation to `authenticator.authenticate()` rather than the previously
   internal `validate_client_cert()`, making the validation policy replaceable
