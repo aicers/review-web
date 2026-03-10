@@ -36,7 +36,6 @@ pub(crate) fn has_any_membership(users_customers: Option<&[u32]>, customer_ids: 
 /// - The user is an admin (`users_customers` is `None`), or
 /// - Every entry in `customer_ids` exists in the user's customer list.
 #[must_use]
-#[allow(dead_code)] // Shared helper for upcoming customer-scoping sub-issues of #756.
 pub(crate) fn has_all_membership(users_customers: Option<&[u32]>, customer_ids: &[u32]) -> bool {
     match users_customers {
         None => true, // Admin has access to all customers
