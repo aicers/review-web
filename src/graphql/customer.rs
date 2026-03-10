@@ -145,7 +145,6 @@ impl CustomerMutation {
         let (removed, removed_customer_networks) = {
             let store = crate::graphql::get_store(ctx)?;
             let map = store.customer_map();
-            let network_map = store.network_map();
 
             // Parse customer IDs before validation to catch invalid IDs early
             let customer_ids = ids
@@ -161,7 +160,6 @@ impl CustomerMutation {
             let mut removed = Vec::<String>::with_capacity(customer_ids.len());
             for i in customer_ids {
                 let key = map.remove(i)?;
-                network_map.remove_customer(i)?;
 
                 let name = match String::from_utf8(key) {
                     Ok(key) => key,
@@ -868,7 +866,7 @@ mod tests {
                 r#"mutation {
                 insertNetwork(name: "n1", description: "", networks: {
                     hosts: [], networks: [], ranges: []
-                }, customerIds: [0], tagIds: [])
+                }, customerIds: [0])
             }"#,
             )
             .await;
@@ -878,14 +876,6 @@ mod tests {
             .execute_as_system_admin(r#"mutation { removeCustomers(ids: ["0"]) }"#)
             .await;
         assert_eq!(res.data.to_string(), r#"{removeCustomers: ["c1"]}"#);
-
-        let res = schema
-            .execute_as_system_admin(r"{networkList{edges{node{customerList{name}}}totalCount}}")
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{networkList: {edges: [{node: {customerList: []}}], totalCount: "1"}}"#
-        );
     }
 
     #[cfg(not(feature = "auth-mtls"))]

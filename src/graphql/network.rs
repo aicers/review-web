@@ -13,7 +13,7 @@ use tracing::info;
 use super::{
     Role, RoleGuard,
     cluster::try_id_args_into_ints,
-    customer::{Customer, HostNetworkGroup, HostNetworkGroupInput},
+    customer::{HostNetworkGroup, HostNetworkGroupInput},
 };
 use crate::graphql::query_with_constraints;
 use crate::info_with_username;
@@ -81,10 +81,8 @@ impl NetworkMutation {
         description: String,
         networks: HostNetworkGroupInput,
         customer_ids: Vec<ID>,
-        tag_ids: Vec<ID>,
     ) -> Result<ID> {
         let customer_ids = id_args_into_uints(&customer_ids)?;
-        let tag_ids = id_args_into_uints(&tag_ids)?;
         let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
         let entry = review_database::Network::new(
@@ -92,7 +90,6 @@ impl NetworkMutation {
             description,
             networks.try_into()?,
             customer_ids,
-            tag_ids,
         );
         let id = map.insert(entry)?;
         info_with_username!(ctx, "Network {name} has been registered");
@@ -168,7 +165,6 @@ struct NetworkUpdateInput {
     description: Option<String>,
     networks: Option<HostNetworkGroupInput>,
     customer_ids: Option<Vec<ID>>,
-    tag_ids: Option<Vec<ID>>,
 }
 
 impl TryFrom<NetworkUpdateInput> for review_database::NetworkUpdate {
@@ -176,13 +172,11 @@ impl TryFrom<NetworkUpdateInput> for review_database::NetworkUpdate {
 
     fn try_from(input: NetworkUpdateInput) -> Result<Self, Self::Error> {
         let customer_ids = try_id_args_into_ints::<u32>(input.customer_ids)?;
-        let tag_ids = try_id_args_into_ints::<u32>(input.tag_ids)?;
         Ok(Self::new(
             input.name,
             input.description,
             input.networks.and_then(|v| v.try_into().ok()),
             customer_ids,
-            tag_ids,
         ))
     }
 }
@@ -207,30 +201,6 @@ impl Network {
 
     async fn networks(&self) -> HostNetworkGroup<'_> {
         (&self.inner.networks).into()
-    }
-
-    #[graphql(name = "customerList")]
-    async fn customer_ids(&self, ctx: &Context<'_>) -> Result<Vec<Customer>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.customer_map();
-        let mut customers = Vec::new();
-
-        for &id in &self.inner.customer_ids {
-            #[allow(clippy::cast_sign_loss)] // u32 stored as i32 in database
-            let Some(customer) = map.get_by_id(id)? else {
-                continue;
-            };
-            customers.push(customer.into());
-        }
-        Ok(customers)
-    }
-
-    async fn tag_ids(&self) -> Vec<ID> {
-        self.inner
-            .tag_ids()
-            .iter()
-            .map(|&id| ID(id.to_string()))
-            .collect()
     }
 
     async fn creation_time(&self) -> DateTime<Utc> {
@@ -296,7 +266,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "", networks: {
                         hosts: [], networks: [], ranges: []
-                    }, customerIds: [], tagIds: [])
+                    }, customerIds: [])
                 }"#,
             )
             .await;
@@ -337,7 +307,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n0", description: "", networks: {
                         hosts: ["1.1.1.1"], networks: [], ranges: []
-                    }, customerIds: [], tagIds: [])
+                    }, customerIds: [])
                 }"#,
             )
             .await;
@@ -355,8 +325,7 @@ mod tests {
                             networks: [],
                             ranges: []
                         }
-                        customerIds: [],
-                        tagIds: []
+                        customerIds: []
                     },
                     new: {
                         name: "n0",
@@ -365,35 +334,12 @@ mod tests {
                             networks: [],
                             ranges: []
                         }
-                        customerIds: [],
-                        tagIds: []
+                        customerIds: []
                     }
                 )
             }"#,
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{updateNetwork: "0"}"#);
-    }
-
-    #[tokio::test]
-    async fn select_networks() {
-        let schema = TestSchema::new().await;
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNetwork(name: "n1", description: "", networks: {
-                        hosts: [], networks: [], ranges: []
-                    }, customerIds: [], tagIds: [0, 1, 2])
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
-        let res = schema
-            .execute_as_system_admin(r"{networkList{edges{node{name tagIds}}totalCount}}")
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{networkList: {edges: [{node: {name: "n1", tagIds: ["0", "1", "2"]}}], totalCount: "1"}}"#
-        );
     }
 }

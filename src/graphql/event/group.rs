@@ -498,8 +498,7 @@ mod tests {
                             networks: [],
                             ranges: []
                         },
-                        customerIds: [],
-                        tagIds: []
+                        customerIds: []
                     )
                 }"#,
             )
