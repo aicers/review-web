@@ -29,6 +29,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Callers that relied on these functions should implement `MtlsAuthenticator`
   instead. (auth-mtls)
 
+### Fixed
+
+- Refactored GraphQL root `MergedObject` groups (Query/Mutation) into smaller
+  units to mitigate `queries overflow the depth limit` on Rust 1.94.0+, likely
+  triggered by increased type-layout query depth after `ManuallyDrop<T>` began
+  wrapping `T` with `MaybeDangling<T>`; no schema or response behavior changes.
+
 ## [0.30.1] - 2026-01-31
 
 ### Added
