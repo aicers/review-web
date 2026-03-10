@@ -20,8 +20,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   node belonging to one of their accessible customers. Affected APIs:
   `triageResponse`, `triageResponseList`, `insertTriageResponse`,
   `updateTriageResponse`, `removeTriageResponses`.
-- Changed `EventTag` GraphQL authorization so `removeEventTag` and
-  `updateEventTag` are now restricted to `SystemAdministrator`.
 
 ### Changed
 
