@@ -5,7 +5,7 @@ use async_graphql::{
     StringNumber,
 };
 use chrono::{DateTime, Utc};
-use review_database::{BackupConfig as DbBackupConfig, Store, backup};
+use review_database::{BackupConfig as DbBackupConfig, BackupConfigUpdate, Store, backup};
 use tracing::info;
 
 use super::{Role, RoleGuard};
@@ -32,6 +32,16 @@ pub struct BackupConfig {
     pub backup_time: String,
     /// Maximum number of retained backup snapshots. Minimum value is 1.
     pub num_of_backups_to_keep: u16,
+}
+
+impl Default for BackupConfig {
+    fn default() -> Self {
+        Self {
+            backup_duration: 1,
+            backup_time: "23:59:59".to_string(),
+            num_of_backups_to_keep: 5,
+        }
+    }
 }
 
 impl From<DbBackupConfig> for BackupConfig {
@@ -156,9 +166,8 @@ impl DbManagementQuery {
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn backup_config(&self, ctx: &Context<'_>) -> Result<BackupConfig> {
         let store = crate::graphql::get_store(ctx)?;
-        let table = store.backup_config_map();
-        let config = table.read()?;
-        Ok(config.into())
+        let config = store.backup_config()?;
+        Ok(config.map_or_else(BackupConfig::default, BackupConfig::from))
     }
 }
 
@@ -229,9 +238,17 @@ impl DbManagementMutation {
         input: BackupConfigInput,
     ) -> Result<BackupConfig> {
         let store = crate::graphql::get_store(ctx)?;
-        let table = store.backup_config_map();
         let config: DbBackupConfig = input.into();
-        table.save(&config)?;
+        if let Some(old_config) = store.backup_config()? {
+            let update = BackupConfigUpdate {
+                backup_duration: Some(config.backup_duration),
+                backup_time: Some(config.backup_time.clone()),
+                num_of_backups_to_keep: Some(config.num_of_backups_to_keep),
+            };
+            store.update_backup_config(&old_config, &update)?;
+        } else {
+            store.init_backup_config(&config)?;
+        }
         info_with_username!(ctx, "Backup configuration has been set");
         Ok(config.into())
     }
@@ -264,11 +281,15 @@ impl DbManagementMutation {
         new: BackupConfigInput,
     ) -> Result<BackupConfig> {
         let store = crate::graphql::get_store(ctx)?;
-        let table = store.backup_config_map();
         let old_config: DbBackupConfig = old.into();
-        let new_config: DbBackupConfig = new.into();
-        table.update_config(&old_config, &new_config)?;
+        let update = BackupConfigUpdate {
+            backup_duration: Some(new.backup_duration),
+            backup_time: Some(new.backup_time.clone()),
+            num_of_backups_to_keep: Some(new.num_of_backups_to_keep),
+        };
+        store.update_backup_config(&old_config, &update)?;
         info_with_username!(ctx, "Backup configuration has been updated");
+        let new_config: DbBackupConfig = new.into();
         Ok(new_config.into())
     }
 }

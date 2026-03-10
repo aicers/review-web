@@ -116,10 +116,9 @@ impl TotalCountByCluster {
     async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<i64>> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.column_stats_map();
-        Ok(StringNumber(map.count_rounds_by_cluster(
-            i32::try_from(self.model)?,
-            self.cluster,
-        )?))
+        Ok(StringNumber(
+            map.count_rounds_by_cluster(self.model, self.cluster)?,
+        ))
     }
 }
 
