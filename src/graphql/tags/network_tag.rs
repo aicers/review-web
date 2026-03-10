@@ -13,9 +13,13 @@ impl NetworkTagQuery {
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
-    async fn network_tag_list(&self, ctx: &Context<'_>) -> Result<Vec<Tag>> {
+    async fn network_tag_list(&self, ctx: &Context<'_>, customer_id: ID) -> Result<Vec<Tag>> {
+        let customer_id = customer_id
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid customer ID")?;
         let store = crate::graphql::get_store(ctx)?;
-        let tags = store.network_tag_set()?;
+        let tags = store.network_tag_set(customer_id)?;
         Ok(tags
             .tags()
             .map(|tag| Tag {
@@ -35,9 +39,18 @@ impl NetworkTagMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))")]
-    async fn insert_network_tag(&self, ctx: &Context<'_>, name: String) -> Result<ID> {
+    async fn insert_network_tag(
+        &self,
+        ctx: &Context<'_>,
+        customer_id: ID,
+        name: String,
+    ) -> Result<ID> {
+        let customer_id = customer_id
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid customer ID")?;
         let store = crate::graphql::get_store(ctx)?;
-        let mut tags = store.network_tag_set()?;
+        let mut tags = store.network_tag_set(customer_id)?;
         let id = tags.insert(&name)?;
         Ok(ID(id.to_string()))
     }
@@ -47,11 +60,20 @@ impl NetworkTagMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))")]
-    async fn remove_network_tag(&self, ctx: &Context<'_>, id: ID) -> Result<Option<String>> {
+    async fn remove_network_tag(
+        &self,
+        ctx: &Context<'_>,
+        customer_id: ID,
+        id: ID,
+    ) -> Result<Option<String>> {
+        let customer_id = customer_id
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid customer ID")?;
         let store = crate::graphql::get_store(ctx)?;
-        let mut tags = store.network_tag_set()?;
+        let mut tags = store.network_tag_set(customer_id)?;
         let networks = store.network_map();
-        let id = id.0.parse::<u32>()?;
+        let id = id.as_str().parse::<u32>()?;
         let name = tags.remove_network_tag(id, &networks)?;
         Ok(Some(name))
     }
@@ -66,13 +88,19 @@ impl NetworkTagMutation {
     async fn update_network_tag(
         &self,
         ctx: &Context<'_>,
+        customer_id: ID,
         id: ID,
         old: String,
         new: String,
     ) -> Result<bool> {
+        let customer_id = customer_id
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid customer ID")?;
         let store = crate::graphql::get_store(ctx)?;
-        let mut tags = store.network_tag_set()?;
-        Ok(tags.update(id.0.parse()?, &old, &new)?)
+        let mut tags = store.network_tag_set(customer_id)?;
+        let id = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
+        Ok(tags.update(id, &old, &new)?)
     }
 }
 
@@ -84,17 +112,17 @@ mod tests {
     async fn network_tag() {
         let schema = TestSchema::new().await;
         let res = schema
-            .execute_as_system_admin(r"{networkTagList{name}}")
+            .execute_as_system_admin(r"{networkTagList(customerId: 0){name}}")
             .await;
         assert_eq!(res.data.to_string(), r"{networkTagList: []}");
 
         let res = schema
-            .execute_as_system_admin(r#"mutation {insertNetworkTag(name: "foo")}"#)
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "foo")}"#)
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "0"}"#);
 
         let res = schema
-            .execute_as_system_admin(r"{networkTagList{name}}")
+            .execute_as_system_admin(r"{networkTagList(customerId: 0){name}}")
             .await;
         assert_eq!(res.data.to_string(), r#"{networkTagList: [{name: "foo"}]}"#);
 
@@ -103,7 +131,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "", networks: {
                         hosts: [], networks: [], ranges: []
-                    }, customerIds: [], tagIds: [0])
+                    }, tagIds: [0])
                 }"#,
             )
             .await;
@@ -117,7 +145,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
-                    removeNetworkTag(id: "0")
+                    removeNetworkTag(customerId: 0, id: "0")
                 }"#,
             )
             .await;
