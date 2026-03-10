@@ -4,15 +4,15 @@ use std::collections::HashMap;
 
 use async_graphql::{
     Context, Error, Object, Result,
-    connection::{Connection, EmptyFields, OpaqueCursor},
+    connection::{Connection, Edge, EmptyFields, OpaqueCursor},
     types::ID,
 };
 use chrono::Utc;
-use review_database::{Store, event::Direction};
+use review_database::{Store, UniqueKey, event::Direction};
 use tracing::info;
 
 use super::{
-    super::{Role, RoleGuard},
+    super::{Role, RoleGuard, customer_access},
     Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, gen_agent_key,
     input::{AgentDraftInput, ExternalServiceInput, NodeDraftInput},
 };
@@ -46,13 +46,8 @@ impl NodeQuery {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn node(&self, ctx: &Context<'_>, id: ID) -> Result<Node> {
-        let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
+        let node = customer_access::load_accessible_node(ctx, &id)?;
 
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.node_map();
-        let Some((node, _invalid_agents, _invalid_external_services)) = map.get_by_id(i)? else {
-            return Err("no such node".into());
-        };
         Ok(node.into())
     }
 }
@@ -75,11 +70,17 @@ impl NodeMutation {
         external_services: Vec<ExternalServiceInput>,
     ) -> Result<ID> {
         let store = crate::graphql::get_store(ctx)?;
+        let users_customers = customer_access::users_customers(ctx)?;
         let map = store.node_map();
         let customer_id = customer_id
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid customer ID")?;
+
+        // Check customer scoping - non-admin users can only create nodes for their customers
+        if !customer_access::is_member(users_customers.as_deref(), customer_id) {
+            return Err("Forbidden".into());
+        }
 
         let agents: Vec<review_database::Agent> = agents
             .into_iter()
@@ -149,7 +150,7 @@ impl NodeMutation {
 
     /// Removes nodes, returning the node keys that no longer exist.
     ///
-    /// On error, some nodes may have been removed.
+    /// Validates all requested nodes before deleting any of them.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn remove_nodes(
@@ -158,12 +159,26 @@ impl NodeMutation {
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
         let store = crate::graphql::get_store(ctx)?;
+        let users_customers = customer_access::users_customers(ctx)?;
         let map = store.node_map();
+        let ids = ids
+            .into_iter()
+            .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID".into()))
+            .collect::<Result<Vec<u32>>>()?;
+
+        for id in &ids {
+            // Check customer scoping before removing
+            let Some((node, _, _)) = map.get_by_id(*id)? else {
+                return Err("no such node".into());
+            };
+            if !customer_access::can_access_node(users_customers.as_deref(), &node) {
+                return Err("Forbidden".into());
+            }
+        }
 
         let mut removed = Vec::<String>::with_capacity(ids.len());
         for id in ids {
-            let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-            let (key, _invalid_agents, _invalid_external_services) = map.remove(i)?;
+            let (key, _invalid_agents, _invalid_external_services) = map.remove(id)?;
 
             let name = match String::from_utf8(key) {
                 Ok(key) => key,
@@ -185,9 +200,14 @@ impl NodeMutation {
         old: NodeInput,
         new: NodeDraftInput,
     ) -> Result<ID> {
+        customer_access::load_accessible_node(ctx, &id)?;
+        if let Some(profile_draft) = new.profile_draft.as_ref() {
+            customer_access::check_customer_membership(ctx, &profile_draft.customer_id)?;
+        }
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
         let store = crate::graphql::get_store(ctx)?;
         let mut map = store.node_map();
+
         let new = super::input::create_draft_update(&old, new)?;
         let old = old.try_into()?;
         map.update(i, &old, &new)?;
@@ -204,8 +224,29 @@ async fn load(
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Node, NodeTotalCount, EmptyFields>> {
     let store = crate::graphql::get_store(ctx)?;
+    let users_customers = customer_access::users_customers(ctx)?;
     let map = store.node_map();
-    super::super::load_edges(&map, after, before, first, last, NodeTotalCount)
+    let users_customers = users_customers.as_deref();
+
+    // Apply customer filtering while collecting edges to keep pagination metadata consistent.
+    let (nodes, has_previous, has_next) =
+        super::super::process_load_edges_filtered(&map, after, before, first, last, None, |node| {
+            customer_access::can_access_node(users_customers, node)
+        });
+
+    let nodes = nodes
+        .into_iter()
+        .map(|res| res.map_err(|e| format!("{e}").into()))
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut connection = Connection::with_additional_fields(has_previous, has_next, NodeTotalCount);
+    for node in nodes {
+        let key = node.unique_key();
+        connection
+            .edges
+            .push(Edge::new(OpaqueCursor(key.to_vec()), node.into()));
+    }
+    Ok(connection)
 }
 
 /// Returns a customer id and the agent key(agent@hostname) list for the node corresponding to
@@ -241,7 +282,8 @@ mod tests {
     use assert_json_diff::assert_json_eq;
     use serde_json::json;
 
-    use crate::graphql::TestSchema;
+    use super::super::test_support::{insert_active_node, update_account_customers};
+    use crate::graphql::{Role, TestSchema};
 
     // test scenario : insert node -> update node with different name -> remove node
     #[tokio::test]
@@ -1288,5 +1330,1181 @@ mod tests {
                 }
             })
         );
+    }
+
+    /// Test that admin users (`customer_ids` = None) can access all nodes
+    #[tokio::test]
+    async fn node_customer_scoping_read_admin_allowed() {
+        let schema = TestSchema::new().await;
+
+        // TestSchema already creates an admin account for "testuser" with customer_ids = None
+
+        // Insert nodes with different customer_ids
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_1",
+                        customerId: 1,
+                        description: "Node for customer 1",
+                        hostname: "host1.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_2",
+                        customerId: 2,
+                        description: "Node for customer 2",
+                        hostname: "host2.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "1"}"#);
+
+        // Admin can read any node
+        let res = schema
+            .execute_as_system_admin(r#"{node(id: "0") { id name }}"#)
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({"node": {"id": "0", "name": "node_customer_1"}})
+        );
+
+        let res = schema
+            .execute_as_system_admin(r#"{node(id: "1") { id name }}"#)
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({"node": {"id": "1", "name": "node_customer_2"}})
+        );
+
+        // Admin can list all nodes
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount edges{node{name}}}}")
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 2);
+    }
+
+    /// Test that scoped users can only access nodes matching their `customer_ids`
+    #[tokio::test]
+    async fn node_customer_scoping_read_allowed() {
+        let schema = TestSchema::new().await;
+
+        let id0 = insert_active_node(&schema.store(), "node_customer_1", 1, "host1.example.com");
+        let id1 = insert_active_node(&schema.store(), "node_customer_2", 2, "host2.example.com");
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+
+        // Update account to be scoped to customer 1 only
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        // Scoped user can read node with matching customer_id
+        let res = schema
+            .execute_with_guard(
+                r#"{node(id: "0") { id name }}"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({"node": {"id": "0", "name": "node_customer_1"}})
+        );
+    }
+
+    /// Test that scoped users are denied access to nodes not matching their `customer_ids`
+    #[tokio::test]
+    async fn node_customer_scoping_read_forbidden() {
+        let schema = TestSchema::new().await;
+
+        // TestSchema creates an admin account - insert nodes first
+
+        // Insert node with customer_id 2 (as admin)
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_2",
+                        customerId: 2,
+                        description: "Node for customer 2",
+                        hostname: "host2.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Update account to be scoped to customer 1 only
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        // Scoped user is denied read access to non-matching customer_id
+        let res = schema
+            .execute_with_guard(
+                r#"{node(id: "0") { id name }}"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    /// Test that admin users can read draft-only nodes.
+    #[tokio::test]
+    async fn node_customer_scoping_draft_profile_read_admin_allowed() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_2_draft_only",
+                        customerId: 2,
+                        description: "Draft-only node for customer 2",
+                        hostname: "draft-host2.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r#"{node(id: "0") { id name }}"#)
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({"node": {"id": "0", "name": "node_customer_2_draft_only"}})
+        );
+    }
+
+    /// Test that scoped users can access draft-only nodes matching their `customer_ids`.
+    #[tokio::test]
+    async fn node_customer_scoping_draft_profile_read_allowed() {
+        let schema = TestSchema::new().await;
+
+        // Insert node first; inserted nodes start as draft-only (`profile` = null).
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_1_draft_only",
+                        customerId: 1,
+                        description: "Draft-only node for customer 1",
+                        hostname: "draft-host1.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        // Scoped user should be able to read a draft-only node for their customer.
+        let res = schema
+            .execute_with_guard(
+                r#"{node(id: "0") { id name }}"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({"node": {"id": "0", "name": "node_customer_1_draft_only"}})
+        );
+    }
+
+    /// Test that scoped users cannot access draft-only nodes for other customers.
+    #[tokio::test]
+    async fn node_customer_scoping_draft_profile_read_forbidden() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_2_draft_only",
+                        customerId: 2,
+                        description: "Draft-only node for customer 2",
+                        hostname: "draft-host2.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        let res = schema
+            .execute_with_guard(
+                r#"{node(id: "0") { id name }}"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    /// Test that admin users can list all nodes.
+    #[tokio::test]
+    async fn node_customer_scoping_list_admin_allowed() {
+        let schema = TestSchema::new().await;
+
+        let id0 = insert_active_node(
+            &schema.store(),
+            "node_customer_1_a",
+            1,
+            "host1a.example.com",
+        );
+        let id1 = insert_active_node(&schema.store(), "node_customer_2", 2, "host2.example.com");
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount edges{node{name}}}}")
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 2);
+        assert_eq!(data["nodeList"]["totalCount"], json!("2"));
+    }
+
+    /// Test that node list returns only matching nodes for scoped users
+    #[tokio::test]
+    async fn node_customer_scoping_list_allowed() {
+        let schema = TestSchema::new().await;
+
+        let id0 = insert_active_node(
+            &schema.store(),
+            "node_customer_1_a",
+            1,
+            "host1a.example.com",
+        );
+        let id1 = insert_active_node(&schema.store(), "node_customer_2", 2, "host2.example.com");
+        let id2 = insert_active_node(
+            &schema.store(),
+            "node_customer_1_b",
+            1,
+            "host1b.example.com",
+        );
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+
+        // Update account to be scoped to customer 1 only
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        // Scoped user list only sees nodes with matching customer_id
+        let res = schema
+            .execute_with_guard(
+                r"{nodeList{edges{node{name}}}}",
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeList"]["edges"].as_array().unwrap();
+        // Should only see 2 nodes (both for customer 1)
+        assert_eq!(edges.len(), 2);
+        let names: Vec<&str> = edges
+            .iter()
+            .map(|e| e["node"]["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"node_customer_1_a"));
+        assert!(names.contains(&"node_customer_1_b"));
+        assert!(!names.contains(&"node_customer_2"));
+    }
+
+    /// Test that scoped users get an empty list when all nodes are out of scope.
+    #[tokio::test]
+    async fn node_customer_scoping_list_forbidden() {
+        let schema = TestSchema::new().await;
+
+        let id0 = insert_active_node(&schema.store(), "node_customer_2", 2, "host2.example.com");
+        assert_eq!(id0, 0);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        let res = schema
+            .execute_with_guard(
+                r"{nodeList{totalCount edges{node{name}}}}",
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeList"]["edges"].as_array().unwrap();
+        assert!(edges.is_empty());
+        assert_eq!(data["nodeList"]["totalCount"], json!("0"));
+    }
+
+    /// Tests that admin users can paginate over all nodes.
+    #[tokio::test]
+    async fn node_customer_scoping_pagination_admin_allowed() {
+        let schema = TestSchema::new().await;
+
+        let id0 = insert_active_node(
+            &schema.store(),
+            "a_customer_2_node",
+            2,
+            "customer2.example.com",
+        );
+        let id1 = insert_active_node(
+            &schema.store(),
+            "b_customer_1_node",
+            1,
+            "customer1.example.com",
+        );
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+
+        let res = schema
+            .execute_as_system_admin(
+                r"{nodeList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
+            )
+            .await;
+
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["node"]["name"], "a_customer_2_node");
+        assert_eq!(data["nodeList"]["pageInfo"]["hasNextPage"], json!(true));
+        assert_eq!(
+            data["nodeList"]["pageInfo"]["hasPreviousPage"],
+            json!(false)
+        );
+    }
+
+    /// Tests that pagination skips inaccessible nodes when fetching the first page.
+    #[tokio::test]
+    async fn node_customer_scoping_pagination_allowed() {
+        let schema = TestSchema::new().await;
+
+        let id0 = insert_active_node(
+            &schema.store(),
+            "a_forbidden_node",
+            2,
+            "forbidden.example.com",
+        );
+        let id1 = insert_active_node(&schema.store(), "b_allowed_node", 1, "allowed.example.com");
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+
+        // Scope the user to customer 1 only.
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        let res = schema
+            .execute_with_guard(
+                r"{nodeList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeList"]["edges"].as_array().unwrap();
+
+        // The first page must contain the first accessible node, not an empty page.
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["node"]["name"], "b_allowed_node");
+        assert_eq!(data["nodeList"]["pageInfo"]["hasNextPage"], json!(false));
+        assert_eq!(
+            data["nodeList"]["pageInfo"]["hasPreviousPage"],
+            json!(false)
+        );
+    }
+
+    /// Tests that pagination returns no nodes when all nodes are inaccessible.
+    #[tokio::test]
+    async fn node_customer_scoping_pagination_forbidden() {
+        let schema = TestSchema::new().await;
+
+        let id0 = insert_active_node(
+            &schema.store(),
+            "a_forbidden_node",
+            2,
+            "forbidden.example.com",
+        );
+        assert_eq!(id0, 0);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        let res = schema
+            .execute_with_guard(
+                r"{nodeList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeList"]["edges"].as_array().unwrap();
+        assert!(edges.is_empty());
+        assert_eq!(data["nodeList"]["pageInfo"]["hasNextPage"], json!(false));
+        assert_eq!(
+            data["nodeList"]["pageInfo"]["hasPreviousPage"],
+            json!(false)
+        );
+    }
+
+    /// Test insert allowed for system administrators regardless of `customer_id`.
+    #[tokio::test]
+    async fn node_customer_scoping_insert_admin_allowed() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_2",
+                        customerId: 2,
+                        description: "Node for customer 2",
+                        hostname: "host2.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+    }
+
+    /// Test insert allowed for matching `customer_id`.
+    #[tokio::test]
+    async fn node_customer_scoping_insert_allowed() {
+        let schema = TestSchema::new().await;
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_1",
+                        customerId: 1,
+                        description: "Node for customer 1",
+                        hostname: "host1.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+    }
+
+    /// Test insert denied for non-matching `customer_id`
+    #[tokio::test]
+    async fn node_customer_scoping_insert_forbidden() {
+        let schema = TestSchema::new().await;
+
+        // Update the default admin account to be scoped to customer 1 only
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        // Scoped user cannot insert node for customer 2
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_2",
+                        customerId: 2,
+                        description: "Node for customer 2",
+                        hostname: "host2.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    /// Tests that totalCount includes all nodes for system administrators.
+    #[tokio::test]
+    async fn node_customer_scoping_total_count_admin_allowed() {
+        let schema = TestSchema::new().await;
+
+        let id0 = insert_active_node(
+            &schema.store(),
+            "count_node_customer_1",
+            1,
+            "host1.example.com",
+        );
+        let id1 = insert_active_node(
+            &schema.store(),
+            "count_node_customer_2",
+            2,
+            "host2.example.com",
+        );
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+
+        let res = schema
+            .execute_as_system_admin(r"{nodeList(first: 10){totalCount edges{node{name}}}}")
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 2);
+        assert_eq!(data["nodeList"]["totalCount"], json!("2"));
+    }
+
+    /// Tests that totalCount is scoped to accessible customers.
+    #[tokio::test]
+    async fn node_customer_scoping_total_count_allowed() {
+        let schema = TestSchema::new().await;
+
+        let id0 = insert_active_node(
+            &schema.store(),
+            "count_node_customer_1",
+            1,
+            "host1.example.com",
+        );
+        let id1 = insert_active_node(
+            &schema.store(),
+            "count_node_customer_2",
+            2,
+            "host2.example.com",
+        );
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        let res = schema
+            .execute_with_guard(
+                r"{nodeList(first: 10){totalCount edges{node{name}}}}",
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["node"]["name"], "count_node_customer_1");
+        assert_eq!(data["nodeList"]["totalCount"], json!("1"));
+    }
+
+    /// Tests that totalCount is zero when all nodes are inaccessible.
+    #[tokio::test]
+    async fn node_customer_scoping_total_count_forbidden() {
+        let schema = TestSchema::new().await;
+
+        let id0 = insert_active_node(
+            &schema.store(),
+            "count_node_customer_2",
+            2,
+            "host2.example.com",
+        );
+        assert_eq!(id0, 0);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        let res = schema
+            .execute_with_guard(
+                r"{nodeList(first: 10){totalCount edges{node{name}}}}",
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeList"]["edges"].as_array().unwrap();
+        assert!(edges.is_empty());
+        assert_eq!(data["nodeList"]["totalCount"], json!("0"));
+    }
+
+    /// Test update allowed for system administrators regardless of `customer_id`.
+    #[tokio::test]
+    async fn node_customer_scoping_update_admin_allowed() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_2",
+                        customerId: 2,
+                        description: "Node for customer 2",
+                        hostname: "host2.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateNodeDraft(
+                        id: "0"
+                        old: {
+                            name: "node_customer_2",
+                            nameDraft: "node_customer_2",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 2,
+                                description: "Node for customer 2",
+                                hostname: "host2.example.com",
+                            },
+                            agents: [],
+                            externalServices: []
+                        },
+                        new: {
+                            nameDraft: "updated_by_admin",
+                            profileDraft: null,
+                            agents: null,
+                            externalServices: null
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
+    }
+
+    /// Test update allowed for matching `customer_id`.
+    #[tokio::test]
+    async fn node_customer_scoping_update_allowed() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_1",
+                        customerId: 1,
+                        description: "Node for customer 1",
+                        hostname: "host1.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    updateNodeDraft(
+                        id: "0"
+                        old: {
+                            name: "node_customer_1",
+                            nameDraft: "node_customer_1",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 1,
+                                description: "Node for customer 1",
+                                hostname: "host1.example.com",
+                            },
+                            agents: [],
+                            externalServices: []
+                        },
+                        new: {
+                            nameDraft: "updated_name",
+                            profileDraft: null,
+                            agents: null,
+                            externalServices: null
+                        }
+                    )
+                }"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
+    }
+
+    /// Test update denied for non-matching `customer_id`
+    #[tokio::test]
+    async fn node_customer_scoping_update_forbidden() {
+        let schema = TestSchema::new().await;
+
+        // TestSchema creates an admin account - insert nodes first
+
+        // Insert node with customer 2 (as admin)
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_2",
+                        customerId: 2,
+                        description: "Node for customer 2",
+                        hostname: "host2.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Update account to be scoped to customer 1 only
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        // Scoped user cannot update node with non-matching customer_id
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    updateNodeDraft(
+                        id: "0"
+                        old: {
+                            name: "node_customer_2",
+                            nameDraft: "node_customer_2",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 2,
+                                description: "Node for customer 2",
+                                hostname: "host2.example.com",
+                            },
+                            agents: [],
+                            externalServices: []
+                        },
+                        new: {
+                            nameDraft: "updated_name",
+                            profileDraft: null,
+                            agents: null,
+                            externalServices: null
+                        }
+                    )
+                }"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    /// Test update denied when a scoped user changes the draft customer to an inaccessible one.
+    #[tokio::test]
+    async fn node_customer_scoping_update_draft_customer_change_forbidden() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_1",
+                        customerId: 1,
+                        description: "Node for customer 1",
+                        hostname: "host1.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    updateNodeDraft(
+                        id: "0"
+                        old: {
+                            name: "node_customer_1",
+                            nameDraft: "node_customer_1",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 1,
+                                description: "Node for customer 1",
+                                hostname: "host1.example.com",
+                            },
+                            agents: [],
+                            externalServices: []
+                        },
+                        new: {
+                            nameDraft: "updated_name",
+                            profileDraft: {
+                                customerId: 2,
+                                description: "Moved to customer 2",
+                                hostname: "host2.example.com",
+                            },
+                            agents: null,
+                            externalServices: null
+                        }
+                    )
+                }"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    /// Test remove allowed for system administrators regardless of `customer_id`.
+    #[tokio::test]
+    async fn node_customer_scoping_remove_admin_allowed() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_2",
+                        customerId: 2,
+                        description: "Node for customer 2",
+                        hostname: "host2.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { removeNodes(ids: ["0"]) }"#)
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(
+            res.data.to_string(),
+            r#"{removeNodes: ["node_customer_2"]}"#
+        );
+    }
+
+    /// Test remove allowed for matching `customer_id`.
+    #[tokio::test]
+    async fn node_customer_scoping_remove_allowed() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_1",
+                        customerId: 1,
+                        description: "Node for customer 1",
+                        hostname: "host1.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { removeNodes(ids: ["0"]) }"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(
+            res.data.to_string(),
+            r#"{removeNodes: ["node_customer_1"]}"#
+        );
+    }
+
+    /// Test remove denied for non-matching `customer_id`
+    #[tokio::test]
+    async fn node_customer_scoping_remove_forbidden() {
+        let schema = TestSchema::new().await;
+
+        // TestSchema creates an admin account - insert nodes first
+
+        // Insert node with customer 2 (as admin)
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node_customer_2",
+                        customerId: 2,
+                        description: "Node for customer 2",
+                        hostname: "host2.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Update account to be scoped to customer 1 only
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        // Scoped user cannot remove node with non-matching customer_id
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { removeNodes(ids: ["0"]) }"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    /// Test remove validates all IDs before deleting any nodes for scoped users.
+    #[tokio::test]
+    async fn node_customer_scoping_remove_forbidden_keeps_all_nodes() {
+        let schema = TestSchema::new().await;
+
+        let id0 = insert_active_node(&schema.store(), "node_customer_1", 1, "host1.example.com");
+        let id1 = insert_active_node(&schema.store(), "node_customer_2", 2, "host2.example.com");
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        let res = schema
+            .execute_with_guard(
+                r#"mutation { removeNodes(ids: ["0", "1"]) }"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount edges{node{id name}}}}")
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeList": {
+                    "totalCount": "2",
+                    "edges": [
+                        {"node": {"id": "0", "name": "node_customer_1"}},
+                        {"node": {"id": "1", "name": "node_customer_2"}}
+                    ]
+                }
+            })
+        );
+    }
+
+    /// Test remove validates all IDs before deleting any nodes when a later ID is missing.
+    #[tokio::test]
+    async fn node_remove_missing_id_keeps_existing_nodes() {
+        let schema = TestSchema::new().await;
+
+        let id0 = insert_active_node(&schema.store(), "node_customer_1", 1, "host1.example.com");
+        assert_eq!(id0, 0);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { removeNodes(ids: ["0", "999"]) }"#)
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "no such node");
+
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount edges{node{id name}}}}")
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeList": {
+                    "totalCount": "1",
+                    "edges": [
+                        {"node": {"id": "0", "name": "node_customer_1"}}
+                    ]
+                }
+            })
+        );
+    }
+
+    /// Test that system administrators remain unscoped even when account has empty `customer_ids`.
+    #[tokio::test]
+    async fn node_customer_scoping_empty_customers_admin_allowed() {
+        let schema = TestSchema::new().await;
+
+        let id0 = insert_active_node(&schema.store(), "some_node", 1, "host.example.com");
+        assert_eq!(id0, 0);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![]));
+
+        let res = schema
+            .execute_as_system_admin(r#"{node(id: "0") { id name }}"#)
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({"node": {"id": "0", "name": "some_node"}})
+        );
+    }
+
+    /// Test that empty `customer_ids` means no access to any node
+    #[tokio::test]
+    async fn node_customer_scoping_empty_customers_forbidden() {
+        let schema = TestSchema::new().await;
+
+        // TestSchema creates an admin account - insert nodes first
+
+        // Insert node (as admin)
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "some_node",
+                        customerId: 1,
+                        description: "A node",
+                        hostname: "host.example.com",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Update account to have empty customer list (no access)
+        update_account_customers(&schema.store(), "testuser", Some(vec![]));
+
+        // Scoped user with empty customers cannot read any node
+        let res = schema
+            .execute_with_guard(
+                r#"{node(id: "0") { id name }}"#,
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+
+        // List should be empty
+        let res = schema
+            .execute_with_guard(
+                r"{nodeList{edges{node{name}}}}",
+                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(res.errors.is_empty());
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeList"]["edges"].as_array().unwrap();
+        assert!(edges.is_empty());
     }
 }
