@@ -35,6 +35,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   units to mitigate `queries overflow the depth limit` on Rust 1.94.0+, likely
   triggered by increased type-layout query depth after `ManuallyDrop<T>` began
   wrapping `T` with `MaybeDangling<T>`; no schema or response behavior changes.
+- `updateCustomer` mutation now validates for duplicate network names, matching
+  the existing validation in `insertCustomer`.
 
 ## [0.30.1] - 2026-01-31
 
@@ -588,10 +590,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `updateSamplingPolicy`.
   - The API returns the following error message when a value cannot be parsed as
     an `IpAddr` (e.g., when "abc" is given):
+
     ```text
     Failed to parse "IpAddress": Invalid IP address: abc (occurred while
     parsing "[IpAddress!]")
     ```
+
 - Added the `theme` field to the `Account` struct to store the user's selected
   screen color mode. Accordingly, the functions for inserting and updating
   accounts have been modified, and new APIs have been added to retrieve and
