@@ -387,12 +387,13 @@ mod tests {
     fn create_account(
         store: &std::sync::RwLockReadGuard<'_, review_database::Store>,
         username: &str,
+        role: Role,
         customer_ids: Option<Vec<u32>>,
     ) {
         let account = types::Account::new(
             username,
             "password",
-            Role::SecurityAdministrator,
+            role,
             "Test User".to_string(),
             "Testing".to_string(),
             None,
@@ -412,7 +413,7 @@ mod tests {
     async fn triage_policy_customer_scoping_admin_allowed() {
         let schema = TestSchema::new().await;
         // Create admin account with no customer_ids (admin)
-        create_account(&schema.store(), "testuser", None);
+        create_account(&schema.store(), "testuser", Role::SystemAdministrator, None);
 
         // Create customer and exclusion reason
         let res = schema
@@ -474,7 +475,12 @@ mod tests {
     async fn triage_policy_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
         // Create scoped user with customer_ids = [0]
-        create_account(&schema.store(), "testuser", Some(vec![0]));
+        create_account(
+            &schema.store(),
+            "testuser",
+            Role::SecurityAdministrator,
+            Some(vec![0]),
+        );
 
         // Create customer and exclusion reason
         let res = schema
@@ -539,7 +545,12 @@ mod tests {
     async fn triage_policy_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
         // Create scoped user with customer_ids = [0]
-        create_account(&schema.store(), "testuser", Some(vec![0]));
+        create_account(
+            &schema.store(),
+            "testuser",
+            Role::SecurityAdministrator,
+            Some(vec![0]),
+        );
 
         // Create two customers
         let res = schema
@@ -664,7 +675,12 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_insert_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
-        create_account(&schema.store(), "testuser", Some(vec![0]));
+        create_account(
+            &schema.store(),
+            "testuser",
+            Role::SecurityAdministrator,
+            Some(vec![0]),
+        );
 
         let res = schema
             .execute_as_system_admin(
@@ -715,7 +731,12 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_insert_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
-        create_account(&schema.store(), "testuser", Some(vec![0]));
+        create_account(
+            &schema.store(),
+            "testuser",
+            Role::SecurityAdministrator,
+            Some(vec![0]),
+        );
 
         let res = schema
             .execute_as_system_admin(
@@ -785,7 +806,12 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_global_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
-        create_account(&schema.store(), "testuser", Some(vec![0]));
+        create_account(
+            &schema.store(),
+            "testuser",
+            Role::SecurityAdministrator,
+            Some(vec![0]),
+        );
 
         let res = schema
             .execute_as_system_admin(
@@ -897,7 +923,12 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_remove_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
-        create_account(&schema.store(), "testuser", Some(vec![0]));
+        create_account(
+            &schema.store(),
+            "testuser",
+            Role::SecurityAdministrator,
+            Some(vec![0]),
+        );
 
         let res = schema
             .execute_as_system_admin(
@@ -958,7 +989,12 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_remove_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
-        create_account(&schema.store(), "testuser", Some(vec![0]));
+        create_account(
+            &schema.store(),
+            "testuser",
+            Role::SecurityAdministrator,
+            Some(vec![0]),
+        );
 
         // Create customers
         let res = schema
@@ -1026,7 +1062,7 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_list_customer_scoping_admin_allowed() {
         let schema = TestSchema::new().await;
-        create_account(&schema.store(), "testuser", None);
+        create_account(&schema.store(), "testuser", Role::SystemAdministrator, None);
 
         // Create customers
         let res = schema
@@ -1109,9 +1145,8 @@ mod tests {
 
         // Admin should see all policies
         let res = schema
-            .execute_with_guard(
+            .execute_as_system_admin(
                 r"{ triagePolicyList(first: 10) { totalCount nodes { name customerId } } }",
-                RoleGuard::Role(Role::SecurityAdministrator),
             )
             .await;
         assert!(
@@ -1126,7 +1161,12 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_list_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
-        create_account(&schema.store(), "testuser", Some(vec![0]));
+        create_account(
+            &schema.store(),
+            "testuser",
+            Role::SecurityAdministrator,
+            Some(vec![0]),
+        );
 
         // Create customers
         let res = schema
@@ -1233,7 +1273,12 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_list_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
-        create_account(&schema.store(), "testuser", Some(vec![99]));
+        create_account(
+            &schema.store(),
+            "testuser",
+            Role::SecurityAdministrator,
+            Some(vec![99]),
+        );
 
         let res = schema
             .execute_as_system_admin(
@@ -1296,7 +1341,12 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_list_multiple_customers_scoping_allowed() {
         let schema = TestSchema::new().await;
-        create_account(&schema.store(), "testuser", Some(vec![0, 2]));
+        create_account(
+            &schema.store(),
+            "testuser",
+            Role::SecurityAdministrator,
+            Some(vec![0, 2]),
+        );
 
         // Create customers
         let res = schema
@@ -1409,7 +1459,12 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_list_empty_scope_scoping_allowed() {
         let schema = TestSchema::new().await;
-        create_account(&schema.store(), "testuser", Some(vec![]));
+        create_account(
+            &schema.store(),
+            "testuser",
+            Role::SecurityAdministrator,
+            Some(vec![]),
+        );
 
         // Create customer
         let res = schema
@@ -1568,7 +1623,12 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_update_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
-        create_account(&schema.store(), "testuser", Some(vec![0]));
+        create_account(
+            &schema.store(),
+            "testuser",
+            Role::SecurityAdministrator,
+            Some(vec![0]),
+        );
 
         let res = schema
             .execute_as_system_admin(
@@ -1646,7 +1706,12 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_update_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
-        create_account(&schema.store(), "testuser", Some(vec![0]));
+        create_account(
+            &schema.store(),
+            "testuser",
+            Role::SecurityAdministrator,
+            Some(vec![0]),
+        );
 
         // Create customers
         let res = schema
@@ -1734,7 +1799,12 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_update_reassign_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
-        create_account(&schema.store(), "testuser", Some(vec![0]));
+        create_account(
+            &schema.store(),
+            "testuser",
+            Role::SecurityAdministrator,
+            Some(vec![0]),
+        );
 
         // Create customers
         let res = schema
