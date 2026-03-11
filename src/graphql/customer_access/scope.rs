@@ -5,6 +5,10 @@
 use async_graphql::{Context, Result};
 use review_database::Role;
 
+const ERR_MISSING_ROLE_GUARD: &str = "Missing authentication role context";
+const ERR_NON_ADMIN_MISSING_CUSTOMER_IDS: &str = "Non-admin user is missing customer_ids";
+const ERR_USER_NOT_FOUND: &str = "User not found";
+
 /// Checks if a user is a member of a specific customer.
 ///
 /// Returns `true` if:
@@ -59,19 +63,19 @@ pub(crate) fn has_all_membership(users_customers: Option<&[u32]>, customer_ids: 
 ///
 /// Returns an error if required context data is missing (e.g., username),
 /// the store cannot be accessed, account lookup fails, or the user account
-/// does not exist.
+/// does not exist. Returns an error when authentication role context is
+/// missing or a non-admin account has no `customer_ids`.
 pub(crate) fn users_customers(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
     // System administrators (and local auth bypass) are always unscoped.
     // This also keeps test schemas (which may not populate account data) aligned
     // with production behavior where system admins have full access.
-    if let Some(guard) = ctx.data_opt::<crate::graphql::RoleGuard>() {
-        match guard {
-            crate::graphql::RoleGuard::Role(Role::SystemAdministrator)
-            | crate::graphql::RoleGuard::Local => {
-                return Ok(None);
-            }
-            crate::graphql::RoleGuard::Role(_) => {}
-        }
+    let role_guard = ctx
+        .data_opt::<crate::graphql::RoleGuard>()
+        .ok_or_else(|| async_graphql::Error::new(ERR_MISSING_ROLE_GUARD))?;
+    match role_guard {
+        crate::graphql::RoleGuard::Role(Role::SystemAdministrator)
+        | crate::graphql::RoleGuard::Local => return Ok(None),
+        crate::graphql::RoleGuard::Role(_) => {}
     }
 
     // Check if CustomerIds is explicitly set in context (mTLS path)
@@ -85,8 +89,10 @@ pub(crate) fn users_customers(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
     let account_map = store.account_map();
     let user = account_map
         .get(username)?
-        .ok_or_else::<async_graphql::Error, _>(|| "User not found".into())?;
-    Ok(user.customer_ids)
+        .ok_or_else(|| async_graphql::Error::new(ERR_USER_NOT_FOUND))?;
+    user.customer_ids
+        .ok_or_else(|| async_graphql::Error::new(ERR_NON_ADMIN_MISSING_CUSTOMER_IDS))
+        .map(Some)
 }
 
 #[cfg(test)]
@@ -210,14 +216,14 @@ mod tests {
     }
 
     impl TestContext {
-        fn new_with_account(username: &str, customer_ids: Option<Vec<u32>>) -> Self {
+        fn new_with_account(username: &str, role: Role, customer_ids: Option<Vec<u32>>) -> Self {
             let db_dir = tempfile::tempdir().expect("create data dir");
             let backup_dir = tempfile::tempdir().expect("create backup dir");
             let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
             let account = types::Account::new(
                 username,
                 "password",
-                Role::SecurityMonitor,
+                role,
                 "Test User".to_string(),
                 "Testing".to_string(),
                 None,
@@ -278,6 +284,15 @@ mod tests {
             self.schema.execute(query).await
         }
 
+        async fn execute_with_guard(
+            &self,
+            query: &str,
+            guard: crate::graphql::RoleGuard,
+        ) -> async_graphql::Response {
+            let request = Request::new(query).data(guard);
+            self.schema.execute(request).await
+        }
+
         async fn execute_with_guard_and_customer_ids(
             &self,
             query: &str,
@@ -293,8 +308,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_users_customers_scoped_user() {
-        let test_ctx = TestContext::new_with_account("scoped_user", Some(vec![1, 2, 3]));
-        let res = test_ctx.execute("{ usersCustomers }").await;
+        let test_ctx = TestContext::new_with_account(
+            "scoped_user",
+            Role::SecurityMonitor,
+            Some(vec![1, 2, 3]),
+        );
+        let res = test_ctx
+            .execute_with_guard(
+                "{ usersCustomers }",
+                crate::graphql::RoleGuard::Role(Role::SecurityMonitor),
+            )
+            .await;
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
         assert_eq!(
             res.data.into_json().unwrap(),
@@ -303,14 +327,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_users_customers_admin_user() {
-        let test_ctx = TestContext::new_with_account("admin_user", None);
-        let res = test_ctx.execute("{ usersCustomers }").await;
+    async fn test_users_customers_system_admin_user() {
+        let test_ctx = TestContext::new_with_account("admin_user", Role::SystemAdministrator, None);
+        let res = test_ctx
+            .execute_with_guard(
+                "{ usersCustomers }",
+                crate::graphql::RoleGuard::Role(Role::SystemAdministrator),
+            )
+            .await;
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
         assert_eq!(
             res.data.into_json().unwrap(),
             json!({"usersCustomers": null})
         );
+    }
+
+    #[tokio::test]
+    async fn test_users_customers_non_admin_without_customer_ids_errors() {
+        let test_ctx = TestContext::new_with_account("scoped_user", Role::SecurityMonitor, None);
+        let res = test_ctx
+            .execute_with_guard(
+                "{ usersCustomers }",
+                crate::graphql::RoleGuard::Role(Role::SecurityMonitor),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, ERR_NON_ADMIN_MISSING_CUSTOMER_IDS);
     }
 
     #[tokio::test]
@@ -333,19 +375,38 @@ mod tests {
     #[tokio::test]
     async fn test_users_customers_missing_user() {
         let test_ctx = TestContext::new_without_account("missing_user");
-        let res = test_ctx.execute("{ usersCustomers }").await;
+        let res = test_ctx
+            .execute_with_guard(
+                "{ usersCustomers }",
+                crate::graphql::RoleGuard::Role(Role::SecurityMonitor),
+            )
+            .await;
         assert_eq!(res.errors.len(), 1);
-        assert_eq!(res.errors[0].message, "User not found");
+        assert_eq!(res.errors[0].message, ERR_USER_NOT_FOUND);
     }
 
     #[tokio::test]
     async fn test_users_customers_missing_username_context() {
         let test_ctx = TestContext::new_without_username();
-        let res = test_ctx.execute("{ usersCustomers }").await;
+        let res = test_ctx
+            .execute_with_guard(
+                "{ usersCustomers }",
+                crate::graphql::RoleGuard::Role(Role::SecurityMonitor),
+            )
+            .await;
         assert_eq!(res.errors.len(), 1);
         assert_eq!(
             res.errors[0].message,
             "Data `alloc::string::String` does not exist."
         );
+    }
+
+    #[tokio::test]
+    async fn test_users_customers_missing_role_guard_context() {
+        let test_ctx =
+            TestContext::new_with_account("scoped_user", Role::SecurityMonitor, Some(vec![1]));
+        let res = test_ctx.execute("{ usersCustomers }").await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, ERR_MISSING_ROLE_GUARD);
     }
 }
