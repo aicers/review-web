@@ -249,6 +249,82 @@ mod tests {
     use crate::graphql::TestSchema;
 
     #[tokio::test]
+    async fn network_list_returns_empty() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(r"{networkList{edges{node{name}}totalCount}}")
+            .await;
+
+        assert_eq!(
+            res.data.to_string(),
+            r#"{networkList: {edges: [], totalCount: "0"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn network_list_returns_inserted_entry() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNetwork(name: "n1", description: "desc", networks: {
+                        hosts: ["1.1.1.1"], networks: [], ranges: []
+                    }, tagIds: [])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"{networkList{edges{node{name description tagIds}}totalCount}}"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{networkList: {edges: [{node: {name: "n1", description: "desc", tagIds: []}}], totalCount: "1"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn network_returns_error_for_missing_id() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(r#"{network(id: "0") {name}}"#)
+            .await;
+
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "no such network");
+    }
+
+    #[tokio::test]
+    async fn network_returns_inserted_entry() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNetwork(name: "n1", description: "desc", networks: {
+                        hosts: ["1.1.1.1"], networks: [], ranges: []
+                    }, tagIds: [])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r#"{network(id: "0") {name description tagIds}}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{network: {name: "n1", description: "desc", tagIds: []}}"#
+        );
+    }
+
+    #[tokio::test]
     async fn network_customer_list_field_is_removed() {
         let schema = TestSchema::new().await;
 

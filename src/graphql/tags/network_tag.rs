@@ -141,12 +141,32 @@ mod tests {
     use crate::graphql::{Role, RoleGuard, TestSchema};
 
     #[tokio::test]
-    async fn network_tag() {
+    async fn network_tag_list_returns_empty_for_system_admin() {
         let schema = TestSchema::new().await;
         let res = schema
             .execute_as_system_admin(r"{networkTagList{name}}")
             .await;
         assert_eq!(res.data.to_string(), r"{networkTagList: []}");
+    }
+
+    #[tokio::test]
+    async fn network_tag_list_requires_customer_id_for_non_admin() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_with_guard(
+                r"{networkTagList{name}}",
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "customer ID is required");
+    }
+
+    #[tokio::test]
+    async fn network_tag_list_returns_customer_scoped_tags_for_non_admin() {
+        let schema = TestSchema::new().await;
 
         let res = schema
             .execute_as_system_admin(
@@ -161,9 +181,98 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "0"}"#);
 
         let res = schema
-            .execute_as_system_admin(r"{networkTagList{name}}")
+            .execute_with_guard(
+                r"{networkTagList(customerId: 0){name}}",
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
             .await;
         assert_eq!(res.data.to_string(), r#"{networkTagList: [{name: "foo"}]}"#);
+    }
+
+    #[tokio::test]
+    async fn insert_network_tag_returns_id() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "foo")}"#)
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "0"}"#);
+    }
+
+    #[tokio::test]
+    async fn remove_network_tag_returns_removed_name() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "foo")}"#)
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    removeNetworkTag(customerId: 0, id: "0")
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{removeNetworkTag: "foo"}"#);
+    }
+
+    #[tokio::test]
+    async fn update_network_tag_returns_true() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "foo")}"#)
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateNetworkTag(customerId: 0, id: "0", old: "foo", new: "bar")
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{updateNetworkTag: true}"#);
+    }
+
+    #[tokio::test]
+    async fn removing_network_tag_clears_network_tag_ids() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "foo")}"#)
+            .await;
+        assert!(res.errors.is_empty());
 
         let res = schema
             .execute_as_system_admin(
@@ -188,7 +297,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{removeNetworkTag: "foo"}"#);
+        assert!(res.errors.is_empty());
 
         let res = schema
             .execute_as_system_admin(r#"{network(id: "0") {tagIds}}"#)
@@ -217,17 +326,17 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "alpha")}"#)
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "0"}"#);
+        assert!(res.errors.is_empty());
 
         let res = schema
             .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 1, name: "alpha")}"#)
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "1"}"#);
+        assert!(res.errors.is_empty());
 
         let res = schema
             .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "beta")}"#)
             .await;
-        assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "2"}"#);
+        assert!(res.errors.is_empty());
 
         let res = schema
             .execute_as_system_admin(r"{networkTagList(customerId: 0){id name}}")
@@ -271,7 +380,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r"{updateNetworkTag: true}");
+        assert!(res.errors.is_empty());
 
         let res = schema
             .execute_as_system_admin(r"{networkTagList{name}}")
