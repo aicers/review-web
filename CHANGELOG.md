@@ -15,6 +15,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `host`, `domain`) extracted from a client certificate. (auth-mtls)
 - Added `authenticator` field of type `Arc<dyn MtlsAuthenticator>` to
   `ServerConfig`. (auth-mtls)
+- Added customer scoping for `TriagePolicy` GraphQL APIs. Non-admin users can
+  only access policies that belong to their assigned customers or global
+  policies (those without a `customerId`). Admin users retain full access to
+  all policies regardless of customer assignment.
+  - Affected APIs: `triagePolicy`, `triagePolicyList`, `updateTriagePolicy`,
+    `removeTriagePolicies`.
 
 ### Changed
 
