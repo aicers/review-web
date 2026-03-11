@@ -90,7 +90,7 @@ impl TriagePolicyQuery {
     async fn triage_policy(&self, ctx: &Context<'_>, id: ID) -> Result<TriagePolicy> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
         Ok(TriagePolicy {
-            inner: load_accessible_policy(ctx, i)?,
+            inner: ensure_accessible_policy(ctx, i)?,
         })
     }
 }
@@ -158,16 +158,16 @@ fn can_access_policy(users_customers: Option<&[u32]>, policy: &database::TriageP
     }
 }
 
-/// Loads a policy by ID and verifies that the current user can access it.
-fn load_accessible_policy(ctx: &Context<'_>, policy_id: u32) -> Result<database::TriagePolicy> {
+/// Ensures that a policy exists and that the current user can access it.
+fn ensure_accessible_policy(ctx: &Context<'_>, policy_id: u32) -> Result<database::TriagePolicy> {
     let users_customers = users_customers(ctx)?;
     let store = crate::graphql::get_store(ctx)?;
     let map = store.triage_policy_map();
-    load_accessible_policy_from_map(&map, users_customers.as_deref(), policy_id)
+    ensure_accessible_policy_from_map(&map, users_customers.as_deref(), policy_id)
 }
 
-/// Loads a policy by ID and verifies that the user can access it.
-fn load_accessible_policy_from_map(
+/// Ensures that a policy exists and that the user can access it.
+fn ensure_accessible_policy_from_map(
     map: &database::IndexedTable<'_, database::TriagePolicy>,
     users_customers: Option<&[u32]>,
     policy_id: u32,
@@ -288,7 +288,7 @@ impl TriagePolicyMutation {
         // Check access for all policies and capture names before removing any.
         for id in &ids {
             let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-            let policy = load_accessible_policy_from_map(&map, users_customers.as_deref(), i)?;
+            let policy = ensure_accessible_policy_from_map(&map, users_customers.as_deref(), i)?;
             parsed_ids.push(i);
             removed.push(policy.name);
         }
@@ -320,7 +320,8 @@ impl TriagePolicyMutation {
 
         // Verify access to the policy based on its current state
         let policy_map = store.triage_policy_map();
-        let _policy = load_accessible_policy_from_map(&policy_map, users_customers.as_deref(), i)?;
+        let _policy =
+            ensure_accessible_policy_from_map(&policy_map, users_customers.as_deref(), i)?;
 
         let customer_map = store.customer_map();
         if let Some(customer_id) = old.customer_id
