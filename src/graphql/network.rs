@@ -279,7 +279,7 @@ mod tests {
 
         let res = schema
             .execute_as_system_admin(
-                r#"{networkList{edges{node{name description tagIds}}totalCount}}"#,
+                r"{networkList{edges{node{name description tagIds}}totalCount}}",
             )
             .await;
         assert_eq!(

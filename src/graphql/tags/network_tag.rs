@@ -255,7 +255,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert_eq!(res.data.to_string(), r#"{updateNetworkTag: true}"#);
+        assert_eq!(res.data.to_string(), r"{updateNetworkTag: true}");
     }
 
     #[tokio::test]
