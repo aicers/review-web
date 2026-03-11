@@ -89,17 +89,9 @@ impl TriagePolicyQuery {
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn triage_policy(&self, ctx: &Context<'_>, id: ID) -> Result<TriagePolicy> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-        let users_customers = users_customers(ctx)?;
-
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.triage_policy_map();
-        let Some(inner) = map.get_by_id(i)? else {
-            return Err("no such triage policy".into());
-        };
-
-        check_policy_access(users_customers.as_deref(), &inner)?;
-
-        Ok(TriagePolicy { inner })
+        Ok(TriagePolicy {
+            inner: load_accessible_policy(ctx, i)?,
+        })
     }
 }
 
@@ -166,13 +158,25 @@ fn can_access_policy(users_customers: Option<&[u32]>, policy: &database::TriageP
     }
 }
 
-/// Returns an error when the user cannot access the given policy.
-fn check_policy_access(
+/// Loads a policy by ID and verifies that the current user can access it.
+fn load_accessible_policy(ctx: &Context<'_>, policy_id: u32) -> Result<database::TriagePolicy> {
+    let users_customers = users_customers(ctx)?;
+    let store = crate::graphql::get_store(ctx)?;
+    let map = store.triage_policy_map();
+    load_accessible_policy_from_map(&map, users_customers.as_deref(), policy_id)
+}
+
+/// Loads a policy by ID and verifies that the user can access it.
+fn load_accessible_policy_from_map(
+    map: &database::IndexedTable<'_, database::TriagePolicy>,
     users_customers: Option<&[u32]>,
-    policy: &database::TriagePolicy,
-) -> Result<()> {
-    if can_access_policy(users_customers, policy) {
-        return Ok(());
+    policy_id: u32,
+) -> Result<database::TriagePolicy> {
+    let Some(policy) = map.get_by_id(policy_id)? else {
+        return Err("no such triage policy".into());
+    };
+    if can_access_policy(users_customers, &policy) {
+        return Ok(policy);
     }
     Err("Forbidden".into())
 }
@@ -284,10 +288,7 @@ impl TriagePolicyMutation {
         // Check access for all policies and capture names before removing any.
         for id in &ids {
             let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-            let Some(policy) = map.get_by_id(i)? else {
-                return Err("no such triage policy".into());
-            };
-            check_policy_access(users_customers.as_deref(), &policy)?;
+            let policy = load_accessible_policy_from_map(&map, users_customers.as_deref(), i)?;
             parsed_ids.push(i);
             removed.push(policy.name);
         }
@@ -319,10 +320,7 @@ impl TriagePolicyMutation {
 
         // Verify access to the policy based on its current state
         let policy_map = store.triage_policy_map();
-        let Some(policy) = policy_map.get_by_id(i)? else {
-            return Err("no such triage policy".into());
-        };
-        check_policy_access(users_customers.as_deref(), &policy)?;
+        let _policy = load_accessible_policy_from_map(&policy_map, users_customers.as_deref(), i)?;
 
         let customer_map = store.customer_map();
         if let Some(customer_id) = old.customer_id
@@ -580,6 +578,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn triage_policy_customer_scoping_missing_policy() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(r#"{ triagePolicy(id: "99") { name } }"#)
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(
+            res.errors[0].message.contains("no such triage policy"),
+            "Expected missing policy error: {:?}",
+            res.errors
+        );
+    }
+
+    #[tokio::test]
     async fn triage_policy_insert_customer_scoping_admin_allowed() {
         let schema = TestSchema::new().await;
 
@@ -765,6 +778,21 @@ mod tests {
         assert!(
             res.errors[0].message.contains("Forbidden"),
             "Expected Forbidden error: {:?}",
+            res.errors
+        );
+    }
+
+    #[tokio::test]
+    async fn triage_policy_remove_customer_scoping_missing_policy() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { removeTriagePolicies(ids: ["99"]) }"#)
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(
+            res.errors[0].message.contains("no such triage policy"),
+            "Expected missing policy error: {:?}",
             res.errors
         );
     }
@@ -1073,6 +1101,41 @@ mod tests {
         assert!(
             res.errors[0].message.contains("Forbidden"),
             "Expected Forbidden error: {:?}",
+            res.errors
+        );
+    }
+
+    #[tokio::test]
+    async fn triage_policy_update_customer_scoping_missing_policy() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateTriagePolicy(
+                        id: 99
+                        old: {
+                            name: "Missing Policy"
+                            triageExclusionId: []
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                        }
+                        new: {
+                            name: "Updated Policy"
+                            triageExclusionId: []
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(
+            res.errors[0].message.contains("no such triage policy"),
+            "Expected missing policy error: {:?}",
             res.errors
         );
     }
