@@ -16,6 +16,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Added `authenticator` field of type `Arc<dyn MtlsAuthenticator>` to
   `ServerConfig`. (auth-mtls)
 
+### Fixed
+
+- `nodeReboot` and `nodeShutdown` now update the `storedStatus`
+  of all agents on the target node to `Unknown` after the
+  operation completes successfully.
+
 ### Changed
 
 - `graphql_handler` and `graphql_ws_handler` now delegate certificate
@@ -588,10 +594,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `updateSamplingPolicy`.
   - The API returns the following error message when a value cannot be parsed as
     an `IpAddr` (e.g., when "abc" is given):
+
     ```text
     Failed to parse "IpAddress": Invalid IP address: abc (occurred while
     parsing "[IpAddress!]")
     ```
+
 - Added the `theme` field to the `Account` struct to store the user's selected
   screen color mode. Accordingly, the functions for inserting and updating
   accounts have been modified, and new APIs have been added to retrieve and
