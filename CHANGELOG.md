@@ -16,12 +16,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Added `authenticator` field of type `Arc<dyn MtlsAuthenticator>` to
   `ServerConfig`. (auth-mtls)
 
-### Fixed
-
-- `nodeReboot` and `nodeShutdown` now update the `storedStatus`
-  of all agents on the target node to `Unknown` after the
-  operation completes successfully.
-
 ### Changed
 
 - `graphql_handler` and `graphql_ws_handler` now delegate certificate
@@ -37,6 +31,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- `nodeReboot` and `nodeShutdown` now update the `storedStatus`
+  of all agents on the target node to `Unknown` after the
+  operation completes successfully.
 - Refactored GraphQL root `MergedObject` groups (Query/Mutation) into smaller
   units to mitigate `queries overflow the depth limit` on Rust 1.94.0+, likely
   triggered by increased type-layout query depth after `ManuallyDrop<T>` began
