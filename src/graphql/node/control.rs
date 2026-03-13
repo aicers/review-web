@@ -1,6 +1,7 @@
 use async_graphql::{Context, ID, Object, Result};
 use futures::future::join_all;
 use itertools::Itertools;
+use review_database::AgentStatus;
 use tracing::{error, info, warn};
 
 use super::{
@@ -13,6 +14,44 @@ use crate::graphql::{
     node::input::NodeInput,
 };
 use crate::{error_with_username, info_with_username, warn_with_username};
+
+fn update_agent_status_to_unknown(ctx: &Context<'_>, hostname: &str) {
+    let Ok(store) = crate::graphql::get_store(ctx) else {
+        error!("Failed to get store to update agent status for {hostname}");
+        return;
+    };
+    let mut map = store.node_map();
+    let Some(agent_keys) = map
+        .iter(review_database::event::Direction::Forward, None)
+        .find_map(|result| {
+            let node = result.ok()?;
+            if node
+                .profile
+                .as_ref()
+                .is_some_and(|p| p.hostname == hostname)
+            {
+                Some(
+                    node.agents
+                        .iter()
+                        .map(|a| a.key.clone())
+                        .collect::<Vec<String>>(),
+                )
+            } else {
+                None
+            }
+        })
+    else {
+        error!("No node found for hostname: {hostname}");
+        return;
+    };
+    for agent_key in &agent_keys {
+        if let Err(e) =
+            map.update_agent_status_by_hostname(hostname, agent_key, AgentStatus::Unknown)
+        {
+            error!("Failed to update agent status to Unknown for {hostname}/{agent_key}: {e}");
+        }
+    }
+}
 
 #[Object]
 impl NodeControlMutation {
@@ -28,6 +67,7 @@ impl NodeControlMutation {
         } else {
             info_with_username!(ctx, "Reboot request sent to {hostname}");
             agents.reboot(&hostname).await?;
+            update_agent_status_to_unknown(ctx, &hostname);
             Ok(hostname)
         }
     }
@@ -46,6 +86,7 @@ impl NodeControlMutation {
         } else {
             info_with_username!(ctx, "Shutdown request sent to {hostname}");
             agents.halt(&hostname).await?;
+            update_agent_status_to_unknown(ctx, &hostname);
             Ok(hostname)
         }
     }
