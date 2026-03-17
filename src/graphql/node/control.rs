@@ -2530,8 +2530,8 @@ mod tests {
             anyhow::bail!("{hostname} is unreachable")
         }
 
-        async fn reboot(&self, hostname: &str) -> Result<(), anyhow::Error> {
-            anyhow::bail!("{hostname} is unreachable")
+        async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error> {
+            Ok(())
         }
 
         async fn update_config(&self, agent_key: &str) -> Result<(), anyhow::Error> {
@@ -2645,6 +2645,97 @@ mod tests {
         ) -> Result<(), anyhow::Error> {
             anyhow::bail!("not expected to be called")
         }
+    }
+
+    #[tokio::test]
+    async fn test_node_reboot() {
+        let mut online_apps_by_host_id = HashMap::new();
+        insert_apps(
+            "analysis",
+            &["semi-supervised"],
+            &mut online_apps_by_host_id,
+        );
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id,
+            available_agents: vec!["semi-supervised@analysis"],
+        });
+
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // Insert a node with hostname "analysis" and an agent with ENABLED status
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "analysis node",
+                        customerId: 0,
+                        description: "Analysis node for testing reboot.",
+                        hostname: "analysis",
+                        agents: [{
+                            key: "semi-supervised"
+                            kind: SEMI_SUPERVISED
+                            status: ENABLED
+                            draft: "test = 'toml'"
+                        }],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Apply the node so that profile (with hostname) is set from profile_draft
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "analysis node",
+                            nameDraft: "analysis node",
+                            profile: null,
+                            profileDraft: {
+                                customerId: "0",
+                                description: "Analysis node for testing reboot.",
+                                hostname: "analysis"
+                            },
+                            agents: [
+                                {
+                                    key: "semi-supervised",
+                                    kind: SEMI_SUPERVISED,
+                                    status: ENABLED,
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+
+        // Verify the agent status is ENABLED before reboot
+        let (node, _, _) = schema.store().node_map().get_by_id(0).unwrap().unwrap();
+        assert_eq!(node.agents.len(), 1);
+        assert_eq!(node.agents[0].status, AgentStatus::Enabled);
+
+        // node_reboot
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                nodeReboot(hostname:"analysis")
+            }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{nodeReboot: "analysis"}"#);
+
+        // Verify the agent status is updated to Unknown after reboot
+        let (node, _, _) = schema.store().node_map().get_by_id(0).unwrap().unwrap();
+        assert_eq!(node.agents[0].status, AgentStatus::Unknown);
     }
 
     #[tokio::test]
