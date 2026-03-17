@@ -374,9 +374,8 @@ mod tests {
     use assert_json_diff::assert_json_eq;
     use async_trait::async_trait;
     use ipnet::IpNet;
-    use serde_json::json;
-
     use review_database::AgentStatus;
+    use serde_json::json;
 
     use crate::graphql::{
         AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema,
