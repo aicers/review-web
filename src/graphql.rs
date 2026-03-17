@@ -1,8 +1,5 @@
 //! The GraphQL API schema and implementation.
 
-// Temporary for shared utilities used across sub-issues of #756.
-// Remove this allow when the last #756 sub-issue is completed.
-#![allow(dead_code)]
 // async-graphql requires the API functions to be `async`.
 #![allow(clippy::unused_async)]
 
@@ -1000,6 +997,9 @@ pub(crate) fn test_jwt_secret_der() -> &'static [u8] {
     TEST_JWT_SECRET_DER
 }
 
+#[cfg(all(test, feature = "auth-jwt"))]
+const TEST_SCOPED_USERNAME: &str = "scoped-user";
+
 #[cfg(test)]
 impl TestSchema {
     async fn new() -> Self {
@@ -1099,12 +1099,58 @@ impl TestSchema {
         role: Role,
         customer_ids: Option<Vec<u32>>,
     ) -> async_graphql::Response {
+        #[cfg(feature = "auth-jwt")]
+        {
+            self.upsert_test_account(TEST_SCOPED_USERNAME, role, customer_ids);
+            let request: async_graphql::Request = query.into();
+            let request = self
+                .request_with_guard(request, RoleGuard::Role(role))
+                .data(TEST_SCOPED_USERNAME.to_string());
+            return self.schema.execute(request).await;
+        }
+
+        #[cfg(feature = "auth-mtls")]
         self.execute_with_context(
             query,
             RoleGuard::Role(role),
             Some(CustomerIds(customer_ids)),
         )
         .await
+    }
+
+    #[cfg(feature = "auth-jwt")]
+    fn upsert_test_account(&self, username: &str, role: Role, customer_ids: Option<Vec<u32>>) {
+        let account = database::types::Account::new(
+            username,
+            "password",
+            role,
+            "Test User".to_string(),
+            "Testing".to_string(),
+            None,
+            None,
+            None,
+            None,
+            customer_ids,
+        )
+        .expect("test account construction should always succeed");
+        let store = self
+            .store
+            .write()
+            .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
+        if store
+            .account_map()
+            .contains(username)
+            .expect("test account lookup should always succeed")
+        {
+            store
+                .account_map()
+                .delete(username)
+                .expect("test account delete should always succeed");
+        }
+        store
+            .account_map()
+            .insert(&account)
+            .expect("test account insert should always succeed");
     }
 
     /// Creates a customer and an applied node with the provided hostname.
