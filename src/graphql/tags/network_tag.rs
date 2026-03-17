@@ -20,6 +20,14 @@ impl NetworkTagQuery {
         customer_id: Option<ID>,
     ) -> Result<Vec<Tag>> {
         let store = crate::graphql::get_store(ctx)?;
+        if let Some(customer_id) = customer_id {
+            let customer_id = customer_id
+                .as_str()
+                .parse::<u32>()
+                .map_err(|_| "invalid customer ID")?;
+            return load_customer_network_tags(&store, customer_id);
+        }
+
         let role = match ctx.data_opt::<RoleGuard>() {
             Some(RoleGuard::Role(role)) => *role,
             _ => return Err("Forbidden".into()),
@@ -29,19 +37,7 @@ impl NetworkTagQuery {
             return load_all_network_tags(&store);
         }
 
-        let customer_id = customer_id
-            .ok_or("customer ID is required")?
-            .as_str()
-            .parse::<u32>()
-            .map_err(|_| "invalid customer ID")?;
-        let tags = store.network_tag_set(customer_id)?;
-        Ok(tags
-            .tags()
-            .map(|tag| Tag {
-                id: tag.id,
-                name: tag.name.clone(),
-            })
-            .collect())
+        Err("customer ID is required".into())
     }
 }
 
@@ -125,15 +121,22 @@ fn load_all_network_tags(store: &Store) -> Result<Vec<Tag>> {
 
     for customer in customer_map.iter(Direction::Forward, None) {
         let customer = customer?;
-        let tag_set = store.network_tag_set(customer.id)?;
-        tags.extend(tag_set.tags().map(|tag| Tag {
-            id: tag.id,
-            name: tag.name.clone(),
-        }));
+        tags.extend(load_customer_network_tags(store, customer.id)?);
     }
 
-    tags.sort_by(|lhs, rhs| lhs.id.cmp(&rhs.id).then_with(|| lhs.name.cmp(&rhs.name)));
+    tags.sort_unstable_by(|lhs, rhs| lhs.id.cmp(&rhs.id));
     Ok(tags)
+}
+
+fn load_customer_network_tags(store: &Store, customer_id: u32) -> Result<Vec<Tag>> {
+    let tags = store.network_tag_set(customer_id)?;
+    Ok(tags
+        .tags()
+        .map(|tag| Tag {
+            id: tag.id,
+            name: tag.name.clone(),
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -187,6 +190,51 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{networkTagList: [{name: "foo"}]}"#);
+    }
+
+    #[tokio::test]
+    async fn network_tag_list_filters_by_customer_for_system_admin() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "alpha")}"#)
+            .await;
+        assert!(res.errors.is_empty());
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 1, name: "beta")}"#)
+            .await;
+        assert!(res.errors.is_empty());
+
+        let res = schema
+            .execute_as_system_admin(r"{networkTagList(customerId: 0){id name}}")
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{networkTagList: [{id: "0", name: "alpha"}]}"#
+        );
+
+        let res = schema
+            .execute_as_system_admin(r"{networkTagList(customerId: 1){id name}}")
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{networkTagList: [{id: "1", name: "beta"}]}"#
+        );
     }
 
     #[tokio::test]
@@ -256,6 +304,75 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r"{updateNetworkTag: true}");
+    }
+
+    #[tokio::test]
+    async fn update_network_tag_returns_false_for_old_name_mismatch() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "foo")}"#)
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateNetworkTag(customerId: 0, id: "0", old: "wrong", new: "bar")
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r"{updateNetworkTag: false}");
+
+        let res = schema
+            .execute_as_system_admin(r"{networkTagList(customerId: 0){name}}")
+            .await;
+        assert_eq!(res.data.to_string(), r#"{networkTagList: [{name: "foo"}]}"#);
+    }
+
+    #[tokio::test]
+    async fn update_network_tag_returns_false_for_different_customer_scope() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "foo")}"#)
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateNetworkTag(customerId: 1, id: "0", old: "foo", new: "bar")
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r"{updateNetworkTag: false}");
+
+        let res = schema
+            .execute_as_system_admin(r"{networkTagList(customerId: 0){name}}")
+            .await;
+        assert_eq!(res.data.to_string(), r#"{networkTagList: [{name: "foo"}]}"#);
     }
 
     #[tokio::test]
@@ -343,7 +460,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{networkTagList: [{id: "0", name: "alpha"}, {id: "1", name: "alpha"}, {id: "2", name: "beta"}]}"#
+            r#"{networkTagList: [{id: "0", name: "alpha"}, {id: "2", name: "beta"}]}"#
         );
 
         let res = schema
@@ -351,7 +468,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{networkTagList: [{id: "0", name: "alpha"}, {id: "1", name: "alpha"}, {id: "2", name: "beta"}]}"#
+            r#"{networkTagList: [{id: "1", name: "alpha"}]}"#
         );
 
         let res = schema

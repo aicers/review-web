@@ -29,8 +29,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `removeNetworkTag`, `updateNetworkTag`.
   - Added required `customerId` to `insertNetworkTag`, `removeNetworkTag`,
     and `updateNetworkTag`.
-  - `networkTagList` now returns all tags for `SystemAdministrator`, and uses
-    `customerId` for customer-scoped lookups by other roles.
+  - `networkTagList` now returns all tags for `SystemAdministrator` when
+    `customerId` is omitted, and returns customer-scoped tags when
+    `customerId` is provided.
 - `graphql_handler` and `graphql_ws_handler` now delegate certificate
   validation to `authenticator.authenticate()` rather than the previously
   internal `validate_client_cert()`, making the validation policy replaceable
