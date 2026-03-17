@@ -7,6 +7,7 @@ use crate::graphql::RoleGuard;
 #[derive(Default)]
 pub(in crate::graphql) struct NetworkTagQuery;
 
+// TODO(#762): Restrict network tag reads to the caller's customer scope.
 #[Object]
 impl NetworkTagQuery {
     /// A list of network tags.
@@ -44,6 +45,7 @@ impl NetworkTagQuery {
 #[derive(Default)]
 pub(in crate::graphql) struct NetworkTagMutation;
 
+// TODO(#762): Enforce customer-scope authorization for network tag mutations.
 #[Object]
 impl NetworkTagMutation {
     /// Inserts a new network tag, returning the ID of the new tag.
