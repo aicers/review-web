@@ -376,6 +376,8 @@ mod tests {
     use ipnet::IpNet;
     use serde_json::json;
 
+    use review_database::AgentStatus;
+
     use crate::graphql::{
         AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema,
         customer::NetworksTargetAgentKeysPair,
@@ -2662,6 +2664,65 @@ mod tests {
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
+        // Insert a node with hostname "analysis" and an agent with ENABLED status
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "analysis node",
+                        customerId: 0,
+                        description: "Analysis node for testing shutdown.",
+                        hostname: "analysis",
+                        agents: [{
+                            key: "semi-supervised"
+                            kind: SEMI_SUPERVISED
+                            status: ENABLED
+                            draft: "test = 'toml'"
+                        }],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Apply the node so that profile (with hostname) is set from profile_draft
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "analysis node",
+                            nameDraft: "analysis node",
+                            profile: null,
+                            profileDraft: {
+                                customerId: "0",
+                                description: "Analysis node for testing shutdown.",
+                                hostname: "analysis"
+                            },
+                            agents: [
+                                {
+                                    key: "semi-supervised",
+                                    kind: SEMI_SUPERVISED,
+                                    status: ENABLED,
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+
+        // Verify the agent status is ENABLED before shutdown
+        let (node, _, _) = schema.store().node_map().get_by_id(0).unwrap().unwrap();
+        assert_eq!(node.agents.len(), 1);
+        assert_eq!(node.agents[0].status, AgentStatus::Enabled);
+
         // node_shutdown
         let res = schema
             .execute_as_system_admin(
@@ -2672,5 +2733,9 @@ mod tests {
             .await;
 
         assert_eq!(res.data.to_string(), r#"{nodeShutdown: "analysis"}"#);
+
+        // Verify the agent status is updated to Unknown after shutdown
+        let (node, _, _) = schema.store().node_map().get_by_id(0).unwrap().unwrap();
+        assert_eq!(node.agents[0].status, AgentStatus::Unknown);
     }
 }
