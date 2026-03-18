@@ -1428,9 +1428,10 @@ mod tests {
 
         // Scoped user can read node with matching customer_id
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"{node(id: "0") { id name }}"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert!(
@@ -1473,9 +1474,10 @@ mod tests {
 
         // Scoped user is denied read access to non-matching customer_id
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"{node(id: "0") { id name }}"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert_eq!(res.errors.len(), 1);
@@ -1543,9 +1545,10 @@ mod tests {
 
         // Scoped user should be able to read a draft-only node for their customer.
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"{node(id: "0") { id name }}"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert!(
@@ -1583,9 +1586,10 @@ mod tests {
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"{node(id: "0") { id name }}"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert_eq!(res.errors.len(), 1);
@@ -1648,9 +1652,10 @@ mod tests {
 
         // Scoped user list only sees nodes with matching customer_id
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r"{nodeList{edges{node{name}}}}",
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert!(
@@ -1682,9 +1687,10 @@ mod tests {
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r"{nodeList{totalCount edges{node{name}}}}",
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert!(
@@ -1759,9 +1765,10 @@ mod tests {
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r"{nodeList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
 
@@ -1799,9 +1806,10 @@ mod tests {
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r"{nodeList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert!(
@@ -1849,7 +1857,7 @@ mod tests {
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"mutation {
                     insertNode(
                         name: "node_customer_1",
@@ -1860,7 +1868,8 @@ mod tests {
                         externalServices: []
                     )
                 }"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert!(
@@ -1881,7 +1890,7 @@ mod tests {
 
         // Scoped user cannot insert node for customer 2
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"mutation {
                     insertNode(
                         name: "node_customer_2",
@@ -1892,7 +1901,8 @@ mod tests {
                         externalServices: []
                     )
                 }"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert_eq!(res.errors.len(), 1);
@@ -1957,9 +1967,10 @@ mod tests {
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r"{nodeList(first: 10){totalCount edges{node{name}}}}",
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
 
@@ -1992,9 +2003,10 @@ mod tests {
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r"{nodeList(first: 10){totalCount edges{node{name}}}}",
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert!(
@@ -2089,7 +2101,7 @@ mod tests {
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"mutation {
                     updateNodeDraft(
                         id: "0"
@@ -2113,7 +2125,8 @@ mod tests {
                         }
                     )
                 }"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert!(
@@ -2153,7 +2166,7 @@ mod tests {
 
         // Scoped user cannot update node with non-matching customer_id
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"mutation {
                     updateNodeDraft(
                         id: "0"
@@ -2177,7 +2190,8 @@ mod tests {
                         }
                     )
                 }"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert_eq!(res.errors.len(), 1);
@@ -2208,7 +2222,7 @@ mod tests {
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"mutation {
                     updateNodeDraft(
                         id: "0"
@@ -2236,7 +2250,8 @@ mod tests {
                         }
                     )
                 }"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert_eq!(res.errors.len(), 1);
@@ -2302,9 +2317,10 @@ mod tests {
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"mutation { removeNodes(ids: ["0"]) }"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert!(
@@ -2347,9 +2363,10 @@ mod tests {
 
         // Scoped user cannot remove node with non-matching customer_id
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"mutation { removeNodes(ids: ["0"]) }"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert_eq!(res.errors.len(), 1);
@@ -2369,9 +2386,10 @@ mod tests {
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"mutation { removeNodes(ids: ["0", "1"]) }"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert_eq!(res.errors.len(), 1);
@@ -2487,9 +2505,10 @@ mod tests {
 
         // Scoped user with empty customers cannot read any node
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"{node(id: "0") { id name }}"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![]),
             )
             .await;
         assert_eq!(res.errors.len(), 1);
@@ -2497,9 +2516,10 @@ mod tests {
 
         // List should be empty
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r"{nodeList{edges{node{name}}}}",
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![]),
             )
             .await;
         assert!(res.errors.is_empty());

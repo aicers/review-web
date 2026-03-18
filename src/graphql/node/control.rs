@@ -2852,9 +2852,10 @@ mod tests {
 
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"mutation { nodeShutdown(hostname: "host-customer-1") }"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert!(
@@ -2886,9 +2887,10 @@ mod tests {
         // Scoped user with customer 1 cannot shutdown customer 2 node.
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"mutation { nodeShutdown(hostname: "host-customer-2") }"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert_eq!(res.errors.len(), 1);
@@ -2942,9 +2944,10 @@ mod tests {
 
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"mutation { nodeReboot(hostname: "host-customer-1") }"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert_eq!(res.errors.len(), 1);
@@ -2972,9 +2975,10 @@ mod tests {
         // Scoped user with customer 1 cannot reboot customer 2 node.
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"mutation { nodeReboot(hostname: "host-customer-2") }"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert_eq!(res.errors.len(), 1);
@@ -3060,7 +3064,7 @@ mod tests {
 
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"mutation {
                     applyNode(
                         id: "0"
@@ -3078,7 +3082,8 @@ mod tests {
                         }
                     )
                 }"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert!(
@@ -3115,7 +3120,7 @@ mod tests {
 
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"mutation {
                     applyNode(
                         id: "0"
@@ -3133,7 +3138,8 @@ mod tests {
                         }
                     )
                 }"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert_eq!(res.errors.len(), 1);
@@ -3166,7 +3172,7 @@ mod tests {
 
         update_account_customers(&schema.store(), "testuser", Some(vec![1]));
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r#"mutation {
                     applyNode(
                         id: "0"
@@ -3184,7 +3190,8 @@ mod tests {
                         }
                     )
                 }"#,
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert_eq!(res.errors.len(), 1);

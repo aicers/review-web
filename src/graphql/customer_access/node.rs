@@ -72,9 +72,15 @@ pub(crate) fn load_accessible_node(
 mod tests {
     use std::sync::{Arc, RwLock};
 
+    #[cfg(feature = "auth-mtls")]
+    use async_graphql::Request;
     use async_graphql::{EmptyMutation, EmptySubscription, Object, Schema};
     use chrono::Utc;
-    use review_database::{Role, Store, types};
+    #[cfg(feature = "auth-jwt")]
+    use review_database::Role;
+    use review_database::Store;
+    #[cfg(feature = "auth-jwt")]
+    use review_database::types;
 
     use super::*;
 
@@ -126,7 +132,8 @@ mod tests {
     }
 
     impl TestContext {
-        fn new(username: &str, customer_ids: Option<Vec<u32>>) -> Self {
+        #[cfg(feature = "auth-jwt")]
+        fn new_with_account(username: &str, customer_ids: Option<Vec<u32>>) -> Self {
             let db_dir = tempfile::tempdir().expect("create data dir");
             let backup_dir = tempfile::tempdir().expect("create backup dir");
             let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
@@ -158,6 +165,23 @@ mod tests {
             }
         }
 
+        #[cfg(feature = "auth-mtls")]
+        fn new_without_account(username: &str) -> Self {
+            let db_dir = tempfile::tempdir().expect("create data dir");
+            let backup_dir = tempfile::tempdir().expect("create backup dir");
+            let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+            let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
+                .data(Arc::new(RwLock::new(store)))
+                .data(username.to_string())
+                .finish();
+            Self {
+                _dir: db_dir,
+                _backup_dir: backup_dir,
+                schema,
+            }
+        }
+
+        #[cfg(feature = "auth-jwt")]
         async fn execute_load_accessible_node(&self, customer_id: u32) -> async_graphql::Response {
             self.schema
                 .execute(format!(
@@ -166,10 +190,55 @@ mod tests {
                 .await
         }
 
+        #[cfg(feature = "auth-jwt")]
         async fn execute_load_missing_node(&self, node_id: &str) -> async_graphql::Response {
             self.schema
                 .execute(format!("{{ loadMissingNode(nodeId: \"{node_id}\") }}"))
                 .await
+        }
+
+        #[cfg(feature = "auth-mtls")]
+        async fn execute_load_accessible_node_with_customer_ids(
+            &self,
+            customer_id: u32,
+            customer_ids: Option<Vec<u32>>,
+        ) -> async_graphql::Response {
+            let request = Request::new(format!(
+                "{{ loadAccessibleNode(customerId: {customer_id}) }}"
+            ))
+            .data(crate::graphql::RoleGuard::Role(
+                crate::graphql::Role::SecurityMonitor,
+            ))
+            .data(crate::graphql::CustomerIds(customer_ids));
+            self.schema.execute(request).await
+        }
+
+        #[cfg(feature = "auth-mtls")]
+        async fn execute_load_accessible_node_admin(
+            &self,
+            customer_id: u32,
+        ) -> async_graphql::Response {
+            let request = Request::new(format!(
+                "{{ loadAccessibleNode(customerId: {customer_id}) }}"
+            ))
+            .data(crate::graphql::RoleGuard::Role(
+                crate::graphql::Role::SystemAdministrator,
+            ));
+            self.schema.execute(request).await
+        }
+
+        #[cfg(feature = "auth-mtls")]
+        async fn execute_load_missing_node_with_customer_ids(
+            &self,
+            node_id: &str,
+            customer_ids: Option<Vec<u32>>,
+        ) -> async_graphql::Response {
+            let request = Request::new(format!("{{ loadMissingNode(nodeId: \"{node_id}\") }}"))
+                .data(crate::graphql::RoleGuard::Role(
+                    crate::graphql::Role::SecurityMonitor,
+                ))
+                .data(crate::graphql::CustomerIds(customer_ids));
+            self.schema.execute(request).await
         }
     }
 
@@ -235,9 +304,10 @@ mod tests {
         assert!(!can_access_node(Some(&[1]), &node));
     }
 
+    #[cfg(feature = "auth-jwt")]
     #[tokio::test]
     async fn test_load_accessible_node_scoped_user_allowed() {
-        let test_ctx = TestContext::new("scoped_user", Some(vec![7]));
+        let test_ctx = TestContext::new_with_account("scoped_user", Some(vec![7]));
         let response = test_ctx.execute_load_accessible_node(7).await;
 
         assert!(
@@ -247,18 +317,47 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "auth-mtls")]
+    #[tokio::test]
+    async fn test_load_accessible_node_scoped_user_allowed() {
+        let test_ctx = TestContext::new_without_account("scoped_user");
+        let response = test_ctx
+            .execute_load_accessible_node_with_customer_ids(7, Some(vec![7]))
+            .await;
+
+        assert!(
+            response.errors.is_empty(),
+            "unexpected errors: {:?}",
+            response.errors
+        );
+    }
+
+    #[cfg(feature = "auth-jwt")]
     #[tokio::test]
     async fn test_load_accessible_node_scoped_user_forbidden() {
-        let test_ctx = TestContext::new("scoped_user", Some(vec![1]));
+        let test_ctx = TestContext::new_with_account("scoped_user", Some(vec![1]));
         let response = test_ctx.execute_load_accessible_node(7).await;
 
         assert_eq!(response.errors.len(), 1);
         assert_eq!(response.errors[0].message, "Forbidden");
     }
 
+    #[cfg(feature = "auth-mtls")]
+    #[tokio::test]
+    async fn test_load_accessible_node_scoped_user_forbidden() {
+        let test_ctx = TestContext::new_without_account("scoped_user");
+        let response = test_ctx
+            .execute_load_accessible_node_with_customer_ids(7, Some(vec![1]))
+            .await;
+
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(response.errors[0].message, "Forbidden");
+    }
+
+    #[cfg(feature = "auth-jwt")]
     #[tokio::test]
     async fn test_load_accessible_node_admin_allowed() {
-        let test_ctx = TestContext::new("admin_user", None);
+        let test_ctx = TestContext::new_with_account("admin_user", None);
         let response = test_ctx.execute_load_accessible_node(7).await;
 
         assert!(
@@ -268,10 +367,36 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "auth-mtls")]
+    #[tokio::test]
+    async fn test_load_accessible_node_admin_allowed() {
+        let test_ctx = TestContext::new_without_account("admin_user");
+        let response = test_ctx.execute_load_accessible_node_admin(7).await;
+
+        assert!(
+            response.errors.is_empty(),
+            "unexpected errors: {:?}",
+            response.errors
+        );
+    }
+
+    #[cfg(feature = "auth-jwt")]
     #[tokio::test]
     async fn test_load_accessible_node_missing_node() {
-        let test_ctx = TestContext::new("scoped_user", Some(vec![7]));
+        let test_ctx = TestContext::new_with_account("scoped_user", Some(vec![7]));
         let response = test_ctx.execute_load_missing_node("1").await;
+
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(response.errors[0].message, "no such node");
+    }
+
+    #[cfg(feature = "auth-mtls")]
+    #[tokio::test]
+    async fn test_load_accessible_node_missing_node() {
+        let test_ctx = TestContext::new_without_account("scoped_user");
+        let response = test_ctx
+            .execute_load_missing_node_with_customer_ids("1", Some(vec![7]))
+            .await;
 
         assert_eq!(response.errors.len(), 1);
         assert_eq!(response.errors[0].message, "no such node");

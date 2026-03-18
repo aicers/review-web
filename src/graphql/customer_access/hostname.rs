@@ -75,6 +75,7 @@ pub(crate) fn check_hostname_access(ctx: &Context<'_>, hostname: &str) -> Result
 /// # Errors
 ///
 /// Returns an error if a database iteration error occurs.
+#[allow(dead_code)] // Shared hostname helper retained for follow-up issues.
 pub(crate) fn hostname_customer_id_map(store: &Store) -> Result<HashMap<String, u32>> {
     let map = store.node_map();
     let mut hostname_map = HashMap::<String, u32>::new();
@@ -98,6 +99,7 @@ pub(crate) fn hostname_customer_id_map(store: &Store) -> Result<HashMap<String, 
 /// # Errors
 ///
 /// Returns an error if the key is too short or contains invalid UTF-8.
+#[allow(dead_code)] // Shared hostname helper retained for follow-up issues.
 pub(crate) fn sensor_from_key(key: &[u8]) -> Result<String> {
     const TIMESTAMP_LEN: usize = 8;
     if key.len() <= TIMESTAMP_LEN {
@@ -112,9 +114,15 @@ pub(crate) fn sensor_from_key(key: &[u8]) -> Result<String> {
 mod tests {
     use std::sync::{Arc, RwLock};
 
+    #[cfg(feature = "auth-mtls")]
+    use async_graphql::Request;
     use async_graphql::{Context, EmptyMutation, EmptySubscription, Object, Result, Schema};
     use chrono::Utc;
-    use review_database::{Role, Store, types};
+    #[cfg(feature = "auth-jwt")]
+    use review_database::Role;
+    use review_database::Store;
+    #[cfg(feature = "auth-jwt")]
+    use review_database::types;
 
     use super::*;
 
@@ -162,7 +170,12 @@ mod tests {
     }
 
     impl TestContext {
-        fn new(username: &str, customer_ids: Option<Vec<u32>>, nodes: &[(&str, u32)]) -> Self {
+        #[cfg(feature = "auth-jwt")]
+        fn new_with_account(
+            username: &str,
+            customer_ids: Option<Vec<u32>>,
+            nodes: &[(&str, u32)],
+        ) -> Self {
             let db_dir = tempfile::tempdir().expect("create data dir");
             let backup_dir = tempfile::tempdir().expect("create backup dir");
             let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
@@ -183,7 +196,24 @@ mod tests {
                 .account_map()
                 .insert(&account)
                 .expect("insert account");
+            Self::with_nodes(store, db_dir, backup_dir, Some(username), nodes)
+        }
 
+        #[cfg(feature = "auth-mtls")]
+        fn new_without_account(username: &str, nodes: &[(&str, u32)]) -> Self {
+            let db_dir = tempfile::tempdir().expect("create data dir");
+            let backup_dir = tempfile::tempdir().expect("create backup dir");
+            let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+            Self::with_nodes(store, db_dir, backup_dir, Some(username), nodes)
+        }
+
+        fn with_nodes(
+            store: Store,
+            db_dir: tempfile::TempDir,
+            backup_dir: tempfile::TempDir,
+            username: Option<&str>,
+            nodes: &[(&str, u32)],
+        ) -> Self {
             let node_map = store.node_map();
             for (hostname, customer_id) in nodes {
                 let node = review_database::Node {
@@ -203,10 +233,13 @@ mod tests {
                 node_map.put(&node).expect("insert node");
             }
 
-            let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
-                .data(Arc::new(RwLock::new(store)))
-                .data(username.to_string())
-                .finish();
+            let builder = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
+                .data(Arc::new(RwLock::new(store)));
+            let schema = if let Some(username) = username {
+                builder.data(username.to_string()).finish()
+            } else {
+                builder.finish()
+            };
             Self {
                 _dir: db_dir,
                 _backup_dir: backup_dir,
@@ -214,12 +247,41 @@ mod tests {
             }
         }
 
+        #[cfg(feature = "auth-jwt")]
         async fn execute_check_hostname_access(&self, hostname: &str) -> async_graphql::Response {
             self.schema
                 .execute(format!(
                     "{{ checkHostnameAccess(hostname: \"{hostname}\") }}"
                 ))
                 .await
+        }
+
+        #[cfg(feature = "auth-mtls")]
+        async fn execute_with_guard_and_customer_ids(
+            &self,
+            hostname: &str,
+            guard: crate::graphql::RoleGuard,
+            customer_ids: Option<Vec<u32>>,
+        ) -> async_graphql::Response {
+            let request = Request::new(format!(
+                "{{ checkHostnameAccess(hostname: \"{hostname}\") }}"
+            ))
+            .data(guard)
+            .data(crate::graphql::CustomerIds(customer_ids));
+            self.schema.execute(request).await
+        }
+
+        #[cfg(feature = "auth-mtls")]
+        async fn execute_with_guard(
+            &self,
+            hostname: &str,
+            guard: crate::graphql::RoleGuard,
+        ) -> async_graphql::Response {
+            let request = Request::new(format!(
+                "{{ checkHostnameAccess(hostname: \"{hostname}\") }}"
+            ))
+            .data(guard);
+            self.schema.execute(request).await
         }
     }
 
@@ -326,9 +388,11 @@ mod tests {
         assert!(map.put(&node2).is_err());
     }
 
+    #[cfg(feature = "auth-jwt")]
     #[tokio::test]
     async fn test_check_hostname_access_scoped_user_allowed() {
-        let test_ctx = TestContext::new("scoped_user", Some(vec![42]), &[("host-a", 42)]);
+        let test_ctx =
+            TestContext::new_with_account("scoped_user", Some(vec![42]), &[("host-a", 42)]);
 
         let response = test_ctx.execute_check_hostname_access("host-a").await;
 
@@ -339,9 +403,31 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "auth-mtls")]
+    #[tokio::test]
+    async fn test_check_hostname_access_scoped_user_allowed() {
+        let test_ctx = TestContext::new_without_account("scoped_user", &[("host-a", 42)]);
+
+        let response = test_ctx
+            .execute_with_guard_and_customer_ids(
+                "host-a",
+                crate::graphql::RoleGuard::Role(crate::graphql::Role::SecurityMonitor),
+                Some(vec![42]),
+            )
+            .await;
+
+        assert!(
+            response.errors.is_empty(),
+            "unexpected errors: {:?}",
+            response.errors
+        );
+    }
+
+    #[cfg(feature = "auth-jwt")]
     #[tokio::test]
     async fn test_check_hostname_access_scoped_user_forbidden() {
-        let test_ctx = TestContext::new("scoped_user", Some(vec![7]), &[("host-a", 42)]);
+        let test_ctx =
+            TestContext::new_with_account("scoped_user", Some(vec![7]), &[("host-a", 42)]);
 
         let response = test_ctx.execute_check_hostname_access("host-a").await;
 
@@ -349,9 +435,28 @@ mod tests {
         assert_eq!(response.errors[0].message, "Forbidden");
     }
 
+    #[cfg(feature = "auth-mtls")]
+    #[tokio::test]
+    async fn test_check_hostname_access_scoped_user_forbidden() {
+        let test_ctx = TestContext::new_without_account("scoped_user", &[("host-a", 42)]);
+
+        let response = test_ctx
+            .execute_with_guard_and_customer_ids(
+                "host-a",
+                crate::graphql::RoleGuard::Role(crate::graphql::Role::SecurityMonitor),
+                Some(vec![7]),
+            )
+            .await;
+
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(response.errors[0].message, "Forbidden");
+    }
+
+    #[cfg(feature = "auth-jwt")]
     #[tokio::test]
     async fn test_check_hostname_access_unknown_hostname_forbidden() {
-        let test_ctx = TestContext::new("scoped_user", Some(vec![42]), &[("host-a", 42)]);
+        let test_ctx =
+            TestContext::new_with_account("scoped_user", Some(vec![42]), &[("host-a", 42)]);
 
         let response = test_ctx.execute_check_hostname_access("host-missing").await;
 
@@ -359,11 +464,48 @@ mod tests {
         assert_eq!(response.errors[0].message, "Forbidden");
     }
 
+    #[cfg(feature = "auth-mtls")]
+    #[tokio::test]
+    async fn test_check_hostname_access_unknown_hostname_forbidden() {
+        let test_ctx = TestContext::new_without_account("scoped_user", &[("host-a", 42)]);
+
+        let response = test_ctx
+            .execute_with_guard_and_customer_ids(
+                "host-missing",
+                crate::graphql::RoleGuard::Role(crate::graphql::Role::SecurityMonitor),
+                Some(vec![42]),
+            )
+            .await;
+
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(response.errors[0].message, "Forbidden");
+    }
+
+    #[cfg(feature = "auth-jwt")]
     #[tokio::test]
     async fn test_check_hostname_access_admin_bypasses_lookup() {
-        let test_ctx = TestContext::new("admin_user", None, &[]);
+        let test_ctx = TestContext::new_with_account("admin_user", None, &[]);
 
         let response = test_ctx.execute_check_hostname_access("host-missing").await;
+
+        assert!(
+            response.errors.is_empty(),
+            "unexpected errors: {:?}",
+            response.errors
+        );
+    }
+
+    #[cfg(feature = "auth-mtls")]
+    #[tokio::test]
+    async fn test_check_hostname_access_admin_bypasses_lookup() {
+        let test_ctx = TestContext::new_without_account("admin_user", &[]);
+
+        let response = test_ctx
+            .execute_with_guard(
+                "host-missing",
+                crate::graphql::RoleGuard::Role(crate::graphql::Role::SystemAdministrator),
+            )
+            .await;
 
         assert!(
             response.errors.is_empty(),

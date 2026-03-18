@@ -128,7 +128,7 @@ mod tests {
     use serde_json::json;
 
     use super::super::test_support::{MockAgentManager, insert_active_node, insert_apps};
-    use crate::graphql::{BoxedAgentManager, CustomerIds, Role, TestSchema};
+    use crate::graphql::{BoxedAgentManager, Role, TestSchema};
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
@@ -634,10 +634,10 @@ mod tests {
         assert_eq!(id1, 1);
 
         let res = schema
-            .execute_with_guard_and_data(
+            .execute_as_scoped_user(
                 r"{nodeStatusList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
-                CustomerIds(Some(vec![1])),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert!(
@@ -674,10 +674,10 @@ mod tests {
         assert_eq!(id0, 0);
 
         let res = schema
-            .execute_with_guard_and_data(
+            .execute_as_scoped_user(
                 r"{nodeStatusList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
-                crate::graphql::RoleGuard::Role(Role::SecurityAdministrator),
-                CustomerIds(Some(vec![1])),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
             )
             .await;
         assert!(
