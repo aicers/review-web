@@ -1,8 +1,4 @@
 //! The GraphQL API schema and implementation.
-
-// Temporary for shared utilities used across sub-issues of #756.
-// Remove this allow when the last #756 sub-issue is completed.
-#![allow(dead_code)]
 // async-graphql requires the API functions to be `async`.
 #![allow(clippy::unused_async)]
 
@@ -1096,6 +1092,7 @@ impl TestSchema {
         self.schema.execute(request).await
     }
 
+    #[allow(dead_code)] // Shared customer-scope test helper retained for follow-up issues.
     async fn execute_as_scoped_user(
         &self,
         query: &str,
@@ -1159,6 +1156,7 @@ impl TestSchema {
     /// Creates a customer and an applied node with the provided hostname.
     ///
     /// Returns the newly created customer ID.
+    #[allow(dead_code)] // Shared customer-scope test helper retained for follow-up issues.
     async fn setup_customer_and_node(&self, customer_name: &str, hostname: &str) -> String {
         let query = format!(
             r#"mutation {{ insertCustomer(name: "{customer_name}", description: "", networks: []) }}"#,
@@ -1213,6 +1211,41 @@ impl TestSchema {
         assert!(res.errors.is_empty(), "apply node: {:?}", res.errors);
 
         cid
+    }
+
+    #[cfg(feature = "auth-jwt")]
+    fn upsert_test_account(&self, username: &str, role: Role, customer_ids: Option<Vec<u32>>) {
+        let account = database::types::Account::new(
+            username,
+            "password",
+            role,
+            "Test User".to_string(),
+            "Testing".to_string(),
+            None,
+            None,
+            None,
+            None,
+            customer_ids,
+        )
+        .expect("test account construction should always succeed");
+        let store = self
+            .store
+            .write()
+            .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
+        if store
+            .account_map()
+            .contains(username)
+            .expect("test account lookup should always succeed")
+        {
+            store
+                .account_map()
+                .delete(username)
+                .expect("test account delete should always succeed");
+        }
+        store
+            .account_map()
+            .insert(&account)
+            .expect("test account insert should always succeed");
     }
 
     fn request_with_guard(
