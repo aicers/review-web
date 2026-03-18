@@ -181,6 +181,20 @@ fn ensure_accessible_policy_from_map(
     Err("Forbidden".into())
 }
 
+/// Ensures that the caller may target the given customer scope in a mutation.
+fn ensure_mutation_customer_scope(
+    users_customers: Option<&[u32]>,
+    customer_id: Option<u32>,
+) -> Result<()> {
+    match (users_customers, customer_id) {
+        (Some(_), None) => Err("Forbidden".into()),
+        (_, Some(customer_id)) if !is_member(users_customers, customer_id) => {
+            Err("Forbidden".into())
+        }
+        _ => Ok(()),
+    }
+}
+
 // Matches a policy against the caller's customer scope:
 //
 // customer_id Some: allow global policies (customer None) or policies for that specific customer.
@@ -239,10 +253,8 @@ impl TriagePolicyMutation {
             if customer_map.get_by_id(customer_id)?.is_none() {
                 return Err("no such customer".into());
             }
-            if !is_member(users_customers.as_deref(), customer_id) {
-                return Err("Forbidden".into());
-            }
         }
+        ensure_mutation_customer_scope(users_customers.as_deref(), customer_id)?;
         let exclusion_map = store.triage_exclusion_reason_map();
         for id in &triage_exclusion_id {
             if exclusion_map.get_by_id(*id)?.is_none() {
@@ -340,11 +352,7 @@ impl TriagePolicyMutation {
             )
             .into());
         }
-        if let Some(customer_id) = new.customer_id
-            && !is_member(users_customers.as_deref(), customer_id)
-        {
-            return Err("Forbidden".into());
-        }
+        ensure_mutation_customer_scope(users_customers.as_deref(), new.customer_id)?;
 
         let exclusion_map = store.triage_exclusion_reason_map();
         for id in &old.triage_exclusion_id {
@@ -631,6 +639,46 @@ mod tests {
         let res = execute_as_scoped_security_admin(
             &schema,
             &customer_policy_mutation("Forbidden Policy", 1),
+            vec![0],
+        )
+        .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(
+            res.errors[0].message.contains("Forbidden"),
+            "Expected Forbidden error: {:?}",
+            res.errors
+        );
+
+        // Ensure policy was not created
+        let res = schema
+            .execute_as_system_admin(r"{ triagePolicyList(first: 10) { totalCount } }")
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        let json = res.data.into_json().unwrap();
+        assert_eq!(json["triagePolicyList"]["totalCount"], "0");
+    }
+
+    #[tokio::test]
+    async fn triage_policy_insert_global_customer_scoping_forbidden() {
+        let schema = TestSchema::new().await;
+
+        insert_default_triage_exclusion_reason(&schema).await;
+
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"mutation {
+                insertTriagePolicy(
+                    name: "Forbidden Global Policy"
+                    triageExclusionId: ["0"]
+                    packetAttr: []
+                    confidence: []
+                    response: []
+                )
+            }"#,
             vec![0],
         )
         .await;
@@ -1100,6 +1148,61 @@ mod tests {
                             confidence: []
                             response: []
                             customerId: "1"
+                        }
+                    )
+                }"#,
+            vec![0],
+        )
+        .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(
+            res.errors[0].message.contains("Forbidden"),
+            "Expected Forbidden error: {:?}",
+            res.errors
+        );
+
+        // Ensure the policy was not updated
+        let res = schema
+            .execute_as_system_admin(r#"{ triagePolicy(id: "0") { name customerId } }"#)
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors when querying policy: {:?}",
+            res.errors
+        );
+        assert_eq!(
+            res.data.to_string(),
+            r#"{triagePolicy: {name: "Customer 0 Policy", customerId: "0"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn triage_policy_update_to_global_customer_scoping_forbidden() {
+        let schema = TestSchema::new().await;
+
+        insert_customers(&schema, &["c1"]).await;
+        insert_default_triage_exclusion_reason(&schema).await;
+        insert_customer_policy(&schema, 0, "Customer 0 Policy", 0).await;
+
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"mutation {
+                    updateTriagePolicy(
+                        id: 0
+                        old: {
+                            name: "Customer 0 Policy"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                            customerId: "0"
+                        }
+                        new: {
+                            name: "Promoted Global Policy"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: []
+                            response: []
                         }
                     )
                 }"#,
