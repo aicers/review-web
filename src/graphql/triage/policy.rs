@@ -381,7 +381,7 @@ impl TriagePolicyMutation {
 mod tests {
     use review_database::{Role, types};
 
-    use crate::graphql::{RoleGuard, TestSchema};
+    use crate::graphql::TestSchema;
 
     fn create_account(
         store: &std::sync::RwLockReadGuard<'_, review_database::Store>,
@@ -490,6 +490,16 @@ mod tests {
         );
     }
 
+    async fn execute_as_scoped_security_admin(
+        schema: &TestSchema,
+        query: &str,
+        customer_ids: Vec<u32>,
+    ) -> async_graphql::Response {
+        schema
+            .execute_as_scoped_user(query, Role::SecurityAdministrator, Some(customer_ids))
+            .await
+    }
+
     #[tokio::test]
     async fn triage_policy_customer_scoping_admin_allowed() {
         let schema = TestSchema::new().await;
@@ -518,25 +528,18 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
-        // Create scoped user with customer_ids = [0]
-        create_account(
-            &schema.store(),
-            "testuser",
-            Role::SecurityAdministrator,
-            Some(vec![0]),
-        );
 
         insert_customers(&schema, &["c1"]).await;
         insert_default_triage_exclusion_reason(&schema).await;
         insert_customer_policy(&schema, 0, "Customer Policy", 0).await;
 
         // Scoped user can read policy for their customer
-        let res = schema
-            .execute_with_guard(
-                r#"{ triagePolicy(id: "0") { name customerId } }"#,
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"{ triagePolicy(id: "0") { name customerId } }"#,
+            vec![0],
+        )
+        .await;
         assert!(
             res.errors.is_empty(),
             "Expected no errors: {:?}",
@@ -551,25 +554,18 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
-        // Create scoped user with customer_ids = [0]
-        create_account(
-            &schema.store(),
-            "testuser",
-            Role::SecurityAdministrator,
-            Some(vec![0]),
-        );
 
         insert_customers(&schema, &["c1", "c2"]).await;
         insert_default_triage_exclusion_reason(&schema).await;
         insert_customer_policy(&schema, 0, "Other Customer Policy", 1).await;
 
         // Scoped user should be denied access
-        let res = schema
-            .execute_with_guard(
-                r#"{ triagePolicy(id: "0") { name } }"#,
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"{ triagePolicy(id: "0") { name } }"#,
+            vec![0],
+        )
+        .await;
         assert_eq!(res.errors.len(), 1);
         assert!(
             res.errors[0].message.contains("Forbidden"),
@@ -607,22 +603,16 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_insert_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
-        create_account(
-            &schema.store(),
-            "testuser",
-            Role::SecurityAdministrator,
-            Some(vec![0]),
-        );
 
         insert_customers(&schema, &["c1"]).await;
         insert_default_triage_exclusion_reason(&schema).await;
 
-        let res = schema
-            .execute_with_guard(
-                &customer_policy_mutation("Allowed Policy", 0),
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            &customer_policy_mutation("Allowed Policy", 0),
+            vec![0],
+        )
+        .await;
         assert!(
             res.errors.is_empty(),
             "Expected no errors: {:?}",
@@ -634,22 +624,16 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_insert_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
-        create_account(
-            &schema.store(),
-            "testuser",
-            Role::SecurityAdministrator,
-            Some(vec![0]),
-        );
 
         insert_customers(&schema, &["c1", "c2"]).await;
         insert_default_triage_exclusion_reason(&schema).await;
 
-        let res = schema
-            .execute_with_guard(
-                &customer_policy_mutation("Forbidden Policy", 1),
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            &customer_policy_mutation("Forbidden Policy", 1),
+            vec![0],
+        )
+        .await;
         assert_eq!(res.errors.len(), 1);
         assert!(
             res.errors[0].message.contains("Forbidden"),
@@ -673,23 +657,17 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_global_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
-        create_account(
-            &schema.store(),
-            "testuser",
-            Role::SecurityAdministrator,
-            Some(vec![0]),
-        );
 
         insert_default_triage_exclusion_reason(&schema).await;
         insert_global_policy(&schema, 0, "Global Policy").await;
 
         // Scoped user can read global policies
-        let res = schema
-            .execute_with_guard(
-                r#"{ triagePolicy(id: "0") { name customerId } }"#,
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"{ triagePolicy(id: "0") { name customerId } }"#,
+            vec![0],
+        )
+        .await;
         assert!(
             res.errors.is_empty(),
             "Expected no errors: {:?}",
@@ -726,23 +704,17 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_remove_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
-        create_account(
-            &schema.store(),
-            "testuser",
-            Role::SecurityAdministrator,
-            Some(vec![0]),
-        );
 
         insert_customers(&schema, &["c1"]).await;
         insert_default_triage_exclusion_reason(&schema).await;
         insert_customer_policy(&schema, 0, "Customer Policy", 0).await;
 
-        let res = schema
-            .execute_with_guard(
-                r#"mutation { removeTriagePolicies(ids: ["0"]) }"#,
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"mutation { removeTriagePolicies(ids: ["0"]) }"#,
+            vec![0],
+        )
+        .await;
         assert!(
             res.errors.is_empty(),
             "Expected no errors: {:?}",
@@ -757,24 +729,18 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_remove_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
-        create_account(
-            &schema.store(),
-            "testuser",
-            Role::SecurityAdministrator,
-            Some(vec![0]),
-        );
 
         insert_customers(&schema, &["c1", "c2"]).await;
         insert_default_triage_exclusion_reason(&schema).await;
         insert_customer_policy(&schema, 0, "Other Customer Policy", 1).await;
 
         // Scoped user should be denied from deleting
-        let res = schema
-            .execute_with_guard(
-                r#"mutation { removeTriagePolicies(ids: ["0"]) }"#,
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"mutation { removeTriagePolicies(ids: ["0"]) }"#,
+            vec![0],
+        )
+        .await;
         assert_eq!(res.errors.len(), 1);
         assert!(
             res.errors[0].message.contains("Forbidden"),
@@ -827,12 +793,6 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_list_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
-        create_account(
-            &schema.store(),
-            "testuser",
-            Role::SecurityAdministrator,
-            Some(vec![0]),
-        );
 
         insert_customers(&schema, &["c1", "c2"]).await;
         insert_default_triage_exclusion_reason(&schema).await;
@@ -841,12 +801,12 @@ mod tests {
         insert_customer_policy(&schema, 2, "Customer 1 Policy", 1).await;
 
         // Scoped user should only see global and customer 0 policies
-        let res = schema
-            .execute_with_guard(
-                r"{ triagePolicyList(first: 10) { totalCount nodes { name customerId } } }",
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r"{ triagePolicyList(first: 10) { totalCount nodes { name customerId } } }",
+            vec![0],
+        )
+        .await;
         assert!(
             res.errors.is_empty(),
             "Expected no errors: {:?}",
@@ -864,23 +824,17 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_list_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
-        create_account(
-            &schema.store(),
-            "testuser",
-            Role::SecurityAdministrator,
-            Some(vec![99]),
-        );
 
         insert_customers(&schema, &["c1"]).await;
         insert_default_triage_exclusion_reason(&schema).await;
         insert_customer_policy(&schema, 0, "Customer 0 Policy", 0).await;
 
-        let res = schema
-            .execute_with_guard(
-                r"{ triagePolicyList(first: 10) { totalCount nodes { name customerId } } }",
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r"{ triagePolicyList(first: 10) { totalCount nodes { name customerId } } }",
+            vec![99],
+        )
+        .await;
         assert!(
             res.errors.is_empty(),
             "Expected no errors: {:?}",
@@ -897,12 +851,6 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_list_multiple_customers_scoping_allowed() {
         let schema = TestSchema::new().await;
-        create_account(
-            &schema.store(),
-            "testuser",
-            Role::SecurityAdministrator,
-            Some(vec![0, 2]),
-        );
 
         insert_customers(&schema, &["c0", "c1", "c2"]).await;
         insert_default_triage_exclusion_reason(&schema).await;
@@ -911,12 +859,12 @@ mod tests {
         insert_customer_policy(&schema, 2, "Customer 2 Policy", 2).await;
 
         // User with customers [0, 2] should see policies for 0 and 2, but not 1
-        let res = schema
-            .execute_with_guard(
-                r"{ triagePolicyList(first: 10) { totalCount nodes { name customerId } } }",
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r"{ triagePolicyList(first: 10) { totalCount nodes { name customerId } } }",
+            vec![0, 2],
+        )
+        .await;
         assert!(
             res.errors.is_empty(),
             "Expected no errors: {:?}",
@@ -934,12 +882,6 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_list_empty_scope_scoping_allowed() {
         let schema = TestSchema::new().await;
-        create_account(
-            &schema.store(),
-            "testuser",
-            Role::SecurityAdministrator,
-            Some(vec![]),
-        );
 
         insert_customers(&schema, &["c1"]).await;
         insert_default_triage_exclusion_reason(&schema).await;
@@ -947,12 +889,12 @@ mod tests {
         insert_customer_policy(&schema, 1, "Customer Policy", 0).await;
 
         // User with empty customer_ids should only see global policies
-        let res = schema
-            .execute_with_guard(
-                r"{ triagePolicyList(first: 10) { totalCount nodes { name } } }",
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r"{ triagePolicyList(first: 10) { totalCount nodes { name } } }",
+            vec![],
+        )
+        .await;
         assert!(
             res.errors.is_empty(),
             "Expected no errors: {:?}",
@@ -1012,20 +954,14 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_update_customer_scoping_allowed() {
         let schema = TestSchema::new().await;
-        create_account(
-            &schema.store(),
-            "testuser",
-            Role::SecurityAdministrator,
-            Some(vec![0]),
-        );
 
         insert_customers(&schema, &["c1"]).await;
         insert_default_triage_exclusion_reason(&schema).await;
         insert_customer_policy(&schema, 0, "Customer Policy", 0).await;
 
-        let res = schema
-            .execute_with_guard(
-                r#"mutation {
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"mutation {
                     updateTriagePolicy(
                         id: 0
                         old: {
@@ -1046,9 +982,9 @@ mod tests {
                         }
                     )
                 }"#,
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
+            vec![0],
+        )
+        .await;
         assert!(
             res.errors.is_empty(),
             "Expected no errors: {:?}",
@@ -1060,21 +996,15 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_update_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
-        create_account(
-            &schema.store(),
-            "testuser",
-            Role::SecurityAdministrator,
-            Some(vec![0]),
-        );
 
         insert_customers(&schema, &["c1", "c2"]).await;
         insert_default_triage_exclusion_reason(&schema).await;
         insert_customer_policy(&schema, 0, "Other Customer Policy", 1).await;
 
         // Scoped user should be denied from updating
-        let res = schema
-            .execute_with_guard(
-                r#"mutation {
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"mutation {
                     updateTriagePolicy(
                         id: 0
                         old: {
@@ -1095,9 +1025,9 @@ mod tests {
                         }
                     )
                 }"#,
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
+            vec![0],
+        )
+        .await;
         assert_eq!(res.errors.len(), 1);
         assert!(
             res.errors[0].message.contains("Forbidden"),
@@ -1144,21 +1074,15 @@ mod tests {
     #[tokio::test]
     async fn triage_policy_update_reassign_customer_scoping_forbidden() {
         let schema = TestSchema::new().await;
-        create_account(
-            &schema.store(),
-            "testuser",
-            Role::SecurityAdministrator,
-            Some(vec![0]),
-        );
 
         insert_customers(&schema, &["c1", "c2"]).await;
         insert_default_triage_exclusion_reason(&schema).await;
         insert_customer_policy(&schema, 0, "Customer 0 Policy", 0).await;
 
         // Scoped user should not be able to move policy to customer 1
-        let res = schema
-            .execute_with_guard(
-                r#"mutation {
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"mutation {
                     updateTriagePolicy(
                         id: 0
                         old: {
@@ -1179,9 +1103,9 @@ mod tests {
                         }
                     )
                 }"#,
-                RoleGuard::Role(Role::SecurityAdministrator),
-            )
-            .await;
+            vec![0],
+        )
+        .await;
         assert_eq!(res.errors.len(), 1);
         assert!(
             res.errors[0].message.contains("Forbidden"),
