@@ -41,6 +41,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   SystemAdministrator, denying SecurityAdministrator access.
 - Changed `EventTag` GraphQL authorization so `removeEventTag` and
   `updateEventTag` are now restricted to `SystemAdministrator`.
+- Restricted `removeEventTag` and `updateEventTag` GraphQL mutations to
+  `SystemAdministrator`.
 - `graphql_handler` and `graphql_ws_handler` now delegate certificate
   validation to `authenticator.authenticate()` rather than the previously
   internal `validate_client_cert()`, making the validation policy replaceable
