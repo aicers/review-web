@@ -1,6 +1,7 @@
 use async_graphql::{Context, ID, Object, Result};
 use futures::future::join_all;
 use itertools::Itertools;
+use review_database::AgentStatus;
 use tracing::{error, info, warn};
 
 use super::{
@@ -13,6 +14,44 @@ use crate::graphql::{
     node::input::NodeInput,
 };
 use crate::{error_with_username, info_with_username, warn_with_username};
+
+fn update_agent_status_to_unknown(ctx: &Context<'_>, hostname: &str) {
+    let Ok(store) = crate::graphql::get_store(ctx) else {
+        error!("Failed to get store to update agent status for {hostname}");
+        return;
+    };
+    let mut map = store.node_map();
+    let Some(agent_keys) = map
+        .iter(review_database::event::Direction::Forward, None)
+        .find_map(|result| {
+            let node = result.ok()?;
+            if node
+                .profile
+                .as_ref()
+                .is_some_and(|p| p.hostname == hostname)
+            {
+                Some(
+                    node.agents
+                        .iter()
+                        .map(|a| a.key.clone())
+                        .collect::<Vec<String>>(),
+                )
+            } else {
+                None
+            }
+        })
+    else {
+        error!("No node found for hostname: {hostname}");
+        return;
+    };
+    for agent_key in &agent_keys {
+        if let Err(e) =
+            map.update_agent_status_by_hostname(hostname, agent_key, AgentStatus::Unknown)
+        {
+            error!("Failed to update agent status to Unknown for {hostname}/{agent_key}: {e}");
+        }
+    }
+}
 
 #[Object]
 impl NodeControlMutation {
@@ -28,6 +67,7 @@ impl NodeControlMutation {
         } else {
             info_with_username!(ctx, "Reboot request sent to {hostname}");
             agents.reboot(&hostname).await?;
+            update_agent_status_to_unknown(ctx, &hostname);
             Ok(hostname)
         }
     }
@@ -46,6 +86,7 @@ impl NodeControlMutation {
         } else {
             info_with_username!(ctx, "Shutdown request sent to {hostname}");
             agents.halt(&hostname).await?;
+            update_agent_status_to_unknown(ctx, &hostname);
             Ok(hostname)
         }
     }
@@ -333,6 +374,7 @@ mod tests {
     use assert_json_diff::assert_json_eq;
     use async_trait::async_trait;
     use ipnet::IpNet;
+    use review_database::AgentStatus;
     use serde_json::json;
 
     use crate::graphql::{
@@ -2488,8 +2530,8 @@ mod tests {
             anyhow::bail!("{hostname} is unreachable")
         }
 
-        async fn reboot(&self, hostname: &str) -> Result<(), anyhow::Error> {
-            anyhow::bail!("{hostname} is unreachable")
+        async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error> {
+            Ok(())
         }
 
         async fn update_config(&self, agent_key: &str) -> Result<(), anyhow::Error> {
@@ -2606,6 +2648,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_node_reboot() {
+        let mut online_apps_by_host_id = HashMap::new();
+        insert_apps(
+            "analysis",
+            &["semi-supervised"],
+            &mut online_apps_by_host_id,
+        );
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id,
+            available_agents: vec!["semi-supervised@analysis"],
+        });
+
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // Insert a node with hostname "analysis" and an agent with ENABLED status
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "analysis node",
+                        customerId: 0,
+                        description: "Analysis node for testing reboot.",
+                        hostname: "analysis",
+                        agents: [{
+                            key: "semi-supervised"
+                            kind: SEMI_SUPERVISED
+                            status: ENABLED
+                            draft: "test = 'toml'"
+                        }],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Apply the node so that profile (with hostname) is set from profile_draft
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "analysis node",
+                            nameDraft: "analysis node",
+                            profile: null,
+                            profileDraft: {
+                                customerId: "0",
+                                description: "Analysis node for testing reboot.",
+                                hostname: "analysis"
+                            },
+                            agents: [
+                                {
+                                    key: "semi-supervised",
+                                    kind: SEMI_SUPERVISED,
+                                    status: ENABLED,
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+
+        // Verify the agent status is ENABLED before reboot
+        let (node, _, _) = schema.store().node_map().get_by_id(0).unwrap().unwrap();
+        assert_eq!(node.agents.len(), 1);
+        assert_eq!(node.agents[0].status, AgentStatus::Enabled);
+
+        // node_reboot
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                nodeReboot(hostname:"analysis")
+            }"#,
+            )
+            .await;
+
+        assert_eq!(res.data.to_string(), r#"{nodeReboot: "analysis"}"#);
+
+        // Verify the agent status is updated to Unknown after reboot
+        let (node, _, _) = schema.store().node_map().get_by_id(0).unwrap().unwrap();
+        assert_eq!(node.agents[0].status, AgentStatus::Unknown);
+    }
+
+    #[tokio::test]
     async fn test_node_shutdown() {
         let mut online_apps_by_host_id = HashMap::new();
         insert_apps(
@@ -2621,6 +2754,65 @@ mod tests {
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
+        // Insert a node with hostname "analysis" and an agent with ENABLED status
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "analysis node",
+                        customerId: 0,
+                        description: "Analysis node for testing shutdown.",
+                        hostname: "analysis",
+                        agents: [{
+                            key: "semi-supervised"
+                            kind: SEMI_SUPERVISED
+                            status: ENABLED
+                            draft: "test = 'toml'"
+                        }],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        // Apply the node so that profile (with hostname) is set from profile_draft
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "analysis node",
+                            nameDraft: "analysis node",
+                            profile: null,
+                            profileDraft: {
+                                customerId: "0",
+                                description: "Analysis node for testing shutdown.",
+                                hostname: "analysis"
+                            },
+                            agents: [
+                                {
+                                    key: "semi-supervised",
+                                    kind: SEMI_SUPERVISED,
+                                    status: ENABLED,
+                                    config: null,
+                                    draft: "test = 'toml'"
+                                }
+                            ],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+
+        // Verify the agent status is ENABLED before shutdown
+        let (node, _, _) = schema.store().node_map().get_by_id(0).unwrap().unwrap();
+        assert_eq!(node.agents.len(), 1);
+        assert_eq!(node.agents[0].status, AgentStatus::Enabled);
+
         // node_shutdown
         let res = schema
             .execute_as_system_admin(
@@ -2631,5 +2823,9 @@ mod tests {
             .await;
 
         assert_eq!(res.data.to_string(), r#"{nodeShutdown: "analysis"}"#);
+
+        // Verify the agent status is updated to Unknown after shutdown
+        let (node, _, _) = schema.store().node_map().get_by_id(0).unwrap().unwrap();
+        assert_eq!(node.agents[0].status, AgentStatus::Unknown);
     }
 }
