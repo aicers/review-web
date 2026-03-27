@@ -1,4 +1,4 @@
-use std::{convert::TryInto, mem::size_of};
+use std::convert::TryInto;
 
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
@@ -13,7 +13,7 @@ use tracing::info;
 use super::{
     Role, RoleGuard,
     cluster::try_id_args_into_ints,
-    customer::{Customer, HostNetworkGroup, HostNetworkGroupInput},
+    customer::{HostNetworkGroup, HostNetworkGroupInput},
 };
 use crate::graphql::query_with_constraints;
 use crate::info_with_username;
@@ -80,20 +80,13 @@ impl NetworkMutation {
         name: String,
         description: String,
         networks: HostNetworkGroupInput,
-        customer_ids: Vec<ID>,
         tag_ids: Vec<ID>,
     ) -> Result<ID> {
-        let customer_ids = id_args_into_uints(&customer_ids)?;
         let tag_ids = id_args_into_uints(&tag_ids)?;
         let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
-        let entry = review_database::Network::new(
-            name.clone(),
-            description,
-            networks.try_into()?,
-            customer_ids,
-            tag_ids,
-        );
+        let entry =
+            review_database::Network::new(name.clone(), description, networks.try_into()?, tag_ids);
         let id = map.insert(entry)?;
         info_with_username!(ctx, "Network {name} has been registered");
         Ok(ID(id.to_string()))
@@ -116,17 +109,10 @@ impl NetworkMutation {
         let mut removed = Vec::with_capacity(ids.len());
         for id in ids {
             let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-            let mut key = map.remove(i)?;
-
-            let len = key.len();
-            let name = if len > size_of::<u32>() {
-                key.truncate(len - size_of::<u32>());
-                match String::from_utf8(key) {
-                    Ok(key) => key,
-                    Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
-                }
-            } else {
-                String::from_utf8_lossy(&key).into()
+            let key = map.remove(i)?;
+            let name = match String::from_utf8(key) {
+                Ok(key) => key,
+                Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
             };
             info_with_username!(ctx, "Network {name} has been deleted");
             removed.push(name);
@@ -167,7 +153,6 @@ struct NetworkUpdateInput {
     name: Option<String>,
     description: Option<String>,
     networks: Option<HostNetworkGroupInput>,
-    customer_ids: Option<Vec<ID>>,
     tag_ids: Option<Vec<ID>>,
 }
 
@@ -175,13 +160,11 @@ impl TryFrom<NetworkUpdateInput> for review_database::NetworkUpdate {
     type Error = async_graphql::Error;
 
     fn try_from(input: NetworkUpdateInput) -> Result<Self, Self::Error> {
-        let customer_ids = try_id_args_into_ints::<u32>(input.customer_ids)?;
         let tag_ids = try_id_args_into_ints::<u32>(input.tag_ids)?;
         Ok(Self::new(
             input.name,
             input.description,
             input.networks.and_then(|v| v.try_into().ok()),
-            customer_ids,
             tag_ids,
         ))
     }
@@ -207,22 +190,6 @@ impl Network {
 
     async fn networks(&self) -> HostNetworkGroup<'_> {
         (&self.inner.networks).into()
-    }
-
-    #[graphql(name = "customerList")]
-    async fn customer_ids(&self, ctx: &Context<'_>) -> Result<Vec<Customer>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.customer_map();
-        let mut customers = Vec::new();
-
-        for &id in &self.inner.customer_ids {
-            #[allow(clippy::cast_sign_loss)] // u32 stored as i32 in database
-            let Some(customer) = map.get_by_id(id)? else {
-                continue;
-            };
-            customers.push(customer.into());
-        }
-        Ok(customers)
     }
 
     async fn tag_ids(&self) -> Vec<ID> {
@@ -280,6 +247,95 @@ async fn load(
 #[cfg(test)]
 mod tests {
     use crate::graphql::TestSchema;
+
+    #[tokio::test]
+    async fn network_list_returns_empty() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(r"{networkList{edges{node{name}}totalCount}}")
+            .await;
+
+        assert_eq!(
+            res.data.to_string(),
+            r#"{networkList: {edges: [], totalCount: "0"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn network_list_returns_inserted_entry() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNetwork(name: "n1", description: "desc", networks: {
+                        hosts: ["1.1.1.1"], networks: [], ranges: []
+                    }, tagIds: [])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r"{networkList{edges{node{name description tagIds}}totalCount}}",
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{networkList: {edges: [{node: {name: "n1", description: "desc", tagIds: []}}], totalCount: "1"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn network_returns_error_for_missing_id() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(r#"{network(id: "0") {name}}"#)
+            .await;
+
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "no such network");
+    }
+
+    #[tokio::test]
+    async fn network_returns_inserted_entry() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNetwork(name: "n1", description: "desc", networks: {
+                        hosts: ["1.1.1.1"], networks: [], ranges: []
+                    }, tagIds: [])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r#"{network(id: "0") {name description tagIds}}"#)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{network: {name: "n1", description: "desc", tagIds: []}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn network_customer_list_field_is_removed() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(r#"{network(id: "0") {customerList{name}}}"#)
+            .await;
+
+        assert_eq!(res.errors.len(), 1);
+        assert!(res.errors[0].message.contains("customerList"));
+    }
+
     #[tokio::test]
     async fn remove_networks() {
         let schema = TestSchema::new().await;
@@ -296,7 +352,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "", networks: {
                         hosts: [], networks: [], ranges: []
-                    }, customerIds: [], tagIds: [])
+                    }, tagIds: [])
                 }"#,
             )
             .await;
@@ -337,7 +393,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n0", description: "", networks: {
                         hosts: ["1.1.1.1"], networks: [], ranges: []
-                    }, customerIds: [], tagIds: [])
+                    }, tagIds: [])
                 }"#,
             )
             .await;
@@ -355,7 +411,6 @@ mod tests {
                             networks: [],
                             ranges: []
                         }
-                        customerIds: [],
                         tagIds: []
                     },
                     new: {
@@ -365,7 +420,6 @@ mod tests {
                             networks: [],
                             ranges: []
                         }
-                        customerIds: [],
                         tagIds: []
                     }
                 )
@@ -383,7 +437,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "", networks: {
                         hosts: [], networks: [], ranges: []
-                    }, customerIds: [], tagIds: [0, 1, 2])
+                    }, tagIds: [0, 1, 2])
                 }"#,
             )
             .await;
