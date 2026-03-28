@@ -499,12 +499,11 @@ mod tests {
     #[tokio::test]
     async fn test_check_customer_membership_scoped_user_allowed() {
         let test_ctx = TestContext::new_without_account("scoped_user");
-        let request =
-            Request::new(r#"{ checkCustomerMembership(customerId: "2") }"#)
-                .data(crate::graphql::RoleGuard::Role(
-                    crate::graphql::Role::SecurityMonitor,
-                ))
-                .data(crate::graphql::CustomerIds(Some(vec![1, 2, 3])));
+        let request = Request::new(r#"{ checkCustomerMembership(customerId: "2") }"#)
+            .data(crate::graphql::RoleGuard::Role(
+                crate::graphql::Role::SecurityMonitor,
+            ))
+            .data(crate::graphql::CustomerIds(Some(vec![1, 2, 3])));
         let res = test_ctx.schema.execute(request).await;
 
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
@@ -524,12 +523,11 @@ mod tests {
     #[tokio::test]
     async fn test_check_customer_membership_scoped_user_forbidden() {
         let test_ctx = TestContext::new_without_account("scoped_user");
-        let request =
-            Request::new(r#"{ checkCustomerMembership(customerId: "2") }"#)
-                .data(crate::graphql::RoleGuard::Role(
-                    crate::graphql::Role::SecurityMonitor,
-                ))
-                .data(crate::graphql::CustomerIds(Some(vec![1])));
+        let request = Request::new(r#"{ checkCustomerMembership(customerId: "2") }"#)
+            .data(crate::graphql::RoleGuard::Role(
+                crate::graphql::Role::SecurityMonitor,
+            ))
+            .data(crate::graphql::CustomerIds(Some(vec![1])));
         let res = test_ctx.schema.execute(request).await;
 
         assert_eq!(res.errors.len(), 1);
@@ -550,12 +548,11 @@ mod tests {
     #[tokio::test]
     async fn test_check_customer_membership_invalid_customer_id() {
         let test_ctx = TestContext::new_without_account("scoped_user");
-        let request =
-            Request::new(r#"{ checkCustomerMembership(customerId: "abc") }"#)
-                .data(crate::graphql::RoleGuard::Role(
-                    crate::graphql::Role::SecurityMonitor,
-                ))
-                .data(crate::graphql::CustomerIds(Some(vec![1])));
+        let request = Request::new(r#"{ checkCustomerMembership(customerId: "abc") }"#)
+            .data(crate::graphql::RoleGuard::Role(
+                crate::graphql::Role::SecurityMonitor,
+            ))
+            .data(crate::graphql::CustomerIds(Some(vec![1])));
         let res = test_ctx.schema.execute(request).await;
 
         assert_eq!(res.errors.len(), 1);
@@ -575,11 +572,9 @@ mod tests {
     #[tokio::test]
     async fn test_check_customer_membership_admin_allowed() {
         let test_ctx = TestContext::new_without_account("admin_user");
-        let request =
-            Request::new(r#"{ checkCustomerMembership(customerId: "999") }"#)
-                .data(crate::graphql::RoleGuard::Role(
-                    crate::graphql::Role::SystemAdministrator,
-                ));
+        let request = Request::new(r#"{ checkCustomerMembership(customerId: "999") }"#).data(
+            crate::graphql::RoleGuard::Role(crate::graphql::Role::SystemAdministrator),
+        );
         let res = test_ctx.schema.execute(request).await;
 
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
