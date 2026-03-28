@@ -43,6 +43,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   validation to `authenticator.authenticate()` rather than the previously
   internal `validate_client_cert()`, making the validation policy replaceable
   at runtime. (auth-mtls)
+- Enforced customer scoping for Node GraphQL operations for non-admin users.
+  Affected APIs: `node`, `nodeList`, `nodeStatusList`, `insertNode`,
+  `updateNodeDraft`, `removeNodes`, `applyNode`, `nodeReboot`,
+  `nodeShutdown`. Administrators (`customer_ids = None`) retain full access.
 
 ### Removed
 

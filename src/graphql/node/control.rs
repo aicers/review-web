@@ -5,7 +5,7 @@ use review_database::AgentStatus;
 use tracing::{error, info, warn};
 
 use super::{
-    super::{BoxedAgentManager, Role, RoleGuard},
+    super::{BoxedAgentManager, Role, RoleGuard, customer_access},
     NodeControlMutation, SEMI_SUPERVISED_AGENT, gen_agent_key,
 };
 use crate::graphql::{
@@ -59,6 +59,8 @@ impl NodeControlMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn node_reboot(&self, ctx: &Context<'_>, hostname: String) -> Result<String> {
+        customer_access::check_hostname_access(ctx, &hostname)?;
+
         let agents = ctx.data::<BoxedAgentManager>()?;
         let review_hostname = roxy::hostname();
         if !review_hostname.is_empty() && review_hostname == hostname {
@@ -75,6 +77,8 @@ impl NodeControlMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
     .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn node_shutdown(&self, ctx: &Context<'_>, hostname: String) -> Result<String> {
+        customer_access::check_hostname_access(ctx, &hostname)?;
+
         let agents = ctx.data::<BoxedAgentManager>()?;
         let review_hostname = roxy::hostname();
         if !review_hostname.is_empty() && review_hostname == hostname {
@@ -102,6 +106,12 @@ impl NodeControlMutation {
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_node(&self, ctx: &Context<'_>, id: ID, node: NodeInput) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
+
+        // Check customer scoping
+        customer_access::load_accessible_node(ctx, &id)?;
+        if let Some(profile_draft) = node.profile_draft.as_ref() {
+            customer_access::check_customer_membership(ctx, &profile_draft.customer_id)?;
+        }
 
         if node.name_draft.is_none() {
             // Since the `name` of the node is used as the key in the database, the `name_draft`
@@ -377,8 +387,9 @@ mod tests {
     use review_database::AgentStatus;
     use serde_json::json;
 
+    use super::super::test_support::{insert_active_node, insert_apps, update_account_customers};
     use crate::graphql::{
-        AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema,
+        AgentManager, BoxedAgentManager, Role, SamplingPolicy, TestSchema,
         customer::NetworksTargetAgentKeysPair,
     };
 
@@ -2551,14 +2562,6 @@ mod tests {
         }
     }
 
-    fn insert_apps(host: &str, apps: &[&str], map: &mut HashMap<String, Vec<(String, String)>>) {
-        let entries = apps
-            .iter()
-            .map(|&app| (format!("{app}@{host}"), app.to_string()))
-            .collect();
-        map.insert(host.to_string(), entries);
-    }
-
     struct FailingMockAgentManager {
         pub online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,
     }
@@ -2739,7 +2742,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_node_shutdown() {
+    async fn node_shutdown_customer_scoping_admin_allowed() {
         let mut online_apps_by_host_id = HashMap::new();
         insert_apps(
             "analysis",
@@ -2827,5 +2830,355 @@ mod tests {
         // Verify the agent status is updated to Unknown after shutdown
         let (node, _, _) = schema.store().node_map().get_by_id(0).unwrap().unwrap();
         assert_eq!(node.agents[0].status, AgentStatus::Unknown);
+    }
+
+    #[tokio::test]
+    async fn node_shutdown_customer_scoping_allowed() {
+        let mut online_apps_by_host_id = HashMap::new();
+        insert_apps(
+            "host-customer-1",
+            &["semi-supervised"],
+            &mut online_apps_by_host_id,
+        );
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id,
+            available_agents: vec!["semi-supervised@host-customer-1"],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let id0 = insert_active_node(&schema.store(), "shutdown_target", 1, "host-customer-1");
+        assert_eq!(id0, 0);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation { nodeShutdown(hostname: "host-customer-1") }"#,
+                Role::SecurityAdministrator,
+                Some(vec![1]),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(res.data.to_string(), r#"{nodeShutdown: "host-customer-1"}"#);
+    }
+
+    #[tokio::test]
+    async fn node_shutdown_customer_scoping_forbidden() {
+        let mut online_apps_by_host_id = HashMap::new();
+        insert_apps(
+            "host-customer-2",
+            &["semi-supervised"],
+            &mut online_apps_by_host_id,
+        );
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id,
+            available_agents: vec!["semi-supervised@host-customer-2"],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let id0 = insert_active_node(&schema.store(), "shutdown_target", 2, "host-customer-2");
+        assert_eq!(id0, 0);
+
+        // Scoped user with customer 1 cannot shutdown customer 2 node.
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation { nodeShutdown(hostname: "host-customer-2") }"#,
+                Role::SecurityAdministrator,
+                Some(vec![1]),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    #[tokio::test]
+    async fn node_reboot_customer_scoping_admin_allowed() {
+        let agent_manager: BoxedAgentManager = Box::new(FailingMockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+        });
+
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    nodeReboot(hostname:"analysis")
+                }"#,
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "analysis is unreachable");
+    }
+
+    #[tokio::test]
+    async fn node_reboot_customer_scoping_allowed() {
+        let agent_manager: BoxedAgentManager = Box::new(FailingMockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let id0 = insert_active_node(&schema.store(), "reboot_target", 1, "host-customer-1");
+        assert_eq!(id0, 0);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation { nodeReboot(hostname: "host-customer-1") }"#,
+                Role::SecurityAdministrator,
+                Some(vec![1]),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "host-customer-1 is unreachable");
+    }
+
+    #[tokio::test]
+    async fn node_reboot_customer_scoping_forbidden() {
+        let mut online_apps_by_host_id = HashMap::new();
+        insert_apps(
+            "host-customer-2",
+            &["semi-supervised"],
+            &mut online_apps_by_host_id,
+        );
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id,
+            available_agents: vec!["semi-supervised@host-customer-2"],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let id0 = insert_active_node(&schema.store(), "reboot_target", 2, "host-customer-2");
+        assert_eq!(id0, 0);
+
+        // Scoped user with customer 1 cannot reboot customer 2 node.
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation { nodeReboot(hostname: "host-customer-2") }"#,
+                Role::SecurityAdministrator,
+                Some(vec![1]),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    #[tokio::test]
+    async fn apply_node_customer_scoping_admin_allowed() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "apply_target",
+                        customerId: 2,
+                        description: "Target node",
+                        hostname: "host-customer-2",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "apply_target",
+                            nameDraft: "apply_target",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 2,
+                                description: "Target node",
+                                hostname: "host-customer-2",
+                            },
+                            agents: [],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+    }
+
+    #[tokio::test]
+    async fn apply_node_customer_scoping_allowed() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "apply_target",
+                        customerId: 1,
+                        description: "Target node",
+                        hostname: "host-customer-1",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "apply_target",
+                            nameDraft: "apply_target",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 1,
+                                description: "Target node",
+                                hostname: "host-customer-1",
+                            },
+                            agents: [],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+                Role::SecurityAdministrator,
+                Some(vec![1]),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(res.data.to_string(), r#"{applyNode: "0"}"#);
+    }
+
+    #[tokio::test]
+    async fn apply_node_customer_scoping_forbidden() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "apply_target",
+                        customerId: 2,
+                        description: "Target node",
+                        hostname: "host-customer-2",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "apply_target",
+                            nameDraft: "apply_target",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 2,
+                                description: "Target node",
+                                hostname: "host-customer-2",
+                            },
+                            agents: [],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+                Role::SecurityAdministrator,
+                Some(vec![1]),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    #[tokio::test]
+    async fn apply_node_customer_scoping_profile_draft_customer_change_forbidden() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "apply_target",
+                        customerId: 1,
+                        description: "Target node",
+                        hostname: "host-customer-1",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "apply_target",
+                            nameDraft: "apply_target",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 2,
+                                description: "Target node",
+                                hostname: "host-customer-2",
+                            },
+                            agents: [],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+                Role::SecurityAdministrator,
+                Some(vec![1]),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
     }
 }

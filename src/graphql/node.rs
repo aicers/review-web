@@ -3,6 +3,8 @@ mod crud;
 mod input;
 mod process;
 mod status;
+#[cfg(test)]
+pub(super) mod test_support;
 
 use std::{borrow::Cow, time::Duration};
 
@@ -13,7 +15,7 @@ use bincode::Options;
 use chrono::{DateTime, TimeZone, Utc};
 #[allow(clippy::module_name_repetitions)]
 pub use crud::agent_keys_by_customer_id;
-use database::Indexable;
+use database::{Indexable, event::Direction};
 use input::NodeInput;
 use review_database as database;
 use roxy::Process as RoxyProcess;
@@ -193,12 +195,31 @@ impl NodeProfile {
 
 struct NodeTotalCount;
 
+fn scoped_node_count(ctx: &Context<'_>) -> Result<usize> {
+    let users_customers = super::customer_access::users_customers(ctx)?;
+    let store = crate::graphql::get_store(ctx)?;
+    let map = store.node_map();
+
+    match users_customers.as_deref() {
+        None => Ok(map.count()?),
+        Some(users_customers) => {
+            let mut count = 0;
+            for entry in map.iter(Direction::Forward, None) {
+                let node = entry.map_err(|_| "invalid value in database")?;
+                if super::customer_access::can_access_node(Some(users_customers), &node) {
+                    count += 1;
+                }
+            }
+            Ok(count)
+        }
+    }
+}
+
 #[Object]
 impl NodeTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
-        let store = crate::graphql::get_store(ctx)?;
-        Ok(StringNumber(store.node_map().count()?))
+        Ok(StringNumber(scoped_node_count(ctx)?))
     }
 }
 
@@ -358,8 +379,7 @@ struct NodeStatusTotalCount;
 impl NodeStatusTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
-        let store = crate::graphql::get_store(ctx)?;
-        Ok(StringNumber(store.node_map().count()?))
+        Ok(StringNumber(scoped_node_count(ctx)?))
     }
 }
 
@@ -421,5 +441,128 @@ fn gen_agent_key(kind: AgentKind, hostname: &str) -> Result<String> {
         AgentKind::Sensor => Ok(format!("{SENSOR_AGENT}@{hostname}")),
         AgentKind::SemiSupervised => Ok(format!("{SEMI_SUPERVISED_AGENT}@{hostname}")),
         AgentKind::TimeSeriesGenerator => Err(anyhow::anyhow!("invalid node's agent type").into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::test_support::{MockAgentManager, insert_active_node, update_account_customers};
+    use crate::graphql::{BoxedAgentManager, CustomerIds, Role, RoleGuard, TestSchema};
+
+    async fn new_schema() -> TestSchema {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: std::collections::HashMap::default(),
+        });
+        TestSchema::new_with_params(agent_manager, None, "testuser").await
+    }
+
+    #[tokio::test]
+    async fn node_status_total_count_admin_allowed() {
+        let schema = new_schema().await;
+
+        let id0 = insert_active_node(
+            &schema.store(),
+            "status_count_customer_1",
+            1,
+            "host1.example.com",
+        );
+        let id1 = insert_active_node(
+            &schema.store(),
+            "status_count_customer_2",
+            2,
+            "host2.example.com",
+        );
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+
+        let res = schema
+            .execute_as_system_admin(r"{nodeStatusList(first: 10){totalCount edges{node{name}}}}")
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeStatusList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 2);
+        assert_eq!(data["nodeStatusList"]["totalCount"], json!("2"));
+    }
+
+    #[tokio::test]
+    async fn node_status_total_count_allowed() {
+        let schema = new_schema().await;
+
+        let id0 = insert_active_node(
+            &schema.store(),
+            "status_count_customer_1",
+            1,
+            "host1.example.com",
+        );
+        let id1 = insert_active_node(
+            &schema.store(),
+            "status_count_customer_2",
+            2,
+            "host2.example.com",
+        );
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        let res = schema
+            .execute_with_guard_and_data(
+                r"{nodeStatusList(first: 10){totalCount edges{node{name}}}}",
+                RoleGuard::Role(Role::SecurityAdministrator),
+                CustomerIds(Some(vec![1])),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeStatusList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["node"]["name"], "status_count_customer_1");
+        assert_eq!(data["nodeStatusList"]["totalCount"], json!("1"));
+    }
+
+    #[tokio::test]
+    async fn node_status_total_count_forbidden() {
+        let schema = new_schema().await;
+
+        let id0 = insert_active_node(
+            &schema.store(),
+            "status_count_customer_2",
+            2,
+            "host2.example.com",
+        );
+        assert_eq!(id0, 0);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+
+        let res = schema
+            .execute_with_guard_and_data(
+                r"{nodeStatusList(first: 10){totalCount edges{node{name}}}}",
+                RoleGuard::Role(Role::SecurityAdministrator),
+                CustomerIds(Some(vec![1])),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeStatusList"]["edges"].as_array().unwrap();
+        assert!(edges.is_empty());
+        assert_eq!(data["nodeStatusList"]["totalCount"], json!("0"));
     }
 }
