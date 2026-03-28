@@ -265,9 +265,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
 
         let res = schema
-            .execute_as_system_admin(
-                r"{networkList{edges{node{name description}}totalCount}}",
-            )
+            .execute_as_system_admin(r"{networkList{edges{node{name description}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
