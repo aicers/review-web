@@ -46,7 +46,7 @@ impl ClusterQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<OpaqueCursor<(i32, i64)>, Cluster, ClusterTotalCount, EmptyFields>> {
+    ) -> Result<Connection<OpaqueCursor<(u32, i64)>, Cluster, ClusterTotalCount, EmptyFields>> {
         let model = model.as_str().parse()?;
         let categories = try_id_args_into_ints::<i32>(categories)?;
         let detectors = try_id_args_into_ints::<i32>(detectors)?;
@@ -89,12 +89,12 @@ impl ClusterQuery {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid model id(u32)")?;
-        let cluster_id_to_i32 = cluster_id
-            .parse::<i32>()
+        let cluster_id = cluster_id
+            .parse::<u32>()
             .map_err(|_| "invalid cluster id")?;
 
         let store = crate::graphql::get_store(ctx)?;
-        let cluster_ids = load_cluster_ids(&store, model_id, Some(cluster_id_to_i32))?;
+        let cluster_ids = load_cluster_ids(&store, model_id, Some(cluster_id))?;
 
         let map = store.column_stats_map();
         let counts = map.get_top_ip_addresses_of_cluster(model_id, &cluster_ids, size)?;
@@ -119,7 +119,7 @@ impl ClusterQuery {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.time_series_map();
         let id = cluster_id
-            .parse::<i32>()
+            .parse::<u32>()
             .map_err(|_| "invalid cluster id")?;
         let model = model
             .as_str()
@@ -176,7 +176,7 @@ impl ClusterMutation {
 #[graphql(complex)]
 struct Cluster {
     #[graphql(skip)]
-    id: i32,
+    id: u32,
     #[graphql(skip)]
     category: i32,
     detector: i32,
@@ -391,11 +391,11 @@ async fn load(
     detectors: Option<Vec<i32>>,
     qualifiers: Option<Vec<i32>>,
     statuses: Option<Vec<i32>>,
-    after: Option<OpaqueCursor<(i32, i64)>>,
-    before: Option<OpaqueCursor<(i32, i64)>>,
+    after: Option<OpaqueCursor<(u32, i64)>>,
+    before: Option<OpaqueCursor<(u32, i64)>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<OpaqueCursor<(i32, i64)>, Cluster, ClusterTotalCount, EmptyFields>> {
+) -> Result<Connection<OpaqueCursor<(u32, i64)>, Cluster, ClusterTotalCount, EmptyFields>> {
     let is_first = first.is_some();
     let limit = slicing::len(first, last)?;
     let store = crate::graphql::get_store(ctx)?;
@@ -472,8 +472,8 @@ const UNCATEGORIZED: i32 = 2;
 fn load_cluster_ids(
     store: &database::Store,
     model_id: u32,
-    cluster_id: Option<i32>,
-) -> Result<Vec<i32>> {
+    cluster_id: Option<u32>,
+) -> Result<Vec<u32>> {
     let map = store.cluster_map();
     let clusters = map.load_clusters(
         model_id,
@@ -487,7 +487,7 @@ fn load_cluster_ids(
         usize::MAX,
     )?;
 
-    let ids: Vec<i32> = clusters
+    let ids: Vec<u32> = clusters
         .into_iter()
         .filter(|c| c.category_id != UNCATEGORIZED)
         .filter(|c| cluster_id.is_none_or(|id| c.id == id))

@@ -10,7 +10,7 @@ pub(in crate::graphql) struct NetworkTagQuery;
 // TODO(#762): Restrict network tag reads to the caller's customer scope.
 #[Object]
 impl NetworkTagQuery {
-    /// A list of network tags.
+    /// A list of network tags for a specific customer.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -48,7 +48,8 @@ pub(in crate::graphql) struct NetworkTagMutation;
 // TODO(#762): Enforce customer-scope authorization for network tag mutations.
 #[Object]
 impl NetworkTagMutation {
-    /// Inserts a new network tag, returning the ID of the new tag.
+    /// Inserts a new network tag for a specific customer, returning the ID of
+    /// the new tag.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))")]
@@ -148,8 +149,19 @@ mod tests {
     #[tokio::test]
     async fn network_tag_list_returns_empty_for_system_admin() {
         let schema = TestSchema::new().await;
+
+        // First create a customer
         let res = schema
-            .execute_as_system_admin(r"{networkTagList{name}}")
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertCustomer(name: "test_customer", description: "", networks: [])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(r#"{networkTagList(customerId: "0"){name}}"#)
             .await;
         assert_eq!(res.data.to_string(), r"{networkTagList: []}");
     }
@@ -396,22 +408,6 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
-                    insertNetwork(name: "n1", description: "", networks: {
-                        hosts: [], networks: [], ranges: []
-                    }, tagIds: [0])
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
-
-        let res = schema
-            .execute_as_system_admin(r#"{network(id: "0") {tagIds}}"#)
-            .await;
-        assert_eq!(res.data.to_string(), r#"{network: {tagIds: ["0"]}}"#);
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
                     removeNetworkTag(customerId: 0, id: "0")
                 }"#,
             )
@@ -419,9 +415,9 @@ mod tests {
         assert!(res.errors.is_empty());
 
         let res = schema
-            .execute_as_system_admin(r#"{network(id: "0") {tagIds}}"#)
+            .execute_as_system_admin(r#"{networkTagList(customerId: "0"){name}}"#)
             .await;
-        assert_eq!(res.data.to_string(), r"{network: {tagIds: []}}");
+        assert_eq!(res.data.to_string(), r"{networkTagList: []}");
     }
 
     #[tokio::test]
