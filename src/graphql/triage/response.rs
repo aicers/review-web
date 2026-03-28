@@ -369,7 +369,7 @@ mod tests {
         let res = schema
             .execute_as_scoped_user(
                 r"{triageResponseList{totalCount}}",
-                Role::SecurityAdministrator,
+                Role::SystemAdministrator,
                 None,
             )
             .await;
@@ -654,7 +654,7 @@ mod tests {
         let res = schema
             .execute_as_scoped_user(
                 r#"{ triageResponse(sensor: "sensor-a", time: "2024-01-01T00:00:00Z") { id remarks } }"#,
-                Role::SecurityAdministrator,
+                Role::SystemAdministrator,
                 None,
             )
             .await;
@@ -742,7 +742,7 @@ mod tests {
                         remarks: "ok"
                     )
                 }"#,
-                Role::SecurityAdministrator,
+                Role::SystemAdministrator,
                 None,
             )
             .await;
@@ -817,7 +817,7 @@ mod tests {
 
         let query = format!(r"mutation {{ removeTriageResponses(ids: [{id}]) }}");
         let res = schema
-            .execute_as_scoped_user(&query, Role::SecurityAdministrator, None)
+            .execute_as_scoped_user(&query, Role::SystemAdministrator, None)
             .await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
         assert_eq!(
@@ -924,7 +924,7 @@ mod tests {
             }}"#,
         );
         let res = schema
-            .execute_as_scoped_user(&query, Role::SecurityAdministrator, None)
+            .execute_as_scoped_user(&query, Role::SystemAdministrator, None)
             .await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
         assert_eq!(
