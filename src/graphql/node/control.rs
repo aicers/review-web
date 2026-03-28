@@ -2899,16 +2899,8 @@ mod tests {
 
     #[tokio::test]
     async fn node_reboot_customer_scoping_admin_allowed() {
-        let mut online_apps_by_host_id = HashMap::new();
-        insert_apps(
-            "analysis",
-            &["semi-supervised"],
-            &mut online_apps_by_host_id,
-        );
-
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
-            online_apps_by_host_id,
-            available_agents: vec!["semi-supervised@analysis"],
+        let agent_manager: BoxedAgentManager = Box::new(FailingMockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
         });
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -2926,16 +2918,8 @@ mod tests {
 
     #[tokio::test]
     async fn node_reboot_customer_scoping_allowed() {
-        let mut online_apps_by_host_id = HashMap::new();
-        insert_apps(
-            "host-customer-1",
-            &["semi-supervised"],
-            &mut online_apps_by_host_id,
-        );
-
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
-            online_apps_by_host_id,
-            available_agents: vec!["semi-supervised@host-customer-1"],
+        let agent_manager: BoxedAgentManager = Box::new(FailingMockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 

@@ -1213,41 +1213,6 @@ impl TestSchema {
         cid
     }
 
-    #[cfg(feature = "auth-jwt")]
-    fn upsert_test_account(&self, username: &str, role: Role, customer_ids: Option<Vec<u32>>) {
-        let account = database::types::Account::new(
-            username,
-            "password",
-            role,
-            "Test User".to_string(),
-            "Testing".to_string(),
-            None,
-            None,
-            None,
-            None,
-            customer_ids,
-        )
-        .expect("test account construction should always succeed");
-        let store = self
-            .store
-            .write()
-            .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
-        if store
-            .account_map()
-            .contains(username)
-            .expect("test account lookup should always succeed")
-        {
-            store
-                .account_map()
-                .delete(username)
-                .expect("test account delete should always succeed");
-        }
-        store
-            .account_map()
-            .insert(&account)
-            .expect("test account insert should always succeed");
-    }
-
     fn request_with_guard(
         &self,
         request: async_graphql::Request,
