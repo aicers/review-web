@@ -7,7 +7,7 @@ use async_graphql::{
     types::ID,
 };
 use chrono::{DateTime, Utc};
-use review_database::{Iterable, event::Direction};
+use review_database::{self as database, Iterable, Store, event::Direction};
 use serde::{Deserialize, Serialize};
 
 use super::{BoxedAgentManager, IpAddress, Role, RoleGuard};
@@ -318,6 +318,27 @@ async fn load_immutable(ctx: &Context<'_>) -> Result<Vec<Policy>> {
     }
 
     Ok(rtn)
+}
+
+/// Returns the sampling policy list for the given customer.
+///
+/// # Errors
+///
+/// Returns an error if the sampling policy database could not be
+/// retrieved.
+pub fn get_sampling_policies(
+    db: &Store,
+    customer_id: u32,
+) -> Result<Vec<database::SamplingPolicy>> {
+    let map = db.sampling_policy_map();
+    let mut policies = vec![];
+    let key = customer_id.to_be_bytes();
+
+    for res in map.prefix_iter(Direction::Forward, None, &key) {
+        let policy = res?;
+        policies.push(policy);
+    }
+    Ok(policies)
 }
 
 #[Object]
