@@ -20,6 +20,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   node belonging to one of their accessible customers. Affected APIs:
   `triageResponse`, `triageResponseList`, `insertTriageResponse`,
   `updateTriageResponse`, `removeTriageResponses`.
+- Added customer scoping for `TriagePolicy` GraphQL APIs. Non-admin users can
+  only access policies that belong to their assigned customers or global
+  policies (those without a `customerId`). Admin users retain full access to
+  all policies regardless of customer assignment.
+  - Affected APIs: `triagePolicy`, `triagePolicyList`, `updateTriagePolicy`,
+    `removeTriagePolicies`.
 
 ### Changed
 
@@ -43,6 +49,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   validation to `authenticator.authenticate()` rather than the previously
   internal `validate_client_cert()`, making the validation policy replaceable
   at runtime. (auth-mtls)
+- Restricted existing `TriagePolicy` GraphQL APIs to the requester's customer
+  scope. Non-admin users can now access only policies that belong to their
+  assigned customers or global policies (those without a `customerId`), while
+  admin users retain full access.
+  - Affected APIs: `triagePolicy`, `triagePolicyList`, `updateTriagePolicy`,
+    `removeTriagePolicies`.
 
 ### Removed
 
