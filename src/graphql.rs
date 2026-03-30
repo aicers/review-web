@@ -409,19 +409,29 @@ pub(crate) fn get_store<'a>(ctx: &'a Context<'a>) -> Result<std::sync::RwLockRea
 }
 
 /// Parses, deduplicates, sorts, and validates customer IDs from a
-/// GraphQL `Option<Vec<ID>>`.
+/// GraphQL `Option<Vec<ID>>`, enforcing customer scoping for
+/// non-admin users.
+///
+/// When `customer_ids` is `None`, admins see all customers while
+/// scoped users are automatically restricted to their own customers.
+/// When `customer_ids` is `Some`, scoped users must have membership
+/// for every requested customer.
 ///
 /// # Errors
 ///
-/// Returns an error if any ID cannot be parsed as `u32` or if a
-/// customer with the given ID does not exist in the store. Also
-/// returns an error when an empty customer ID list is provided.
+/// Returns an error if any ID cannot be parsed as `u32`, if a
+/// customer with the given ID does not exist in the store, if an
+/// empty customer ID list is provided, or if a scoped user requests
+/// a customer they do not have access to.
 fn parse_and_validate_customer_ids(
     ctx: &Context<'_>,
     customer_ids: Option<Vec<ID>>,
 ) -> Result<Option<Vec<u32>>> {
+    let users_cids = customer_access::users_customers(ctx)?;
+
     let Some(ids) = customer_ids else {
-        return Ok(None);
+        // No explicit filter: admins see all, scoped users see their own.
+        return Ok(users_cids);
     };
 
     if ids.is_empty() {
@@ -439,6 +449,11 @@ fn parse_and_validate_customer_ids(
 
     parsed.sort_unstable();
     parsed.dedup();
+
+    // Scoped users may only query their own customers.
+    if !customer_access::has_all_membership(users_cids.as_deref(), &parsed) {
+        return Err("access denied: requested customer is not accessible".into());
+    }
 
     let store = get_store(ctx)?;
     let customer_map = store.customer_map();
