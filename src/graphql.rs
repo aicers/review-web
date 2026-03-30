@@ -1222,7 +1222,8 @@ impl TestSchema {
         } else {
             request
         };
-        request.data(guard)
+        // Add CustomerIds with None (admin access) by default for existing tests
+        request.data(guard).data(CustomerIds(None))
     }
 
     fn request_with_context(
