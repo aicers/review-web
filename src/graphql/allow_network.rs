@@ -432,7 +432,7 @@ async fn apply_allow_networks(
 
 #[cfg(test)]
 mod tests {
-    use crate::graphql::TestSchema;
+    use crate::graphql::{Role, TestSchema};
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
@@ -703,6 +703,135 @@ mod tests {
                 .expect("error must exist")
                 .message
                 .contains("no such customer"),
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn test_allow_network_scoped_user() {
+        let schema = TestSchema::new().await;
+
+        // Create two customers and insert a network for each.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertCustomer(name: "c0", description: "", networks: [])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertCustomer(name: "c1", description: "", networks: [])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertAllowNetwork(
+                        name: "Net A"
+                        customerId: 0
+                        networks: { hosts: ["1.1.1.1"], networks: [], ranges: [] }
+                        description: "Desc A"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty());
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertAllowNetwork(
+                        name: "Net B"
+                        customerId: 1
+                        networks: { hosts: ["2.2.2.2"], networks: [], ranges: [] }
+                        description: "Desc B"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty());
+
+        // Scoped user with access to customer 0 only.
+        // Querying their own customer succeeds.
+        let res = schema
+            .execute_as_scoped_user(
+                r"query {
+                    allowNetworkList(customerIds: [0], first: 10) {
+                        totalCount
+                        nodes { name customerId }
+                    }
+                }",
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{allowNetworkList: {totalCount: "1", nodes: [{name: "Net A", customerId: "0"}]}}"#
+        );
+
+        // Querying another customer is denied.
+        let res = schema
+            .execute_as_scoped_user(
+                r"query {
+                    allowNetworkList(customerIds: [1], first: 10) {
+                        totalCount
+                    }
+                }",
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors
+                .first()
+                .expect("error must exist")
+                .message
+                .contains("access denied"),
+        );
+
+        // Omitting customerIds returns only the scoped user's data.
+        let res = schema
+            .execute_as_scoped_user(
+                r"query {
+                    allowNetworkList(first: 10) {
+                        totalCount
+                        nodes { name customerId }
+                    }
+                }",
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{allowNetworkList: {totalCount: "1", nodes: [{name: "Net A", customerId: "0"}]}}"#
+        );
+
+        // Admin (None) still sees all customers when omitting customerIds.
+        let res = schema
+            .execute_as_system_admin(
+                r"query {
+                    allowNetworkList(first: 10) {
+                        totalCount
+                    }
+                }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{allowNetworkList: {totalCount: "2"}}"#
         );
     }
 }
