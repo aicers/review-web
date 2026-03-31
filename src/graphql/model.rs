@@ -656,7 +656,7 @@ impl TopTrendsByColumn {
 }
 
 struct ClusterTrend {
-    cluster_id: String,
+    cluster_id: u32,
     series: Vec<TimeCount>,
     trend: Vec<usize>,
     lines: Vec<LineSegment>,
@@ -670,8 +670,8 @@ struct ClusterTrend {
 
 #[Object]
 impl ClusterTrend {
-    async fn cluster_id(&self) -> &str {
-        &self.cluster_id
+    async fn cluster_id(&self) -> ID {
+        ID(self.cluster_id.to_string())
     }
 
     async fn series(&self) -> &[TimeCount] {
@@ -728,7 +728,7 @@ impl ClusterTrend {
         trendi_order: i32,
         min_slope: f64,
     ) -> Option<Self> {
-        let cluster_id = inner.id.to_string();
+        let cluster_id = inner.id;
         let series = inner.time_counts;
         let Ok(trend) = get_trend(&series, cutoff_rate, trendi_order) else {
             return None;

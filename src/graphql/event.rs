@@ -2189,7 +2189,8 @@ mod tests {
                             hosts: ["0.0.0.4"],
                             networks: [],
                             ranges: []
-                        }
+                        },
+                        tagIds: []
                     )
                 }"#,
             )

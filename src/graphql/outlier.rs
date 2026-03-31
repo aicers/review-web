@@ -320,6 +320,7 @@ async fn load_outliers(
 pub(super) struct RankedOutlier {
     #[graphql(skip)]
     id: i64,
+    #[graphql(skip)]
     model_id: u32,
     timestamp: i64,
     rank: i64,
@@ -346,6 +347,10 @@ impl From<review_database::OutlierInfo> for RankedOutlier {
 impl RankedOutlier {
     async fn id(&self) -> ID {
         ID(self.id.to_string())
+    }
+
+    async fn model_id(&self) -> ID {
+        ID(self.model_id.to_string())
     }
 }
 
@@ -446,6 +451,7 @@ pub(super) struct Outlier {
     #[graphql(skip)]
     pub(super) events: Vec<i64>,
     pub(super) size: i64,
+    #[graphql(skip)]
     pub(super) model_id: u32,
 }
 
@@ -453,6 +459,10 @@ pub(super) struct Outlier {
 impl Outlier {
     async fn id(&self) -> ID {
         ID(self.id.to_string())
+    }
+
+    async fn model_id(&self) -> ID {
+        ID(self.model_id.to_string())
     }
 
     async fn events(&self) -> Result<Vec<DateTime<Utc>>> {

@@ -77,7 +77,7 @@ impl ClusterQuery {
         &self,
         ctx: &Context<'_>,
         model: ID,
-        cluster_id: String,
+        cluster_id: ID,
         size: Option<i32>,
     ) -> Result<Vec<TopElementCountsByColumn>> {
         const DEFAULT_SIZE: i32 = 30;
@@ -90,6 +90,7 @@ impl ClusterQuery {
             .parse::<u32>()
             .map_err(|_| "invalid model id(u32)")?;
         let cluster_id = cluster_id
+            .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid cluster id")?;
 
@@ -110,7 +111,7 @@ impl ClusterQuery {
         &self,
         ctx: &Context<'_>,
         model: ID,
-        cluster_id: String,
+        cluster_id: ID,
         cutoff_rate: Option<f64>,
         trendi_order: Option<i32>,
         start: Option<i64>,
@@ -119,6 +120,7 @@ impl ClusterQuery {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.time_series_map();
         let id = cluster_id
+            .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid cluster id")?;
         let model = model
