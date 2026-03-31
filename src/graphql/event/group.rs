@@ -498,6 +498,7 @@ mod tests {
                             networks: [],
                             ranges: []
                         },
+                        tagIds: []
                     )
                 }"#,
             )

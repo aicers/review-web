@@ -35,20 +35,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
-- Updated GraphQL network APIs to match `review-database` `0.44` schema changes
-  (Network no longer stores `customer_ids`).
-  - Affected GraphQL APIs: `insertNetwork`, `updateNetwork`, `Network.customerList`.
-  - Removed `customerIds` from `insertNetwork` arguments and
-    `NetworkUpdateInput`.
-  - Removed `customerList` field from `Network`.
-- Updated network tag GraphQL APIs to use customer-scoped tag sets.
-  - Affected GraphQL APIs: `networkTagList`, `insertNetworkTag`,
-    `removeNetworkTag`, `updateNetworkTag`.
-  - Added required `customerId` to `insertNetworkTag`, `removeNetworkTag`,
-    and `updateNetworkTag`.
-  - `networkTagList` now returns all tags for `SystemAdministrator` when
-    `customerId` is omitted, and returns customer-scoped tags when
-    `customerId` is provided.
 - Restricted backup/restore GraphQL queries and mutations to
   SystemAdministrator, denying SecurityAdministrator access.
 - `allowNetworkList` and `blockNetworkList` GraphQL queries now accept
@@ -84,11 +70,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   replacing previous uses of `i32`, `String`, and `usize`. This change aligns
   with the corresponding type unification in `review-database`.
 - Updated `review-database` dependency to include commits that unify ID types
-  to `u32` and implement customer-scoped network tags.
-- **BREAKING**: Removed the `tagIds` parameter from the `insertNetwork` GraphQL
-  API as network tags are now managed separately per customer.
-- **BREAKING**: Removed the `tagIds` field from the `Network` GraphQL type and
-  the `NetworkUpdateInput` input type.
+  to `u32`.
 
 ### Fixed
 
