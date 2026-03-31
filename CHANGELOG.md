@@ -11,11 +11,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Added `customerId` field to the `AllowNetwork` and `BlockNetwork`
   GraphQL object types so each list item explicitly indicates its
   owner customer.
-- Added customer scoping enforcement to `allowNetworkList` and
-  `blockNetworkList` GraphQL queries. Non-admin users are now
-  automatically restricted to their own customers and cannot query
-  customers they do not have access to. Works under both `auth-jwt`
-  and `auth-mtls` features.
+- Added customer scoping enforcement to allow/block network GraphQL APIs.
+  Non-admin users are now restricted to their own customers for all
+  operations: `allowNetworkList`, `blockNetworkList`, `insertAllowNetwork`,
+  `insertBlockNetwork`, `updateAllowNetwork`, `updateBlockNetwork`,
+  `removeAllowNetworks`, and `removeBlockNetworks`. Remove operations
+  validate scope for all targets before performing any deletion. Works
+  under both `auth-jwt` and `auth-mtls` features.
 - Added `MtlsIdentity` struct and `MtlsAuthenticator` trait to `auth::mtls`
   for dependency-inversion: the trait is defined in `review-web` and
   implementations are injected from external crates (e.g. `review`).
