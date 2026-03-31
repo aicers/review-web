@@ -11,7 +11,8 @@ use super::{
     customer::{HostNetworkGroup, HostNetworkGroupInput, NetworksTargetAgentKeysPair},
 };
 use crate::graphql::{
-    node::SEMI_SUPERVISED_AGENT, parse_and_validate_customer_ids, query_with_constraints,
+    customer_access, node::SEMI_SUPERVISED_AGENT, parse_and_validate_customer_ids,
+    query_with_constraints,
 };
 use crate::{error_with_username, info_with_username};
 
@@ -74,6 +75,10 @@ impl AllowNetworkMutation {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid customer ID")?;
+        let users_cids = customer_access::users_customers(ctx)?;
+        if !customer_access::is_member(users_cids.as_deref(), customer_id) {
+            return Err("access denied: customer is not accessible".into());
+        }
         {
             let store = crate::graphql::get_store(ctx)?;
             let customer_map = store.customer_map();
@@ -128,6 +133,7 @@ impl AllowNetworkMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
+        let users_cids = customer_access::users_customers(ctx)?;
         let (removed, count, network_lists) = {
             let store = crate::graphql::get_store(ctx)?;
             let map = store.allow_network_map();
@@ -136,6 +142,19 @@ impl AllowNetworkMutation {
                 .iter()
                 .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID"))
                 .collect::<Result<_, _>>()?;
+
+            // Verify scope for all targets before any deletion.
+            if users_cids.is_some() {
+                for &id in &ids {
+                    let network = map.get_by_id(id)?.ok_or("no such allow network")?;
+                    if !customer_access::is_member(users_cids.as_deref(), network.customer_id) {
+                        return Err(
+                            "access denied: allow network belongs to inaccessible customer".into(),
+                        );
+                    }
+                }
+            }
+
             let count = ids.len();
             let mut affected_customers = std::collections::HashSet::new();
             let removed = ids
@@ -203,6 +222,7 @@ impl AllowNetworkMutation {
         new: AllowNetworkInput,
     ) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
+        let users_cids = customer_access::users_customers(ctx)?;
 
         let network_list = {
             let store = crate::graphql::get_store(ctx)?;
@@ -210,8 +230,22 @@ impl AllowNetworkMutation {
             let current_allow_network = map
                 .get_by_id(i)?
                 .ok_or_else(|| anyhow::anyhow!("no such allow network"))?;
+
+            // Verify the caller has access to the current network's customer.
+            if !customer_access::is_member(users_cids.as_deref(), current_allow_network.customer_id)
+            {
+                return Err("access denied: allow network belongs to inaccessible customer".into());
+            }
+
             let old: review_database::AllowNetworkUpdate = old.try_into()?;
             let new: review_database::AllowNetworkUpdate = new.try_into()?;
+
+            // Verify the caller has access to the new customer, if being changed.
+            if let Some(new_customer_id) = new.customer_id
+                && !customer_access::is_member(users_cids.as_deref(), new_customer_id)
+            {
+                return Err("access denied: target customer is not accessible".into());
+            }
 
             let customer_map = store.customer_map();
             if let Some(customer_id) = old.customer_id
@@ -832,6 +866,260 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             r#"{allowNetworkList: {totalCount: "2"}}"#
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn test_allow_network_mutation_scoping() {
+        let schema = TestSchema::new().await;
+
+        // Create two customers.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertCustomer(name: "c0", description: "", networks: [])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertCustomer(name: "c1", description: "", networks: [])
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
+
+        // --- Insert scoping ---
+
+        // Scoped user (customer 0) inserting into own customer succeeds.
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {
+                    insertAllowNetwork(
+                        name: "Net Own"
+                        customerId: 0
+                        networks: { hosts: ["1.1.1.1"], networks: [], ranges: [] }
+                        description: "own"
+                    )
+                }"#,
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+
+        // Scoped user (customer 0) inserting into another customer is denied.
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {
+                    insertAllowNetwork(
+                        name: "Net Other"
+                        customerId: 1
+                        networks: { hosts: ["2.2.2.2"], networks: [], ranges: [] }
+                        description: "other"
+                    )
+                }"#,
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0].message.contains("access denied"),
+            "{}",
+            res.errors[0].message,
+        );
+
+        // Admin inserts a network for customer 1.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertAllowNetwork(
+                        name: "Net C1"
+                        customerId: 1
+                        networks: { hosts: ["3.3.3.3"], networks: [], ranges: [] }
+                        description: "c1"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+
+        // --- Update scoping ---
+        // Retrieve actual IDs via list queries.
+        let res = schema
+            .execute_as_system_admin(
+                r"query {
+                    allowNetworkList(customerIds: [0], first: 10) {
+                        nodes { id name }
+                    }
+                }",
+            )
+            .await;
+        let c0_id = res.data.to_string();
+        // Extract the ID for the customer-0 network.
+        let c0_net_id = c0_id
+            .split("id: \"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap();
+
+        let res = schema
+            .execute_as_system_admin(
+                r"query {
+                    allowNetworkList(customerIds: [1], first: 10) {
+                        nodes { id name }
+                    }
+                }",
+            )
+            .await;
+        let c1_id = res.data.to_string();
+        let c1_net_id = c1_id
+            .split("id: \"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap();
+
+        // Scoped user (customer 0) cannot update a network belonging to customer 1.
+        let res = schema
+            .execute_as_scoped_user(
+                &format!(
+                    r#"mutation {{
+                        updateAllowNetwork(
+                            id: "{c1_net_id}"
+                            old: {{
+                                name: "Net C1"
+                                customerId: 1
+                                networks: {{ hosts: ["3.3.3.3"], networks: [], ranges: [] }}
+                                description: "c1"
+                            }}
+                            new: {{
+                                name: "Net C1 Updated"
+                                customerId: 1
+                                networks: {{ hosts: ["3.3.3.3"], networks: [], ranges: [] }}
+                                description: "c1"
+                            }}
+                        )
+                    }}"#
+                ),
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0].message.contains("access denied"),
+            "{}",
+            res.errors[0].message,
+        );
+
+        // Scoped user (customer 0) can update their own network.
+        let res = schema
+            .execute_as_scoped_user(
+                &format!(
+                    r#"mutation {{
+                        updateAllowNetwork(
+                            id: "{c0_net_id}"
+                            old: {{
+                                name: "Net Own"
+                                customerId: 0
+                                networks: {{ hosts: ["1.1.1.1"], networks: [], ranges: [] }}
+                                description: "own"
+                            }}
+                            new: {{
+                                name: "Net Own Updated"
+                                customerId: 0
+                                networks: {{ hosts: ["1.1.1.1"], networks: [], ranges: [] }}
+                                description: "own"
+                            }}
+                        )
+                    }}"#
+                ),
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+
+        // --- Remove scoping ---
+
+        // Scoped user (customer 0) cannot remove a network belonging to customer 1.
+        let res = schema
+            .execute_as_scoped_user(
+                &format!(
+                    r#"mutation {{
+                        removeAllowNetworks(ids: ["{c1_net_id}"])
+                    }}"#
+                ),
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0].message.contains("access denied"),
+            "{}",
+            res.errors[0].message,
+        );
+
+        // Mixed removal (own + other) is denied entirely (no partial deletion).
+        let res = schema
+            .execute_as_scoped_user(
+                &format!(
+                    r#"mutation {{
+                        removeAllowNetworks(ids: ["{c0_net_id}", "{c1_net_id}"])
+                    }}"#
+                ),
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors[0].message.contains("access denied"),
+            "{}",
+            res.errors[0].message,
+        );
+
+        // Verify nothing was removed (both networks still exist).
+        let res = schema
+            .execute_as_system_admin(
+                r"query {
+                    allowNetworkList(first: 10) {
+                        totalCount
+                    }
+                }",
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{allowNetworkList: {totalCount: "2"}}"#
+        );
+
+        // Scoped user (customer 0) can remove their own network.
+        let res = schema
+            .execute_as_scoped_user(
+                &format!(
+                    r#"mutation {{
+                        removeAllowNetworks(ids: ["{c0_net_id}"])
+                    }}"#
+                ),
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{removeAllowNetworks: ["Net Own Updated"]}"#
         );
     }
 }
