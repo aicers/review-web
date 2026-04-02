@@ -407,21 +407,44 @@ pub(crate) fn get_store<'a>(ctx: &'a Context<'a>) -> Result<std::sync::RwLockRea
         .unwrap_or_else(|e| panic!("RwLock poisoned: {e}")))
 }
 
+/// Computes the intersection of the requested customer IDs with the
+/// user's accessible customer IDs. Admins (`None`) keep all requested
+/// IDs. Returns an error if the intersection is empty.
+fn intersect_accessible_customer_ids(
+    users_customers: Option<&[u32]>,
+    requested_customer_ids: &[u32],
+) -> Result<Vec<u32>> {
+    let filtered = match users_customers {
+        None => requested_customer_ids.to_vec(), // admin
+        Some(users) => requested_customer_ids
+            .iter()
+            .copied()
+            .filter(|id| users.contains(id))
+            .collect(),
+    };
+
+    if filtered.is_empty() {
+        return Err("access denied: all requested customers are not accessible".into());
+    }
+
+    Ok(filtered)
+}
+
 /// Parses, deduplicates, sorts, and validates customer IDs from a
 /// GraphQL `Option<Vec<ID>>`, enforcing customer scoping for
 /// non-admin users.
 ///
 /// When `customer_ids` is `None`, admins see all customers while
 /// scoped users are automatically restricted to their own customers.
-/// When `customer_ids` is `Some`, scoped users must have membership
-/// for every requested customer.
+/// When `customer_ids` is `Some`, the requested IDs are intersected
+/// with the user's accessible customers (admins keep all requested IDs).
 ///
 /// # Errors
 ///
 /// Returns an error if any ID cannot be parsed as `u32`, if a
 /// customer with the given ID does not exist in the store, if an
-/// empty customer ID list is provided, or if a scoped user requests
-/// a customer they do not have access to.
+/// empty customer ID list is provided, or if none of the requested
+/// customers are accessible to the user.
 fn parse_and_validate_customer_ids(
     ctx: &Context<'_>,
     customer_ids: Option<Vec<ID>>,
@@ -449,10 +472,8 @@ fn parse_and_validate_customer_ids(
     parsed.sort_unstable();
     parsed.dedup();
 
-    // Scoped users may only query their own customers.
-    if !customer_access::has_all_membership(users_cids.as_deref(), &parsed) {
-        return Err("access denied: requested customer is not accessible".into());
-    }
+    // Intersect requested IDs with the user's accessible set.
+    let parsed = intersect_accessible_customer_ids(users_cids.as_deref(), &parsed)?;
 
     let store = get_store(ctx)?;
     let customer_map = store.customer_map();

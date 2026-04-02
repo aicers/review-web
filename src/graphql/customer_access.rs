@@ -9,4 +9,4 @@ pub(crate) use hostname::{
     sensor_from_key,
 };
 pub(crate) use node::{can_access_node, load_accessible_node};
-pub(crate) use scope::{check_customer_membership, has_all_membership, is_member, users_customers};
+pub(crate) use scope::{check_customer_membership, is_member, users_customers};
