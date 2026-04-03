@@ -95,9 +95,7 @@ impl NetworkMutation {
     /// Removes networks, returning the networks names that no longer exist.
     ///
     /// On error, some networks may have been removed.
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))
-        .or(RoleGuard::new(Role::SecurityManager))")]
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn remove_networks(
         &self,
         ctx: &Context<'_>,
@@ -121,9 +119,7 @@ impl NetworkMutation {
     }
 
     /// Updates the given network.
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))
-        .or(RoleGuard::new(Role::SecurityManager))")]
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn update_network(
         &self,
         ctx: &Context<'_>,
@@ -246,7 +242,7 @@ async fn load(
 
 #[cfg(test)]
 mod tests {
-    use crate::graphql::TestSchema;
+    use crate::graphql::{Role, RoleGuard, TestSchema};
 
     #[tokio::test]
     async fn network_list_returns_empty() {
@@ -449,5 +445,294 @@ mod tests {
             res.data.to_string(),
             r#"{networkList: {edges: [{node: {name: "n1", tagIds: ["0", "1", "2"]}}], totalCount: "1"}}"#
         );
+    }
+
+    async fn assert_forbidden(schema: &TestSchema, role: Role, query: &str) {
+        let res = schema
+            .execute_with_guard(query, RoleGuard::Role(role))
+            .await;
+        assert!(
+            !res.errors.is_empty(),
+            "Role {role:?} should be forbidden for query: {query}"
+        );
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    // --- Regression tests: SystemAdministrator can still use all mutations ---
+
+    #[tokio::test]
+    async fn system_admin_can_insert_network() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNetwork(name: "n1", description: "d", networks: {
+                        hosts: [], networks: [], ranges: []
+                    }, tagIds: [])
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty());
+        assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
+    }
+
+    #[tokio::test]
+    async fn system_admin_can_update_network() {
+        let schema = TestSchema::new().await;
+        schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNetwork(name: "n0", description: "", networks: {
+                        hosts: ["1.1.1.1"], networks: [], ranges: []
+                    }, tagIds: [])
+                }"#,
+            )
+            .await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateNetwork(
+                        id: "0",
+                        old: { name: "n0", networks: {
+                            hosts: ["1.1.1.1"], networks: [], ranges: []
+                        }, tagIds: [] },
+                        new: { name: "n0-updated", networks: {
+                            hosts: ["2.2.2.2"], networks: [], ranges: []
+                        }, tagIds: [] }
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty());
+        assert_eq!(res.data.to_string(), r#"{updateNetwork: "0"}"#);
+    }
+
+    #[tokio::test]
+    async fn system_admin_can_remove_networks() {
+        let schema = TestSchema::new().await;
+        schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNetwork(name: "n1", description: "", networks: {
+                        hosts: [], networks: [], ranges: []
+                    }, tagIds: [])
+                }"#,
+            )
+            .await;
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { removeNetworks(ids: ["0"]) }"#)
+            .await;
+        assert!(res.errors.is_empty());
+        assert_eq!(res.data.to_string(), r#"{removeNetworks: ["n1"]}"#);
+    }
+
+    // --- Regression: insertNetwork still works for non-admin roles ---
+
+    #[tokio::test]
+    async fn security_administrator_can_insert_network() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertNetwork(name: "n1", description: "d", networks: {
+                        hosts: [], networks: [], ranges: []
+                    }, tagIds: [])
+                }"#,
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(res.errors.is_empty());
+        assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
+    }
+
+    #[tokio::test]
+    async fn security_manager_can_insert_network() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_with_guard(
+                r#"mutation {
+                    insertNetwork(name: "n1", description: "d", networks: {
+                        hosts: [], networks: [], ranges: []
+                    }, tagIds: [])
+                }"#,
+                RoleGuard::Role(Role::SecurityManager),
+            )
+            .await;
+        assert!(res.errors.is_empty());
+        assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
+    }
+
+    // --- Regression: networkList and network(id) still work for all roles ---
+
+    #[tokio::test]
+    async fn all_roles_can_query_network_list() {
+        let schema = TestSchema::new().await;
+        for role in [
+            Role::SystemAdministrator,
+            Role::SecurityAdministrator,
+            Role::SecurityManager,
+            Role::SecurityMonitor,
+        ] {
+            let res = schema
+                .execute_with_guard(
+                    r"{networkList{edges{node{name}}totalCount}}",
+                    RoleGuard::Role(role),
+                )
+                .await;
+            assert!(
+                res.errors.is_empty(),
+                "Role {role:?} should be allowed to query networkList"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn all_roles_can_query_network_by_id() {
+        let schema = TestSchema::new().await;
+        schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNetwork(name: "n1", description: "d", networks: {
+                        hosts: [], networks: [], ranges: []
+                    }, tagIds: [])
+                }"#,
+            )
+            .await;
+
+        for role in [
+            Role::SystemAdministrator,
+            Role::SecurityAdministrator,
+            Role::SecurityManager,
+            Role::SecurityMonitor,
+        ] {
+            let res = schema
+                .execute_with_guard(r#"{network(id: "0") {name}}"#, RoleGuard::Role(role))
+                .await;
+            assert!(
+                res.errors.is_empty(),
+                "Role {role:?} should be allowed to query network(id)"
+            );
+        }
+    }
+
+    // --- Failure tests: non-admin roles cannot updateNetwork ---
+
+    #[tokio::test]
+    async fn non_admin_roles_cannot_update_network() {
+        let schema = TestSchema::new().await;
+        schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNetwork(name: "n0", description: "orig", networks: {
+                        hosts: ["1.1.1.1"], networks: [], ranges: []
+                    }, tagIds: [])
+                }"#,
+            )
+            .await;
+
+        let update_mutation = r#"mutation {
+            updateNetwork(
+                id: "0",
+                old: { name: "n0", description: "orig", networks: {
+                    hosts: ["1.1.1.1"], networks: [], ranges: []
+                }, tagIds: [] },
+                new: { name: "hacked", description: "modified", networks: {
+                    hosts: ["9.9.9.9"], networks: [], ranges: []
+                }, tagIds: [] }
+            )
+        }"#;
+
+        for role in [
+            Role::SecurityAdministrator,
+            Role::SecurityManager,
+            Role::SecurityMonitor,
+        ] {
+            assert_forbidden(&schema, role, update_mutation).await;
+
+            // Verify data unchanged
+            let res = schema
+                .execute_as_system_admin(r#"{network(id: "0") {name description}}"#)
+                .await;
+            assert_eq!(
+                res.data.to_string(),
+                r#"{network: {name: "n0", description: "orig"}}"#,
+                "Network should be unchanged after forbidden {role:?} updateNetwork"
+            );
+        }
+    }
+
+    // --- Failure tests: non-admin roles cannot removeNetworks ---
+
+    #[tokio::test]
+    async fn non_admin_roles_cannot_remove_networks() {
+        let schema = TestSchema::new().await;
+        schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNetwork(name: "n1", description: "", networks: {
+                        hosts: [], networks: [], ranges: []
+                    }, tagIds: [])
+                }"#,
+            )
+            .await;
+
+        let remove_mutation = r#"mutation { removeNetworks(ids: ["0"]) }"#;
+
+        for role in [
+            Role::SecurityAdministrator,
+            Role::SecurityManager,
+            Role::SecurityMonitor,
+        ] {
+            assert_forbidden(&schema, role, remove_mutation).await;
+
+            // Verify network still exists
+            let res = schema
+                .execute_as_system_admin(r"{networkList{totalCount}}")
+                .await;
+            assert_eq!(
+                res.data.to_string(),
+                r#"{networkList: {totalCount: "1"}}"#,
+                "Network should still exist after forbidden {role:?} removeNetworks"
+            );
+        }
+    }
+
+    // --- Preserve-current-behavior: insertNetwork with tagIds: [] ---
+
+    #[tokio::test]
+    async fn insert_network_with_empty_tag_ids_for_permitted_roles() {
+        let schema = TestSchema::new().await;
+
+        for (i, role) in [
+            Role::SystemAdministrator,
+            Role::SecurityAdministrator,
+            Role::SecurityManager,
+        ]
+        .iter()
+        .enumerate()
+        {
+            let name = format!("net{i}");
+            let query = format!(
+                r#"mutation {{
+                    insertNetwork(name: "{name}", description: "", networks: {{
+                        hosts: [], networks: [], ranges: []
+                    }}, tagIds: [])
+                }}"#
+            );
+            let res = schema
+                .execute_with_guard(&query, RoleGuard::Role(*role))
+                .await;
+            assert!(
+                res.errors.is_empty(),
+                "Role {role:?} should be allowed to insertNetwork with empty tagIds"
+            );
+        }
+
+        let res = schema
+            .execute_as_system_admin(r"{networkList{totalCount}}")
+            .await;
+        assert_eq!(res.data.to_string(), r#"{networkList: {totalCount: "3"}}"#);
     }
 }
