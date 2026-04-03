@@ -65,7 +65,7 @@ pub use self::customer::get_customer_networks;
 pub use self::node::agent_keys_by_customer_id;
 pub use self::sampling::{
     Interval as SamplingInterval, Kind as SamplingKind, Period as SamplingPeriod,
-    Policy as SamplingPolicy,
+    Policy as SamplingPolicy, get_sampling_policies,
 };
 use crate::backend::{AgentManager, CertManager};
 
