@@ -320,21 +320,17 @@ async fn load_immutable(ctx: &Context<'_>) -> Result<Vec<Policy>> {
     Ok(rtn)
 }
 
-/// Returns the sampling policy list for the given customer.
+/// Returns all sampling policies.
 ///
 /// # Errors
 ///
 /// Returns an error if the sampling policy database could not be
 /// retrieved.
-pub fn get_sampling_policies(
-    db: &Store,
-    customer_id: u32,
-) -> Result<Vec<database::SamplingPolicy>> {
+pub fn get_sampling_policies(db: &Store) -> Result<Vec<database::SamplingPolicy>> {
     let map = db.sampling_policy_map();
     let mut policies = vec![];
-    let key = customer_id.to_be_bytes();
 
-    for res in map.prefix_iter(Direction::Forward, None, &key) {
+    for res in map.iter(Direction::Forward, None) {
         let policy = res?;
         policies.push(policy);
     }
