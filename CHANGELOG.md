@@ -59,6 +59,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   units to mitigate `queries overflow the depth limit` on Rust 1.94.0+, likely
   triggered by increased type-layout query depth after `ManuallyDrop<T>` began
   wrapping `T` with `MaybeDangling<T>`; no schema or response behavior changes.
+- `updateCustomer` mutation now validates for duplicate network names, matching
+  the existing validation in `insertCustomer`.
 
 ## [0.30.1] - 2026-01-31
 
