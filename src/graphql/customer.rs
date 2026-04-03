@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::convert::{TryFrom, TryInto};
 
 use anyhow::Context as AnyhowContext;
@@ -108,13 +109,13 @@ impl CustomerMutation {
         description: String,
         networks: Vec<CustomerNetworkInput>,
     ) -> Result<ID> {
+        validate_no_duplicate_network_names(&networks)?;
         let store = crate::graphql::get_store(ctx)?;
         let map = store.customer_map();
-        let mut networks: Vec<review_database::CustomerNetwork> = networks
+        let networks: Vec<review_database::CustomerNetwork> = networks
             .into_iter()
             .map(TryFrom::try_from)
             .collect::<Result<Vec<_>>>()?;
-        validate_no_duplicate_network_names(&mut networks)?;
         let value = database::Customer {
             id: u32::MAX,
             name: name.clone(),
@@ -196,12 +197,11 @@ impl CustomerMutation {
         new: CustomerUpdateInput,
     ) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-        let old = old.try_into()?;
-        let mut new: review_database::CustomerUpdate = new.try_into()?;
-
-        if let Some(ref mut networks) = new.networks {
+        if let Some(ref networks) = new.networks {
             validate_no_duplicate_network_names(networks)?;
         }
+        let old = old.try_into()?;
+        let new: review_database::CustomerUpdate = new.try_into()?;
 
         let network_list = {
             let store = crate::graphql::get_store(ctx)?;
@@ -252,20 +252,15 @@ impl CustomerMutation {
 
 /// Validates that there are no duplicate network names in the given list.
 ///
-/// This function sorts the networks by name, removes duplicates, and returns an error
-/// if duplicates were detected.
-///
 /// # Errors
 ///
 /// Returns an error with "duplicate network name" if duplicates are found.
-fn validate_no_duplicate_network_names(
-    networks: &mut Vec<review_database::CustomerNetwork>,
-) -> Result<()> {
-    networks.sort_by(|a, b| a.name.cmp(&b.name));
-    let original_count = networks.len();
-    networks.dedup_by(|a, b| a.name == b.name);
-    if networks.len() != original_count {
-        return Err("duplicate network name".into());
+fn validate_no_duplicate_network_names(networks: &[CustomerNetworkInput]) -> Result<()> {
+    let mut seen = HashSet::new();
+    for network in networks {
+        if !seen.insert(&network.name) {
+            return Err("duplicate network name".into());
+        }
     }
     Ok(())
 }
