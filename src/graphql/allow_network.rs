@@ -23,10 +23,12 @@ pub(super) struct AllowNetworkQuery;
 impl AllowNetworkQuery {
     /// A list of allowed networks, optionally filtered by customer IDs.
     ///
-    /// When `customerIds` is provided, results are filtered to those
-    /// customers (deduplicated and sorted by ID for deterministic
-    /// ordering and pagination). When omitted, all customers are
-    /// included.
+    /// When `customerIds` is provided, results are filtered by the intersection
+    /// of requested customer IDs and the caller's accessible customer scope
+    /// (deduplicated and sorted for deterministic ordering and pagination).
+    /// If the intersection is empty, the request is denied.
+    /// When omitted, admins can access all customers, while scoped users can
+    /// access only their own customers.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
