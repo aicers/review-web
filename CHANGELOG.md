@@ -53,12 +53,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `updateNodeDraft`, `removeNodes`, `applyNode`, `nodeReboot`,
   `nodeShutdown`. Administrators (`customer_ids = None`) retain full access.
 
-### Removed
-
-- Removed `validate_client_cert()` and `has_service_name()` from `auth::mtls`.
-  Callers that relied on these functions should implement `MtlsAuthenticator`
-  instead. (auth-mtls)
-
 ### Fixed
 
 - `nodeReboot` and `nodeShutdown` now update the `storedStatus`
