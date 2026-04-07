@@ -79,9 +79,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `updateNodeDraft`, `removeNodes`, `applyNode`, `nodeReboot`,
   `nodeShutdown`. Administrators (`customer_ids = None`) retain full access.
 
-
-### Changed
-
 ### Fixed
 
 - `nodeReboot` and `nodeShutdown` now update the `storedStatus`
