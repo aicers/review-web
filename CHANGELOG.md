@@ -43,12 +43,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   validation to `authenticator.authenticate()` rather than the previously
   internal `validate_client_cert()`, making the validation policy replaceable
   at runtime. (auth-mtls)
-
-### Removed
-
-- Removed `validate_client_cert()` and `has_service_name()` from `auth::mtls`.
-  Callers that relied on these functions should implement `MtlsAuthenticator`
-  instead. (auth-mtls)
+- Unified all `cluster_id` and `model_id` types to `u32` across the codebase,
+  replacing previous uses of `i32`, `String`, and `usize`. This change aligns
+  with the corresponding type unification in `review-database`.
 
 ### Fixed
 
@@ -59,6 +56,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   units to mitigate `queries overflow the depth limit` on Rust 1.94.0+, likely
   triggered by increased type-layout query depth after `ManuallyDrop<T>` began
   wrapping `T` with `MaybeDangling<T>`; no schema or response behavior changes.
+
+### Removed
+
+- Removed `validate_client_cert()` and `has_service_name()` from `auth::mtls`.
+  Callers that relied on these functions should implement `MtlsAuthenticator`
+  instead. (auth-mtls)
 
 ## [0.30.1] - 2026-01-31
 
