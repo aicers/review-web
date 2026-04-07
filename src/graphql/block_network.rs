@@ -835,6 +835,26 @@ mod tests {
                 .contains("access denied"),
         );
 
+        // Mixed accessible and inaccessible IDs: intersection filtering
+        // returns only the accessible customer's data.
+        let res = schema
+            .execute_as_scoped_user(
+                r"query {
+                    blockNetworkList(customerIds: [0, 1], first: 10) {
+                        totalCount
+                        nodes { name customerId }
+                    }
+                }",
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{blockNetworkList: {totalCount: "1", nodes: [{name: "Net A", customerId: "0"}]}}"#
+        );
+
         // Omitting customerIds returns only the scoped user's data.
         let res = schema
             .execute_as_scoped_user(

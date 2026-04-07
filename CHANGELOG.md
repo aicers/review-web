@@ -55,7 +55,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `customerIds: [ID]` (multiple customer IDs) instead of the previous
   `customerId: ID`. The input list is deduplicated and sorted by ID
   for deterministic ordering and pagination. Omitting `customerIds`
-  still returns results for all customers.
+  still returns results for all accessible customers.
 - Restricted `updateNetwork` and `removeNetworks` GraphQL mutations
   to `SystemAdministrator` only. `insertNetwork`, `networkList`, and
   `network(id)` guards remain unchanged.
