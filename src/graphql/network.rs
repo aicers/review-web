@@ -569,6 +569,17 @@ mod tests {
     #[tokio::test]
     async fn all_roles_can_query_network_list() {
         let schema = TestSchema::new().await;
+        schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNetwork(name: "n1", description: "d", networks: {
+                        hosts: [], networks: [], ranges: []
+                    }, tagIds: [])
+                }"#,
+            )
+            .await;
+
+        let expected = r#"{networkList: {edges: [{node: {name: "n1"}}], totalCount: "1"}}"#;
         for role in [
             Role::SystemAdministrator,
             Role::SecurityAdministrator,
@@ -584,6 +595,11 @@ mod tests {
             assert!(
                 res.errors.is_empty(),
                 "Role {role:?} should be allowed to query networkList"
+            );
+            assert_eq!(
+                res.data.to_string(),
+                expected,
+                "Role {role:?} should see the same networkList result"
             );
         }
     }
@@ -601,6 +617,7 @@ mod tests {
             )
             .await;
 
+        let expected = r#"{network: {name: "n1"}}"#;
         for role in [
             Role::SystemAdministrator,
             Role::SecurityAdministrator,
@@ -613,6 +630,11 @@ mod tests {
             assert!(
                 res.errors.is_empty(),
                 "Role {role:?} should be allowed to query network(id)"
+            );
+            assert_eq!(
+                res.data.to_string(),
+                expected,
+                "Role {role:?} should see the same network(id) result"
             );
         }
     }
