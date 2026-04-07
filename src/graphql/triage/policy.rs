@@ -287,6 +287,7 @@ impl TriagePolicyMutation {
         for id in &ids {
             let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
             let policy = ensure_accessible_policy_from_map(&map, users_customers.as_deref(), i)?;
+            ensure_mutation_customer_scope(users_customers.as_deref(), policy.customer_id)?;
             parsed_ids.push(i);
             removed.push(policy.name);
         }
@@ -316,8 +317,8 @@ impl TriagePolicyMutation {
 
         let store = crate::graphql::get_store(ctx)?;
         let policy_map = store.triage_policy_map();
-        let _policy =
-            ensure_accessible_policy_from_map(&policy_map, users_customers.as_deref(), i)?;
+        let policy = ensure_accessible_policy_from_map(&policy_map, users_customers.as_deref(), i)?;
+        ensure_mutation_customer_scope(users_customers.as_deref(), policy.customer_id)?;
 
         let customer_map = store.customer_map();
         if let Some(customer_id) = old.customer_id
@@ -1288,5 +1289,356 @@ mod tests {
             res.data.to_string(),
             r#"{triagePolicy: {name: "Customer 0 Policy", customerId: "0"}}"#
         );
+    }
+
+    #[tokio::test]
+    async fn triage_policy_scoped_user_cannot_delete_shared_policy() {
+        let schema = TestSchema::new().await;
+
+        insert_default_triage_exclusion_reason(&schema).await;
+        insert_global_policy(&schema, 0, "Shared Policy").await;
+
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"mutation { removeTriagePolicies(ids: ["0"]) }"#,
+            vec![0],
+        )
+        .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(res.errors[0].message.contains("Forbidden"));
+
+        // Verify the policy still exists.
+        let res = schema
+            .execute_as_system_admin(r#"{ triagePolicy(id: "0") { name } }"#)
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{triagePolicy: {name: "Shared Policy"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn triage_policy_scoped_user_cannot_update_shared_policy() {
+        let schema = TestSchema::new().await;
+
+        insert_default_triage_exclusion_reason(&schema).await;
+        insert_global_policy(&schema, 0, "Shared Policy").await;
+
+        // Attempt to update a shared policy while keeping it shared.
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"mutation {
+                updateTriagePolicy(
+                    id: 0
+                    old: {
+                        name: "Shared Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                    }
+                    new: {
+                        name: "Renamed Shared"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                    }
+                )
+            }"#,
+            vec![0],
+        )
+        .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(res.errors[0].message.contains("Forbidden"));
+    }
+
+    #[tokio::test]
+    async fn triage_policy_scoped_user_cannot_convert_shared_to_customer_owned() {
+        let schema = TestSchema::new().await;
+
+        insert_customers(&schema, &["c1"]).await;
+        insert_default_triage_exclusion_reason(&schema).await;
+        insert_global_policy(&schema, 0, "Shared Policy").await;
+
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"mutation {
+                updateTriagePolicy(
+                    id: 0
+                    old: {
+                        name: "Shared Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                    }
+                    new: {
+                        name: "Now Customer Owned"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "0"
+                    }
+                )
+            }"#,
+            vec![0],
+        )
+        .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(res.errors[0].message.contains("Forbidden"));
+    }
+
+    #[tokio::test]
+    async fn triage_policy_scoped_user_cannot_move_out_of_scope_into_scope() {
+        let schema = TestSchema::new().await;
+
+        insert_customers(&schema, &["c1", "c2"]).await;
+        insert_default_triage_exclusion_reason(&schema).await;
+        insert_customer_policy(&schema, 0, "Out of Scope Policy", 1).await;
+
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"mutation {
+                updateTriagePolicy(
+                    id: 0
+                    old: {
+                        name: "Out of Scope Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "1"
+                    }
+                    new: {
+                        name: "Stolen Policy"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "0"
+                    }
+                )
+            }"#,
+            vec![0],
+        )
+        .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(res.errors[0].message.contains("Forbidden"));
+    }
+
+    #[tokio::test]
+    async fn triage_policy_scoped_user_can_reassign_between_in_scope_customers() {
+        let schema = TestSchema::new().await;
+
+        insert_customers(&schema, &["c1", "c2"]).await;
+        insert_default_triage_exclusion_reason(&schema).await;
+        insert_customer_policy(&schema, 0, "Policy A", 0).await;
+
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"mutation {
+                updateTriagePolicy(
+                    id: 0
+                    old: {
+                        name: "Policy A"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "0"
+                    }
+                    new: {
+                        name: "Policy A"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                        customerId: "1"
+                    }
+                )
+            }"#,
+            vec![0, 1],
+        )
+        .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(res.data.to_string(), r#"{updateTriagePolicy: "0"}"#);
+    }
+
+    #[tokio::test]
+    async fn triage_policy_remove_mixed_permitted_and_forbidden_fails_atomically() {
+        let schema = TestSchema::new().await;
+
+        insert_customers(&schema, &["c1", "c2"]).await;
+        insert_default_triage_exclusion_reason(&schema).await;
+        insert_customer_policy(&schema, 0, "In Scope Policy", 0).await;
+        insert_customer_policy(&schema, 1, "Out of Scope Policy", 1).await;
+
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"mutation { removeTriagePolicies(ids: ["0", "1"]) }"#,
+            vec![0],
+        )
+        .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(res.errors[0].message.contains("Forbidden"));
+
+        // Verify neither policy was deleted.
+        let res = schema
+            .execute_as_system_admin(
+                r"{ triagePolicyList(first: 10) { totalCount nodes { name } } }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        let json = res.data.into_json().unwrap();
+        assert_eq!(json["triagePolicyList"]["totalCount"], "2");
+    }
+
+    #[tokio::test]
+    async fn triage_policy_remove_mixed_permitted_and_shared_fails_atomically() {
+        let schema = TestSchema::new().await;
+
+        insert_customers(&schema, &["c1"]).await;
+        insert_default_triage_exclusion_reason(&schema).await;
+        insert_global_policy(&schema, 0, "Shared Policy").await;
+        insert_customer_policy(&schema, 1, "In Scope Policy", 0).await;
+
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"mutation { removeTriagePolicies(ids: ["1", "0"]) }"#,
+            vec![0],
+        )
+        .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(res.errors[0].message.contains("Forbidden"));
+
+        // Verify neither policy was deleted.
+        let res = schema
+            .execute_as_system_admin(
+                r"{ triagePolicyList(first: 10) { totalCount nodes { name } } }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        let json = res.data.into_json().unwrap();
+        assert_eq!(json["triagePolicyList"]["totalCount"], "2");
+    }
+
+    #[tokio::test]
+    async fn triage_policy_list_with_customer_id_filter_includes_shared() {
+        let schema = TestSchema::new().await;
+
+        insert_customers(&schema, &["c1", "c2"]).await;
+        insert_default_triage_exclusion_reason(&schema).await;
+        insert_global_policy(&schema, 0, "Shared Policy").await;
+        insert_customer_policy(&schema, 1, "Customer 0 Policy", 0).await;
+        insert_customer_policy(&schema, 2, "Customer 1 Policy", 1).await;
+
+        let res = execute_as_scoped_security_admin(
+            &schema,
+            r#"{ triagePolicyList(first: 10, customerId: "0") { totalCount nodes { name } } }"#,
+            vec![0],
+        )
+        .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        let json = res.data.into_json().unwrap();
+        assert_eq!(json["triagePolicyList"]["totalCount"], "2");
+        let names = node_names(&json);
+        assert!(names.contains(&"Shared Policy"));
+        assert!(names.contains(&"Customer 0 Policy"));
+        assert!(!names.contains(&"Customer 1 Policy"));
+    }
+
+    #[tokio::test]
+    async fn triage_policy_admin_crud_shared_policy() {
+        let schema = TestSchema::new().await;
+
+        insert_default_triage_exclusion_reason(&schema).await;
+        insert_global_policy(&schema, 0, "Shared Policy").await;
+
+        // Admin can read shared policy.
+        let res = schema
+            .execute_as_system_admin(r#"{ triagePolicy(id: "0") { name customerId } }"#)
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{triagePolicy: {name: "Shared Policy", customerId: null}}"#
+        );
+
+        // Admin can update shared policy.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateTriagePolicy(
+                        id: 0
+                        old: {
+                            name: "Shared Policy"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                        }
+                        new: {
+                            name: "Updated Shared"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(res.data.to_string(), r#"{updateTriagePolicy: "0"}"#);
+
+        // Admin can delete shared policy.
+        let res = schema
+            .execute_as_system_admin(r#"mutation { removeTriagePolicies(ids: ["0"]) }"#)
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{removeTriagePolicies: ["Updated Shared"]}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn triage_policy_admin_can_reassign_customers() {
+        let schema = TestSchema::new().await;
+
+        insert_customers(&schema, &["c1", "c2"]).await;
+        insert_default_triage_exclusion_reason(&schema).await;
+        insert_customer_policy(&schema, 0, "Policy", 0).await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateTriagePolicy(
+                        id: 0
+                        old: {
+                            name: "Policy"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                            customerId: "0"
+                        }
+                        new: {
+                            name: "Policy"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: []
+                            response: []
+                            customerId: "1"
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(res.data.to_string(), r#"{updateTriagePolicy: "0"}"#);
     }
 }
