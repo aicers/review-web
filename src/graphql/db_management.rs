@@ -34,16 +34,6 @@ pub struct BackupConfig {
     pub num_of_backups_to_keep: u16,
 }
 
-impl Default for BackupConfig {
-    fn default() -> Self {
-        Self {
-            backup_duration: 1,
-            backup_time: "23:59:59".to_string(),
-            num_of_backups_to_keep: 5,
-        }
-    }
-}
-
 impl From<DbBackupConfig> for BackupConfig {
     fn from(config: DbBackupConfig) -> Self {
         Self {
@@ -163,20 +153,13 @@ impl DbManagementQuery {
 
     /// Retrieves the current backup configuration.
     ///
-    /// Returns the stored configuration if one exists, otherwise returns
-    /// sensible defaults:
-    /// - `backup_duration`: 1 day
-    /// - `backup_time`: "23:59:59" (UTC)
-    /// - `num_of_backups_to_keep`: 5
+    /// Returns the stored configuration if one exists, otherwise returns `None`.
     ///
     /// Accessible to `SystemAdministrator` only.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
-    async fn backup_config(&self, ctx: &Context<'_>) -> Result<BackupConfig> {
+    async fn backup_config(&self, ctx: &Context<'_>) -> Result<Option<BackupConfig>> {
         let store = crate::graphql::get_store(ctx)?;
-        Ok(store
-            .backup_config()?
-            .map(BackupConfig::from)
-            .unwrap_or_default())
+        Ok(store.backup_config()?.map(BackupConfig::from))
     }
 }
 
@@ -277,7 +260,6 @@ impl DbManagementMutation {
     /// # Errors
     ///
     /// Returns an error if:
-    /// * The user is not an administrator
     /// * The user is not a `SystemAdministrator`
     /// * The old configuration doesn't match the current stored configuration
     /// * Input validation fails (e.g., invalid time format, zero values)
@@ -451,7 +433,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_backup_config_query_returns_defaults() {
+    async fn test_backup_config_query_returns_none_when_uninitialized() {
         let schema = TestSchema::new().await;
 
         let res = schema.execute_as_system_admin(BACKUP_CONFIG_QUERY).await;
@@ -460,11 +442,7 @@ mod tests {
         assert_json_eq!(
             res.data.into_json().unwrap(),
             json!({
-                "backupConfig": {
-                    "backupDuration": 1,
-                    "backupTime": "23:59:59",
-                    "numOfBackupsToKeep": 5
-                }
+                "backupConfig": null
             })
         );
     }
