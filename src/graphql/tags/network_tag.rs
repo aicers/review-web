@@ -148,19 +148,8 @@ mod tests {
     #[tokio::test]
     async fn network_tag_list_returns_empty_for_system_admin() {
         let schema = TestSchema::new().await;
-
-        // Create a customer for tag scoping
         let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertCustomer(name: "c1", description: "", networks: [])
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
-
-        let res = schema
-            .execute_as_system_admin(r"{networkTagList(customerId: 0){name}}")
+            .execute_as_system_admin(r"{networkTagList{name}}")
             .await;
         assert_eq!(res.data.to_string(), r"{networkTagList: []}");
     }
