@@ -41,6 +41,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `customerId` is provided.
 - Restricted backup/restore GraphQL queries and mutations to
   SystemAdministrator, denying SecurityAdministrator access.
+- Restricted `updateNetwork` and `removeNetworks` GraphQL mutations
+  to `SystemAdministrator` only. `insertNetwork`, `networkList`, and
+  `network(id)` guards remain unchanged.
 - `graphql_handler` and `graphql_ws_handler` now delegate certificate
   validation to `authenticator.authenticate()` rather than the previously
   internal `validate_client_cert()`, making the validation policy replaceable
