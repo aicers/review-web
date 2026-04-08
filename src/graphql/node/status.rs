@@ -10,7 +10,7 @@ use roxy::ResourceUsage;
 use tracing::info;
 
 use super::{
-    super::{BoxedAgentManager, Role, RoleGuard},
+    super::{BoxedAgentManager, Role, RoleGuard, customer_access},
     NodeStatus, NodeStatusQuery, NodeStatusTotalCount, matches_manager_hostname,
 };
 use crate::graphql::query_with_constraints;
@@ -49,10 +49,26 @@ async fn load(
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, NodeStatus, NodeStatusTotalCount, EmptyFields>> {
+    let users_customers = customer_access::users_customers(ctx)?;
+    let users_customers = users_customers.as_deref();
     let (node_list, has_previous, has_next) = {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.node_map();
-        super::super::load_edges_interim(&map, after, before, first, last, None)?
+        // Apply customer filtering while collecting edges to keep pagination metadata consistent.
+        let (node_list, has_previous, has_next) = super::super::process_load_edges_filtered(
+            &map,
+            after,
+            before,
+            first,
+            last,
+            None,
+            |node| customer_access::can_access_node(users_customers, node),
+        );
+        let node_list = node_list
+            .into_iter()
+            .map(|res| res.map_err(|e| format!("{e}").into()))
+            .collect::<Result<Vec<_>>>()?;
+        (node_list, has_previous, has_next)
     };
 
     let agent_manager = ctx.data::<BoxedAgentManager>()?;
@@ -106,102 +122,13 @@ async fn fetch_resource_usage_and_ping(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, time::Duration};
+    use std::collections::HashMap;
 
     use assert_json_diff::assert_json_include;
-    use async_trait::async_trait;
-    use roxy::ResourceUsage;
     use serde_json::json;
 
-    use crate::graphql::{
-        AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema,
-        customer::NetworksTargetAgentKeysPair,
-    };
-
-    struct MockAgentManager {
-        pub online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,
-    }
-
-    #[async_trait]
-    impl AgentManager for MockAgentManager {
-        async fn send_agent_specific_internal_networks(
-            &self,
-            _networks: &[NetworksTargetAgentKeysPair],
-        ) -> Result<Vec<String>, anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-
-        async fn send_agent_specific_allow_networks(
-            &self,
-            _networks: &[NetworksTargetAgentKeysPair],
-        ) -> Result<Vec<String>, anyhow::Error> {
-            unimplemented!()
-        }
-
-        async fn send_agent_specific_block_networks(
-            &self,
-            _networks: &[NetworksTargetAgentKeysPair],
-        ) -> Result<Vec<String>, anyhow::Error> {
-            unimplemented!()
-        }
-
-        async fn online_apps_by_host_id(
-            &self,
-        ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error> {
-            Ok(self.online_apps_by_host_id.clone())
-        }
-
-        async fn broadcast_crusher_sampling_policy(
-            &self,
-            _sampling_policies: &[SamplingPolicy],
-        ) -> Result<(), anyhow::Error> {
-            unimplemented!()
-        }
-
-        async fn get_process_list(
-            &self,
-            _hostname: &str,
-        ) -> Result<Vec<roxy::Process>, anyhow::Error> {
-            unimplemented!()
-        }
-
-        async fn get_resource_usage(
-            &self,
-            _hostname: &str,
-        ) -> Result<roxy::ResourceUsage, anyhow::Error> {
-            Ok(ResourceUsage {
-                cpu_usage: 20.0,
-                total_memory: 1000,
-                used_memory: 100,
-                disk_used_bytes: 100,
-                disk_available_bytes: 900,
-            })
-        }
-
-        async fn halt(&self, _hostname: &str) -> Result<(), anyhow::Error> {
-            unimplemented!()
-        }
-
-        async fn ping(&self, _hostname: &str) -> Result<Duration, anyhow::Error> {
-            Ok(Duration::from_micros(10))
-        }
-
-        async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error> {
-            unimplemented!()
-        }
-
-        async fn update_config(&self, _agent_key: &str) -> Result<(), anyhow::Error> {
-            Ok(())
-        }
-    }
-
-    fn insert_apps(host: &str, apps: &[&str], map: &mut HashMap<String, Vec<(String, String)>>) {
-        let entries = apps
-            .iter()
-            .map(|&app| (format!("{app}@{host}"), app.to_string()))
-            .collect();
-        map.insert(host.to_string(), entries);
-    }
+    use super::super::test_support::{MockAgentManager, insert_active_node, insert_apps};
+    use crate::graphql::{BoxedAgentManager, Role, TestSchema};
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
@@ -647,5 +574,128 @@ mod tests {
         let res = schema.execute_as_system_admin(r#"{nodeStatusList(first:2, before:"WzExNiwxMDEsMTE1LDExNiw1M10"){edges{node{name}}}}"#)
             .await;
         assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn node_status_customer_scoping_pagination_admin_allowed() {
+        let mut online_apps_by_host_id = HashMap::new();
+        insert_apps("allowed-host", &["sensor"], &mut online_apps_by_host_id);
+        insert_apps("customer2-host", &["sensor"], &mut online_apps_by_host_id);
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id,
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let id0 = insert_active_node(&schema.store(), "a_customer2_status", 2, "customer2-host");
+        let id1 = insert_active_node(&schema.store(), "b_customer1_status", 1, "allowed-host");
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+
+        let res = schema
+            .execute_as_system_admin(
+                r"{nodeStatusList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeStatusList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["node"]["name"], "a_customer2_status");
+        assert_eq!(
+            data["nodeStatusList"]["pageInfo"]["hasNextPage"],
+            json!(true)
+        );
+        assert_eq!(
+            data["nodeStatusList"]["pageInfo"]["hasPreviousPage"],
+            json!(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn node_status_customer_scoping_pagination_allowed() {
+        let mut online_apps_by_host_id = HashMap::new();
+        insert_apps("allowed-host", &["sensor"], &mut online_apps_by_host_id);
+        insert_apps("forbidden-host", &["sensor"], &mut online_apps_by_host_id);
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id,
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let id0 = insert_active_node(&schema.store(), "a_forbidden_status", 2, "forbidden-host");
+        let id1 = insert_active_node(&schema.store(), "b_allowed_status", 1, "allowed-host");
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+
+        let res = schema
+            .execute_as_scoped_user(
+                r"{nodeStatusList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
+                Role::SecurityAdministrator,
+                Some(vec![1]),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeStatusList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["node"]["name"], "b_allowed_status");
+        assert_eq!(
+            data["nodeStatusList"]["pageInfo"]["hasNextPage"],
+            json!(false)
+        );
+        assert_eq!(
+            data["nodeStatusList"]["pageInfo"]["hasPreviousPage"],
+            json!(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn node_status_customer_scoping_pagination_forbidden() {
+        let mut online_apps_by_host_id = HashMap::new();
+        insert_apps("forbidden-host", &["sensor"], &mut online_apps_by_host_id);
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id,
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let id0 = insert_active_node(&schema.store(), "a_forbidden_status", 2, "forbidden-host");
+        assert_eq!(id0, 0);
+
+        let res = schema
+            .execute_as_scoped_user(
+                r"{nodeStatusList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
+                Role::SecurityAdministrator,
+                Some(vec![1]),
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let edges = data["nodeStatusList"]["edges"].as_array().unwrap();
+        assert!(edges.is_empty());
+        assert_eq!(
+            data["nodeStatusList"]["pageInfo"]["hasNextPage"],
+            json!(false)
+        );
+        assert_eq!(
+            data["nodeStatusList"]["pageInfo"]["hasPreviousPage"],
+            json!(false)
+        );
     }
 }

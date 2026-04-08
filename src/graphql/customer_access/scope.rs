@@ -1,4 +1,4 @@
-use async_graphql::{Context, Result};
+use async_graphql::{Context, Result, types::ID};
 use review_database::Role;
 
 /// Checks if a user is a member of a specific customer.
@@ -90,6 +90,27 @@ fn users_customers_by_feature(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
 fn users_customers_by_feature(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
     let customer_ids = ctx.data::<crate::graphql::CustomerIds>()?;
     Ok(customer_ids.0.clone())
+}
+
+/// Checks whether the current user can access the given customer ID.
+///
+/// Returns `Ok(())` if the current user is unscoped or belongs to the given customer.
+///
+/// # Errors
+///
+/// Returns an error if required context data is missing, the customer ID is invalid,
+/// or the current user is not allowed to access the customer.
+pub(crate) fn check_customer_membership(ctx: &Context<'_>, customer_id: &ID) -> Result<()> {
+    let users_customers = users_customers(ctx)?;
+    let customer_id = customer_id
+        .as_str()
+        .parse::<u32>()
+        .map_err(|_| "invalid customer ID")?;
+    if is_member(users_customers.as_deref(), customer_id) {
+        Ok(())
+    } else {
+        Err("Forbidden".into())
+    }
 }
 
 #[cfg(test)]
@@ -208,6 +229,15 @@ mod tests {
         async fn users_customers(&self, ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
             super::users_customers(ctx)
         }
+
+        async fn check_customer_membership(
+            &self,
+            ctx: &Context<'_>,
+            customer_id: ID,
+        ) -> Result<bool> {
+            super::check_customer_membership(ctx, &customer_id)?;
+            Ok(true)
+        }
     }
 
     struct TestContext {
@@ -300,6 +330,18 @@ mod tests {
             self.schema.execute(request).await
         }
 
+        #[cfg(feature = "auth-jwt")]
+        async fn execute_check_customer_membership(
+            &self,
+            customer_id: &str,
+        ) -> async_graphql::Response {
+            self.schema
+                .execute(format!(
+                    "{{ checkCustomerMembership(customerId: \"{customer_id}\") }}"
+                ))
+                .await
+        }
+
         #[cfg(feature = "auth-mtls")]
         async fn execute_with_guard(
             &self,
@@ -323,11 +365,47 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "auth-mtls")]
+    #[tokio::test]
+    async fn test_users_customers_scoped_user() {
+        let test_ctx = TestContext::new_without_account("scoped_user");
+        let res = test_ctx
+            .execute_with_guard_and_customer_ids(
+                "{ usersCustomers }",
+                crate::graphql::RoleGuard::Role(crate::graphql::Role::SecurityAdministrator),
+                Some(vec![1, 2, 3]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            json!({"usersCustomers": [1, 2, 3]})
+        );
+    }
+
     #[cfg(feature = "auth-jwt")]
     #[tokio::test]
     async fn test_users_customers_admin_user() {
         let test_ctx = TestContext::new_with_account("admin_user", None);
         let res = test_ctx.execute("{ usersCustomers }").await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            json!({"usersCustomers": null})
+        );
+    }
+
+    #[cfg(feature = "auth-mtls")]
+    #[tokio::test]
+    async fn test_users_customers_admin_user() {
+        let test_ctx = TestContext::new_without_account("admin_user");
+        let res = test_ctx
+            .execute_with_guard_and_customer_ids(
+                "{ usersCustomers }",
+                crate::graphql::RoleGuard::Role(crate::graphql::Role::SystemAdministrator),
+                None,
+            )
+            .await;
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
         assert_eq!(
             res.data.into_json().unwrap(),
@@ -406,5 +484,99 @@ mod tests {
             res.errors[0].message,
             "Data `review_web::graphql::CustomerIds` does not exist."
         );
+    }
+
+    #[cfg(feature = "auth-jwt")]
+    #[tokio::test]
+    async fn test_check_customer_membership_scoped_user_allowed() {
+        let test_ctx = TestContext::new_with_account("scoped_user", Some(vec![1, 2, 3]));
+        let res = test_ctx.execute_check_customer_membership("2").await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+    }
+
+    #[cfg(feature = "auth-mtls")]
+    #[tokio::test]
+    async fn test_check_customer_membership_scoped_user_allowed() {
+        let test_ctx = TestContext::new_without_account("scoped_user");
+        let request = Request::new(r#"{ checkCustomerMembership(customerId: "2") }"#)
+            .data(crate::graphql::RoleGuard::Role(
+                crate::graphql::Role::SecurityMonitor,
+            ))
+            .data(crate::graphql::CustomerIds(Some(vec![1, 2, 3])));
+        let res = test_ctx.schema.execute(request).await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+    }
+
+    #[cfg(feature = "auth-jwt")]
+    #[tokio::test]
+    async fn test_check_customer_membership_scoped_user_forbidden() {
+        let test_ctx = TestContext::new_with_account("scoped_user", Some(vec![1]));
+        let res = test_ctx.execute_check_customer_membership("2").await;
+
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    #[cfg(feature = "auth-mtls")]
+    #[tokio::test]
+    async fn test_check_customer_membership_scoped_user_forbidden() {
+        let test_ctx = TestContext::new_without_account("scoped_user");
+        let request = Request::new(r#"{ checkCustomerMembership(customerId: "2") }"#)
+            .data(crate::graphql::RoleGuard::Role(
+                crate::graphql::Role::SecurityMonitor,
+            ))
+            .data(crate::graphql::CustomerIds(Some(vec![1])));
+        let res = test_ctx.schema.execute(request).await;
+
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    #[cfg(feature = "auth-jwt")]
+    #[tokio::test]
+    async fn test_check_customer_membership_invalid_customer_id() {
+        let test_ctx = TestContext::new_with_account("scoped_user", Some(vec![1]));
+        let res = test_ctx.execute_check_customer_membership("abc").await;
+
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "invalid customer ID");
+    }
+
+    #[cfg(feature = "auth-mtls")]
+    #[tokio::test]
+    async fn test_check_customer_membership_invalid_customer_id() {
+        let test_ctx = TestContext::new_without_account("scoped_user");
+        let request = Request::new(r#"{ checkCustomerMembership(customerId: "abc") }"#)
+            .data(crate::graphql::RoleGuard::Role(
+                crate::graphql::Role::SecurityMonitor,
+            ))
+            .data(crate::graphql::CustomerIds(Some(vec![1])));
+        let res = test_ctx.schema.execute(request).await;
+
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "invalid customer ID");
+    }
+
+    #[cfg(feature = "auth-jwt")]
+    #[tokio::test]
+    async fn test_check_customer_membership_admin_allowed() {
+        let test_ctx = TestContext::new_with_account("admin_user", None);
+        let res = test_ctx.execute_check_customer_membership("999").await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+    }
+
+    #[cfg(feature = "auth-mtls")]
+    #[tokio::test]
+    async fn test_check_customer_membership_admin_allowed() {
+        let test_ctx = TestContext::new_without_account("admin_user");
+        let request = Request::new(r#"{ checkCustomerMembership(customerId: "999") }"#).data(
+            crate::graphql::RoleGuard::Role(crate::graphql::Role::SystemAdministrator),
+        );
+        let res = test_ctx.schema.execute(request).await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
     }
 }

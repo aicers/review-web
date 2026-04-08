@@ -48,6 +48,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Unified all `cluster_id` and `model_id` types to `u32` across the codebase,
   replacing previous uses of `i32`, `String`, and `usize`. This change aligns
   with the corresponding type unification in `review-database`.
+- Enforced customer scoping for Node GraphQL operations for non-admin users.
+  Affected APIs: `node`, `nodeList`, `nodeStatusList`, `insertNode`,
+  `updateNodeDraft`, `removeNodes`, `applyNode`, `nodeReboot`,
+  `nodeShutdown`. Administrators (`customer_ids = None`) retain full access.
 
 ### Fixed
 
