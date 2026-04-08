@@ -44,6 +44,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Restricted `updateNetwork` and `removeNetworks` GraphQL mutations
   to `SystemAdministrator` only. `insertNetwork`, `networkList`, and
   `network(id)` guards remain unchanged.
+- Enforced customer scoping for `TriagePolicy` GraphQL APIs so scoped
+  security administrators can only read and mutate global policies and
+  policies for customers they belong to.
+- Enforced customer scoping for `TriagePolicy` GraphQL APIs. Scoped
+  security administrators can read and list shared and in-scope
+  customer-owned policies, but can only mutate customer-owned policies
+  within their customer scope. Shared policies remain system-managed and
+  are read-only for scoped users.
 - `graphql_handler` and `graphql_ws_handler` now delegate certificate
   validation to `authenticator.authenticate()` rather than the previously
   internal `validate_client_cert()`, making the validation policy replaceable
