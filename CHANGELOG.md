@@ -59,6 +59,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Restricted `updateNetwork` and `removeNetworks` GraphQL mutations
   to `SystemAdministrator` only. `insertNetwork`, `networkList`, and
   `network(id)` guards remain unchanged.
+- Enforced customer scoping for Network and NetworkTag GraphQL APIs.
+  - `insertNetwork`: scoped `SecurityAdministrator` and `SecurityManager`
+    can only insert when every referenced tag belongs to an in-scope
+    customer. `tagIds: []` remains allowed. `SecurityMonitor` is forbidden.
+  - `networkTagList(customerId: X)`: returns `Forbidden` when `X` is out
+    of scope for non-admin callers.
+  - `insertNetworkTag`, `updateNetworkTag`, `removeNetworkTag`: return
+    `Forbidden` when the `customerId` is out of scope for non-admin callers.
+  - `networkList` and `network(id)` remain globally readable for all
+    allowed roles.
 - Enforced customer scoping for `TriagePolicy` GraphQL APIs so scoped
   security administrators can only read and mutate global policies and
   policies for customers they belong to.
