@@ -3,11 +3,11 @@ use review_database::{Iterable, Role, Store, event::Direction};
 
 use super::Tag;
 use crate::graphql::RoleGuard;
+use crate::graphql::customer_access::check_customer_membership;
 
 #[derive(Default)]
 pub(in crate::graphql) struct NetworkTagQuery;
 
-// TODO(#762): Restrict network tag reads to the caller's customer scope.
 #[Object]
 impl NetworkTagQuery {
     /// A list of network tags.
@@ -22,6 +22,7 @@ impl NetworkTagQuery {
     ) -> Result<Vec<Tag>> {
         let store = crate::graphql::get_store(ctx)?;
         if let Some(customer_id) = customer_id {
+            check_customer_membership(ctx, &customer_id)?;
             let customer_id = customer_id
                 .as_str()
                 .parse::<u32>()
@@ -45,7 +46,6 @@ impl NetworkTagQuery {
 #[derive(Default)]
 pub(in crate::graphql) struct NetworkTagMutation;
 
-// TODO(#762): Enforce customer-scope authorization for network tag mutations.
 #[Object]
 impl NetworkTagMutation {
     /// Inserts a new network tag, returning the ID of the new tag.
@@ -58,6 +58,7 @@ impl NetworkTagMutation {
         customer_id: ID,
         name: String,
     ) -> Result<ID> {
+        check_customer_membership(ctx, &customer_id)?;
         let customer_id = customer_id
             .as_str()
             .parse::<u32>()
@@ -79,6 +80,7 @@ impl NetworkTagMutation {
         customer_id: ID,
         id: ID,
     ) -> Result<Option<String>> {
+        check_customer_membership(ctx, &customer_id)?;
         let customer_id = customer_id
             .as_str()
             .parse::<u32>()
@@ -106,6 +108,7 @@ impl NetworkTagMutation {
         old: String,
         new: String,
     ) -> Result<bool> {
+        check_customer_membership(ctx, &customer_id)?;
         let customer_id = customer_id
             .as_str()
             .parse::<u32>()
@@ -186,9 +189,10 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertNetworkTag: "0"}"#);
 
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r"{networkTagList(customerId: 0){name}}",
-                RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![0]),
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{networkTagList: [{name: "foo"}]}"#);
@@ -482,9 +486,10 @@ mod tests {
         );
 
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r"{networkTagList(customerId: 0){id name}}",
-                RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![0, 1]),
             )
             .await;
         assert_eq!(
@@ -510,14 +515,421 @@ mod tests {
         );
 
         let res = schema
-            .execute_with_guard(
+            .execute_as_scoped_user(
                 r"{networkTagList(customerId: 1){name}}",
-                RoleGuard::Role(Role::SecurityAdministrator),
+                Role::SecurityAdministrator,
+                Some(vec![0, 1]),
             )
             .await;
         assert_eq!(
             res.data.to_string(),
             r#"{networkTagList: [{name: "alpha"}]}"#
         );
+    }
+
+    // --- Regression: SystemAdministrator can do all NetworkTag operations ---
+
+    #[tokio::test]
+    async fn system_admin_can_query_network_tag_list_with_and_without_customer_id() {
+        let schema = TestSchema::new().await;
+
+        schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "a")}"#)
+            .await;
+        schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 1, name: "b")}"#)
+            .await;
+
+        // Without customerId: aggregate view
+        let res = schema
+            .execute_as_system_admin(r"{networkTagList{name}}")
+            .await;
+        assert!(res.errors.is_empty());
+        assert_eq!(
+            res.data.to_string(),
+            r#"{networkTagList: [{name: "a"}, {name: "b"}]}"#
+        );
+
+        // With customerId: single customer
+        let res = schema
+            .execute_as_system_admin(r"{networkTagList(customerId: 0){name}}")
+            .await;
+        assert!(res.errors.is_empty());
+        assert_eq!(res.data.to_string(), r#"{networkTagList: [{name: "a"}]}"#);
+    }
+
+    // --- Regression: scoped users can query/mutate in-scope NetworkTags ---
+
+    #[tokio::test]
+    async fn scoped_users_can_query_network_tag_list_for_in_scope_customer() {
+        let schema = TestSchema::new().await;
+
+        schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "foo")}"#)
+            .await;
+
+        for role in [
+            Role::SecurityAdministrator,
+            Role::SecurityManager,
+            Role::SecurityMonitor,
+        ] {
+            let res = schema
+                .execute_as_scoped_user(
+                    r"{networkTagList(customerId: 0){name}}",
+                    role,
+                    Some(vec![0]),
+                )
+                .await;
+            assert!(
+                res.errors.is_empty(),
+                "Scoped {role:?} should query in-scope networkTagList: {:?}",
+                res.errors
+            );
+            assert_eq!(res.data.to_string(), r#"{networkTagList: [{name: "foo"}]}"#);
+        }
+    }
+
+    #[tokio::test]
+    async fn scoped_security_admin_can_mutate_in_scope_network_tags() {
+        let schema = TestSchema::new().await;
+
+        schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+
+        // Insert
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {insertNetworkTag(customerId: 0, name: "foo")}"#,
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+
+        // Update
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {updateNetworkTag(customerId: 0, id: "0", old: "foo", new: "bar")}"#,
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(res.data.to_string(), r"{updateNetworkTag: true}");
+
+        // Remove
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {removeNetworkTag(customerId: 0, id: "0")}"#,
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+    }
+
+    #[tokio::test]
+    async fn scoped_security_manager_can_mutate_in_scope_network_tags() {
+        let schema = TestSchema::new().await;
+
+        schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {insertNetworkTag(customerId: 0, name: "foo")}"#,
+                Role::SecurityManager,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {updateNetworkTag(customerId: 0, id: "0", old: "foo", new: "bar")}"#,
+                Role::SecurityManager,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {removeNetworkTag(customerId: 0, id: "0")}"#,
+                Role::SecurityManager,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+    }
+
+    // --- Regression: removing tag clears network tag IDs ---
+
+    #[tokio::test]
+    async fn scoped_remove_network_tag_clears_network_tag_ids() {
+        let schema = TestSchema::new().await;
+
+        schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "foo")}"#)
+            .await;
+        schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNetwork(name: "n1", description: "", networks: {
+                        hosts: [], networks: [], ranges: []
+                    }, tagIds: [0])
+                }"#,
+            )
+            .await;
+
+        let res = schema
+            .execute_as_system_admin(r#"{network(id: "0") {tagIds}}"#)
+            .await;
+        assert_eq!(res.data.to_string(), r#"{network: {tagIds: ["0"]}}"#);
+
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {removeNetworkTag(customerId: 0, id: "0")}"#,
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(res.errors.is_empty());
+
+        let res = schema
+            .execute_as_system_admin(r#"{network(id: "0") {tagIds}}"#)
+            .await;
+        assert_eq!(res.data.to_string(), r"{network: {tagIds: []}}");
+    }
+
+    // --- Failure: scoped users cannot query out-of-scope networkTagList ---
+
+    #[tokio::test]
+    async fn scoped_users_cannot_query_network_tag_list_for_out_of_scope_customer() {
+        let schema = TestSchema::new().await;
+
+        schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+
+        for role in [
+            Role::SecurityAdministrator,
+            Role::SecurityManager,
+            Role::SecurityMonitor,
+        ] {
+            let res = schema
+                .execute_as_scoped_user(
+                    r"{networkTagList(customerId: 1){name}}",
+                    role,
+                    Some(vec![0]),
+                )
+                .await;
+            assert!(
+                !res.errors.is_empty(),
+                "Scoped {role:?} should be forbidden"
+            );
+            assert_eq!(res.errors[0].message, "Forbidden");
+        }
+    }
+
+    // --- Failure: scoped users without customerId get "customer ID is required" ---
+
+    #[tokio::test]
+    async fn scoped_users_without_customer_id_get_required_error() {
+        let schema = TestSchema::new().await;
+
+        schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+
+        for role in [
+            Role::SecurityAdministrator,
+            Role::SecurityManager,
+            Role::SecurityMonitor,
+        ] {
+            let res = schema
+                .execute_as_scoped_user(r"{networkTagList{name}}", role, Some(vec![0]))
+                .await;
+            assert!(!res.errors.is_empty());
+            assert_eq!(res.errors[0].message, "customer ID is required");
+        }
+    }
+
+    // --- Failure: scoped users cannot mutate out-of-scope NetworkTags ---
+
+    #[tokio::test]
+    async fn scoped_security_admin_cannot_mutate_out_of_scope_network_tags() {
+        let schema = TestSchema::new().await;
+
+        schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 1, name: "foo")}"#)
+            .await;
+
+        // Insert for out-of-scope customer
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {insertNetworkTag(customerId: 1, name: "bar")}"#,
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert_eq!(res.errors[0].message, "Forbidden");
+
+        // Update for out-of-scope customer
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {updateNetworkTag(customerId: 1, id: "0", old: "foo", new: "bar")}"#,
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert_eq!(res.errors[0].message, "Forbidden");
+
+        // Remove for out-of-scope customer
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {removeNetworkTag(customerId: 1, id: "0")}"#,
+                Role::SecurityAdministrator,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert_eq!(res.errors[0].message, "Forbidden");
+
+        // Verify tag is unchanged
+        let res = schema
+            .execute_as_system_admin(r"{networkTagList(customerId: 1){name}}")
+            .await;
+        assert_eq!(res.data.to_string(), r#"{networkTagList: [{name: "foo"}]}"#);
+    }
+
+    #[tokio::test]
+    async fn scoped_security_manager_cannot_mutate_out_of_scope_network_tags() {
+        let schema = TestSchema::new().await;
+
+        schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
+            )
+            .await;
+        schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 1, name: "foo")}"#)
+            .await;
+
+        for mutation in [
+            r#"mutation {insertNetworkTag(customerId: 1, name: "bar")}"#,
+            r#"mutation {updateNetworkTag(customerId: 1, id: "0", old: "foo", new: "bar")}"#,
+            r#"mutation {removeNetworkTag(customerId: 1, id: "0")}"#,
+        ] {
+            let res = schema
+                .execute_as_scoped_user(mutation, Role::SecurityManager, Some(vec![0]))
+                .await;
+            assert!(!res.errors.is_empty(), "Should be forbidden: {mutation}");
+            assert_eq!(res.errors[0].message, "Forbidden");
+        }
+    }
+
+    // --- Failure: SecurityMonitor cannot mutate NetworkTags ---
+
+    #[tokio::test]
+    async fn security_monitor_cannot_mutate_network_tags() {
+        let schema = TestSchema::new().await;
+
+        schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
+            )
+            .await;
+        schema
+            .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "foo")}"#)
+            .await;
+
+        let insert = schema
+            .execute_as_scoped_user(
+                r#"mutation {insertNetworkTag(customerId: 0, name: "bar")}"#,
+                Role::SecurityMonitor,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(!insert.errors.is_empty());
+        assert_eq!(insert.errors[0].message, "Forbidden");
+
+        let update = schema
+            .execute_as_scoped_user(
+                r#"mutation {updateNetworkTag(customerId: 0, id: "0", old: "foo", new: "bar")}"#,
+                Role::SecurityMonitor,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(!update.errors.is_empty());
+        assert_eq!(update.errors[0].message, "Forbidden");
+
+        let remove = schema
+            .execute_as_scoped_user(
+                r#"mutation {removeNetworkTag(customerId: 0, id: "0")}"#,
+                Role::SecurityMonitor,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(!remove.errors.is_empty());
+        assert_eq!(remove.errors[0].message, "Forbidden");
+
+        // Verify tag unchanged
+        let res = schema
+            .execute_as_system_admin(r"{networkTagList(customerId: 0){name}}")
+            .await;
+        assert_eq!(res.data.to_string(), r#"{networkTagList: [{name: "foo"}]}"#);
     }
 }

@@ -1210,7 +1210,6 @@ impl TestSchema {
         self.schema.execute(request).await
     }
 
-    #[allow(dead_code)] // Shared customer-scope test helper retained for follow-up issues.
     async fn execute_as_scoped_user(
         &self,
         query: &str,
@@ -1274,7 +1273,6 @@ impl TestSchema {
     /// Creates a customer and an applied node with the provided hostname.
     ///
     /// Returns the newly created customer ID.
-    #[allow(dead_code)] // Shared customer-scope test helper retained for follow-up issues.
     async fn setup_customer_and_node(&self, customer_name: &str, hostname: &str) -> String {
         let query = format!(
             r#"mutation {{ insertCustomer(name: "{customer_name}", description: "", networks: []) }}"#,
