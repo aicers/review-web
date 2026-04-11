@@ -320,19 +320,59 @@ async fn load_immutable(ctx: &Context<'_>) -> Result<Vec<Policy>> {
     Ok(rtn)
 }
 
-/// Returns all sampling policies.
+/// Returns sampling policies that belong to the given customer.
+///
+/// A policy is included if:
+/// - Its `node` field is `None` (treated as a shared/global policy), or
+/// - Its `node` refers to a node whose `profile.customer_id` matches
+///   the requested `customer_id`.
+///
+/// Policies whose `node` references a non-existent node or a node
+/// without a profile are skipped with a warning.
 ///
 /// # Errors
 ///
-/// Returns an error if the sampling policy database could not be
-/// retrieved.
-pub fn get_sampling_policies(db: &Store, _customer_id: u32) -> Result<Vec<Policy>> {
-    let map = db.sampling_policy_map();
-    let mut policies = vec![];
+/// Returns an error if the sampling policy or node database could not
+/// be read.
+pub fn get_sampling_policies(db: &Store, customer_id: u32) -> Result<Vec<Policy>> {
+    let policy_map = db.sampling_policy_map();
+    let node_map = db.node_map();
 
-    for res in map.iter(Direction::Forward, None) {
+    // Build a lookup from node name -> customer_id.
+    let mut node_customer: std::collections::HashMap<String, u32> =
+        std::collections::HashMap::new();
+    for entry in node_map.iter(Direction::Forward, None) {
+        let node = entry.map_err(|e| format!("failed to read node_map: {e}"))?;
+        if let Some(profile) = &node.profile {
+            node_customer.insert(node.name.clone(), profile.customer_id);
+        }
+    }
+
+    let mut policies = vec![];
+    for res in policy_map.iter(Direction::Forward, None) {
         let policy = res?;
-        policies.push(policy.into());
+        match &policy.node {
+            None => {
+                // Shared/global policy — return to every customer.
+                policies.push(policy.into());
+            }
+            Some(node_name) => match node_customer.get(node_name) {
+                Some(&cid) if cid == customer_id => {
+                    policies.push(policy.into());
+                }
+                Some(_) => {
+                    // Belongs to a different customer — skip.
+                }
+                None => {
+                    tracing::warn!(
+                        "sampling policy {:?} references unknown \
+                         or profile-less node {:?}, skipping",
+                        policy.name,
+                        node_name,
+                    );
+                }
+            },
+        }
     }
     Ok(policies)
 }
@@ -452,6 +492,8 @@ impl SamplingPolicyMutation {
 #[cfg(test)]
 mod tests {
     use assert_json_diff::assert_json_eq;
+    use chrono::Utc;
+    use review_database::Store;
     use serde_json::json;
 
     use crate::graphql::TestSchema;
@@ -639,5 +681,102 @@ mod tests {
             res.data.to_string(),
             r#"{removeSamplingPolicies: ["Policy 2"]}"#
         );
+    }
+
+    fn insert_node(store: &Store, name: &str, customer_id: u32) {
+        let node = review_database::Node {
+            id: u32::MAX,
+            name: name.to_string(),
+            name_draft: Some(name.to_string()),
+            profile: Some(review_database::NodeProfile {
+                customer_id,
+                description: String::new(),
+                hostname: name.to_string(),
+            }),
+            profile_draft: None,
+            agents: vec![],
+            external_services: vec![],
+            creation_time: Utc::now(),
+        };
+        store.node_map().put(&node).expect("insert node");
+    }
+
+    fn insert_policy(store: &Store, name: &str, node: Option<&str>) {
+        let policy = review_database::SamplingPolicy {
+            id: u32::MAX,
+            name: name.to_string(),
+            kind: review_database::SamplingKind::Conn,
+            interval: review_database::SamplingInterval::FifteenMinutes,
+            period: review_database::SamplingPeriod::OneDay,
+            offset: 0,
+            src_ip: None,
+            dst_ip: None,
+            node: node.map(ToString::to_string),
+            column: None,
+            immutable: false,
+            creation_time: Utc::now(),
+        };
+        store
+            .sampling_policy_map()
+            .put(policy)
+            .expect("insert policy");
+    }
+
+    #[test]
+    fn get_sampling_policies_filters_by_customer() {
+        let db_dir = tempfile::tempdir().unwrap();
+        let backup_dir = tempfile::tempdir().unwrap();
+        let store = Store::new(db_dir.path(), backup_dir.path()).unwrap();
+
+        // Create two nodes belonging to different customers.
+        insert_node(&store, "node_a", 1);
+        insert_node(&store, "node_b", 2);
+
+        // Create policies:
+        //  - global (node = None)       -> returned for every customer
+        //  - assigned to node_a (cust 1) -> returned only for customer 1
+        //  - assigned to node_b (cust 2) -> returned only for customer 2
+        //  - referencing a missing node  -> skipped
+        insert_policy(&store, "global_policy", None);
+        insert_policy(&store, "policy_a", Some("node_a"));
+        insert_policy(&store, "policy_b", Some("node_b"));
+        insert_policy(&store, "orphan_policy", Some("no_such_node"));
+
+        // Customer 1 should see global + policy_a.
+        let result = super::get_sampling_policies(&store, 1).unwrap();
+        let names: Vec<&str> = result
+            .iter()
+            .map(|p| p.node.as_deref().unwrap_or("(none)"))
+            .collect();
+        assert_eq!(result.len(), 2, "customer 1 policies: {names:?}");
+        assert!(
+            result.iter().any(|p| p.node.is_none()),
+            "global policy missing"
+        );
+        assert!(
+            result.iter().any(|p| p.node.as_deref() == Some("node_a")),
+            "policy_a missing"
+        );
+
+        // Customer 2 should see global + policy_b.
+        let result = super::get_sampling_policies(&store, 2).unwrap();
+        let names: Vec<&str> = result
+            .iter()
+            .map(|p| p.node.as_deref().unwrap_or("(none)"))
+            .collect();
+        assert_eq!(result.len(), 2, "customer 2 policies: {names:?}");
+        assert!(
+            result.iter().any(|p| p.node.is_none()),
+            "global policy missing"
+        );
+        assert!(
+            result.iter().any(|p| p.node.as_deref() == Some("node_b")),
+            "policy_b missing"
+        );
+
+        // Customer 99 (no nodes) should see only the global policy.
+        let result = super::get_sampling_policies(&store, 99).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(result[0].node.is_none());
     }
 }

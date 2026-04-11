@@ -29,7 +29,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Added `authenticator` field of type `Arc<dyn MtlsAuthenticator>` to
   `ServerConfig`. (auth-mtls)
 - Added `get_sampling_policies` function to return a list of sampling
-  policies for a given customer.
+  policies for a given customer. Policies with `node == None` are
+  treated as shared/global and returned to every customer.
 - Added customer scoping to `TriageResponse` GraphQL resolvers. Non-admin
   users can now only access triage responses whose sensor hostname maps to a
   node belonging to one of their accessible customers. Affected APIs:
@@ -116,6 +117,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- `get_sampling_policies` now filters policies by `customer_id`
+  instead of returning every policy in the store. Policies are
+  matched via the node's `profile.customer_id`; policies with no
+  node are treated as shared and returned to every customer.
 - `nodeReboot` and `nodeShutdown` now update the `storedStatus`
   of all agents on the target node to `Unknown` after the
   operation completes successfully.
