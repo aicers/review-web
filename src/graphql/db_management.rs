@@ -5,7 +5,7 @@ use async_graphql::{
     StringNumber,
 };
 use chrono::{DateTime, Utc};
-use review_database::{BackupConfig as DbBackupConfig, Store, backup};
+use review_database::{BackupConfig as DbBackupConfig, BackupConfigUpdate, Store, backup};
 use tracing::info;
 
 use super::{Role, RoleGuard};
@@ -54,6 +54,15 @@ impl CustomValidator<String> for BackupTimeValidator {
             return Err(InputValueError::custom(
                 "invalid backup_time: must be in HH:MM:SS format",
             ));
+        }
+
+        // Enforce exactly two digits for each component (zero-padded HH:MM:SS).
+        for (i, label) in [(0, "hour"), (1, "minute"), (2, "second")] {
+            if parts[i].len() != 2 {
+                return Err(InputValueError::custom(format!(
+                    "invalid backup_time: {label} must be exactly two digits"
+                )));
+            }
         }
 
         let hour: u8 = parts[0]
@@ -144,19 +153,13 @@ impl DbManagementQuery {
 
     /// Retrieves the current backup configuration.
     ///
-    /// Returns the stored configuration if one exists, otherwise returns
-    /// sensible defaults:
-    /// - `backup_duration`: 1 day
-    /// - `backup_time`: "23:59:59" (UTC)
-    /// - `num_of_backups_to_keep`: 5
+    /// Returns the stored configuration if one exists, otherwise returns `None`.
     ///
-    /// Accessible to administrators only.
+    /// Accessible to `SystemAdministrator` only.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
-    async fn backup_config(&self, ctx: &Context<'_>) -> Result<BackupConfig> {
+    async fn backup_config(&self, ctx: &Context<'_>) -> Result<Option<BackupConfig>> {
         let store = crate::graphql::get_store(ctx)?;
-        let table = store.backup_config_map();
-        let config = table.read()?;
-        Ok(config.into())
+        Ok(store.backup_config()?.map(BackupConfig::from))
     }
 }
 
@@ -201,7 +204,8 @@ impl DbManagementMutation {
     /// Sets or creates a new backup configuration.
     ///
     /// This mutation creates or overwrites the backup configuration with the
-    /// provided values. Only administrators can modify the backup configuration.
+    /// provided values. Only `SystemAdministrator` can modify the backup
+    /// configuration.
     ///
     /// # Arguments
     ///
@@ -213,7 +217,7 @@ impl DbManagementMutation {
     /// # Errors
     ///
     /// Returns an error if:
-    /// * The user is not an administrator
+    /// * The user is not a `SystemAdministrator`
     /// * Input validation fails (e.g., invalid time format, zero values)
     /// * Database operation fails
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
@@ -223,9 +227,20 @@ impl DbManagementMutation {
         input: BackupConfigInput,
     ) -> Result<BackupConfig> {
         let store = crate::graphql::get_store(ctx)?;
-        let table = store.backup_config_map();
         let config: DbBackupConfig = input.into();
-        table.save(&config)?;
+        match store.backup_config()? {
+            Some(old) => {
+                let update = BackupConfigUpdate {
+                    backup_duration: Some(config.backup_duration),
+                    backup_time: Some(config.backup_time.clone()),
+                    num_of_backups_to_keep: Some(config.num_of_backups_to_keep),
+                };
+                store.update_backup_config(&old, &update)?;
+            }
+            None => {
+                store.init_backup_config(&config)?;
+            }
+        }
         info_with_username!(ctx, "Backup configuration has been set");
         Ok(config.into())
     }
@@ -234,8 +249,8 @@ impl DbManagementMutation {
     ///
     /// This mutation updates the backup configuration from the old values to
     /// new values. Both old and new configurations must be provided for
-    /// optimistic concurrency control. Only administrators can modify the
-    /// backup configuration.
+    /// optimistic concurrency control. Only `SystemAdministrator` can modify
+    /// the backup configuration.
     ///
     /// # Arguments
     ///
@@ -245,7 +260,7 @@ impl DbManagementMutation {
     /// # Errors
     ///
     /// Returns an error if:
-    /// * The user is not an administrator
+    /// * The user is not a `SystemAdministrator`
     /// * The old configuration doesn't match the current stored configuration
     /// * Input validation fails (e.g., invalid time format, zero values)
     /// * Database operation fails
@@ -257,12 +272,19 @@ impl DbManagementMutation {
         new: BackupConfigInput,
     ) -> Result<BackupConfig> {
         let store = crate::graphql::get_store(ctx)?;
-        let table = store.backup_config_map();
         let old_config: DbBackupConfig = old.into();
-        let new_config: DbBackupConfig = new.into();
-        table.update_config(&old_config, &new_config)?;
+        let update = BackupConfigUpdate {
+            backup_duration: Some(new.backup_duration),
+            backup_time: Some(new.backup_time.clone()),
+            num_of_backups_to_keep: Some(new.num_of_backups_to_keep),
+        };
+        store.update_backup_config(&old_config, &update)?;
         info_with_username!(ctx, "Backup configuration has been updated");
-        Ok(new_config.into())
+        Ok(BackupConfig {
+            backup_duration: new.backup_duration,
+            backup_time: new.backup_time,
+            num_of_backups_to_keep: new.num_of_backups_to_keep,
+        })
     }
 }
 
@@ -273,6 +295,9 @@ mod tests {
     use serde_json::json;
 
     use crate::graphql::{RoleGuard, TestSchema};
+
+    const BACKUP_CONFIG_QUERY: &str =
+        r"{ backupConfig { backupDuration backupTime numOfBackupsToKeep } }";
 
     fn set_backup_config_mutation(
         backup_duration: u16,
@@ -339,11 +364,19 @@ mod tests {
         assert_eq!(res.errors[0].message, "Forbidden");
     }
 
+    /// Sets up a backup config and asserts success. Returns the mutation string
+    /// used, so callers can reference the same values for update tests.
+    async fn set_initial_config(schema: &TestSchema) -> String {
+        let mutation = set_backup_config_mutation(1, "23:59:59", 5);
+        let res = schema.execute_as_system_admin(&mutation).await;
+        assert!(res.errors.is_empty(), "Setup failed: {:?}", res.errors);
+        mutation
+    }
+
     #[tokio::test]
     async fn test_backups_query_success() {
         let schema = TestSchema::new().await;
 
-        // Query for backups - this should work and return an empty array initially
         let res = schema
             .execute_as_system_admin(r"{ backups { id timestamp size } }")
             .await;
@@ -356,8 +389,6 @@ mod tests {
     async fn test_backups_query_sorted_by_timestamp_desc() {
         let schema = TestSchema::new().await;
 
-        // Create 3 backups to avoid accidental pass with 2 items
-        // Add a delay between backups to ensure distinct timestamps
         for _ in 0..3 {
             let res = schema
                 .execute_as_system_admin(r"mutation { backup(numOfBackupsToKeep: 5) }")
@@ -371,7 +402,6 @@ mod tests {
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
 
-        // Fetch and verify order strictly
         let res = schema
             .execute_as_system_admin(r"{ backups { id timestamp } }")
             .await;
@@ -394,8 +424,6 @@ mod tests {
             "At least three backups are expected: {timestamps:?}"
         );
 
-        // Verify timestamps are in descending order (latest first)
-        // Use >= to allow for equal timestamps when backups are created rapidly
         for w in timestamps.windows(2) {
             assert!(
                 w[0] >= w[1],
@@ -405,37 +433,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_backup_config_query_returns_defaults() {
+    async fn test_backup_config_query_returns_none_when_uninitialized() {
         let schema = TestSchema::new().await;
 
-        // Query backup config as system admin - should return defaults
-        let res = schema
-            .execute_as_system_admin(
-                r"{ backupConfig { backupDuration backupTime numOfBackupsToKeep } }",
-            )
-            .await;
+        let res = schema.execute_as_system_admin(BACKUP_CONFIG_QUERY).await;
 
         assert!(res.errors.is_empty(), "GraphQL errors: {:?}", res.errors);
         assert_json_eq!(
             res.data.into_json().unwrap(),
             json!({
-                "backupConfig": {
-                    "backupDuration": 1,
-                    "backupTime": "23:59:59",
-                    "numOfBackupsToKeep": 5
-                }
+                "backupConfig": null
             })
         );
     }
 
     #[tokio::test]
-    async fn test_backup_config_query_admin_only() {
+    async fn test_backup_config_query_system_admin_only() {
         let schema = TestSchema::new().await;
 
-        // Test that SystemAdministrator can access backup config
         let res = schema
             .execute_with_guard(
-                r"{ backupConfig { backupDuration backupTime numOfBackupsToKeep } }",
+                BACKUP_CONFIG_QUERY,
                 RoleGuard::Role(Role::SystemAdministrator),
             )
             .await;
@@ -446,33 +464,19 @@ mod tests {
             res.errors
         );
 
-        // Test that SecurityAdministrator is denied access
-        assert_forbidden(
-            &schema,
-            Role::SecurityAdministrator,
-            r"{ backupConfig { backupDuration backupTime numOfBackupsToKeep } }",
-        )
-        .await;
+        assert_forbidden(&schema, Role::SecurityAdministrator, BACKUP_CONFIG_QUERY).await;
 
-        // Test that non-admin roles are denied access
         for role in [Role::SecurityManager, Role::SecurityMonitor] {
-            assert_forbidden(
-                &schema,
-                role,
-                r"{ backupConfig { backupDuration backupTime numOfBackupsToKeep } }",
-            )
-            .await;
+            assert_forbidden(&schema, role, BACKUP_CONFIG_QUERY).await;
         }
     }
 
     #[tokio::test]
-    async fn test_set_backup_config_admin_only() {
+    async fn test_set_backup_config_system_admin_only() {
         let schema = TestSchema::new().await;
 
-        // Test that SystemAdministrator can set backup config
         let mutation = set_backup_config_mutation(7, "03:00:00", 10);
 
-        // Should succeed for SystemAdministrator
         let res = schema.execute_as_system_admin(&mutation).await;
         assert!(res.errors.is_empty(), "GraphQL errors: {:?}", res.errors);
         assert_json_eq!(
@@ -486,28 +490,64 @@ mod tests {
             })
         );
 
-        // Should fail for SecurityAdministrator
         assert_forbidden(&schema, Role::SecurityAdministrator, &mutation).await;
 
-        // Should fail for non-admin roles
         for role in [Role::SecurityManager, Role::SecurityMonitor] {
             assert_forbidden(&schema, role, &mutation).await;
         }
     }
 
     #[tokio::test]
-    async fn test_update_backup_config_admin_only() {
+    async fn test_set_backup_config_overwrites_existing() {
         let schema = TestSchema::new().await;
 
-        // First set a config
-        let set_mutation = set_backup_config_mutation(1, "23:59:59", 5);
-        let res = schema.execute_as_system_admin(&set_mutation).await;
-        assert!(res.errors.is_empty(), "Setup failed: {:?}", res.errors);
+        // First call: create config
+        let first = set_backup_config_mutation(1, "23:59:59", 5);
+        let res = schema.execute_as_system_admin(&first).await;
+        assert!(res.errors.is_empty(), "First set failed: {:?}", res.errors);
 
-        // Now update it
+        // Second call: overwrite with different values
+        let second = set_backup_config_mutation(14, "06:30:00", 20);
+        let res = schema.execute_as_system_admin(&second).await;
+        assert!(
+            res.errors.is_empty(),
+            "Second set (overwrite) failed: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "setBackupConfig": {
+                    "backupDuration": 14,
+                    "backupTime": "06:30:00",
+                    "numOfBackupsToKeep": 20
+                }
+            })
+        );
+
+        // Verify the overwrite persisted by reading back
+        let res = schema.execute_as_system_admin(BACKUP_CONFIG_QUERY).await;
+        assert!(res.errors.is_empty(), "Read failed: {:?}", res.errors);
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "backupConfig": {
+                    "backupDuration": 14,
+                    "backupTime": "06:30:00",
+                    "numOfBackupsToKeep": 20
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_backup_config_system_admin_only() {
+        let schema = TestSchema::new().await;
+
+        set_initial_config(&schema).await;
+
         let update_mutation = update_backup_config_mutation(1, "23:59:59", 5, 14, "02:30:00", 7);
 
-        // Should succeed for SystemAdministrator
         let res = schema.execute_as_system_admin(&update_mutation).await;
         assert!(res.errors.is_empty(), "GraphQL errors: {:?}", res.errors);
         assert_json_eq!(
@@ -522,13 +562,10 @@ mod tests {
         );
 
         // Reset config for SecurityAdministrator test
-        let res = schema.execute_as_system_admin(&set_mutation).await;
-        assert!(res.errors.is_empty(), "Reset failed: {:?}", res.errors);
+        set_initial_config(&schema).await;
 
-        // Should fail for SecurityAdministrator
         assert_forbidden(&schema, Role::SecurityAdministrator, &update_mutation).await;
 
-        // Should fail for non-admin roles
         for role in [Role::SecurityManager, Role::SecurityMonitor] {
             assert_forbidden(&schema, role, &update_mutation).await;
         }
@@ -620,9 +657,7 @@ mod tests {
     async fn test_update_backup_config_old_mismatch_fails() {
         let schema = TestSchema::new().await;
 
-        let set_mutation = set_backup_config_mutation(1, "23:59:59", 5);
-        let res = schema.execute_as_system_admin(&set_mutation).await;
-        assert!(res.errors.is_empty(), "Setup failed: {:?}", res.errors);
+        set_initial_config(&schema).await;
 
         let update_mutation = update_backup_config_mutation(2, "23:59:59", 5, 3, "02:30:00", 7);
         let res = schema.execute_as_system_admin(&update_mutation).await;
@@ -641,9 +676,7 @@ mod tests {
     async fn test_update_backup_config_validation_time_format() {
         let schema = TestSchema::new().await;
 
-        let set_mutation = set_backup_config_mutation(1, "23:59:59", 5);
-        let res = schema.execute_as_system_admin(&set_mutation).await;
-        assert!(res.errors.is_empty(), "Setup failed: {:?}", res.errors);
+        set_initial_config(&schema).await;
 
         let update_mutation = update_backup_config_mutation(1, "23:59:59", 5, 1, "25:00:00", 5);
         let res = schema.execute_as_system_admin(&update_mutation).await;
@@ -673,22 +706,9 @@ mod tests {
     async fn test_set_backup_config_validation_backup_duration() {
         let schema = TestSchema::new().await;
 
-        // Test invalid backup_duration (0)
-        let mutation = r#"
-            mutation {
-                setBackupConfig(input: {
-                    backupDuration: 0
-                    backupTime: "03:00:00"
-                    numOfBackupsToKeep: 5
-                }) {
-                    backupDuration
-                }
-            }
-        "#;
-
-        let res = schema.execute_as_system_admin(mutation).await;
+        let mutation = set_backup_config_mutation(0, "03:00:00", 5);
+        let res = schema.execute_as_system_admin(&mutation).await;
         assert!(!res.errors.is_empty(), "Expected validation error");
-        // async-graphql's minimum validator produces error message about minimum value
         assert!(
             res.errors[0]
                 .message
@@ -702,22 +722,9 @@ mod tests {
     async fn test_set_backup_config_validation_num_of_backups() {
         let schema = TestSchema::new().await;
 
-        // Test invalid num_of_backups_to_keep (0)
-        let mutation = r#"
-            mutation {
-                setBackupConfig(input: {
-                    backupDuration: 1
-                    backupTime: "03:00:00"
-                    numOfBackupsToKeep: 0
-                }) {
-                    backupDuration
-                }
-            }
-        "#;
-
-        let res = schema.execute_as_system_admin(mutation).await;
+        let mutation = set_backup_config_mutation(1, "03:00:00", 0);
+        let res = schema.execute_as_system_admin(&mutation).await;
         assert!(!res.errors.is_empty(), "Expected validation error");
-        // async-graphql's minimum validator produces error message about minimum value
         assert!(
             res.errors[0]
                 .message
@@ -731,7 +738,6 @@ mod tests {
     async fn test_set_backup_config_validation_time_format() {
         let schema = TestSchema::new().await;
 
-        // Test various invalid time formats
         let invalid_times = [
             ("25:00:00", "hour must be 0-23"),
             ("12:60:00", "minute must be 0-59"),
@@ -742,20 +748,7 @@ mod tests {
         ];
 
         for (time, expected_error) in invalid_times {
-            let mutation = format!(
-                r#"
-                mutation {{
-                    setBackupConfig(input: {{
-                        backupDuration: 1
-                        backupTime: "{time}"
-                        numOfBackupsToKeep: 5
-                    }}) {{
-                        backupDuration
-                    }}
-                }}
-            "#
-            );
-
+            let mutation = set_backup_config_mutation(1, time, 5);
             let res = schema.execute_as_system_admin(&mutation).await;
             assert!(
                 !res.errors.is_empty(),
@@ -770,20 +763,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_set_backup_config_validation_time_two_digit_format() {
+        let schema = TestSchema::new().await;
+
+        // Non-zero-padded inputs must be rejected (e.g. "2:03:04" instead of "02:03:04")
+        let non_padded_times = [
+            ("2:03:04", "hour must be exactly two digits"),
+            ("02:3:04", "minute must be exactly two digits"),
+            ("02:03:4", "second must be exactly two digits"),
+        ];
+
+        for (time, expected_error) in non_padded_times {
+            let mutation = set_backup_config_mutation(1, time, 5);
+            let res = schema.execute_as_system_admin(&mutation).await;
+            assert!(
+                !res.errors.is_empty(),
+                "Expected validation error for non-padded time '{time}'"
+            );
+            assert!(
+                res.errors[0].message.contains(expected_error),
+                "Time '{time}': expected error containing '{expected_error}', got: {}",
+                res.errors[0].message
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn test_backup_config_set_and_read_roundtrip() {
         let schema = TestSchema::new().await;
 
-        // Set a custom config
         let mutation = set_backup_config_mutation(30, "04:15:30", 20);
         let res = schema.execute_as_system_admin(&mutation).await;
         assert!(res.errors.is_empty(), "Set failed: {:?}", res.errors);
 
-        // Read it back
-        let res = schema
-            .execute_as_system_admin(
-                r"{ backupConfig { backupDuration backupTime numOfBackupsToKeep } }",
-            )
-            .await;
+        let res = schema.execute_as_system_admin(BACKUP_CONFIG_QUERY).await;
         assert!(res.errors.is_empty(), "Read failed: {:?}", res.errors);
         assert_json_eq!(
             res.data.into_json().unwrap(),

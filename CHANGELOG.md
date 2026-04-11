@@ -78,6 +78,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Affected APIs: `node`, `nodeList`, `nodeStatusList`, `insertNode`,
   `updateNodeDraft`, `removeNodes`, `applyNode`, `nodeReboot`,
   `nodeShutdown`. Administrators (`customer_ids = None`) retain full access.
+- Updated `backupConfig` GraphQL query and `updateBackupConfig` mutation to
+  align with the new `review-database` `BackupConfig` ownership and storage
+  design. `backupConfig` now returns `null` when no backup configuration has
+  been initialized (previously returned a default object). Clients should
+  handle a `null` response and call `initBackupConfig` before updating.
 
 ### Fixed
 
