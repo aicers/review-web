@@ -110,7 +110,7 @@ impl WindowsThreat {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::WindowsThreat::threat_level().into()
     }
 
     /// Learning Method

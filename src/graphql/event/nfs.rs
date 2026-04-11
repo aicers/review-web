@@ -152,7 +152,7 @@ impl BlocklistNfs {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistNfs::threat_level().into()
     }
 }
 

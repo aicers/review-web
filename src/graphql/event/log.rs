@@ -80,7 +80,7 @@ impl ExtraThreat {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::ExtraThreat::threat_level().into()
     }
 
     /// Learning Method

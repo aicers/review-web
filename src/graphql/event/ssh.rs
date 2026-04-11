@@ -207,7 +207,7 @@ impl BlocklistSsh {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistSsh::threat_level().into()
     }
 }
 

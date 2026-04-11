@@ -177,7 +177,7 @@ impl BlocklistSmtp {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistSmtp::threat_level().into()
     }
 }
 

@@ -197,7 +197,7 @@ impl BlocklistSmb {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistSmb::threat_level().into()
     }
 }
 

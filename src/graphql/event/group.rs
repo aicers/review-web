@@ -1,4 +1,4 @@
-use std::{collections::HashMap, num::NonZeroU8};
+use std::collections::HashMap;
 
 use async_graphql::{Context, Object, OutputType, Result, SimpleObject};
 use num_traits::ToPrimitive;
@@ -6,7 +6,7 @@ use review_database::event::{Direction, EventFilter};
 use review_database::{Event, IndexedTable, Iterable};
 use tracing::warn;
 
-use super::{EventListFilterInput, from_filter_input};
+use super::{EventListFilterInput, ThreatLevel, from_filter_input};
 use crate::{
     graphql::{Role, RoleGuard},
     warn_with_username,
@@ -191,9 +191,9 @@ impl EventGroupQuery {
         ctx: &Context<'_>,
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] first: i32,
-    ) -> Result<EventCounts<u8>> {
+    ) -> Result<EventCounts<ThreatLevel>> {
         let (values, counts) = count_events(ctx, &filter, Event::count_level, first).await?;
-        let values = values.into_iter().map(NonZeroU8::get).collect();
+        let values = values.into_iter().map(Into::into).collect();
         Ok(EventCounts { values, counts })
     }
 
@@ -285,6 +285,7 @@ impl EventGroupQuery {
 #[derive(SimpleObject)]
 #[graphql(concrete(name = "StringEventCounter", params(String)))]
 #[graphql(concrete(name = "U8EventCounter", params(u8)))]
+#[graphql(concrete(name = "ThreatLevelEventCounter", params(ThreatLevel)))]
 struct EventCounts<T: OutputType> {
     values: Vec<T>,
     counts: Vec<usize>,

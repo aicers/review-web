@@ -233,7 +233,7 @@ impl BlocklistDhcp {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistDhcp::threat_level().into()
     }
 }
 

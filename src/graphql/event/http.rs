@@ -286,7 +286,7 @@ impl HttpThreat {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Low
+        database::HttpThreat::threat_level().into()
     }
 
     /// Learning Method
@@ -416,7 +416,7 @@ impl RepeatedHttpSessions {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::RepeatedHttpSessions::threat_level().into()
     }
 
     /// Learning Method
@@ -668,7 +668,7 @@ impl TorConnection {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::TorConnection::threat_level().into()
     }
 
     /// Learning Method
@@ -920,7 +920,7 @@ impl DomainGenerationAlgorithm {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::DomainGenerationAlgorithm::threat_level().into()
     }
 
     /// Learning Method
@@ -1172,7 +1172,7 @@ impl NonBrowser {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::NonBrowser::threat_level().into()
     }
 
     /// Learning Method
@@ -1424,7 +1424,7 @@ impl BlocklistHttp {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistHttp::threat_level().into()
     }
 
     /// Learning Method

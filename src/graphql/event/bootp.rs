@@ -199,7 +199,7 @@ impl BlocklistBootp {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistBootp::threat_level().into()
     }
 }
 

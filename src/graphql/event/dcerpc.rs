@@ -162,7 +162,7 @@ impl BlocklistDceRpc {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistDceRpc::threat_level().into()
     }
 }
 

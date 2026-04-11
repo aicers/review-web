@@ -211,7 +211,7 @@ impl BlocklistMalformedDns {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistMalformedDns::threat_level().into()
     }
 }
 

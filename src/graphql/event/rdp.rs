@@ -116,7 +116,7 @@ impl RdpBruteForce {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::RdpBruteForce::threat_level().into()
     }
 }
 
@@ -268,7 +268,7 @@ impl BlocklistRdp {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistRdp::threat_level().into()
     }
 }
 

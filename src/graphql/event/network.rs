@@ -183,7 +183,7 @@ impl NetworkThreat {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::NetworkThreat::threat_level().into()
     }
 
     /// Learning Method

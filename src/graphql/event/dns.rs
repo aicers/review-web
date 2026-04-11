@@ -205,7 +205,7 @@ impl DnsCovertChannel {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::DnsCovertChannel::threat_level().into()
     }
 
     /// Learning Method
@@ -418,7 +418,7 @@ impl LockyRansomware {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::High
+        database::LockyRansomware::threat_level().into()
     }
 }
 
@@ -630,7 +630,7 @@ impl CryptocurrencyMiningPool {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::CryptocurrencyMiningPool::threat_level().into()
     }
 }
 
@@ -837,7 +837,7 @@ impl BlocklistDns {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistDns::threat_level().into()
     }
 }
 
