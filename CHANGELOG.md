@@ -77,6 +77,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   customer-owned policies, but can only mutate customer-owned policies
   within their customer scope. Shared policies remain system-managed and
   are read-only for scoped users.
+- Restricted `removeEventTag` and `updateEventTag` GraphQL mutations to
+  `SystemAdministrator`.
 - `graphql_handler` and `graphql_ws_handler` now delegate certificate
   validation to `authenticator.authenticate()` rather than the previously
   internal `validate_client_cert()`, making the validation policy replaceable
