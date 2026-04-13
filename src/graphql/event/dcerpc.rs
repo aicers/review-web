@@ -13,10 +13,10 @@ pub(super) struct BlocklistDceRpc {
 #[derive(SimpleObject)]
 struct DceRpcContext {
     id: i32,
-    abstract_syntax: String,
+    abstract_syntax: StringNumber<u128>,
     abstract_major: i32,
     abstract_minor: i32,
-    transfer_syntax: String,
+    transfer_syntax: StringNumber<u128>,
     transfer_major: i32,
     transfer_minor: i32,
     acceptance: i32,
@@ -27,10 +27,10 @@ impl From<&database::DceRpcContext> for DceRpcContext {
     fn from(c: &database::DceRpcContext) -> Self {
         Self {
             id: i32::from(c.id),
-            abstract_syntax: format!("{:#x}", c.abstract_syntax),
+            abstract_syntax: StringNumber(c.abstract_syntax),
             abstract_major: i32::from(c.abstract_major),
             abstract_minor: i32::from(c.abstract_minor),
-            transfer_syntax: format!("{:#x}", c.transfer_syntax),
+            transfer_syntax: StringNumber(c.transfer_syntax),
             transfer_major: i32::from(c.transfer_major),
             transfer_minor: i32::from(c.transfer_minor),
             acceptance: i32::from(c.acceptance),

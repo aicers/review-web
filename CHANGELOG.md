@@ -108,8 +108,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `review-database` DCE/RPC event schema. Removed legacy fields
   (`rtt`, `namedPipe`, `endpoint`, `operation`) and added
   `context: [DceRpcContext!]!` and `request: [String!]!`.
-  The `u128` fields (`abstractSyntax`, `transferSyntax`) are
-  represented as hex strings in GraphQL.
 
 ### Fixed
 
