@@ -1,1 +1,0 @@
-std::iter::Map<std::vec::IntoIter<review_database::ThreatLevel>, fn(std::num::NonZero<u8>) -> u8 {std::num::NonZero::<u8>::get}>
