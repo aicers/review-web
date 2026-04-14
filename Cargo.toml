@@ -27,7 +27,7 @@ num-traits = "0.2"
 reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls-native-roots",
 ] }
-review-database = { git = "https://github.com/aicers/review-database.git", rev = "b51055e0316a9013779a974f5913952ea63e99e2" }
+review-database = { git = "https://github.com/aicers/review-database.git", rev = "c4aaaf3c9645100d68dc69ac47707f6cfe342c16" }
 roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.5.0" }
 rustls = { version = "0.23", default-features = false, features = [
   "ring",

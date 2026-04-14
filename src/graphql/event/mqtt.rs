@@ -172,7 +172,7 @@ impl BlocklistMqtt {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistMqtt::threat_level().into()
     }
 }
 

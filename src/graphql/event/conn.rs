@@ -118,7 +118,7 @@ impl PortScan {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::PortScan::threat_level().into()
     }
 }
 
@@ -257,7 +257,7 @@ impl MultiHostPortScan {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::MultiHostPortScan::threat_level().into()
     }
 }
 
@@ -390,7 +390,7 @@ impl ExternalDdos {
     }
 
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::ExternalDdos::threat_level().into()
     }
 }
 
@@ -557,7 +557,7 @@ impl BlocklistConn {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistConn::threat_level().into()
     }
 }
 
@@ -724,7 +724,7 @@ impl TorConnectionConn {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::TorConnectionConn::threat_level().into()
     }
 
     /// Learning Method

@@ -125,7 +125,7 @@ impl LdapBruteForce {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::LdapBruteForce::threat_level().into()
     }
 }
 
@@ -308,7 +308,7 @@ impl LdapPlainText {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::LdapPlainText::threat_level().into()
     }
 }
 
@@ -490,7 +490,7 @@ impl BlocklistLdap {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistLdap::threat_level().into()
     }
 }
 

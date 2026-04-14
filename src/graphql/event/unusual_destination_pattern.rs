@@ -120,7 +120,7 @@ impl UnusualDestinationPattern {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::UnusualDestinationPattern::threat_level().into()
     }
 
     /// Learning Method

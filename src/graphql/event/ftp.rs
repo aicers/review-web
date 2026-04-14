@@ -190,7 +190,7 @@ impl FtpBruteForce {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::FtpBruteForce::threat_level().into()
     }
 }
 
@@ -358,7 +358,7 @@ impl FtpPlainText {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::FtpPlainText::threat_level().into()
     }
 }
 
@@ -526,7 +526,7 @@ impl BlocklistFtp {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistFtp::threat_level().into()
     }
 }
 

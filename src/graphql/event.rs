@@ -23,7 +23,7 @@ mod sysmon;
 mod tls;
 mod unusual_destination_pattern;
 
-use std::{cmp, collections::BinaryHeap, net::IpAddr, num::NonZeroU8, sync::Arc};
+use std::{cmp, collections::BinaryHeap, net::IpAddr, sync::Arc};
 
 use anyhow::{Context as AnyhowContext, anyhow, bail};
 use async_graphql::{
@@ -31,6 +31,7 @@ use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
 };
 use chrono::{DateTime, Utc};
+use database::ThreatLevel as DatabaseThreatLevel;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
 use num_traits::FromPrimitive;
@@ -88,10 +89,13 @@ const DEFAULT_TRIAGE_LIST_COUNT: usize = 100;
 
 /// Threat level.
 #[derive(Clone, Copy, Enum, Eq, PartialEq)]
+#[graphql(remote = "DatabaseThreatLevel")]
 pub(super) enum ThreatLevel {
+    VeryLow,
     Low,
     Medium,
     High,
+    VeryHigh,
 }
 
 #[derive(Default)]
@@ -963,7 +967,7 @@ struct EventListFilterInput {
     user_departments: Option<Vec<String>>,
     countries: Option<Vec<String>>,
     categories: Option<Vec<Option<u8>>>,
-    levels: Option<Vec<u8>>,
+    levels: Option<Vec<ThreatLevel>>,
     kinds: Option<Vec<String>>,
     learning_methods: Option<Vec<LearningMethod>>,
     confidence_min: Option<f32>,
@@ -1154,15 +1158,10 @@ fn from_filter_input(
         None
     };
 
-    let levels = if let Some(levels_input) = &input.levels {
-        let mut levels = Vec::with_capacity(levels_input.len());
-        for level in levels_input {
-            levels.push(NonZeroU8::new(*level).ok_or_else(|| anyhow!("invalid level"))?);
-        }
-        Some(levels)
-    } else {
-        None
-    };
+    let levels = input
+        .levels
+        .as_ref()
+        .map(|v| v.iter().map(|l| DatabaseThreatLevel::from(*l)).collect());
 
     let kinds = if let Some(kinds_input) = &input.kinds {
         let mut kinds = Vec::with_capacity(kinds_input.len());

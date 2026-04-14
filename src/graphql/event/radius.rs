@@ -203,7 +203,7 @@ impl BlocklistRadius {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistRadius::threat_level().into()
     }
 }
 

@@ -247,7 +247,7 @@ impl BlocklistTls {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistTls::threat_level().into()
     }
 }
 
@@ -499,7 +499,7 @@ impl SuspiciousTlsTraffic {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::SuspiciousTlsTraffic::threat_level().into()
     }
 }
 

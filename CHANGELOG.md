@@ -35,6 +35,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- Replaced the local `ThreatLevel` enum with `review-database`'s
+  `ThreatLevel`, adding `VeryLow` and `VeryHigh` variants to the
+  GraphQL schema. Event `level` resolvers now delegate to the
+  database crate instead of returning hardcoded values.
+- The `levels` field in `EventListFilterInput` now accepts
+  `ThreatLevel` enum values instead of raw integers, preventing
+  invalid values at the GraphQL layer.
+- The `eventCountsByLevel` query now returns `ThreatLevel` values
+  instead of `u8`.
 - Updated GraphQL network APIs to match `review-database` `0.44` schema changes
   (Network no longer stores `customer_ids`).
   - Affected GraphQL APIs: `insertNetwork`, `updateNetwork`, `Network.customerList`.

@@ -187,7 +187,7 @@ impl BlocklistKerberos {
 
     /// Threat Level
     pub async fn level(&self) -> ThreatLevel {
-        ThreatLevel::Medium
+        database::BlocklistKerberos::threat_level().into()
     }
 }
 
