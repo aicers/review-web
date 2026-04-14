@@ -2355,6 +2355,7 @@ mod tests {
             class_id: vec![4, 5, 6],
             client_id_type: 1,
             client_id: vec![7, 8, 9],
+            options: Vec::new(),
             category: Some(EventCategory::InitialAccess),
             confidence: 0.8,
         };
