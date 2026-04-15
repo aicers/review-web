@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result, SimpleObject, StringNumber};
+use async_graphql::{Context, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use itertools::Itertools;
 use review_database::event as database;
@@ -6,10 +6,25 @@ use review_database::event as database;
 use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
 use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
-#[derive(SimpleObject)]
-pub(super) struct DhcpOption {
-    code: i32,
-    value: Vec<u8>,
+pub(super) struct DhcpOption<'a> {
+    inner: &'a (u8, Vec<u8>),
+}
+
+impl<'a> From<&'a (u8, Vec<u8>)> for DhcpOption<'a> {
+    fn from(inner: &'a (u8, Vec<u8>)) -> Self {
+        Self { inner }
+    }
+}
+
+#[Object]
+impl DhcpOption<'_> {
+    async fn code(&self) -> i32 {
+        i32::from(self.inner.0)
+    }
+
+    async fn value(&self) -> &[u8] {
+        &self.inner.1
+    }
 }
 
 pub(super) struct BlocklistDhcp {
@@ -220,15 +235,8 @@ impl BlocklistDhcp {
     }
 
     /// DHCP Options
-    async fn options(&self) -> Vec<DhcpOption> {
-        self.inner
-            .options
-            .iter()
-            .map(|(code, value)| DhcpOption {
-                code: i32::from(*code),
-                value: value.clone(),
-            })
-            .collect()
+    async fn options(&self) -> Vec<DhcpOption<'_>> {
+        self.inner.options.iter().map(Into::into).collect()
     }
 
     /// MITRE Tactic
