@@ -1,5 +1,4 @@
 use async_graphql::{Context, Object, Result, SimpleObject, StringNumber};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
 use itertools::Itertools;
 use review_database::event as database;
@@ -10,7 +9,7 @@ use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategor
 #[derive(SimpleObject)]
 pub(super) struct DhcpOption {
     code: i32,
-    value: String,
+    value: Vec<u8>,
 }
 
 pub(super) struct BlocklistDhcp {
@@ -227,7 +226,7 @@ impl BlocklistDhcp {
             .iter()
             .map(|(code, value)| DhcpOption {
                 code: i32::from(*code),
-                value: STANDARD.encode(value),
+                value: value.clone(),
             })
             .collect()
     }

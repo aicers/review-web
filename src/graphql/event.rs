@@ -2404,7 +2404,7 @@ mod tests {
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "127.0.0.1", giaddr: "127.0.0.8", reqIpAddr: "127.0.0.100", classId: "04:05:06", clientId: "07:08:09", options: [{code: 53, value: "AQ=="}, {code: 61, value: "BwgJ"}]}}]}}"#
+            r#"{eventList: {edges: [{node: {origAddr: "127.0.0.1", giaddr: "127.0.0.8", reqIpAddr: "127.0.0.100", classId: "04:05:06", clientId: "07:08:09", options: [{code: 53, value: [1]}, {code: 61, value: [7, 8, 9]}]}}]}}"#
         );
     }
 
