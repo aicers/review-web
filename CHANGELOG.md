@@ -104,6 +104,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   design. `backupConfig` now returns `null` when no backup configuration has
   been initialized (previously returned a default object). Clients should
   handle a `null` response and call `initBackupConfig` before updating.
+- Updated `BlocklistDceRpc` GraphQL type to match the new
+  `review-database` DCE/RPC event schema. Removed legacy fields
+  (`rtt`, `namedPipe`, `endpoint`, `operation`) and added
+  `context: [DceRpcContext!]!` and `request: [String!]!`.
 
 ### Fixed
 

@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result, StringNumber};
+use async_graphql::{Context, Object, Result, SimpleObject, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::event as database;
 
@@ -7,6 +7,36 @@ use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategor
 
 pub(super) struct BlocklistDceRpc {
     inner: database::BlocklistDceRpc,
+}
+
+/// A single DCE/RPC context entry.
+#[derive(SimpleObject)]
+struct DceRpcContext {
+    id: i32,
+    abstract_syntax: StringNumber<u128>,
+    abstract_major: i32,
+    abstract_minor: i32,
+    transfer_syntax: StringNumber<u128>,
+    transfer_major: i32,
+    transfer_minor: i32,
+    acceptance: i32,
+    reason: i32,
+}
+
+impl From<&database::DceRpcContext> for DceRpcContext {
+    fn from(c: &database::DceRpcContext) -> Self {
+        Self {
+            id: i32::from(c.id),
+            abstract_syntax: StringNumber(c.abstract_syntax),
+            abstract_major: i32::from(c.abstract_major),
+            abstract_minor: i32::from(c.abstract_minor),
+            transfer_syntax: StringNumber(c.transfer_syntax),
+            transfer_major: i32::from(c.transfer_major),
+            transfer_minor: i32::from(c.transfer_minor),
+            acceptance: i32::from(c.acceptance),
+            reason: i32::from(c.reason),
+        }
+    }
 }
 
 #[Object]
@@ -122,24 +152,14 @@ impl BlocklistDceRpc {
         StringNumber(self.inner.resp_l2_bytes)
     }
 
-    /// Round-Trip Time
-    async fn rtt(&self) -> StringNumber<i64> {
-        StringNumber(self.inner.rtt)
+    /// DCE/RPC Context Entries
+    async fn context(&self) -> Vec<DceRpcContext> {
+        self.inner.context.iter().map(Into::into).collect()
     }
 
-    /// Named Pipe
-    async fn named_pipe(&self) -> &str {
-        &self.inner.named_pipe
-    }
-
-    /// Endpoint
-    async fn endpoint(&self) -> &str {
-        &self.inner.endpoint
-    }
-
-    /// Operation
-    async fn operation(&self) -> &str {
-        &self.inner.endpoint
+    /// DCE/RPC Request Strings
+    async fn request(&self) -> &[String] {
+        &self.inner.request
     }
 
     /// MITRE Tactic
