@@ -1,10 +1,17 @@
-use async_graphql::{Context, Object, Result, StringNumber};
+use async_graphql::{Context, Object, Result, SimpleObject, StringNumber};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
 use itertools::Itertools;
 use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
 use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
+
+#[derive(SimpleObject)]
+pub(super) struct DhcpOption {
+    code: i32,
+    value: String,
+}
 
 pub(super) struct BlocklistDhcp {
     inner: database::BlocklistDhcp,
@@ -211,6 +218,18 @@ impl BlocklistDhcp {
     /// Client ID List
     async fn client_id(&self) -> String {
         format!("{:02x}", self.inner.client_id.iter().format(":"))
+    }
+
+    /// DHCP Options
+    async fn options(&self) -> Vec<DhcpOption> {
+        self.inner
+            .options
+            .iter()
+            .map(|(code, value)| DhcpOption {
+                code: i32::from(*code),
+                value: STANDARD.encode(value),
+            })
+            .collect()
     }
 
     /// MITRE Tactic
