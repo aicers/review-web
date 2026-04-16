@@ -337,7 +337,7 @@ async fn count_events<T>(
     }
 
     let mut counter = counter.into_iter().collect::<Vec<_>>();
-    counter.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    counter.sort_unstable_by_key(|b| std::cmp::Reverse(b.1));
     counter.truncate(usize::try_from(first).unwrap_or(counter.len()));
     let (values, counts) = counter.into_iter().fold(
         (Vec::new(), Vec::new()),
@@ -390,7 +390,7 @@ async fn count_events_by_network(
     }
 
     let mut counter = counter.into_iter().collect::<Vec<_>>();
-    counter.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    counter.sort_unstable_by_key(|b| std::cmp::Reverse(b.1));
     counter.truncate(usize::try_from(first).unwrap_or(counter.len()));
     let (values, counts) = counter.into_iter().fold(
         (Vec::new(), Vec::new()),

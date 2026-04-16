@@ -451,251 +451,171 @@ async fn fetch_events(
             };
 
             match event_kind {
-                EventKind::DnsCovertChannel => {
-                    if event_time >= dns_covert_time {
-                        tx.unbounded_send(value.into())?;
-                        dns_covert_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::DnsCovertChannel if event_time >= dns_covert_time => {
+                    tx.unbounded_send(value.into())?;
+                    dns_covert_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::HttpThreat => {
-                    if event_time >= http_threat_time {
-                        tx.unbounded_send(value.into())?;
-                        http_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::HttpThreat if event_time >= http_threat_time => {
+                    tx.unbounded_send(value.into())?;
+                    http_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::RdpBruteForce => {
-                    if event_time >= rdp_brute_time {
-                        tx.unbounded_send(value.into())?;
-                        rdp_brute_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::RdpBruteForce if event_time >= rdp_brute_time => {
+                    tx.unbounded_send(value.into())?;
+                    rdp_brute_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::RepeatedHttpSessions => {
-                    if event_time >= repeat_http_time {
-                        tx.unbounded_send(value.into())?;
-                        repeat_http_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::RepeatedHttpSessions if event_time >= repeat_http_time => {
+                    tx.unbounded_send(value.into())?;
+                    repeat_http_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::TorConnection => {
-                    if event_time >= tor_time {
-                        tx.unbounded_send(value.into())?;
-                        tor_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::TorConnection if event_time >= tor_time => {
+                    tx.unbounded_send(value.into())?;
+                    tor_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::TorConnectionConn => {
-                    if event_time >= tor_connection_conn_time {
-                        tx.unbounded_send(value.into())?;
-                        tor_connection_conn_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::TorConnectionConn if event_time >= tor_connection_conn_time => {
+                    tx.unbounded_send(value.into())?;
+                    tor_connection_conn_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::DomainGenerationAlgorithm => {
-                    if event_time >= dga_time {
-                        tx.unbounded_send(value.into())?;
-                        dga_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::DomainGenerationAlgorithm if event_time >= dga_time => {
+                    tx.unbounded_send(value.into())?;
+                    dga_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::FtpBruteForce => {
-                    if event_time >= ftp_brute_time {
-                        tx.unbounded_send(value.into())?;
-                        ftp_brute_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::FtpBruteForce if event_time >= ftp_brute_time => {
+                    tx.unbounded_send(value.into())?;
+                    ftp_brute_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::FtpPlainText => {
-                    if event_time >= ftp_plain_time {
-                        tx.unbounded_send(value.into())?;
-                        ftp_plain_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::FtpPlainText if event_time >= ftp_plain_time => {
+                    tx.unbounded_send(value.into())?;
+                    ftp_plain_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::PortScan => {
-                    if event_time >= port_scan_time {
-                        tx.unbounded_send(value.into())?;
-                        port_scan_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::PortScan if event_time >= port_scan_time => {
+                    tx.unbounded_send(value.into())?;
+                    port_scan_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::MultiHostPortScan => {
-                    if event_time >= multi_host_time {
-                        tx.unbounded_send(value.into())?;
-                        multi_host_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::MultiHostPortScan if event_time >= multi_host_time => {
+                    tx.unbounded_send(value.into())?;
+                    multi_host_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::NonBrowser => {
-                    if event_time >= non_browser_time {
-                        tx.unbounded_send(value.into())?;
-                        non_browser_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::NonBrowser if event_time >= non_browser_time => {
+                    tx.unbounded_send(value.into())?;
+                    non_browser_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::LdapBruteForce => {
-                    if event_time >= ldap_brute_time {
-                        tx.unbounded_send(value.into())?;
-                        ldap_brute_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::LdapBruteForce if event_time >= ldap_brute_time => {
+                    tx.unbounded_send(value.into())?;
+                    ldap_brute_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::LdapPlainText => {
-                    if event_time >= ldap_plain_time {
-                        tx.unbounded_send(value.into())?;
-                        ldap_plain_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::LdapPlainText if event_time >= ldap_plain_time => {
+                    tx.unbounded_send(value.into())?;
+                    ldap_plain_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::ExternalDdos => {
-                    if event_time >= external_ddos_time {
-                        tx.unbounded_send(value.into())?;
-                        external_ddos_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::ExternalDdos if event_time >= external_ddos_time => {
+                    tx.unbounded_send(value.into())?;
+                    external_ddos_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::CryptocurrencyMiningPool => {
-                    if event_time >= cryptocurrency_time {
-                        tx.unbounded_send(value.into())?;
-                        cryptocurrency_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::CryptocurrencyMiningPool if event_time >= cryptocurrency_time => {
+                    tx.unbounded_send(value.into())?;
+                    cryptocurrency_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistBootp => {
-                    if event_time >= blocklist_bootp_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_bootp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistBootp if event_time >= blocklist_bootp_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_bootp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistConn => {
-                    if event_time >= blocklist_conn_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_conn_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistConn if event_time >= blocklist_conn_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_conn_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistDhcp => {
-                    if event_time >= blocklist_dhcp_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_dhcp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistDhcp if event_time >= blocklist_dhcp_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_dhcp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistDns => {
-                    if event_time >= blocklist_dns_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_dns_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistDns if event_time >= blocklist_dns_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_dns_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistDceRpc => {
-                    if event_time >= blocklist_dcerpc_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_dcerpc_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistDceRpc if event_time >= blocklist_dcerpc_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_dcerpc_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistFtp => {
-                    if event_time >= blocklist_ftp_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_ftp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistFtp if event_time >= blocklist_ftp_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_ftp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistHttp => {
-                    if event_time >= blocklist_http_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_http_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistHttp if event_time >= blocklist_http_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_http_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistKerberos => {
-                    if event_time >= blocklist_kerberos_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_kerberos_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistKerberos if event_time >= blocklist_kerberos_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_kerberos_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistLdap => {
-                    if event_time >= blocklist_ldap_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_ldap_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistLdap if event_time >= blocklist_ldap_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_ldap_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistMalformedDns => {
-                    if event_time >= blocklist_malformed_dns_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_malformed_dns_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistMalformedDns if event_time >= blocklist_malformed_dns_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_malformed_dns_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistMqtt => {
-                    if event_time >= blocklist_mqtt_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_mqtt_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistMqtt if event_time >= blocklist_mqtt_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_mqtt_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistNfs => {
-                    if event_time >= blocklist_nfs_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_nfs_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistNfs if event_time >= blocklist_nfs_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_nfs_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistNtlm => {
-                    if event_time >= blocklist_ntlm_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_ntlm_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistNtlm if event_time >= blocklist_ntlm_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_ntlm_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistRadius => {
-                    if event_time >= blocklist_radius_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_radius_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistRadius if event_time >= blocklist_radius_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_radius_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistRdp => {
-                    if event_time >= blocklist_rdp_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_rdp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistRdp if event_time >= blocklist_rdp_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_rdp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistSmb => {
-                    if event_time >= blocklist_smb_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_smb_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistSmb if event_time >= blocklist_smb_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_smb_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistSmtp => {
-                    if event_time >= blocklist_smtp_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_smtp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistSmtp if event_time >= blocklist_smtp_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_smtp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistSsh => {
-                    if event_time >= blocklist_ssh_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_ssh_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistSsh if event_time >= blocklist_ssh_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_ssh_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::BlocklistTls => {
-                    if event_time >= blocklist_tls_time {
-                        tx.unbounded_send(value.into())?;
-                        blocklist_tls_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::BlocklistTls if event_time >= blocklist_tls_time => {
+                    tx.unbounded_send(value.into())?;
+                    blocklist_tls_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::WindowsThreat => {
-                    if event_time >= windows_threat_time {
-                        tx.unbounded_send(value.into())?;
-                        windows_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::WindowsThreat if event_time >= windows_threat_time => {
+                    tx.unbounded_send(value.into())?;
+                    windows_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::NetworkThreat => {
-                    if event_time >= network_threat_time {
-                        tx.unbounded_send(value.into())?;
-                        network_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::NetworkThreat if event_time >= network_threat_time => {
+                    tx.unbounded_send(value.into())?;
+                    network_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::ExtraThreat => {
-                    if event_time >= extra_threat_time {
-                        tx.unbounded_send(value.into())?;
-                        extra_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::ExtraThreat if event_time >= extra_threat_time => {
+                    tx.unbounded_send(value.into())?;
+                    extra_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::LockyRansomware => {
-                    if event_time >= locky_ransomware_time {
-                        tx.unbounded_send(value.into())?;
-                        locky_ransomware_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::LockyRansomware if event_time >= locky_ransomware_time => {
+                    tx.unbounded_send(value.into())?;
+                    locky_ransomware_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::SuspiciousTlsTraffic => {
-                    if event_time >= suspicious_tls_time {
-                        tx.unbounded_send(value.into())?;
-                        suspicious_tls_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::SuspiciousTlsTraffic if event_time >= suspicious_tls_time => {
+                    tx.unbounded_send(value.into())?;
+                    suspicious_tls_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
-                EventKind::UnusualDestinationPattern => {
-                    if event_time >= unusual_destination_pattern_time {
-                        tx.unbounded_send(value.into())?;
-                        unusual_destination_pattern_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
-                    }
+                EventKind::UnusualDestinationPattern
+                    if event_time >= unusual_destination_pattern_time =>
+                {
+                    tx.unbounded_send(value.into())?;
+                    unusual_destination_pattern_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 _ => {}
             }

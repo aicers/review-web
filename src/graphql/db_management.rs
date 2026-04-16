@@ -146,7 +146,7 @@ impl DbManagementQuery {
             })
             .collect();
 
-        result.sort_unstable_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        result.sort_unstable_by_key(|b| std::cmp::Reverse(b.timestamp));
 
         Ok(result)
     }

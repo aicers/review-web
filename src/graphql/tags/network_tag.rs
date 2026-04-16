@@ -129,7 +129,7 @@ fn load_all_network_tags(store: &Store) -> Result<Vec<Tag>> {
         tags.extend(load_customer_network_tags(store, customer.id)?);
     }
 
-    tags.sort_unstable_by(|lhs, rhs| lhs.id.cmp(&rhs.id));
+    tags.sort_unstable_by_key(|lhs| lhs.id);
     Ok(tags)
 }
 

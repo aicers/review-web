@@ -399,8 +399,7 @@ fn sort_on_category(category: &str, series: &mut Vec<TopTrendsByColumn>) {
     match category {
         "up_number" => {
             for s in series {
-                s.trends
-                    .sort_by(|a, b| b.number_of_ups.cmp(&a.number_of_ups));
+                s.trends.sort_by_key(|b| std::cmp::Reverse(b.number_of_ups));
                 // by up_number
             }
         }
@@ -416,7 +415,7 @@ fn sort_on_category(category: &str, series: &mut Vec<TopTrendsByColumn>) {
         "up_span" => {
             for s in series {
                 s.trends
-                    .sort_by(|a, b| b.longest_up_span.cmp(&a.longest_up_span));
+                    .sort_by_key(|b| std::cmp::Reverse(b.longest_up_span));
                 // by up_number
             }
         }
