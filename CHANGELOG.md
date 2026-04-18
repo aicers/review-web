@@ -8,6 +8,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- Added `options` field to the `BlocklistDhcp` GraphQL type,
+  exposing DHCP option entries as a list of `DhcpOption` objects
+  with `code` (Int) and `value` (raw byte array) fields.
 - Added `customerId` field to the `AllowNetwork` and `BlockNetwork`
   GraphQL object types so each list item explicitly indicates its
   owner customer.

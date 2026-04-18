@@ -6,6 +6,27 @@ use review_database::event as database;
 use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
 use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
+pub(super) struct DhcpOption<'a> {
+    inner: &'a (u8, Vec<u8>),
+}
+
+impl<'a> From<&'a (u8, Vec<u8>)> for DhcpOption<'a> {
+    fn from(inner: &'a (u8, Vec<u8>)) -> Self {
+        Self { inner }
+    }
+}
+
+#[Object]
+impl DhcpOption<'_> {
+    async fn code(&self) -> i32 {
+        i32::from(self.inner.0)
+    }
+
+    async fn value(&self) -> &[u8] {
+        &self.inner.1
+    }
+}
+
 pub(super) struct BlocklistDhcp {
     inner: database::BlocklistDhcp,
 }
@@ -211,6 +232,11 @@ impl BlocklistDhcp {
     /// Client ID List
     async fn client_id(&self) -> String {
         format!("{:02x}", self.inner.client_id.iter().format(":"))
+    }
+
+    /// DHCP Options
+    async fn options(&self) -> Vec<DhcpOption<'_>> {
+        self.inner.options.iter().map(Into::into).collect()
     }
 
     /// MITRE Tactic

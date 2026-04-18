@@ -2275,6 +2275,7 @@ mod tests {
             class_id: vec![4, 5, 6],
             client_id_type: 1,
             client_id: vec![7, 8, 9],
+            options: vec![(53, vec![1]), (61, vec![7, 8, 9])],
             category: Some(EventCategory::InitialAccess),
             confidence: 0.8,
         };
@@ -2316,14 +2317,14 @@ mod tests {
                     customers: [0],
                     directions: [\"OUTBOUND\"],
                 }}) {{ \
-                    edges {{ node {{... on BlocklistDhcp {{ origAddr,giaddr,reqIpAddr,classId,clientId }} }} }} \
+                    edges {{ node {{... on BlocklistDhcp {{ origAddr,giaddr,reqIpAddr,classId,clientId,options {{ code,value }} }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "127.0.0.1", giaddr: "127.0.0.8", reqIpAddr: "127.0.0.100", classId: "04:05:06", clientId: "07:08:09"}}]}}"#
+            r#"{eventList: {edges: [{node: {origAddr: "127.0.0.1", giaddr: "127.0.0.8", reqIpAddr: "127.0.0.100", classId: "04:05:06", clientId: "07:08:09", options: [{code: 53, value: [1]}, {code: 61, value: [7, 8, 9]}]}}]}}"#
         );
     }
 
