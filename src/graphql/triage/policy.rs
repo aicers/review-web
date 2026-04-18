@@ -31,12 +31,10 @@ impl TriagePolicyTotalCount {
         Ok(StringNumber(
             map.iter(Direction::Forward, None)
                 .filter(|res| {
-                    res.as_ref()
-                        .map(|policy| {
-                            matches_customer(policy, self.customer_id)
-                                && can_access_policy(self.users_customers.as_deref(), policy)
-                        })
-                        .unwrap_or(false)
+                    res.as_ref().is_ok_and(|policy| {
+                        matches_customer(policy, self.customer_id)
+                            && can_access_policy(self.users_customers.as_deref(), policy)
+                    })
                 })
                 .count(),
         ))
