@@ -206,8 +206,8 @@ struct Confidence<'a> {
 
 #[Object]
 impl Confidence<'_> {
-    async fn threat_category(&self) -> ThreatCategory {
-        self.inner.threat_category.into()
+    async fn threat_category(&self) -> Option<ThreatCategory> {
+        self.inner.threat_category.map(Into::into)
     }
 
     async fn threat_kind(&self) -> &str {
@@ -263,7 +263,7 @@ pub(super) struct PacketAttrInput {
 
 #[derive(Clone, InputObject)]
 pub(super) struct ConfidenceInput {
-    threat_category: ThreatCategory,
+    threat_category: Option<ThreatCategory>,
     threat_kind: String,
     confidence: f64,
     weight: Option<f64>,
@@ -272,7 +272,7 @@ pub(super) struct ConfidenceInput {
 impl From<&ConfidenceInput> for database::Confidence {
     fn from(c: &ConfidenceInput) -> Self {
         Self {
-            threat_category: c.threat_category.into(),
+            threat_category: c.threat_category.map(Into::into),
             threat_kind: c.threat_kind.clone(),
             confidence: c.confidence,
             weight: c.weight,
@@ -681,6 +681,206 @@ mod tests {
                 .as_str()
                 .unwrap(),
             "Global Policy"
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn test_triage_policy_optional_threat_category() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason"
+                        description: ""
+                        ipAddress: {
+                            hosts: ["1.1.1.1"]
+                            networks: []
+                            ranges: []
+                        }
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        // Insert a policy that mixes null and non-null threatCategory entries.
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertTriagePolicy(
+                        name: "Mixed"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: [{
+                            threatCategory: COMMAND_AND_CONTROL
+                            threatKind: "DNS Covert"
+                            confidence: 0.5
+                            weight: 0.5
+                        }, {
+                            threatCategory: null
+                            threatKind: "Unspecified"
+                            confidence: 0.25
+                        }]
+                        response: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
+
+        // Query returns both null and non-null threatCategory values.
+        let res = schema
+            .execute_as_system_admin(
+                r"
+                query {
+                    triagePolicyList(first: 10) {
+                        nodes {
+                            name
+                            confidence {
+                                threatCategory
+                                threatKind
+                            }
+                        }
+                    }
+                }",
+            )
+            .await;
+        let json = res.data.into_json().unwrap();
+        let entries = json["triagePolicyList"]["nodes"][0]["confidence"]
+            .as_array()
+            .unwrap();
+        assert_eq!(entries.len(), 2);
+        // Confidence entries are sorted, and None orders before Some(_).
+        assert!(entries[0]["threatCategory"].is_null());
+        assert_eq!(entries[0]["threatKind"], "Unspecified");
+        assert_eq!(entries[1]["threatCategory"], "COMMAND_AND_CONTROL");
+        assert_eq!(entries[1]["threatKind"], "DNS Covert");
+
+        // Update: flip non-null to null and null to non-null.
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    updateTriagePolicy(
+                        id: 0
+                        old: {
+                            name: "Mixed"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: [{
+                                threatCategory: COMMAND_AND_CONTROL
+                                threatKind: "DNS Covert"
+                                confidence: 0.5
+                                weight: 0.5
+                            }, {
+                                threatCategory: null
+                                threatKind: "Unspecified"
+                                confidence: 0.25
+                            }]
+                            response: []
+                        }
+                        new: {
+                            name: "Mixed"
+                            triageExclusionId: ["0"]
+                            packetAttr: []
+                            confidence: [{
+                                threatCategory: null
+                                threatKind: "DNS Covert"
+                                confidence: 0.5
+                                weight: 0.5
+                            }, {
+                                threatCategory: EXFILTRATION
+                                threatKind: "Unspecified"
+                                confidence: 0.25
+                            }]
+                            response: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{updateTriagePolicy: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r"
+                query {
+                    triagePolicyList(first: 10) {
+                        nodes {
+                            confidence {
+                                threatCategory
+                                threatKind
+                            }
+                        }
+                    }
+                }",
+            )
+            .await;
+        let json = res.data.into_json().unwrap();
+        let entries = json["triagePolicyList"]["nodes"][0]["confidence"]
+            .as_array()
+            .unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0]["threatCategory"].is_null());
+        assert_eq!(entries[0]["threatKind"], "DNS Covert");
+        assert_eq!(entries[1]["threatCategory"], "EXFILTRATION");
+        assert_eq!(entries[1]["threatKind"], "Unspecified");
+    }
+
+    #[tokio::test]
+    async fn test_triage_policy_rejects_missing_threat_kind() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertTriageExclusionReason(input: {
+                        name: "Reason"
+                        description: ""
+                        ipAddress: {
+                            hosts: ["1.1.1.1"]
+                            networks: []
+                            ranges: []
+                        }
+                    })
+                }"#,
+            )
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{insertTriageExclusionReason: "0"}"#
+        );
+
+        // threatKind is required even when threatCategory is null.
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertTriagePolicy(
+                        name: "Bad"
+                        triageExclusionId: ["0"]
+                        packetAttr: []
+                        confidence: [{
+                            threatCategory: null
+                            confidence: 0.25
+                        }]
+                        response: []
+                    )
+                }"#,
+            )
+            .await;
+        assert!(
+            !res.errors.is_empty(),
+            "expected validation error, got {res:?}"
         );
     }
 }
