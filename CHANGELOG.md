@@ -118,9 +118,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Fixed
 
 - `get_sampling_policies` now filters policies by `customer_id`
-  instead of returning every policy in the store. Policies are
-  matched via the node's `profile.customer_id`; policies with no
-  node are treated as shared and returned to every customer.
+  instead of returning every policy in the store. The join key is
+  `NodeProfile.hostname` (which is what `SamplingPolicy.node`
+  stores), so policies whose hostname does not map to a node with
+  a profile are skipped. Policies with no node are treated as
+  shared and returned to every customer.
 - `nodeReboot` and `nodeShutdown` now update the `storedStatus`
   of all agents on the target node to `Unknown` after the
   operation completes successfully.

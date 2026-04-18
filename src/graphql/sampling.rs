@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::IpAddr;
 
 use async_graphql::connection::OpaqueCursor;
@@ -324,11 +325,14 @@ async fn load_immutable(ctx: &Context<'_>) -> Result<Vec<Policy>> {
 ///
 /// A policy is included if:
 /// - Its `node` field is `None` (treated as a shared/global policy), or
-/// - Its `node` refers to a node whose `profile.customer_id` matches
-///   the requested `customer_id`.
+/// - Its `node` (a hostname) matches a node whose `profile.customer_id`
+///   equals the requested `customer_id`.
 ///
-/// Policies whose `node` references a non-existent node or a node
-/// without a profile are skipped with a warning.
+/// `SamplingPolicy.node` stores a hostname (see `SamplingPolicyInput.node`),
+/// so the join key is `NodeProfile.hostname`, not `Node.name`.
+///
+/// Policies whose `node` hostname does not map to any node with a
+/// profile are skipped with a warning.
 ///
 /// # Errors
 ///
@@ -338,13 +342,12 @@ pub fn get_sampling_policies(db: &Store, customer_id: u32) -> Result<Vec<Policy>
     let policy_map = db.sampling_policy_map();
     let node_map = db.node_map();
 
-    // Build a lookup from node name -> customer_id.
-    let mut node_customer: std::collections::HashMap<String, u32> =
-        std::collections::HashMap::new();
+    // Build a lookup from hostname -> customer_id.
+    let mut hostname_customer: HashMap<String, u32> = HashMap::new();
     for entry in node_map.iter(Direction::Forward, None) {
-        let node = entry.map_err(|e| format!("failed to read node_map: {e}"))?;
+        let node = entry?;
         if let Some(profile) = &node.profile {
-            node_customer.insert(node.name.clone(), profile.customer_id);
+            hostname_customer.insert(profile.hostname.clone(), profile.customer_id);
         }
     }
 
@@ -356,7 +359,7 @@ pub fn get_sampling_policies(db: &Store, customer_id: u32) -> Result<Vec<Policy>
                 // Shared/global policy — return to every customer.
                 policies.push(policy.into());
             }
-            Some(node_name) => match node_customer.get(node_name) {
+            Some(hostname) => match hostname_customer.get(hostname) {
                 Some(&cid) if cid == customer_id => {
                     policies.push(policy.into());
                 }
@@ -365,10 +368,10 @@ pub fn get_sampling_policies(db: &Store, customer_id: u32) -> Result<Vec<Policy>
                 }
                 None => {
                     tracing::warn!(
-                        "sampling policy {:?} references unknown \
-                         or profile-less node {:?}, skipping",
+                        "sampling policy {:?} references hostname {:?} \
+                         that does not map to any node with a profile; skipping",
                         policy.name,
-                        node_name,
+                        hostname,
                     );
                 }
             },
@@ -683,7 +686,7 @@ mod tests {
         );
     }
 
-    fn insert_node(store: &Store, name: &str, customer_id: u32) {
+    fn insert_node(store: &Store, name: &str, hostname: &str, customer_id: u32) {
         let node = review_database::Node {
             id: u32::MAX,
             name: name.to_string(),
@@ -691,7 +694,7 @@ mod tests {
             profile: Some(review_database::NodeProfile {
                 customer_id,
                 description: String::new(),
-                hostname: name.to_string(),
+                hostname: hostname.to_string(),
             }),
             profile_draft: None,
             agents: vec![],
@@ -728,19 +731,23 @@ mod tests {
         let backup_dir = tempfile::tempdir().unwrap();
         let store = Store::new(db_dir.path(), backup_dir.path()).unwrap();
 
-        // Create two nodes belonging to different customers.
-        insert_node(&store, "node_a", 1);
-        insert_node(&store, "node_b", 2);
+        // Nodes use distinct `name` and `hostname` values so the test
+        // distinguishes which field the join key is — `SamplingPolicy.node`
+        // is a hostname, not a node name.
+        insert_node(&store, "node_a", "host_a", 1);
+        insert_node(&store, "node_b", "host_b", 2);
 
-        // Create policies:
+        // Create policies (policy.node stores the target hostname):
         //  - global (node = None)       -> returned for every customer
-        //  - assigned to node_a (cust 1) -> returned only for customer 1
-        //  - assigned to node_b (cust 2) -> returned only for customer 2
-        //  - referencing a missing node  -> skipped
+        //  - assigned to host_a (cust 1) -> returned only for customer 1
+        //  - assigned to host_b (cust 2) -> returned only for customer 2
+        //  - referencing a missing host  -> skipped
+        //  - referencing a node's *name* (not hostname) -> skipped
         insert_policy(&store, "global_policy", None);
-        insert_policy(&store, "policy_a", Some("node_a"));
-        insert_policy(&store, "policy_b", Some("node_b"));
-        insert_policy(&store, "orphan_policy", Some("no_such_node"));
+        insert_policy(&store, "policy_a", Some("host_a"));
+        insert_policy(&store, "policy_b", Some("host_b"));
+        insert_policy(&store, "orphan_policy", Some("no_such_host"));
+        insert_policy(&store, "by_node_name_policy", Some("node_a"));
 
         // Customer 1 should see global + policy_a.
         let result = super::get_sampling_policies(&store, 1).unwrap();
@@ -754,7 +761,7 @@ mod tests {
             "global policy missing"
         );
         assert!(
-            result.iter().any(|p| p.node.as_deref() == Some("node_a")),
+            result.iter().any(|p| p.node.as_deref() == Some("host_a")),
             "policy_a missing"
         );
 
@@ -770,7 +777,7 @@ mod tests {
             "global policy missing"
         );
         assert!(
-            result.iter().any(|p| p.node.as_deref() == Some("node_b")),
+            result.iter().any(|p| p.node.as_deref() == Some("host_b")),
             "policy_b missing"
         );
 
