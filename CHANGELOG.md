@@ -426,7 +426,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   allowing both `SystemAdministrator` and `SecurityAdministrator` roles. This
   enhances system security by enforcing stricter role-based access control
   for sensitive account management operations.
-- Bumped Roxy version to 0.6.0 with updated `ResourceUsage` struct field names.
+- Bumped Roxy version to 0.5.0 with updated `ResourceUsage` struct field names.
   The `total_disk_space` field is now calculated as `disk_used_bytes` +
   `disk_available_bytes`, and `used_disk_space` is now accessed as
   `disk_used_bytes`.
