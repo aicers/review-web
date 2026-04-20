@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::net::IpAddr;
 
 use async_graphql::connection::OpaqueCursor;
@@ -12,6 +11,7 @@ use review_database::{Iterable, Store, event::Direction};
 use serde::{Deserialize, Serialize};
 
 use super::{BoxedAgentManager, IpAddress, Role, RoleGuard};
+use crate::graphql::customer_access::hostname_customer_id_map;
 use crate::graphql::query_with_constraints;
 
 #[derive(Default)]
@@ -340,32 +340,20 @@ async fn load_immutable(ctx: &Context<'_>) -> Result<Vec<Policy>> {
 /// be read.
 pub fn get_sampling_policies(db: &Store, customer_id: u32) -> Result<Vec<Policy>> {
     let policy_map = db.sampling_policy_map();
-    let node_map = db.node_map();
-
-    // Build a lookup from hostname -> customer_id.
-    let mut hostname_customer: HashMap<String, u32> = HashMap::new();
-    for entry in node_map.iter(Direction::Forward, None) {
-        let node = entry?;
-        if let Some(profile) = &node.profile {
-            hostname_customer.insert(profile.hostname.clone(), profile.customer_id);
-        }
-    }
+    let hostname_customer = hostname_customer_id_map(db)?;
 
     let mut policies = vec![];
     for res in policy_map.iter(Direction::Forward, None) {
         let policy = res?;
         match &policy.node {
             None => {
-                // Shared/global policy — return to every customer.
                 policies.push(policy.into());
             }
             Some(hostname) => match hostname_customer.get(hostname) {
                 Some(&cid) if cid == customer_id => {
                     policies.push(policy.into());
                 }
-                Some(_) => {
-                    // Belongs to a different customer — skip.
-                }
+                Some(_) => {}
                 None => {
                     tracing::warn!(
                         "sampling policy {:?} references hostname {:?} \

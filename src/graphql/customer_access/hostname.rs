@@ -75,7 +75,6 @@ pub(crate) fn check_hostname_access(ctx: &Context<'_>, hostname: &str) -> Result
 /// # Errors
 ///
 /// Returns an error if a database iteration error occurs.
-#[allow(dead_code)] // Shared hostname helper retained for follow-up issues.
 pub(crate) fn hostname_customer_id_map(store: &Store) -> Result<HashMap<String, u32>> {
     let map = store.node_map();
     let mut hostname_map = HashMap::<String, u32>::new();
