@@ -4,7 +4,7 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.32.0] - 2026-04-18
+## [0.31.0] - 2026-04-18
 
 ### Added
 
@@ -426,7 +426,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   allowing both `SystemAdministrator` and `SecurityAdministrator` roles. This
   enhances system security by enforcing stricter role-based access control
   for sensitive account management operations.
-- Bumped Roxy version to 0.5.0 with updated `ResourceUsage` struct field names.
+- Bumped Roxy version to 0.6.0 with updated `ResourceUsage` struct field names.
   The `total_disk_space` field is now calculated as `disk_used_bytes` +
   `disk_available_bytes`, and `used_disk_space` is now accessed as
   `disk_used_bytes`.
@@ -1487,7 +1487,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
-[0.32.0]: https://github.com/aicers/review-web/compare/0.30.1...0.32.0
+[0.31.0]: https://github.com/aicers/review-web/compare/0.30.1...0.31.0
 [0.30.1]: https://github.com/aicers/review-web/compare/0.30.0...0.30.1
 [0.30.0]: https://github.com/aicers/review-web/compare/0.29.4...0.30.0
 [0.29.4]: https://github.com/aicers/review-web/compare/0.29.3...0.29.4
