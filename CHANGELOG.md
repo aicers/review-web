@@ -123,6 +123,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   units to mitigate `queries overflow the depth limit` on Rust 1.94.0+, likely
   triggered by increased type-layout query depth after `ManuallyDrop<T>` began
   wrapping `T` with `MaybeDangling<T>`; no schema or response behavior changes.
+- `get_sampling_policies` now filters results by the caller's
+  `customer_id` instead of returning every policy in the store. A
+  policy whose `node` field is unset is treated as shared/global and
+  returned to every caller; a policy whose `node` resolves to a node
+  owned by a different customer, or to a missing/profile-less node,
+  is skipped (unresolved cases are logged). This prevents
+  cross-customer sampling policy leaks on Crusher restart in
+  multi-customer deployments.
 
 ### Removed
 

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::IpAddr;
 
 use async_graphql::connection::OpaqueCursor;
@@ -9,6 +10,7 @@ use async_graphql::{
 use chrono::{DateTime, Utc};
 use review_database::{Iterable, Store, event::Direction};
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use super::{BoxedAgentManager, IpAddress, Role, RoleGuard};
 use crate::graphql::query_with_constraints;
@@ -320,21 +322,59 @@ async fn load_immutable(ctx: &Context<'_>) -> Result<Vec<Policy>> {
     Ok(rtn)
 }
 
-/// Returns all sampling policies.
+/// Returns sampling policies scoped to the given customer.
+///
+/// A policy is included when:
+/// - its `node` field is `None` (policies with no associated node are
+///   treated as shared/global and returned to every caller — revisit this
+///   default if stricter scoping is needed), or
+/// - its `node` field names a node whose active profile's `customer_id`
+///   matches the requested `customer_id`.
+///
+/// Policies whose `node` cannot be resolved (unknown node name or a node
+/// without an active profile) are skipped and a warning is logged, so a
+/// misconfigured policy does not leak across customers.
 ///
 /// # Errors
 ///
-/// Returns an error if the sampling policy database could not be
-/// retrieved.
-pub fn get_sampling_policies(db: &Store, _customer_id: u32) -> Result<Vec<Policy>> {
+/// Returns an error if the sampling policy database or node database
+/// could not be retrieved.
+pub fn get_sampling_policies(db: &Store, customer_id: u32) -> Result<Vec<Policy>> {
+    let node_owners = collect_node_customer_ids(db)?;
     let map = db.sampling_policy_map();
     let mut policies = vec![];
 
     for res in map.iter(Direction::Forward, None) {
         let policy = res?;
-        policies.push(policy.into());
+        match policy.node.as_deref() {
+            None => policies.push(policy.into()),
+            Some(node_name) => match node_owners.get(node_name) {
+                Some(Some(owner)) if *owner == customer_id => policies.push(policy.into()),
+                Some(Some(_)) => {}
+                Some(None) => warn!(
+                    "sampling policy {:?} references node {:?} without an active profile; \
+                     skipping",
+                    policy.name, node_name
+                ),
+                None => warn!(
+                    "sampling policy {:?} references unknown node {:?}; skipping",
+                    policy.name, node_name
+                ),
+            },
+        }
     }
     Ok(policies)
+}
+
+fn collect_node_customer_ids(db: &Store) -> Result<HashMap<String, Option<u32>>> {
+    let map = db.node_map();
+    let mut owners = HashMap::new();
+    for entry in map.iter(Direction::Forward, None) {
+        let node = entry?;
+        let customer_id = node.profile.as_ref().map(|profile| profile.customer_id);
+        owners.insert(node.name, customer_id);
+    }
+    Ok(owners)
 }
 
 #[Object]
@@ -452,9 +492,126 @@ impl SamplingPolicyMutation {
 #[cfg(test)]
 mod tests {
     use assert_json_diff::assert_json_eq;
+    use chrono::Utc;
+    use review_database::{
+        Node, NodeProfile, SamplingInterval, SamplingKind, SamplingPeriod, SamplingPolicy, Store,
+    };
     use serde_json::json;
 
+    use super::get_sampling_policies;
     use crate::graphql::TestSchema;
+
+    fn insert_node(store: &Store, name: &str, profile: Option<NodeProfile>) {
+        let node = Node {
+            id: u32::MAX,
+            name: name.to_string(),
+            name_draft: Some(name.to_string()),
+            profile,
+            profile_draft: None,
+            agents: vec![],
+            external_services: vec![],
+            creation_time: Utc::now(),
+        };
+        store.node_map().put(&node).expect("insert node");
+    }
+
+    fn insert_policy(store: &Store, name: &str, node: Option<String>) {
+        let policy = SamplingPolicy {
+            id: u32::MAX,
+            name: name.to_string(),
+            kind: SamplingKind::Conn,
+            interval: SamplingInterval::FifteenMinutes,
+            period: SamplingPeriod::OneDay,
+            offset: 0,
+            src_ip: None,
+            dst_ip: None,
+            node,
+            column: None,
+            immutable: false,
+            creation_time: Utc::now(),
+        };
+        store
+            .sampling_policy_map()
+            .put(policy)
+            .expect("insert sampling policy");
+    }
+
+    #[test]
+    fn get_sampling_policies_filters_by_customer() {
+        let db_dir = tempfile::tempdir().expect("create data dir");
+        let backup_dir = tempfile::tempdir().expect("create backup dir");
+        let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+
+        insert_node(
+            &store,
+            "node-c1",
+            Some(NodeProfile {
+                customer_id: 1,
+                description: String::new(),
+                hostname: "host-c1".to_string(),
+            }),
+        );
+        insert_node(
+            &store,
+            "node-c2",
+            Some(NodeProfile {
+                customer_id: 2,
+                description: String::new(),
+                hostname: "host-c2".to_string(),
+            }),
+        );
+        insert_node(&store, "node-no-profile", None);
+
+        insert_policy(&store, "shared", None);
+        insert_policy(&store, "owned-c1", Some("node-c1".to_string()));
+        insert_policy(&store, "owned-c2", Some("node-c2".to_string()));
+        insert_policy(&store, "missing-node", Some("node-ghost".to_string()));
+        insert_policy(&store, "no-profile", Some("node-no-profile".to_string()));
+
+        let policies = get_sampling_policies(&store, 1).expect("get policies");
+        let mut names: Vec<_> = policies
+            .iter()
+            .map(|p| {
+                store
+                    .sampling_policy_map()
+                    .get_by_id(p.id)
+                    .expect("db get")
+                    .expect("policy exists")
+                    .name
+            })
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["owned-c1", "shared"]);
+
+        let policies = get_sampling_policies(&store, 2).expect("get policies");
+        let mut names: Vec<_> = policies
+            .iter()
+            .map(|p| {
+                store
+                    .sampling_policy_map()
+                    .get_by_id(p.id)
+                    .expect("db get")
+                    .expect("policy exists")
+                    .name
+            })
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["owned-c2", "shared"]);
+
+        let policies = get_sampling_policies(&store, 99).expect("get policies");
+        let names: Vec<_> = policies
+            .iter()
+            .map(|p| {
+                store
+                    .sampling_policy_map()
+                    .get_by_id(p.id)
+                    .expect("db get")
+                    .expect("policy exists")
+                    .name
+            })
+            .collect();
+        assert_eq!(names, vec!["shared"]);
+    }
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
