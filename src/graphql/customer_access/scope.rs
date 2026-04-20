@@ -16,34 +16,6 @@ pub(crate) fn is_member(users_customers: Option<&[u32]>, customer_id: u32) -> bo
     }
 }
 
-/// Checks whether the user has membership for any provided customer IDs.
-///
-/// Returns `true` if:
-/// - The user is an admin (`users_customers` is `None`), or
-/// - Any entry in `customer_ids` exists in the user's customer list.
-#[must_use]
-#[allow(dead_code)] // Shared helper for upcoming customer-scoping sub-issues of #756.
-pub(crate) fn has_any_membership(users_customers: Option<&[u32]>, customer_ids: &[u32]) -> bool {
-    match users_customers {
-        None => true, // Admin has access to all customers
-        Some(users_customers) => customer_ids.iter().any(|id| users_customers.contains(id)),
-    }
-}
-
-/// Checks whether the user has membership for all provided customer IDs.
-///
-/// Returns `true` if:
-/// - The user is an admin (`users_customers` is `None`), or
-/// - Every entry in `customer_ids` exists in the user's customer list.
-#[must_use]
-#[allow(dead_code)] // Shared helper for upcoming customer-scoping sub-issues of #756.
-pub(crate) fn has_all_membership(users_customers: Option<&[u32]>, customer_ids: &[u32]) -> bool {
-    match users_customers {
-        None => true, // Admin has access to all customers
-        Some(users_customers) => customer_ids.iter().all(|id| users_customers.contains(id)),
-    }
-}
-
 /// Retrieves the current user's customer ID list from the GraphQL context.
 ///
 /// Returns `Ok(None)` for administrators (full access), or `Ok(Some(Vec<u32>))` for
@@ -147,78 +119,6 @@ mod tests {
     fn test_is_member_empty_customers() {
         let users_customers = Vec::<u32>::new();
         assert!(!is_member(Some(&users_customers), 1));
-    }
-
-    #[test]
-    fn test_has_any_membership_admin() {
-        let customer_ids = vec![1, 2, 3];
-        assert!(has_any_membership(None, &customer_ids));
-    }
-
-    #[test]
-    fn test_has_any_membership_with_match() {
-        let users_customers = vec![1, 2, 3, 4, 5];
-        let customer_ids = vec![2, 3, 4];
-        assert!(has_any_membership(Some(&users_customers), &customer_ids));
-    }
-
-    #[test]
-    fn test_has_any_membership_partial_match() {
-        let users_customers = vec![1, 3, 5];
-        let customer_ids = vec![2, 3, 4];
-        assert!(has_any_membership(Some(&users_customers), &customer_ids));
-    }
-
-    #[test]
-    fn test_has_any_membership_no_match() {
-        let users_customers = vec![10, 20, 30];
-        let customer_ids = vec![1, 2, 3];
-        assert!(!has_any_membership(Some(&users_customers), &customer_ids));
-    }
-
-    #[test]
-    fn test_has_any_membership_empty_required() {
-        let users_customers = vec![1, 2, 3];
-        assert!(!has_any_membership(Some(&users_customers), &[]));
-    }
-
-    #[test]
-    fn test_has_all_membership_admin() {
-        let customer_ids = vec![1, 2, 3];
-        assert!(has_all_membership(None, &customer_ids));
-    }
-
-    #[test]
-    fn test_has_all_membership_with_full_match() {
-        let users_customers = vec![1, 2, 3, 4, 5];
-        let customer_ids = vec![2, 3, 4];
-        assert!(has_all_membership(Some(&users_customers), &customer_ids));
-    }
-
-    #[test]
-    fn test_has_all_membership_partial_match() {
-        let users_customers = vec![1, 3, 5];
-        let customer_ids = vec![1, 2];
-        assert!(!has_all_membership(Some(&users_customers), &customer_ids));
-    }
-
-    #[test]
-    fn test_has_all_membership_no_match() {
-        let users_customers = vec![10, 20, 30];
-        let customer_ids = vec![1, 2, 3];
-        assert!(!has_all_membership(Some(&users_customers), &customer_ids));
-    }
-
-    #[test]
-    fn test_has_all_membership_empty_required() {
-        let users_customers = vec![1, 2, 3];
-        assert!(has_all_membership(Some(&users_customers), &[]));
-    }
-
-    #[test]
-    fn test_has_all_membership_empty_users() {
-        let users_customers = Vec::<u32>::new();
-        assert!(!has_all_membership(Some(&users_customers), &[1]));
     }
 
     #[derive(Default)]
