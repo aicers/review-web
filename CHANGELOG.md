@@ -28,6 +28,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   see sensors of their accessible customers; passing a `customerIds` value
   containing an inaccessible customer returns an authorization error. Works
   under both `auth-jwt` and `auth-mtls` features.
+- Added `accountLockoutPolicy` GraphQL query and
+  `updateAccountLockoutPolicy` mutation for administering account lockout and
+  suspension thresholds. The policy exposes three admin-configurable settings:
+  `maxFailedAttemptsTempLock` (failed sign-in attempts before a temporary
+  lock), `tempLockDurationSeconds` (temporary lock duration), and
+  `maxFailedAttemptsSuspend` (failed sign-in attempts before the account is
+  suspended). The query is available to `SystemAdministrator` and
+  `SecurityAdministrator`; only `SystemAdministrator` may update the policy.
+  Values default to 5 attempts, 900 seconds, and 10 attempts when unset.
 
 ### Changed
 
@@ -35,6 +44,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   nullable (`ThreatCategory` -> `Option<ThreatCategory>`) following the
   underlying `review-database` change that made `Confidence::threat_category`
   optional.
+- Account lockout thresholds are now read from the configurable policy
+  instead of being hard-coded at 5 attempts / 30 minutes. Accounts other
+  than `SystemAdministrator` are suspended once failed attempts reach the
+  suspension threshold; `SystemAdministrator` accounts remain subject to
+  temporary locks but are exempt from suspension. A successful sign-in
+  resets the failed-attempt counter, while expiring a temporary lock no
+  longer clears it, so persistent failures can still reach the suspension
+  threshold.
+- `comprehensiveUserList` now reports `isLocked` based on the account's
+  current temporary-lock expiry and `isSuspended` from the account's
+  suspension state, rather than deriving both from a single flag.
 
 ## [0.31.0] - 2026-04-18
 
