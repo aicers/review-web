@@ -30,7 +30,7 @@ jobs:
       - name: Check (${{ matrix.features }})
         run: cargo check --no-default-features --features ${{ matrix.features }} --examples
       - name: markdownlint
-        uses: DavidAnson/markdownlint-cli2-action@v19
+        uses: DavidAnson/markdownlint-cli2-action@v23
 
   test:
     runs-on: ${{ matrix.os }}
@@ -68,7 +68,7 @@ jobs:
       - name: Generate code coverage
         run: cargo llvm-cov --no-default-features --features ${{ matrix.features }} --workspace --lcov --output-path lcov-${{ matrix.features }}.info
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
