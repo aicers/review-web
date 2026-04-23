@@ -77,10 +77,14 @@ pub struct ComprehensiveUserAccount {
 }
 
 const REVIEW_ADMIN: &str = "REVIEW_ADMIN";
-const MAX_FAILED_LOGIN_ATTEMPTS_BEFORE_LOCKOUT: u8 = 5; // Account lockout constants
-const ACCOUNT_LOCKOUT_DURATION: chrono::Duration = chrono::Duration::minutes(30);
 const AIMER_TOKEN_ERROR_MESSAGE: &str = "Failed to issue aimer token";
 const ACCOUNT_EXPIRY_CONFIG_KEY: &str = "account expiry period in seconds";
+const MAX_FAILED_ATTEMPTS_TEMP_LOCK_KEY: &str = "max failed attempts before temporary lock";
+const TEMP_LOCK_DURATION_SECONDS_KEY: &str = "temporary lock duration in seconds";
+const MAX_FAILED_ATTEMPTS_SUSPEND_KEY: &str = "max failed attempts before suspension";
+const DEFAULT_MAX_FAILED_ATTEMPTS_TEMP_LOCK: u8 = 5;
+const DEFAULT_TEMP_LOCK_DURATION_SECONDS: u32 = 900;
+const DEFAULT_MAX_FAILED_ATTEMPTS_SUSPEND: u8 = 10;
 
 #[derive(Default)]
 pub(super) struct AccountQuery;
@@ -255,6 +259,7 @@ impl AccountQuery {
         let store = crate::graphql::get_store(ctx)?;
         let account_map = store.account_map();
 
+        let now = Utc::now();
         let users = account_map
             .iter(Direction::Forward, None)
             .filter_map(|entry| {
@@ -268,8 +273,8 @@ impl AccountQuery {
                     role: account.role.into(),
                     creation_time: account.creation_time(),
                     last_signin_time: account.last_signin_time(),
-                    is_locked: false,
-                    is_suspended: false,
+                    is_locked: account.locked_out_until.is_some_and(|until| until > now),
+                    is_suspended: account.is_suspended,
                     max_parallel_sessions: account.max_parallel_sessions,
                     allow_access_from: account
                         .allow_access_from
@@ -292,6 +297,14 @@ impl AccountQuery {
 
         info_with_username!(ctx, "Account session expiration settings retrieved");
         expiration_time(&store).map(StringNumber)
+    }
+
+    /// Returns the current account lockout and suspension policy.
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)
+        .or(RoleGuard::new(super::Role::SecurityAdministrator))")]
+    async fn account_lockout_policy(&self, ctx: &Context<'_>) -> Result<AccountLockoutPolicy> {
+        let store = crate::graphql::get_store(ctx)?;
+        account_lockout_policy(&store)
     }
 }
 
@@ -608,11 +621,18 @@ impl AccountMutation {
 
         let store = crate::graphql::get_store(ctx)?;
         let account_map = store.account_map();
+        let policy = account_lockout_policy(&store)?;
         let client_ip = get_client_ip(ctx);
 
         if let Some(mut account) = account_map.get(&normalized_username)? {
             check_account_lockout_status(&mut account, &account_map, &normalized_username)?;
-            validate_password(&mut account, &account_map, &normalized_username, &password)?;
+            validate_password(
+                &mut account,
+                &account_map,
+                &normalized_username,
+                &password,
+                policy,
+            )?;
             validate_last_signin_time(&account, &normalized_username)?;
             validate_allow_access_from(&account, client_ip, &normalized_username)?;
             validate_max_parallel_sessions(&account, &store, &normalized_username)?;
@@ -650,11 +670,18 @@ impl AccountMutation {
 
         let store = crate::graphql::get_store(ctx)?;
         let account_map = store.account_map();
+        let policy = account_lockout_policy(&store)?;
         let client_ip = get_client_ip(ctx);
 
         if let Some(mut account) = account_map.get(&normalized_username)? {
             check_account_lockout_status(&mut account, &account_map, &normalized_username)?;
-            validate_password(&mut account, &account_map, &normalized_username, &password)?;
+            validate_password(
+                &mut account,
+                &account_map,
+                &normalized_username,
+                &password,
+                policy,
+            )?;
             validate_allow_access_from(&account, client_ip, &normalized_username)?;
             validate_max_parallel_sessions(&account, &store, &normalized_username)?;
             validate_update_new_password(&password, &new_password, &normalized_username)?;
@@ -859,6 +886,52 @@ impl AccountMutation {
 
         update_jwt_expires_in(expires_in)?;
         Ok(time)
+    }
+
+    /// Updates the account lockout and suspension policy.
+    ///
+    /// The suspension threshold must be greater than or equal to the temporary
+    /// lock threshold so that repeated failed attempts can eventually trigger
+    /// suspension.
+    #[graphql(guard = "RoleGuard::new(super::Role::SystemAdministrator)")]
+    async fn update_account_lockout_policy(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(validator(minimum = 1))] max_failed_attempts_temp_lock: u8,
+        #[graphql(validator(minimum = 1))] temp_lock_duration_seconds: u32,
+        #[graphql(validator(minimum = 1))] max_failed_attempts_suspend: u8,
+    ) -> Result<AccountLockoutPolicy> {
+        if max_failed_attempts_suspend < max_failed_attempts_temp_lock {
+            return Err(
+                "Suspension threshold must be greater than or equal to the temporary lock threshold"
+                    .into(),
+            );
+        }
+
+        let store = crate::graphql::get_store(ctx)?;
+        put_policy_value(
+            &store,
+            MAX_FAILED_ATTEMPTS_TEMP_LOCK_KEY,
+            &max_failed_attempts_temp_lock.to_string(),
+        )?;
+        put_policy_value(
+            &store,
+            TEMP_LOCK_DURATION_SECONDS_KEY,
+            &temp_lock_duration_seconds.to_string(),
+        )?;
+        put_policy_value(
+            &store,
+            MAX_FAILED_ATTEMPTS_SUSPEND_KEY,
+            &max_failed_attempts_suspend.to_string(),
+        )?;
+
+        info_with_username!(ctx, "Account lockout policy has been updated");
+
+        Ok(AccountLockoutPolicy {
+            max_failed_attempts_temp_lock,
+            temp_lock_duration_seconds,
+            max_failed_attempts_suspend,
+        })
     }
 
     /// Updates only the user's language setting.
@@ -1085,19 +1158,29 @@ fn validate_password(
     account_map: &Table<types::Account>,
     username: &str,
     password: &str,
+    policy: AccountLockoutPolicy,
 ) -> Result<()> {
     if !account.verify_password(password) {
         info!("wrong password for {username}");
 
-        // Increment failed login attempts
-        account.failed_login_attempts += 1;
+        account.failed_login_attempts = account.failed_login_attempts.saturating_add(1);
+        let is_admin = account.role == database::Role::SystemAdministrator;
 
-        // Check if we've reached the lockout threshold
-        if account.failed_login_attempts >= MAX_FAILED_LOGIN_ATTEMPTS_BEFORE_LOCKOUT {
-            let lockout_until = Utc::now() + ACCOUNT_LOCKOUT_DURATION;
+        if !is_admin && account.failed_login_attempts >= policy.max_failed_attempts_suspend {
+            account.is_suspended = true;
+            account_map.put(account)?;
+
+            info!("{username} has been suspended due to repeated failed login attempts");
+            return Err(format!(
+                "{username} has been suspended due to repeated failed login attempts. Contact an administrator to restore access."
+            )
+            .into());
+        }
+
+        if account.failed_login_attempts >= policy.max_failed_attempts_temp_lock {
+            let lockout_until = Utc::now()
+                + chrono::Duration::seconds(i64::from(policy.temp_lock_duration_seconds));
             account.locked_out_until = Some(lockout_until);
-
-            // Persist changes to database
             account_map.put(account)?;
 
             info!(
@@ -1105,15 +1188,14 @@ fn validate_password(
             );
             return Err(format!(
                 "{username} has been locked due to multiple failed login attempts. It will remain locked until {lockout_until}"
-            ).into());
+            )
+            .into());
         }
 
-        // Persist the incremented failed login attempts
         account_map.put(account)?;
         return Err("incorrect username or password".into());
     }
 
-    // Reset failed attempts on successful password validation
     account.failed_login_attempts = 0;
     account_map.put(account)?;
     Ok(())
@@ -1132,18 +1214,21 @@ fn check_account_lockout_status(
     account_map: &Table<types::Account>,
     username: &str,
 ) -> Result<()> {
-    // Check if the account has lockout fields - this will help us determine if the feature is supported
-    // Try to access the fields directly
+    if account.is_suspended {
+        info!("{username} is suspended");
+        return Err(format!(
+            "{username} is suspended. Contact an administrator to restore access."
+        )
+        .into());
+    }
     if let Some(locked_until) = &account.locked_out_until {
         if *locked_until > Utc::now() {
             info!("{username} is locked until {locked_until}");
             return Err(format!("{username} is locked until {locked_until}").into());
         }
-        // Lockout period has expired, reset the fields
+        // Lockout period has expired; clear the timestamp while preserving the
+        // attempt counter so persistent failures can still trigger suspension.
         account.locked_out_until = None;
-        account.failed_login_attempts = 0;
-
-        // Persist changes to database
         account_map.put(account)?;
     }
     Ok(())
@@ -1275,6 +1360,70 @@ pub fn expiration_time(store: &Store) -> Result<u32> {
 pub fn init_expiration_time(store: &Store, time: u32) -> anyhow::Result<()> {
     let map = store.config_map();
     map.init(ACCOUNT_EXPIRY_CONFIG_KEY, &time.to_string())?;
+    Ok(())
+}
+
+/// Global thresholds governing failed sign-in handling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, SimpleObject)]
+struct AccountLockoutPolicy {
+    /// Number of consecutive failed sign-in attempts that trigger a temporary
+    /// account lock.
+    max_failed_attempts_temp_lock: u8,
+    /// Duration (in seconds) of the temporary lock applied after the temporary
+    /// lock threshold is crossed.
+    temp_lock_duration_seconds: u32,
+    /// Number of consecutive failed sign-in attempts that trigger account
+    /// suspension (admin intervention required). System administrator accounts
+    /// are exempt from suspension.
+    max_failed_attempts_suspend: u8,
+}
+
+impl Default for AccountLockoutPolicy {
+    fn default() -> Self {
+        Self {
+            max_failed_attempts_temp_lock: DEFAULT_MAX_FAILED_ATTEMPTS_TEMP_LOCK,
+            temp_lock_duration_seconds: DEFAULT_TEMP_LOCK_DURATION_SECONDS,
+            max_failed_attempts_suspend: DEFAULT_MAX_FAILED_ATTEMPTS_SUSPEND,
+        }
+    }
+}
+
+/// Returns the current account lockout policy, falling back to the built-in
+/// defaults when a value is not yet configured.
+///
+/// # Errors
+///
+/// Returns an error if a persisted value is present but cannot be parsed.
+fn account_lockout_policy(store: &Store) -> Result<AccountLockoutPolicy> {
+    let map = store.config_map();
+    let mut policy = AccountLockoutPolicy::default();
+
+    if let Some(value) = map.current(MAX_FAILED_ATTEMPTS_TEMP_LOCK_KEY)? {
+        policy.max_failed_attempts_temp_lock = value
+            .parse::<u8>()
+            .map_err(|e| format!("failed to parse {MAX_FAILED_ATTEMPTS_TEMP_LOCK_KEY}: {e}"))?;
+    }
+    if let Some(value) = map.current(TEMP_LOCK_DURATION_SECONDS_KEY)? {
+        policy.temp_lock_duration_seconds = value
+            .parse::<u32>()
+            .map_err(|e| format!("failed to parse {TEMP_LOCK_DURATION_SECONDS_KEY}: {e}"))?;
+    }
+    if let Some(value) = map.current(MAX_FAILED_ATTEMPTS_SUSPEND_KEY)? {
+        policy.max_failed_attempts_suspend = value
+            .parse::<u8>()
+            .map_err(|e| format!("failed to parse {MAX_FAILED_ATTEMPTS_SUSPEND_KEY}: {e}"))?;
+    }
+
+    Ok(policy)
+}
+
+fn put_policy_value(store: &Store, key: &str, value: &str) -> anyhow::Result<()> {
+    let map = store.config_map();
+    if map.current(key)?.is_some() {
+        map.update(key, value)?;
+    } else {
+        map.init(key, value)?;
+    }
     Ok(())
 }
 
@@ -4808,5 +4957,384 @@ mod tests {
 
         assert!(!res.errors.is_empty());
         assert!(res.errors.first().unwrap().message.contains("Forbidden"));
+    }
+
+    const POLICY_QUERY: &str = r"query {
+        accountLockoutPolicy {
+            maxFailedAttemptsTempLock
+            tempLockDurationSeconds
+            maxFailedAttemptsSuspend
+        }
+    }";
+
+    #[tokio::test]
+    async fn account_lockout_policy_returns_defaults() {
+        let schema = TestSchema::new().await;
+
+        let res = schema.execute_as_system_admin(POLICY_QUERY).await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r"{accountLockoutPolicy: {maxFailedAttemptsTempLock: 5, tempLockDurationSeconds: 900, maxFailedAttemptsSuspend: 10}}"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_account_lockout_policy_persists_values() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r"mutation {
+                    updateAccountLockoutPolicy(
+                        maxFailedAttemptsTempLock: 3,
+                        tempLockDurationSeconds: 60,
+                        maxFailedAttemptsSuspend: 6
+                    ) {
+                        maxFailedAttemptsTempLock
+                        tempLockDurationSeconds
+                        maxFailedAttemptsSuspend
+                    }
+                }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r"{updateAccountLockoutPolicy: {maxFailedAttemptsTempLock: 3, tempLockDurationSeconds: 60, maxFailedAttemptsSuspend: 6}}"
+        );
+
+        let res = schema.execute_as_system_admin(POLICY_QUERY).await;
+        assert_eq!(
+            res.data.to_string(),
+            r"{accountLockoutPolicy: {maxFailedAttemptsTempLock: 3, tempLockDurationSeconds: 60, maxFailedAttemptsSuspend: 6}}"
+        );
+
+        // Updating again should use the update path (not init).
+        let res = schema
+            .execute_as_system_admin(
+                r"mutation {
+                    updateAccountLockoutPolicy(
+                        maxFailedAttemptsTempLock: 4,
+                        tempLockDurationSeconds: 120,
+                        maxFailedAttemptsSuspend: 8
+                    ) {
+                        maxFailedAttemptsTempLock
+                    }
+                }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+    }
+
+    #[tokio::test]
+    async fn update_account_lockout_policy_rejects_inverted_thresholds() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r"mutation {
+                    updateAccountLockoutPolicy(
+                        maxFailedAttemptsTempLock: 10,
+                        tempLockDurationSeconds: 60,
+                        maxFailedAttemptsSuspend: 3
+                    ) {
+                        maxFailedAttemptsTempLock
+                    }
+                }",
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(
+            res.errors
+                .first()
+                .unwrap()
+                .message
+                .contains("Suspension threshold")
+        );
+    }
+
+    #[tokio::test]
+    async fn update_account_lockout_policy_requires_system_administrator() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_with_guard(
+                r"mutation {
+                    updateAccountLockoutPolicy(
+                        maxFailedAttemptsTempLock: 3,
+                        tempLockDurationSeconds: 60,
+                        maxFailedAttemptsSuspend: 6
+                    ) {
+                        maxFailedAttemptsTempLock
+                    }
+                }",
+                RoleGuard::Role(Role::SecurityAdministrator),
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(res.errors.first().unwrap().message.contains("Forbidden"));
+    }
+
+    #[tokio::test]
+    async fn sign_in_failure_increments_attempts_and_temp_locks() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertAccount(
+                        username: "lockee",
+                        password: "correct",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Lockee",
+                        department: "Test",
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "lockee"}"#);
+        update_account_last_signin_time(&schema, "lockee").await;
+
+        // Tighten the policy so the test doesn't need many attempts.
+        let res = schema
+            .execute_as_system_admin(
+                r"mutation {
+                    updateAccountLockoutPolicy(
+                        maxFailedAttemptsTempLock: 2,
+                        tempLockDurationSeconds: 60,
+                        maxFailedAttemptsSuspend: 5
+                    ) { maxFailedAttemptsTempLock }
+                }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+
+        let wrong_password = r#"mutation {
+            signIn(username: "lockee", password: "wrong") { reviewToken }
+        }"#;
+
+        let res = schema.execute_as_system_admin(wrong_password).await;
+        assert_eq!(
+            res.errors.first().unwrap().message,
+            "incorrect username or password"
+        );
+
+        let res = schema.execute_as_system_admin(wrong_password).await;
+        assert!(
+            res.errors
+                .first()
+                .unwrap()
+                .message
+                .contains("has been locked")
+        );
+
+        let store = schema.store();
+        let map = store.account_map();
+        let account = map.get("lockee").unwrap().unwrap();
+        assert_eq!(account.failed_login_attempts, 2);
+        assert!(account.locked_out_until.is_some());
+        assert!(!account.is_suspended);
+    }
+
+    #[tokio::test]
+    async fn sign_in_suspends_non_admin_at_threshold() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertAccount(
+                        username: "brute",
+                        password: "correct",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Brute",
+                        department: "Test",
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "brute"}"#);
+        update_account_last_signin_time(&schema, "brute").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r"mutation {
+                    updateAccountLockoutPolicy(
+                        maxFailedAttemptsTempLock: 1,
+                        tempLockDurationSeconds: 1,
+                        maxFailedAttemptsSuspend: 3
+                    ) { maxFailedAttemptsTempLock }
+                }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+
+        let store = schema.store();
+        let map = store.account_map();
+
+        // Drive the account to the suspension threshold by writing failures
+        // directly; simulating expired lockouts between attempts keeps the
+        // test focused on the suspension trigger rather than timing.
+        for i in 1..=2 {
+            let mut account = map.get("brute").unwrap().unwrap();
+            account.failed_login_attempts = i;
+            account.locked_out_until = Some(Utc::now() - chrono::Duration::seconds(1));
+            map.put(&account).unwrap();
+            let res = schema
+                .execute_as_system_admin(
+                    r#"mutation {
+                        signIn(username: "brute", password: "wrong") { reviewToken }
+                    }"#,
+                )
+                .await;
+            assert!(!res.errors.is_empty());
+        }
+
+        let account = map.get("brute").unwrap().unwrap();
+        assert!(account.is_suspended, "account should be suspended");
+    }
+
+    #[tokio::test]
+    async fn sign_in_does_not_suspend_system_administrator() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertAccount(
+                        username: "sysadmin2",
+                        password: "correct",
+                        role: "SYSTEM_ADMINISTRATOR",
+                        name: "Sys Admin",
+                        department: "IT"
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "sysadmin2"}"#);
+        update_account_last_signin_time(&schema, "sysadmin2").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r"mutation {
+                    updateAccountLockoutPolicy(
+                        maxFailedAttemptsTempLock: 1,
+                        tempLockDurationSeconds: 1,
+                        maxFailedAttemptsSuspend: 2
+                    ) { maxFailedAttemptsTempLock }
+                }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+
+        let store = schema.store();
+        let map = store.account_map();
+        let mut account = map.get("sysadmin2").unwrap().unwrap();
+        // Simulate an account already one failure below the suspend threshold
+        // with an expired lock so the next failure would normally suspend.
+        account.failed_login_attempts = 1;
+        account.locked_out_until = Some(Utc::now() - chrono::Duration::seconds(1));
+        map.put(&account).unwrap();
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    signIn(username: "sysadmin2", password: "wrong") { reviewToken }
+                }"#,
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+
+        let account = map.get("sysadmin2").unwrap().unwrap();
+        assert!(
+            !account.is_suspended,
+            "system administrator must not be suspended"
+        );
+        assert!(
+            account.locked_out_until.is_some(),
+            "system administrator should still be temporarily locked"
+        );
+        assert!(account.failed_login_attempts >= 2);
+    }
+
+    #[tokio::test]
+    async fn sign_in_rejects_suspended_account() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertAccount(
+                        username: "suspendee",
+                        password: "correct",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Suspendee",
+                        department: "Test",
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "suspendee"}"#);
+        update_account_last_signin_time(&schema, "suspendee").await;
+
+        let store = schema.store();
+        let map = store.account_map();
+        let mut account = map.get("suspendee").unwrap().unwrap();
+        account.is_suspended = true;
+        map.put(&account).unwrap();
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    signIn(username: "suspendee", password: "correct") { reviewToken }
+                }"#,
+            )
+            .await;
+        assert!(!res.errors.is_empty());
+        assert!(res.errors.first().unwrap().message.contains("suspended"));
+    }
+
+    #[tokio::test]
+    async fn successful_sign_in_resets_failed_attempts() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertAccount(
+                        username: "resetter",
+                        password: "correct",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "Resetter",
+                        department: "Test",
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "resetter"}"#);
+        update_account_last_signin_time(&schema, "resetter").await;
+
+        let store = schema.store();
+        let map = store.account_map();
+        let mut account = map.get("resetter").unwrap().unwrap();
+        account.failed_login_attempts = 2;
+        map.put(&account).unwrap();
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    signIn(username: "resetter", password: "correct") { reviewToken }
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+
+        let account = map.get("resetter").unwrap().unwrap();
+        assert_eq!(account.failed_login_attempts, 0);
     }
 }
