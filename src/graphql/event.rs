@@ -3030,31 +3030,31 @@ mod tests {
             packet_attr: Vec::new(),
             confidence: vec![
                 database::Confidence {
-                    threat_category: database::EventCategory::CommandAndControl,
+                    threat_category: Some(database::EventCategory::CommandAndControl),
                     threat_kind: "dns covert channel".to_string(),
                     confidence: 0.0,
                     weight: Some(0.9),
                 },
                 database::Confidence {
-                    threat_category: database::EventCategory::CommandAndControl,
+                    threat_category: Some(database::EventCategory::CommandAndControl),
                     threat_kind: "http threat".to_string(),
                     confidence: 0.0,
                     weight: Some(0.9),
                 },
                 database::Confidence {
-                    threat_category: database::EventCategory::InitialAccess,
+                    threat_category: Some(database::EventCategory::InitialAccess),
                     threat_kind: "dga".to_string(),
                     confidence: 0.0,
                     weight: Some(0.8),
                 },
                 database::Confidence {
-                    threat_category: database::EventCategory::InitialAccess,
+                    threat_category: Some(database::EventCategory::InitialAccess),
                     threat_kind: "locky ransomware".to_string(),
                     confidence: 0.0,
                     weight: Some(0.8),
                 },
                 database::Confidence {
-                    threat_category: database::EventCategory::Discovery,
+                    threat_category: Some(database::EventCategory::Discovery),
                     threat_kind: "non browser".to_string(),
                     confidence: 0.0,
                     weight: Some(0.5),
