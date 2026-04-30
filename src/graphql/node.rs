@@ -1,5 +1,6 @@
 mod control;
 mod crud;
+mod customer_sensor_list;
 mod input;
 mod process;
 mod status;
