@@ -13,7 +13,9 @@ use tracing::info;
 
 use super::{
     super::{Role, RoleGuard, customer_access},
-    Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, gen_agent_key,
+    Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, customer_sensor_list,
+    customer_sensor_list::{Sensor, SensorTotalCount},
+    gen_agent_key,
     input::{AgentDraftInput, ExternalServiceInput, NodeDraftInput},
 };
 use crate::{graphql::query_with_constraints, info_with_username};
@@ -49,6 +51,34 @@ impl NodeQuery {
         let node = customer_access::load_accessible_node(ctx, &id)?;
 
         Ok(node.into())
+    }
+
+    /// A list of sensors deployed across customers the caller can access.
+    ///
+    /// A sensor is an entry in `Node.agents` whose `kind` is `SENSOR` and
+    /// whose `config` is set. Nodes whose `profile` is `None` are excluded.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    async fn customer_sensor_list(
+        &self,
+        ctx: &Context<'_>,
+        customer_ids: Option<Vec<i32>>,
+        after: Option<String>,
+        before: Option<String>,
+        first: Option<i32>,
+        last: Option<i32>,
+    ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Sensor, SensorTotalCount, EmptyFields>> {
+        info_with_username!(ctx, "Customer sensor list requested");
+        query_with_constraints(
+            after,
+            before,
+            first,
+            last,
+            |after, before, first, last| async move {
+                customer_sensor_list::load(ctx, customer_ids, after, before, first, last).await
+            },
+        )
+        .await
     }
 }
 
