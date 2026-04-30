@@ -4,6 +4,17 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `customerSensorList` GraphQL query that returns the deployed sensors
+  (sensor agents whose `config` is set) on nodes the caller can access. Each
+  entry exposes `customerId`, `agentKey`, and `hostFqdn`. Non-admin users only
+  see sensors of their accessible customers; passing a `customerIds` value
+  containing an inaccessible customer returns an authorization error. Works
+  under both `auth-jwt` and `auth-mtls` features.
+
 ## [0.31.0] - 2026-04-18
 
 ### Added
@@ -1491,6 +1502,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.31.0...main
 [0.31.0]: https://github.com/aicers/review-web/compare/0.30.1...0.31.0
 [0.30.1]: https://github.com/aicers/review-web/compare/0.30.0...0.30.1
 [0.30.0]: https://github.com/aicers/review-web/compare/0.29.4...0.30.0
