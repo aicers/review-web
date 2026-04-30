@@ -4,6 +4,16 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `threatCategory` in triage policy confidence entries is now optional in
+  GraphQL inputs and nullable in GraphQL outputs. `insertTriagePolicy` and
+  `updateTriagePolicy` accept `threatCategory: null`, and queries return
+  `null` for entries without a threat category. `threatKind` remains
+  required.
+
 ## [0.31.0] - 2026-04-18
 
 ### Added
@@ -1491,6 +1501,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.31.0...HEAD
 [0.31.0]: https://github.com/aicers/review-web/compare/0.30.1...0.31.0
 [0.30.1]: https://github.com/aicers/review-web/compare/0.30.0...0.30.1
 [0.30.0]: https://github.com/aicers/review-web/compare/0.29.4...0.30.0
