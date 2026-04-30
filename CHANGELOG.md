@@ -29,7 +29,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Added `authenticator` field of type `Arc<dyn MtlsAuthenticator>` to
   `ServerConfig`. (auth-mtls)
 - Added `get_sampling_policies` function to return a list of sampling
-  policies for a given customer.
+  policies for a given customer. The join key is `NodeProfile.hostname`
+  (which is what `SamplingPolicy.node` stores), so policies whose
+  hostname does not map to a node with a profile are skipped. Policies
+  with `node == None` are treated as shared/global and returned to
+  every customer.
 - Added customer scoping to `TriageResponse` GraphQL resolvers. Non-admin
   users can now only access triage responses whose sensor hostname maps to a
   node belonging to one of their accessible customers. Affected APIs:
