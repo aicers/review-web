@@ -1,6 +1,6 @@
-# Instructions for AI Coding Agents
+# Instructions for Claude
 
-This document defines the rules, context, and standards for AI agents
+This document defines the rules, context, and standards for Claude when
 contributing to the `review-web` project. Read this carefully before
 generating code.
 
