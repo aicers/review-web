@@ -8,6 +8,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- Added `event(id: ID!): Event` GraphQL query for single-event lookup by an
+  opaque identifier, intended for stable URL-addressable references to a
+  detection event. Each `Event` now exposes an `id` field derived from the
+  event's existing storage key. The new resolver applies the same role guard
+  as `eventList`
+  (`SystemAdministrator | SecurityAdministrator | SecurityManager |
+  SecurityMonitor`) and the same customer/sensor access restrictions, so a
+  single-record lookup cannot bypass tenant scoping. The encoding of `id`
+  is opaque; consumers must not parse it. IDs are stable for as long as the
+  event is retained under the current storage key format — retention drop
+  or a future key-format migration may invalidate them.
 - Added `eventListWithTriage` GraphQL query that returns events passing the
   standard filter regardless of policy match, with optional inline triage
   scoring and exclusions. The new resolver supports two caller patterns:
@@ -44,6 +55,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- Renamed the `id` field on the `BlocklistRadius` GraphQL type to `packetId`.
+  The new `Event.id` interface field claims `id` for the opaque event
+  identifier, so the existing RADIUS packet identifier had to be moved to
+  avoid a name collision. Clients reading the RADIUS packet identifier from
+  `BlocklistRadius` must update to the new field name.
 - `Confidence.threatCategory` and `ConfidenceInput.threatCategory` are now
   nullable (`ThreatCategory` -> `Option<ThreatCategory>`) following the
   underlying `review-database` change that made `Confidence::threat_category`

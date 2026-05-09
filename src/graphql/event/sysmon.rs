@@ -7,11 +7,17 @@ use crate::graphql::{filter::LearningMethod, triage::ThreatCategory};
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct WindowsThreat {
+    id: i128,
     inner: database::WindowsThreat,
 }
 
 #[Object]
 impl WindowsThreat {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -119,8 +125,8 @@ impl WindowsThreat {
     }
 }
 
-impl From<database::WindowsThreat> for WindowsThreat {
-    fn from(inner: database::WindowsThreat) -> Self {
-        Self { inner }
+impl From<(i128, database::WindowsThreat)> for WindowsThreat {
+    fn from((id, inner): (i128, database::WindowsThreat)) -> Self {
+        Self { id, inner }
     }
 }

@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result, StringNumber};
+use async_graphql::{Context, ID, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::event as database;
 
@@ -9,11 +9,17 @@ use crate::graphql::{
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct DnsCovertChannel {
+    id: i128,
     inner: database::DnsCovertChannel,
 }
 
 #[Object]
 impl DnsCovertChannel {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -214,19 +220,25 @@ impl DnsCovertChannel {
     }
 }
 
-impl From<database::DnsCovertChannel> for DnsCovertChannel {
-    fn from(inner: database::DnsCovertChannel) -> Self {
-        Self { inner }
+impl From<(i128, database::DnsCovertChannel)> for DnsCovertChannel {
+    fn from((id, inner): (i128, database::DnsCovertChannel)) -> Self {
+        Self { id, inner }
     }
 }
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct LockyRansomware {
+    id: i128,
     inner: database::LockyRansomware,
 }
 
 #[Object]
 impl LockyRansomware {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -422,18 +434,24 @@ impl LockyRansomware {
     }
 }
 
-impl From<database::LockyRansomware> for LockyRansomware {
-    fn from(inner: database::LockyRansomware) -> Self {
-        Self { inner }
+impl From<(i128, database::LockyRansomware)> for LockyRansomware {
+    fn from((id, inner): (i128, database::LockyRansomware)) -> Self {
+        Self { id, inner }
     }
 }
 
 pub(super) struct CryptocurrencyMiningPool {
+    id: i128,
     inner: database::CryptocurrencyMiningPool,
 }
 
 #[Object]
 impl CryptocurrencyMiningPool {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -634,18 +652,24 @@ impl CryptocurrencyMiningPool {
     }
 }
 
-impl From<database::CryptocurrencyMiningPool> for CryptocurrencyMiningPool {
-    fn from(inner: database::CryptocurrencyMiningPool) -> Self {
-        Self { inner }
+impl From<(i128, database::CryptocurrencyMiningPool)> for CryptocurrencyMiningPool {
+    fn from((id, inner): (i128, database::CryptocurrencyMiningPool)) -> Self {
+        Self { id, inner }
     }
 }
 
 pub(super) struct BlocklistDns {
+    id: i128,
     inner: database::BlocklistDns,
 }
 
 #[Object]
 impl BlocklistDns {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -841,8 +865,8 @@ impl BlocklistDns {
     }
 }
 
-impl From<database::BlocklistDns> for BlocklistDns {
-    fn from(inner: database::BlocklistDns) -> Self {
-        Self { inner }
+impl From<(i128, database::BlocklistDns)> for BlocklistDns {
+    fn from((id, inner): (i128, database::BlocklistDns)) -> Self {
+        Self { id, inner }
     }
 }

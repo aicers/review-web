@@ -453,169 +453,169 @@ async fn fetch_events(
 
             match event_kind {
                 EventKind::DnsCovertChannel if event_time >= dns_covert_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     dns_covert_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::HttpThreat if event_time >= http_threat_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     http_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::RdpBruteForce if event_time >= rdp_brute_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     rdp_brute_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::RepeatedHttpSessions if event_time >= repeat_http_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     repeat_http_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::TorConnection if event_time >= tor_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     tor_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::TorConnectionConn if event_time >= tor_connection_conn_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     tor_connection_conn_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::DomainGenerationAlgorithm if event_time >= dga_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     dga_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::FtpBruteForce if event_time >= ftp_brute_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     ftp_brute_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::FtpPlainText if event_time >= ftp_plain_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     ftp_plain_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::PortScan if event_time >= port_scan_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     port_scan_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::MultiHostPortScan if event_time >= multi_host_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     multi_host_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::NonBrowser if event_time >= non_browser_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     non_browser_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::LdapBruteForce if event_time >= ldap_brute_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     ldap_brute_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::LdapPlainText if event_time >= ldap_plain_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     ldap_plain_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::ExternalDdos if event_time >= external_ddos_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     external_ddos_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::CryptocurrencyMiningPool if event_time >= cryptocurrency_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     cryptocurrency_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistBootp if event_time >= blocklist_bootp_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_bootp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistConn if event_time >= blocklist_conn_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_conn_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistDhcp if event_time >= blocklist_dhcp_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_dhcp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistDns if event_time >= blocklist_dns_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_dns_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistDceRpc if event_time >= blocklist_dcerpc_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_dcerpc_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistFtp if event_time >= blocklist_ftp_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_ftp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistHttp if event_time >= blocklist_http_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_http_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistKerberos if event_time >= blocklist_kerberos_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_kerberos_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistLdap if event_time >= blocklist_ldap_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_ldap_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistMalformedDns if event_time >= blocklist_malformed_dns_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_malformed_dns_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistMqtt if event_time >= blocklist_mqtt_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_mqtt_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistNfs if event_time >= blocklist_nfs_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_nfs_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistNtlm if event_time >= blocklist_ntlm_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_ntlm_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistRadius if event_time >= blocklist_radius_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_radius_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistRdp if event_time >= blocklist_rdp_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_rdp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistSmb if event_time >= blocklist_smb_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_smb_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistSmtp if event_time >= blocklist_smtp_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_smtp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistSsh if event_time >= blocklist_ssh_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_ssh_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistTls if event_time >= blocklist_tls_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_tls_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::WindowsThreat if event_time >= windows_threat_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     windows_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::NetworkThreat if event_time >= network_threat_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     network_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::ExtraThreat if event_time >= extra_threat_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     extra_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::LockyRansomware if event_time >= locky_ransomware_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     locky_ransomware_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::SuspiciousTlsTraffic if event_time >= suspicious_tls_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     suspicious_tls_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::UnusualDestinationPattern
                     if event_time >= unusual_destination_pattern_time =>
                 {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     unusual_destination_pattern_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 _ => {}
@@ -626,6 +626,26 @@ async fn fetch_events(
 
 #[Object]
 impl EventQuery {
+    /// Looks up a single event by its opaque `id`.
+    ///
+    /// `id` is the value previously returned from `Event.id`. Decoding the
+    /// `id` is internal; consumers must not parse it.
+    ///
+    /// Returns `null` when no event with the given `id` exists, or when the
+    /// caller's customer/sensor scope does not include the event. The same
+    /// role guard and tenant scoping used by `eventList` apply here.
+    ///
+    /// IDs are stable for as long as the event is retained under the current
+    /// storage key format. Retention drop or a future key-format migration
+    /// may invalidate them.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityManager))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
+    async fn event(&self, ctx: &Context<'_>, id: ID) -> Result<Option<Event>> {
+        load_event(ctx, &id).await
+    }
+
     /// A list of events with timestamp on or after `start` and before `end`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
@@ -756,9 +776,25 @@ pub(super) struct EndpointInput {
     pub(super) custom: Option<HostNetworkGroupInput>,
 }
 
+/// Encodes an event's storage key as an opaque GraphQL `ID`.
+///
+/// The encoding is opaque to consumers; do not parse it on the client side.
+/// IDs are stable for as long as the event is retained under the current
+/// storage key format.
+pub(super) fn opaque_event_id(key: i128) -> ID {
+    ID::from(key.to_string())
+}
+
+fn parse_event_id(id: &ID) -> Result<i128> {
+    id.as_str()
+        .parse::<i128>()
+        .map_err(|_| "invalid event id".into())
+}
+
 /// Common interface for all event types.
 #[derive(Interface)]
 #[graphql(
+    field(name = "id", ty = "ID"),
     field(name = "time", ty = "DateTime<Utc>"),
     field(name = "sensor", ty = "&str"),
     field(name = "confidence", ty = "f32"),
@@ -870,67 +906,75 @@ enum Event {
     UnusualDestinationPattern(UnusualDestinationPattern),
 }
 
-impl From<database::Event> for Event {
-    fn from(event: database::Event) -> Self {
+impl From<(i128, database::Event)> for Event {
+    fn from((key, event): (i128, database::Event)) -> Self {
         match event {
-            database::Event::DnsCovertChannel(event) => Event::DnsCovertChannel(event.into()),
-            database::Event::HttpThreat(event) => Event::HttpThreat(event.into()),
-            database::Event::RdpBruteForce(event) => Event::RdpBruteForce(event.into()),
+            database::Event::DnsCovertChannel(event) => {
+                Event::DnsCovertChannel((key, event).into())
+            }
+            database::Event::HttpThreat(event) => Event::HttpThreat((key, event).into()),
+            database::Event::RdpBruteForce(event) => Event::RdpBruteForce((key, event).into()),
             database::Event::RepeatedHttpSessions(event) => {
-                Event::RepeatedHttpSessions(event.into())
+                Event::RepeatedHttpSessions((key, event).into())
             }
-            database::Event::TorConnection(event) => Event::TorConnection(event.into()),
-            database::Event::TorConnectionConn(event) => Event::TorConnectionConn(event.into()),
+            database::Event::TorConnection(event) => Event::TorConnection((key, event).into()),
+            database::Event::TorConnectionConn(event) => {
+                Event::TorConnectionConn((key, event).into())
+            }
             database::Event::DomainGenerationAlgorithm(event) => {
-                Event::DomainGenerationAlgorithm(event.into())
+                Event::DomainGenerationAlgorithm((key, event).into())
             }
-            database::Event::FtpBruteForce(event) => Event::FtpBruteForce(event.into()),
-            database::Event::FtpPlainText(event) => Event::FtpPlainText(event.into()),
-            database::Event::PortScan(event) => Event::PortScan(event.into()),
-            database::Event::MultiHostPortScan(event) => Event::MultiHostPortScan(event.into()),
-            database::Event::ExternalDdos(event) => Event::ExternalDdos(event.into()),
-            database::Event::NonBrowser(event) => Event::NonBrowser(event.into()),
-            database::Event::LdapBruteForce(event) => Event::LdapBruteForce(event.into()),
-            database::Event::LdapPlainText(event) => Event::LdapPlainText(event.into()),
+            database::Event::FtpBruteForce(event) => Event::FtpBruteForce((key, event).into()),
+            database::Event::FtpPlainText(event) => Event::FtpPlainText((key, event).into()),
+            database::Event::PortScan(event) => Event::PortScan((key, event).into()),
+            database::Event::MultiHostPortScan(event) => {
+                Event::MultiHostPortScan((key, event).into())
+            }
+            database::Event::ExternalDdos(event) => Event::ExternalDdos((key, event).into()),
+            database::Event::NonBrowser(event) => Event::NonBrowser((key, event).into()),
+            database::Event::LdapBruteForce(event) => Event::LdapBruteForce((key, event).into()),
+            database::Event::LdapPlainText(event) => Event::LdapPlainText((key, event).into()),
             database::Event::CryptocurrencyMiningPool(event) => {
-                Event::CryptocurrencyMiningPool(event.into())
+                Event::CryptocurrencyMiningPool((key, event).into())
             }
             database::Event::Blocklist(record_type) => match record_type {
-                RecordType::Bootp(event) => Event::BlocklistBootp(event.into()),
-                RecordType::Conn(event) => Event::BlocklistConn(event.into()),
-                RecordType::Dhcp(event) => Event::BlocklistDhcp(event.into()),
-                RecordType::Dns(event) => Event::BlocklistDns(event.into()),
-                RecordType::DceRpc(event) => Event::BlocklistDceRpc(event.into()),
-                RecordType::Ftp(event) => Event::BlocklistFtp(event.into()),
-                RecordType::Http(event) => Event::BlocklistHttp(event.into()),
-                RecordType::Kerberos(event) => Event::BlocklistKerberos(event.into()),
-                RecordType::Ldap(event) => Event::BlocklistLdap(event.into()),
-                RecordType::MalformedDns(event) => Event::BlocklistMalformedDns(event.into()),
-                RecordType::Mqtt(event) => Event::BlocklistMqtt(event.into()),
-                RecordType::Nfs(event) => Event::BlocklistNfs(event.into()),
-                RecordType::Ntlm(event) => Event::BlocklistNtlm(event.into()),
-                RecordType::Radius(event) => Event::BlocklistRadius(event.into()),
-                RecordType::Rdp(event) => Event::BlocklistRdp(event.into()),
-                RecordType::Smb(event) => Event::BlocklistSmb(event.into()),
-                RecordType::Smtp(event) => Event::BlocklistSmtp(event.into()),
-                RecordType::Ssh(event) => Event::BlocklistSsh(event.into()),
-                RecordType::Tls(event) => Event::BlocklistTls(event.into()),
+                RecordType::Bootp(event) => Event::BlocklistBootp((key, event).into()),
+                RecordType::Conn(event) => Event::BlocklistConn((key, event).into()),
+                RecordType::Dhcp(event) => Event::BlocklistDhcp((key, event).into()),
+                RecordType::Dns(event) => Event::BlocklistDns((key, event).into()),
+                RecordType::DceRpc(event) => Event::BlocklistDceRpc((key, event).into()),
+                RecordType::Ftp(event) => Event::BlocklistFtp((key, event).into()),
+                RecordType::Http(event) => Event::BlocklistHttp((key, event).into()),
+                RecordType::Kerberos(event) => Event::BlocklistKerberos((key, event).into()),
+                RecordType::Ldap(event) => Event::BlocklistLdap((key, event).into()),
+                RecordType::MalformedDns(event) => {
+                    Event::BlocklistMalformedDns((key, event).into())
+                }
+                RecordType::Mqtt(event) => Event::BlocklistMqtt((key, event).into()),
+                RecordType::Nfs(event) => Event::BlocklistNfs((key, event).into()),
+                RecordType::Ntlm(event) => Event::BlocklistNtlm((key, event).into()),
+                RecordType::Radius(event) => Event::BlocklistRadius((key, event).into()),
+                RecordType::Rdp(event) => Event::BlocklistRdp((key, event).into()),
+                RecordType::Smb(event) => Event::BlocklistSmb((key, event).into()),
+                RecordType::Smtp(event) => Event::BlocklistSmtp((key, event).into()),
+                RecordType::Ssh(event) => Event::BlocklistSsh((key, event).into()),
+                RecordType::Tls(event) => Event::BlocklistTls((key, event).into()),
                 RecordType::UnusualDestinationPattern(event) => {
-                    Event::UnusualDestinationPattern(event.into())
+                    Event::UnusualDestinationPattern((key, event).into())
                 }
             },
-            database::Event::WindowsThreat(event) => Event::WindowsThreat(event.into()),
-            database::Event::NetworkThreat(event) => Event::NetworkThreat(event.into()),
-            database::Event::ExtraThreat(event) => Event::ExtraThreat(event.into()),
-            database::Event::LockyRansomware(event) => Event::LockyRansomware(event.into()),
+            database::Event::WindowsThreat(event) => Event::WindowsThreat((key, event).into()),
+            database::Event::NetworkThreat(event) => Event::NetworkThreat((key, event).into()),
+            database::Event::ExtraThreat(event) => Event::ExtraThreat((key, event).into()),
+            database::Event::LockyRansomware(event) => Event::LockyRansomware((key, event).into()),
             database::Event::SuspiciousTlsTraffic(event) => {
-                Event::SuspiciousTlsTraffic(event.into())
+                Event::SuspiciousTlsTraffic((key, event).into())
             }
         }
     }
 }
 
-#[derive(InputObject)]
+#[derive(Default, InputObject)]
 struct EventListFilterInput {
     start: Option<DateTime<Utc>>,
     end: Option<DateTime<Utc>>,
@@ -1415,6 +1459,54 @@ fn convert_triage_input(
     Ok(triage_policies)
 }
 
+async fn load_event(ctx: &Context<'_>, id: &ID) -> Result<Option<Event>> {
+    let key = parse_event_id(id)?;
+    let store = crate::graphql::get_store(ctx)?;
+
+    // Build a tenant-scope filter from an empty input so that
+    // `from_filter_input` derives the caller's allowed sensors from
+    // their `customer_ids`. SystemAdministrator (no customer_ids) sees
+    // every sensor; everyone else is restricted to sensors of their
+    // accessible customers.
+    let mut filter = from_filter_input(ctx, &store, &EventListFilterInput::default())?;
+    filter.moderate_kinds();
+
+    let db = store.events();
+    let mut iter = db.iter_from(key, Direction::Forward);
+    let Some(item) = iter.next() else {
+        return Ok(None);
+    };
+    let (found_key, mut event) = match item {
+        Ok(kv) => kv,
+        Err(e) => {
+            warn_with_username!(ctx, "Invalid event: {:?}", e);
+            return Ok(None);
+        }
+    };
+    if found_key != key {
+        return Ok(None);
+    }
+
+    let locator = if filter.has_country() {
+        Some(
+            ctx.data::<ip2location::DB>()
+                .map_err(|_| "unable to locate IP address")?,
+        )
+    } else {
+        None
+    };
+    let (matched, triage_score) = event
+        .matches(locator, &filter)
+        .map_err(|e| format!("{e}"))?;
+    if !matched {
+        return Ok(None);
+    }
+    if let Some(triage_score) = triage_score {
+        event.set_triage_scores(triage_score);
+    }
+    Ok(Some((found_key, event).into()))
+}
+
 async fn load(
     ctx: &Context<'_>,
     filter: &EventListFilterInput,
@@ -1556,6 +1648,7 @@ async fn load_triage_list(
             let scored_event = ScoredEvent {
                 score: max_score,
                 priority: event_priority,
+                key,
                 event,
             };
 
@@ -1572,7 +1665,7 @@ async fn load_triage_list(
     let result: Vec<Event> = heap
         .into_sorted_vec()
         .into_iter()
-        .map(|scored| scored.event.into())
+        .map(|scored| (scored.key, scored.event).into())
         .collect();
     Ok(result)
 }
@@ -1581,6 +1674,7 @@ async fn load_triage_list(
 struct ScoredEvent {
     score: f64,
     priority: u8,
+    key: i128,
     event: database::Event,
 }
 
@@ -1734,7 +1828,7 @@ fn iter_to_events(
         if let Some(triage_score) = triage_score {
             event.set_triage_scores(triage_score);
         }
-        events.push((key, event.into()));
+        events.push((key, (key, event).into()));
         exceeded = events.len() > len;
         if exceeded {
             break;
@@ -1959,7 +2053,7 @@ fn iter_to_events_with_triage(
                 event.set_triage_scores(scores);
             }
         }
-        events.push((key, event.into()));
+        events.push((key, (key, event).into()));
         exceeded = events.len() > len;
         if exceeded {
             break;
@@ -2040,6 +2134,160 @@ mod tests {
             kind: EventKind::DnsCovertChannel,
             fields: bincode::serialize(&fields).expect("serializable"),
         }
+    }
+
+    #[tokio::test]
+    async fn event_lookup_by_id_returns_matching_event() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2018, 1, 26)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let key = db.put(&event_message_at(ts, 1, 2)).unwrap();
+        drop(store);
+
+        let query = format!(
+            "{{ event(id: \"{key}\") {{ id, ... on DnsCovertChannel {{ time, query }} }} }}"
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        assert_eq!(
+            res.data.to_string(),
+            format!(
+                r#"{{event: {{id: "{key}", time: "2018-01-26T18:30:09.453829+00:00", query: "domain"}}}}"#
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn event_lookup_unknown_id_returns_null() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin("{ event(id: \"0\") { id } }")
+            .await;
+        assert_eq!(res.data.to_string(), r"{event: null}");
+    }
+
+    #[tokio::test]
+    async fn event_lookup_invalid_id_errors() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin("{ event(id: \"not-a-number\") { id } }")
+            .await;
+        assert!(!res.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn event_lookup_id_matches_event_list_cursor() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2018, 1, 26)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(ts, 1, 2)).unwrap();
+        drop(store);
+
+        let res = schema
+            .execute_as_system_admin("{ eventList(filter: {}) { edges { cursor, node { id } } } }")
+            .await;
+        let s = res.data.to_string();
+        let cursor_pos = s.find("cursor: \"").expect("cursor present");
+        let cursor_start = cursor_pos + "cursor: \"".len();
+        let cursor_end = cursor_start + s[cursor_start..].find('"').unwrap();
+        let cursor = &s[cursor_start..cursor_end];
+        let id_pos = s.find("id: \"").expect("id present");
+        let id_start = id_pos + "id: \"".len();
+        let id_end = id_start + s[id_start..].find('"').unwrap();
+        let id = &s[id_start..id_end];
+        assert_eq!(cursor, id);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "auth-jwt")]
+    async fn event_lookup_respects_tenant_scope() {
+        use crate::graphql::Role;
+
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "sensor1",
+                        customerId: 0,
+                        description: "This is the sensor node",
+                        hostname: "sensor1",
+                        agents: [{
+                            key: "sensor"
+                            kind: SENSOR
+                            status: ENABLED
+                        }],
+                        externalServices: [],
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+        let _ = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "sensor1",
+                            nameDraft: "sensor1",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the sensor node",
+                                hostname: "sensor1",
+                            }
+                            agents: [
+                                {
+                                    key: "sensor",
+                                    kind: "SENSOR",
+                                    status: "ENABLED"
+                                }
+                            ],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2018, 1, 26)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let key = db.put(&event_message_at(ts, 1, 2)).unwrap();
+        drop(store);
+
+        let query =
+            format!("{{ event(id: \"{key}\") {{ ... on DnsCovertChannel {{ sensor }} }} }}");
+
+        // Scoped user assigned to customer 0 (which owns sensor1) can see it.
+        let res = schema
+            .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![0]))
+            .await;
+        assert_eq!(res.data.to_string(), r#"{event: {sensor: "sensor1"}}"#);
+
+        // Scoped user assigned to customer 1 (not owning sensor1) cannot.
+        let res = schema
+            .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![1]))
+            .await;
+        assert_eq!(res.data.to_string(), r"{event: null}");
     }
 
     #[tokio::test]

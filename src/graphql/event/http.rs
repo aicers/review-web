@@ -9,11 +9,17 @@ use crate::graphql::{
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct HttpThreat {
+    id: i128,
     inner: database::HttpThreat,
 }
 
 #[Object]
 impl HttpThreat {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -295,18 +301,24 @@ impl HttpThreat {
     }
 }
 
-impl From<database::HttpThreat> for HttpThreat {
-    fn from(inner: database::HttpThreat) -> Self {
-        Self { inner }
+impl From<(i128, database::HttpThreat)> for HttpThreat {
+    fn from((id, inner): (i128, database::HttpThreat)) -> Self {
+        Self { id, inner }
     }
 }
 
 pub(super) struct RepeatedHttpSessions {
+    id: i128,
     inner: database::RepeatedHttpSessions,
 }
 
 #[Object]
 impl RepeatedHttpSessions {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -425,18 +437,24 @@ impl RepeatedHttpSessions {
     }
 }
 
-impl From<database::RepeatedHttpSessions> for RepeatedHttpSessions {
-    fn from(inner: database::RepeatedHttpSessions) -> Self {
-        Self { inner }
+impl From<(i128, database::RepeatedHttpSessions)> for RepeatedHttpSessions {
+    fn from((id, inner): (i128, database::RepeatedHttpSessions)) -> Self {
+        Self { id, inner }
     }
 }
 
 pub(super) struct TorConnection {
+    id: i128,
     inner: database::TorConnection,
 }
 
 #[Object]
 impl TorConnection {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -677,18 +695,24 @@ impl TorConnection {
     }
 }
 
-impl From<database::TorConnection> for TorConnection {
-    fn from(inner: database::TorConnection) -> Self {
-        Self { inner }
+impl From<(i128, database::TorConnection)> for TorConnection {
+    fn from((id, inner): (i128, database::TorConnection)) -> Self {
+        Self { id, inner }
     }
 }
 
 pub(super) struct DomainGenerationAlgorithm {
+    id: i128,
     inner: database::DomainGenerationAlgorithm,
 }
 
 #[Object]
 impl DomainGenerationAlgorithm {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -929,18 +953,24 @@ impl DomainGenerationAlgorithm {
     }
 }
 
-impl From<database::DomainGenerationAlgorithm> for DomainGenerationAlgorithm {
-    fn from(inner: database::DomainGenerationAlgorithm) -> Self {
-        Self { inner }
+impl From<(i128, database::DomainGenerationAlgorithm)> for DomainGenerationAlgorithm {
+    fn from((id, inner): (i128, database::DomainGenerationAlgorithm)) -> Self {
+        Self { id, inner }
     }
 }
 
 pub(super) struct NonBrowser {
+    id: i128,
     inner: database::NonBrowser,
 }
 
 #[Object]
 impl NonBrowser {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -1181,18 +1211,24 @@ impl NonBrowser {
     }
 }
 
-impl From<database::NonBrowser> for NonBrowser {
-    fn from(inner: database::NonBrowser) -> Self {
-        Self { inner }
+impl From<(i128, database::NonBrowser)> for NonBrowser {
+    fn from((id, inner): (i128, database::NonBrowser)) -> Self {
+        Self { id, inner }
     }
 }
 
 pub(super) struct BlocklistHttp {
+    id: i128,
     inner: database::BlocklistHttp,
 }
 
 #[Object]
 impl BlocklistHttp {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -1433,8 +1469,8 @@ impl BlocklistHttp {
     }
 }
 
-impl From<database::BlocklistHttp> for BlocklistHttp {
-    fn from(inner: database::BlocklistHttp) -> Self {
-        Self { inner }
+impl From<(i128, database::BlocklistHttp)> for BlocklistHttp {
+    fn from((id, inner): (i128, database::BlocklistHttp)) -> Self {
+        Self { id, inner }
     }
 }

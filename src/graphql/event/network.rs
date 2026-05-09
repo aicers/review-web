@@ -9,11 +9,17 @@ use crate::graphql::{
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct NetworkThreat {
+    id: i128,
     inner: database::NetworkThreat,
 }
 
 #[Object]
 impl NetworkThreat {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -192,8 +198,8 @@ impl NetworkThreat {
     }
 }
 
-impl From<database::NetworkThreat> for NetworkThreat {
-    fn from(inner: database::NetworkThreat) -> Self {
-        Self { inner }
+impl From<(i128, database::NetworkThreat)> for NetworkThreat {
+    fn from((id, inner): (i128, database::NetworkThreat)) -> Self {
+        Self { id, inner }
     }
 }

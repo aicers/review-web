@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result, StringNumber};
+use async_graphql::{Context, ID, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::event as database;
 
@@ -7,11 +7,17 @@ use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategor
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct RdpBruteForce {
+    id: i128,
     inner: database::RdpBruteForce,
 }
 
 #[Object]
 impl RdpBruteForce {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -120,18 +126,24 @@ impl RdpBruteForce {
     }
 }
 
-impl From<database::RdpBruteForce> for RdpBruteForce {
-    fn from(inner: database::RdpBruteForce) -> Self {
-        Self { inner }
+impl From<(i128, database::RdpBruteForce)> for RdpBruteForce {
+    fn from((id, inner): (i128, database::RdpBruteForce)) -> Self {
+        Self { id, inner }
     }
 }
 
 pub(super) struct BlocklistRdp {
+    id: i128,
     inner: database::BlocklistRdp,
 }
 
 #[Object]
 impl BlocklistRdp {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -272,8 +284,8 @@ impl BlocklistRdp {
     }
 }
 
-impl From<database::BlocklistRdp> for BlocklistRdp {
-    fn from(inner: database::BlocklistRdp) -> Self {
-        Self { inner }
+impl From<(i128, database::BlocklistRdp)> for BlocklistRdp {
+    fn from((id, inner): (i128, database::BlocklistRdp)) -> Self {
+        Self { id, inner }
     }
 }

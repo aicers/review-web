@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result, StringNumber};
+use async_graphql::{Context, ID, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::event as database;
 
@@ -9,11 +9,17 @@ use crate::graphql::{
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct PortScan {
+    id: i128,
     inner: database::PortScan,
 }
 
 #[Object]
 impl PortScan {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -122,18 +128,24 @@ impl PortScan {
     }
 }
 
-impl From<database::PortScan> for PortScan {
-    fn from(inner: database::PortScan) -> Self {
-        Self { inner }
+impl From<(i128, database::PortScan)> for PortScan {
+    fn from((id, inner): (i128, database::PortScan)) -> Self {
+        Self { id, inner }
     }
 }
 
 pub(super) struct MultiHostPortScan {
+    id: i128,
     inner: database::MultiHostPortScan,
 }
 
 #[Object]
 impl MultiHostPortScan {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -261,18 +273,24 @@ impl MultiHostPortScan {
     }
 }
 
-impl From<database::MultiHostPortScan> for MultiHostPortScan {
-    fn from(inner: database::MultiHostPortScan) -> Self {
-        Self { inner }
+impl From<(i128, database::MultiHostPortScan)> for MultiHostPortScan {
+    fn from((id, inner): (i128, database::MultiHostPortScan)) -> Self {
+        Self { id, inner }
     }
 }
 
 pub(super) struct ExternalDdos {
+    id: i128,
     inner: database::ExternalDdos,
 }
 
 #[Object]
 impl ExternalDdos {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -394,18 +412,24 @@ impl ExternalDdos {
     }
 }
 
-impl From<database::ExternalDdos> for ExternalDdos {
-    fn from(inner: database::ExternalDdos) -> Self {
-        Self { inner }
+impl From<(i128, database::ExternalDdos)> for ExternalDdos {
+    fn from((id, inner): (i128, database::ExternalDdos)) -> Self {
+        Self { id, inner }
     }
 }
 
 pub(super) struct BlocklistConn {
+    id: i128,
     inner: database::BlocklistConn,
 }
 
 #[Object]
 impl BlocklistConn {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -561,18 +585,24 @@ impl BlocklistConn {
     }
 }
 
-impl From<database::BlocklistConn> for BlocklistConn {
-    fn from(inner: database::BlocklistConn) -> Self {
-        Self { inner }
+impl From<(i128, database::BlocklistConn)> for BlocklistConn {
+    fn from((id, inner): (i128, database::BlocklistConn)) -> Self {
+        Self { id, inner }
     }
 }
 
 pub(super) struct TorConnectionConn {
+    id: i128,
     inner: database::TorConnectionConn,
 }
 
 #[Object]
 impl TorConnectionConn {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -733,8 +763,8 @@ impl TorConnectionConn {
     }
 }
 
-impl From<database::TorConnectionConn> for TorConnectionConn {
-    fn from(inner: database::TorConnectionConn) -> Self {
-        Self { inner }
+impl From<(i128, database::TorConnectionConn)> for TorConnectionConn {
+    fn from((id, inner): (i128, database::TorConnectionConn)) -> Self {
+        Self { id, inner }
     }
 }

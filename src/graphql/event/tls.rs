@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result, StringNumber};
+use async_graphql::{Context, ID, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::event as database;
 
@@ -6,11 +6,17 @@ use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_ne
 use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
 pub(super) struct BlocklistTls {
+    id: i128,
     inner: database::BlocklistTls,
 }
 
 #[Object]
 impl BlocklistTls {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -251,18 +257,24 @@ impl BlocklistTls {
     }
 }
 
-impl From<database::BlocklistTls> for BlocklistTls {
-    fn from(inner: database::BlocklistTls) -> Self {
-        Self { inner }
+impl From<(i128, database::BlocklistTls)> for BlocklistTls {
+    fn from((id, inner): (i128, database::BlocklistTls)) -> Self {
+        Self { id, inner }
     }
 }
 
 pub(super) struct SuspiciousTlsTraffic {
+    id: i128,
     inner: database::SuspiciousTlsTraffic,
 }
 
 #[Object]
 impl SuspiciousTlsTraffic {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -503,8 +515,8 @@ impl SuspiciousTlsTraffic {
     }
 }
 
-impl From<database::SuspiciousTlsTraffic> for SuspiciousTlsTraffic {
-    fn from(inner: database::SuspiciousTlsTraffic) -> Self {
-        Self { inner }
+impl From<(i128, database::SuspiciousTlsTraffic)> for SuspiciousTlsTraffic {
+    fn from((id, inner): (i128, database::SuspiciousTlsTraffic)) -> Self {
+        Self { id, inner }
     }
 }

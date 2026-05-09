@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result, StringNumber};
+use async_graphql::{Context, ID, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use itertools::Itertools;
 use review_database::event as database;
@@ -7,11 +7,17 @@ use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_ne
 use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
 pub(super) struct BlocklistRadius {
+    id: i128,
     inner: database::BlocklistRadius,
 }
 
 #[Object]
 impl BlocklistRadius {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -123,8 +129,8 @@ impl BlocklistRadius {
         StringNumber(self.inner.resp_l2_bytes)
     }
 
-    /// ID
-    async fn id(&self) -> u8 {
+    /// RADIUS packet identifier.
+    async fn packet_id(&self) -> u8 {
         self.inner.id
     }
 
@@ -207,8 +213,8 @@ impl BlocklistRadius {
     }
 }
 
-impl From<database::BlocklistRadius> for BlocklistRadius {
-    fn from(inner: database::BlocklistRadius) -> Self {
-        Self { inner }
+impl From<(i128, database::BlocklistRadius)> for BlocklistRadius {
+    fn from((id, inner): (i128, database::BlocklistRadius)) -> Self {
+        Self { id, inner }
     }
 }

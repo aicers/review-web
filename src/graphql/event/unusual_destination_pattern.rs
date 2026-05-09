@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result};
+use async_graphql::{Context, ID, Object, Result};
 use chrono::{DateTime, Utc};
 use review_database::event as database;
 
@@ -10,11 +10,17 @@ use crate::graphql::{
 /// An event indicating an unusual pattern of connections to multiple
 /// responder IP addresses.
 pub(super) struct UnusualDestinationPattern {
+    id: i128,
     inner: database::UnusualDestinationPattern,
 }
 
 #[Object]
 impl UnusualDestinationPattern {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -129,8 +135,8 @@ impl UnusualDestinationPattern {
     }
 }
 
-impl From<database::UnusualDestinationPattern> for UnusualDestinationPattern {
-    fn from(inner: database::UnusualDestinationPattern) -> Self {
-        Self { inner }
+impl From<(i128, database::UnusualDestinationPattern)> for UnusualDestinationPattern {
+    fn from((id, inner): (i128, database::UnusualDestinationPattern)) -> Self {
+        Self { id, inner }
     }
 }

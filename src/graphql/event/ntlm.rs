@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result, StringNumber};
+use async_graphql::{Context, ID, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::event as database;
 
@@ -6,11 +6,17 @@ use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_ne
 use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
 
 pub(super) struct BlocklistNtlm {
+    id: i128,
     inner: database::BlocklistNtlm,
 }
 
 #[Object]
 impl BlocklistNtlm {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -171,8 +177,8 @@ impl BlocklistNtlm {
     }
 }
 
-impl From<database::BlocklistNtlm> for BlocklistNtlm {
-    fn from(inner: database::BlocklistNtlm) -> Self {
-        Self { inner }
+impl From<(i128, database::BlocklistNtlm)> for BlocklistNtlm {
+    fn from((id, inner): (i128, database::BlocklistNtlm)) -> Self {
+        Self { id, inner }
     }
 }
