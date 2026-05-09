@@ -7,11 +7,17 @@ use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategor
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct LdapBruteForce {
+    id: i128,
     inner: database::LdapBruteForce,
 }
 
 #[Object]
 impl LdapBruteForce {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -129,19 +135,25 @@ impl LdapBruteForce {
     }
 }
 
-impl From<database::LdapBruteForce> for LdapBruteForce {
-    fn from(inner: database::LdapBruteForce) -> Self {
-        Self { inner }
+impl From<(i128, database::LdapBruteForce)> for LdapBruteForce {
+    fn from((id, inner): (i128, database::LdapBruteForce)) -> Self {
+        Self { id, inner }
     }
 }
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct LdapPlainText {
+    id: i128,
     inner: database::LdapPlainText,
 }
 
 #[Object]
 impl LdapPlainText {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -312,18 +324,24 @@ impl LdapPlainText {
     }
 }
 
-impl From<database::LdapPlainText> for LdapPlainText {
-    fn from(inner: database::LdapPlainText) -> Self {
-        Self { inner }
+impl From<(i128, database::LdapPlainText)> for LdapPlainText {
+    fn from((id, inner): (i128, database::LdapPlainText)) -> Self {
+        Self { id, inner }
     }
 }
 
 pub(super) struct BlocklistLdap {
+    id: i128,
     inner: database::BlocklistLdap,
 }
 
 #[Object]
 impl BlocklistLdap {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -494,8 +512,8 @@ impl BlocklistLdap {
     }
 }
 
-impl From<database::BlocklistLdap> for BlocklistLdap {
-    fn from(inner: database::BlocklistLdap) -> Self {
-        Self { inner }
+impl From<(i128, database::BlocklistLdap)> for BlocklistLdap {
+    fn from((id, inner): (i128, database::BlocklistLdap)) -> Self {
+        Self { id, inner }
     }
 }

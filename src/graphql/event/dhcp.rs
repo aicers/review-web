@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result, StringNumber};
+use async_graphql::{Context, ID, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use itertools::Itertools;
 use review_database::event as database;
@@ -28,11 +28,17 @@ impl DhcpOption<'_> {
 }
 
 pub(super) struct BlocklistDhcp {
+    id: i128,
     inner: database::BlocklistDhcp,
 }
 
 #[Object]
 impl BlocklistDhcp {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -263,8 +269,8 @@ impl BlocklistDhcp {
     }
 }
 
-impl From<database::BlocklistDhcp> for BlocklistDhcp {
-    fn from(inner: database::BlocklistDhcp) -> Self {
-        Self { inner }
+impl From<(i128, database::BlocklistDhcp)> for BlocklistDhcp {
+    fn from((id, inner): (i128, database::BlocklistDhcp)) -> Self {
+        Self { id, inner }
     }
 }

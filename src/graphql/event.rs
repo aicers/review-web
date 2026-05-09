@@ -453,169 +453,169 @@ async fn fetch_events(
 
             match event_kind {
                 EventKind::DnsCovertChannel if event_time >= dns_covert_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     dns_covert_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::HttpThreat if event_time >= http_threat_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     http_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::RdpBruteForce if event_time >= rdp_brute_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     rdp_brute_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::RepeatedHttpSessions if event_time >= repeat_http_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     repeat_http_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::TorConnection if event_time >= tor_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     tor_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::TorConnectionConn if event_time >= tor_connection_conn_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     tor_connection_conn_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::DomainGenerationAlgorithm if event_time >= dga_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     dga_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::FtpBruteForce if event_time >= ftp_brute_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     ftp_brute_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::FtpPlainText if event_time >= ftp_plain_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     ftp_plain_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::PortScan if event_time >= port_scan_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     port_scan_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::MultiHostPortScan if event_time >= multi_host_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     multi_host_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::NonBrowser if event_time >= non_browser_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     non_browser_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::LdapBruteForce if event_time >= ldap_brute_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     ldap_brute_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::LdapPlainText if event_time >= ldap_plain_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     ldap_plain_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::ExternalDdos if event_time >= external_ddos_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     external_ddos_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::CryptocurrencyMiningPool if event_time >= cryptocurrency_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     cryptocurrency_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistBootp if event_time >= blocklist_bootp_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_bootp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistConn if event_time >= blocklist_conn_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_conn_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistDhcp if event_time >= blocklist_dhcp_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_dhcp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistDns if event_time >= blocklist_dns_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_dns_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistDceRpc if event_time >= blocklist_dcerpc_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_dcerpc_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistFtp if event_time >= blocklist_ftp_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_ftp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistHttp if event_time >= blocklist_http_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_http_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistKerberos if event_time >= blocklist_kerberos_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_kerberos_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistLdap if event_time >= blocklist_ldap_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_ldap_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistMalformedDns if event_time >= blocklist_malformed_dns_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_malformed_dns_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistMqtt if event_time >= blocklist_mqtt_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_mqtt_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistNfs if event_time >= blocklist_nfs_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_nfs_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistNtlm if event_time >= blocklist_ntlm_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_ntlm_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistRadius if event_time >= blocklist_radius_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_radius_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistRdp if event_time >= blocklist_rdp_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_rdp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistSmb if event_time >= blocklist_smb_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_smb_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistSmtp if event_time >= blocklist_smtp_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_smtp_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistSsh if event_time >= blocklist_ssh_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_ssh_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::BlocklistTls if event_time >= blocklist_tls_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     blocklist_tls_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::WindowsThreat if event_time >= windows_threat_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     windows_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::NetworkThreat if event_time >= network_threat_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     network_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::ExtraThreat if event_time >= extra_threat_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     extra_threat_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::LockyRansomware if event_time >= locky_ransomware_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     locky_ransomware_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::SuspiciousTlsTraffic if event_time >= suspicious_tls_time => {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     suspicious_tls_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 EventKind::UnusualDestinationPattern
                     if event_time >= unusual_destination_pattern_time =>
                 {
-                    tx.unbounded_send(value.into())?;
+                    tx.unbounded_send((key, value).into())?;
                     unusual_destination_pattern_time = event_time + ADD_TIME_FOR_NEXT_COMPARE;
                 }
                 _ => {}
@@ -626,6 +626,26 @@ async fn fetch_events(
 
 #[Object]
 impl EventQuery {
+    /// Looks up a single event by its opaque `id`.
+    ///
+    /// `id` is the value previously returned from `Event.id`. Decoding the
+    /// `id` is internal; consumers must not parse it.
+    ///
+    /// Returns `null` when no event with the given `id` exists, or when the
+    /// caller's customer/sensor scope does not include the event. The same
+    /// role guard and tenant scoping used by `eventList` apply here.
+    ///
+    /// IDs are stable for as long as the event is retained under the current
+    /// storage key format. Retention drop or a future key-format migration
+    /// may invalidate them.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityManager))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
+    async fn event(&self, ctx: &Context<'_>, id: ID) -> Result<Option<Event>> {
+        load_event(ctx, &id).await
+    }
+
     /// A list of events with timestamp on or after `start` and before `end`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
@@ -756,9 +776,25 @@ pub(super) struct EndpointInput {
     pub(super) custom: Option<HostNetworkGroupInput>,
 }
 
+/// Encodes an event's storage key as an opaque GraphQL `ID`.
+///
+/// The encoding is opaque to consumers; do not parse it on the client side.
+/// IDs are stable for as long as the event is retained under the current
+/// storage key format.
+pub(super) fn opaque_event_id(key: i128) -> ID {
+    ID::from(key.to_string())
+}
+
+fn parse_event_id(id: &ID) -> Result<i128> {
+    id.as_str()
+        .parse::<i128>()
+        .map_err(|_| "invalid event id".into())
+}
+
 /// Common interface for all event types.
 #[derive(Interface)]
 #[graphql(
+    field(name = "id", ty = "ID"),
     field(name = "time", ty = "DateTime<Utc>"),
     field(name = "sensor", ty = "&str"),
     field(name = "confidence", ty = "f32"),
@@ -870,67 +906,75 @@ enum Event {
     UnusualDestinationPattern(UnusualDestinationPattern),
 }
 
-impl From<database::Event> for Event {
-    fn from(event: database::Event) -> Self {
+impl From<(i128, database::Event)> for Event {
+    fn from((key, event): (i128, database::Event)) -> Self {
         match event {
-            database::Event::DnsCovertChannel(event) => Event::DnsCovertChannel(event.into()),
-            database::Event::HttpThreat(event) => Event::HttpThreat(event.into()),
-            database::Event::RdpBruteForce(event) => Event::RdpBruteForce(event.into()),
+            database::Event::DnsCovertChannel(event) => {
+                Event::DnsCovertChannel((key, event).into())
+            }
+            database::Event::HttpThreat(event) => Event::HttpThreat((key, event).into()),
+            database::Event::RdpBruteForce(event) => Event::RdpBruteForce((key, event).into()),
             database::Event::RepeatedHttpSessions(event) => {
-                Event::RepeatedHttpSessions(event.into())
+                Event::RepeatedHttpSessions((key, event).into())
             }
-            database::Event::TorConnection(event) => Event::TorConnection(event.into()),
-            database::Event::TorConnectionConn(event) => Event::TorConnectionConn(event.into()),
+            database::Event::TorConnection(event) => Event::TorConnection((key, event).into()),
+            database::Event::TorConnectionConn(event) => {
+                Event::TorConnectionConn((key, event).into())
+            }
             database::Event::DomainGenerationAlgorithm(event) => {
-                Event::DomainGenerationAlgorithm(event.into())
+                Event::DomainGenerationAlgorithm((key, event).into())
             }
-            database::Event::FtpBruteForce(event) => Event::FtpBruteForce(event.into()),
-            database::Event::FtpPlainText(event) => Event::FtpPlainText(event.into()),
-            database::Event::PortScan(event) => Event::PortScan(event.into()),
-            database::Event::MultiHostPortScan(event) => Event::MultiHostPortScan(event.into()),
-            database::Event::ExternalDdos(event) => Event::ExternalDdos(event.into()),
-            database::Event::NonBrowser(event) => Event::NonBrowser(event.into()),
-            database::Event::LdapBruteForce(event) => Event::LdapBruteForce(event.into()),
-            database::Event::LdapPlainText(event) => Event::LdapPlainText(event.into()),
+            database::Event::FtpBruteForce(event) => Event::FtpBruteForce((key, event).into()),
+            database::Event::FtpPlainText(event) => Event::FtpPlainText((key, event).into()),
+            database::Event::PortScan(event) => Event::PortScan((key, event).into()),
+            database::Event::MultiHostPortScan(event) => {
+                Event::MultiHostPortScan((key, event).into())
+            }
+            database::Event::ExternalDdos(event) => Event::ExternalDdos((key, event).into()),
+            database::Event::NonBrowser(event) => Event::NonBrowser((key, event).into()),
+            database::Event::LdapBruteForce(event) => Event::LdapBruteForce((key, event).into()),
+            database::Event::LdapPlainText(event) => Event::LdapPlainText((key, event).into()),
             database::Event::CryptocurrencyMiningPool(event) => {
-                Event::CryptocurrencyMiningPool(event.into())
+                Event::CryptocurrencyMiningPool((key, event).into())
             }
             database::Event::Blocklist(record_type) => match record_type {
-                RecordType::Bootp(event) => Event::BlocklistBootp(event.into()),
-                RecordType::Conn(event) => Event::BlocklistConn(event.into()),
-                RecordType::Dhcp(event) => Event::BlocklistDhcp(event.into()),
-                RecordType::Dns(event) => Event::BlocklistDns(event.into()),
-                RecordType::DceRpc(event) => Event::BlocklistDceRpc(event.into()),
-                RecordType::Ftp(event) => Event::BlocklistFtp(event.into()),
-                RecordType::Http(event) => Event::BlocklistHttp(event.into()),
-                RecordType::Kerberos(event) => Event::BlocklistKerberos(event.into()),
-                RecordType::Ldap(event) => Event::BlocklistLdap(event.into()),
-                RecordType::MalformedDns(event) => Event::BlocklistMalformedDns(event.into()),
-                RecordType::Mqtt(event) => Event::BlocklistMqtt(event.into()),
-                RecordType::Nfs(event) => Event::BlocklistNfs(event.into()),
-                RecordType::Ntlm(event) => Event::BlocklistNtlm(event.into()),
-                RecordType::Radius(event) => Event::BlocklistRadius(event.into()),
-                RecordType::Rdp(event) => Event::BlocklistRdp(event.into()),
-                RecordType::Smb(event) => Event::BlocklistSmb(event.into()),
-                RecordType::Smtp(event) => Event::BlocklistSmtp(event.into()),
-                RecordType::Ssh(event) => Event::BlocklistSsh(event.into()),
-                RecordType::Tls(event) => Event::BlocklistTls(event.into()),
+                RecordType::Bootp(event) => Event::BlocklistBootp((key, event).into()),
+                RecordType::Conn(event) => Event::BlocklistConn((key, event).into()),
+                RecordType::Dhcp(event) => Event::BlocklistDhcp((key, event).into()),
+                RecordType::Dns(event) => Event::BlocklistDns((key, event).into()),
+                RecordType::DceRpc(event) => Event::BlocklistDceRpc((key, event).into()),
+                RecordType::Ftp(event) => Event::BlocklistFtp((key, event).into()),
+                RecordType::Http(event) => Event::BlocklistHttp((key, event).into()),
+                RecordType::Kerberos(event) => Event::BlocklistKerberos((key, event).into()),
+                RecordType::Ldap(event) => Event::BlocklistLdap((key, event).into()),
+                RecordType::MalformedDns(event) => {
+                    Event::BlocklistMalformedDns((key, event).into())
+                }
+                RecordType::Mqtt(event) => Event::BlocklistMqtt((key, event).into()),
+                RecordType::Nfs(event) => Event::BlocklistNfs((key, event).into()),
+                RecordType::Ntlm(event) => Event::BlocklistNtlm((key, event).into()),
+                RecordType::Radius(event) => Event::BlocklistRadius((key, event).into()),
+                RecordType::Rdp(event) => Event::BlocklistRdp((key, event).into()),
+                RecordType::Smb(event) => Event::BlocklistSmb((key, event).into()),
+                RecordType::Smtp(event) => Event::BlocklistSmtp((key, event).into()),
+                RecordType::Ssh(event) => Event::BlocklistSsh((key, event).into()),
+                RecordType::Tls(event) => Event::BlocklistTls((key, event).into()),
                 RecordType::UnusualDestinationPattern(event) => {
-                    Event::UnusualDestinationPattern(event.into())
+                    Event::UnusualDestinationPattern((key, event).into())
                 }
             },
-            database::Event::WindowsThreat(event) => Event::WindowsThreat(event.into()),
-            database::Event::NetworkThreat(event) => Event::NetworkThreat(event.into()),
-            database::Event::ExtraThreat(event) => Event::ExtraThreat(event.into()),
-            database::Event::LockyRansomware(event) => Event::LockyRansomware(event.into()),
+            database::Event::WindowsThreat(event) => Event::WindowsThreat((key, event).into()),
+            database::Event::NetworkThreat(event) => Event::NetworkThreat((key, event).into()),
+            database::Event::ExtraThreat(event) => Event::ExtraThreat((key, event).into()),
+            database::Event::LockyRansomware(event) => Event::LockyRansomware((key, event).into()),
             database::Event::SuspiciousTlsTraffic(event) => {
-                Event::SuspiciousTlsTraffic(event.into())
+                Event::SuspiciousTlsTraffic((key, event).into())
             }
         }
     }
 }
 
-#[derive(InputObject)]
+#[derive(Default, InputObject)]
 struct EventListFilterInput {
     start: Option<DateTime<Utc>>,
     end: Option<DateTime<Utc>>,
@@ -1415,6 +1459,84 @@ fn convert_triage_input(
     Ok(triage_policies)
 }
 
+/// Returns the list of sensor hostnames the caller is allowed to see, or
+/// `None` for unscoped (administrator) callers.
+fn sensors_for_user(ctx: &Context<'_>, store: &Store) -> Result<Option<Vec<String>>> {
+    let Some(customer_ids) = crate::graphql::customer_access::users_customers(ctx)? else {
+        return Ok(None);
+    };
+    if customer_ids.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+    let sensors = store
+        .node_map()
+        .iter(Direction::Forward, None)
+        .filter_map(Result::ok)
+        .filter(|node| {
+            node.agents
+                .iter()
+                .any(|agent| agent.kind == AgentKind::Sensor)
+                && node
+                    .profile
+                    .as_ref()
+                    .is_some_and(|profile| customer_ids.contains(&profile.customer_id))
+        })
+        .filter_map(|node| node.profile.map(|profile| profile.hostname))
+        .collect::<Vec<_>>();
+    Ok(Some(sensors))
+}
+
+async fn load_event(ctx: &Context<'_>, id: &ID) -> Result<Option<Event>> {
+    let key = parse_event_id(id)?;
+    let store = crate::graphql::get_store(ctx)?;
+
+    // Derive the caller's allowed sensors via the shared customer-access
+    // helper, which handles both auth-jwt (username -> account) and
+    // auth-mtls (`CustomerIds` data) request contexts. SystemAdministrator
+    // (no customer_ids) sees every sensor; everyone else is restricted to
+    // sensors owned by their accessible customers.
+    let sensors = sensors_for_user(ctx, &store)?;
+    let mut filter = EventFilter::new(
+        None, None, None, None, None, None, None, None, None, None, sensors, None, None, None,
+    );
+    filter.moderate_kinds();
+
+    let db = store.events();
+    let mut iter = db.iter_from(key, Direction::Forward);
+    let Some(item) = iter.next() else {
+        return Ok(None);
+    };
+    let (found_key, mut event) = match item {
+        Ok(kv) => kv,
+        Err(e) => {
+            warn_with_username!(ctx, "Invalid event: {:?}", e);
+            return Ok(None);
+        }
+    };
+    if found_key != key {
+        return Ok(None);
+    }
+
+    let locator = if filter.has_country() {
+        Some(
+            ctx.data::<ip2location::DB>()
+                .map_err(|_| "unable to locate IP address")?,
+        )
+    } else {
+        None
+    };
+    let (matched, triage_score) = event
+        .matches(locator, &filter)
+        .map_err(|e| format!("{e}"))?;
+    if !matched {
+        return Ok(None);
+    }
+    if let Some(triage_score) = triage_score {
+        event.set_triage_scores(triage_score);
+    }
+    Ok(Some((found_key, event).into()))
+}
+
 async fn load(
     ctx: &Context<'_>,
     filter: &EventListFilterInput,
@@ -1556,6 +1678,7 @@ async fn load_triage_list(
             let scored_event = ScoredEvent {
                 score: max_score,
                 priority: event_priority,
+                key,
                 event,
             };
 
@@ -1572,7 +1695,7 @@ async fn load_triage_list(
     let result: Vec<Event> = heap
         .into_sorted_vec()
         .into_iter()
-        .map(|scored| scored.event.into())
+        .map(|scored| (scored.key, scored.event).into())
         .collect();
     Ok(result)
 }
@@ -1581,6 +1704,7 @@ async fn load_triage_list(
 struct ScoredEvent {
     score: f64,
     priority: u8,
+    key: i128,
     event: database::Event,
 }
 
@@ -1734,7 +1858,7 @@ fn iter_to_events(
         if let Some(triage_score) = triage_score {
             event.set_triage_scores(triage_score);
         }
-        events.push((key, event.into()));
+        events.push((key, (key, event).into()));
         exceeded = events.len() > len;
         if exceeded {
             break;
@@ -1959,7 +2083,7 @@ fn iter_to_events_with_triage(
                 event.set_triage_scores(scores);
             }
         }
-        events.push((key, event.into()));
+        events.push((key, (key, event).into()));
         exceeded = events.len() > len;
         if exceeded {
             break;
@@ -1981,7 +2105,10 @@ mod tests {
     use review_database::{
         self as database, EventCategory, EventKind, EventMessage,
         event::{
-            BlocklistBootpFields, BlocklistDhcpFields, BlocklistTlsFields, DnsEventFields,
+            BlocklistBootpFields, BlocklistConnFields, BlocklistDceRpcFields, BlocklistDhcpFields,
+            BlocklistDnsFields, BlocklistKerberosFields, BlocklistMqttFields, BlocklistNfsFields,
+            BlocklistNtlmFields, BlocklistRdpFields, BlocklistSmbFields, BlocklistSmtpFields,
+            BlocklistSshFields, BlocklistTlsFields, DnsEventFields,
             UnusualDestinationPatternFields,
         },
     };
@@ -2039,6 +2166,594 @@ mod tests {
             time: timestamp,
             kind: EventKind::DnsCovertChannel,
             fields: bincode::serialize(&fields).expect("serializable"),
+        }
+    }
+
+    #[tokio::test]
+    async fn event_lookup_by_id_returns_matching_event() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2018, 1, 26)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let key = db.put(&event_message_at(ts, 1, 2)).unwrap();
+        drop(store);
+
+        let query = format!(
+            "{{ event(id: \"{key}\") {{ id, ... on DnsCovertChannel {{ time, query }} }} }}"
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        assert_eq!(
+            res.data.to_string(),
+            format!(
+                r#"{{event: {{id: "{key}", time: "2018-01-26T18:30:09.453829+00:00", query: "domain"}}}}"#
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn event_lookup_unknown_id_returns_null() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin("{ event(id: \"0\") { id } }")
+            .await;
+        assert_eq!(res.data.to_string(), r"{event: null}");
+    }
+
+    #[tokio::test]
+    async fn event_lookup_invalid_id_errors() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin("{ event(id: \"not-a-number\") { id } }")
+            .await;
+        assert!(!res.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn event_lookup_id_matches_event_list_cursor() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2018, 1, 26)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(ts, 1, 2)).unwrap();
+        drop(store);
+
+        let res = schema
+            .execute_as_system_admin("{ eventList(filter: {}) { edges { cursor, node { id } } } }")
+            .await;
+        let s = res.data.to_string();
+        let cursor_pos = s.find("cursor: \"").expect("cursor present");
+        let cursor_start = cursor_pos + "cursor: \"".len();
+        let cursor_end = cursor_start + s[cursor_start..].find('"').unwrap();
+        let cursor = &s[cursor_start..cursor_end];
+        let id_pos = s.find("id: \"").expect("id present");
+        let id_start = id_pos + "id: \"".len();
+        let id_end = id_start + s[id_start..].find('"').unwrap();
+        let id = &s[id_start..id_end];
+        assert_eq!(cursor, id);
+    }
+
+    #[tokio::test]
+    async fn event_lookup_respects_tenant_scope() {
+        use crate::graphql::Role;
+
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "sensor1",
+                        customerId: 0,
+                        description: "This is the sensor node",
+                        hostname: "sensor1",
+                        agents: [{
+                            key: "sensor"
+                            kind: SENSOR
+                            status: ENABLED
+                        }],
+                        externalServices: [],
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+        let _ = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "sensor1",
+                            nameDraft: "sensor1",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 0,
+                                description: "This is the sensor node",
+                                hostname: "sensor1",
+                            }
+                            agents: [
+                                {
+                                    key: "sensor",
+                                    kind: "SENSOR",
+                                    status: "ENABLED"
+                                }
+                            ],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2018, 1, 26)
+            .unwrap()
+            .and_hms_micro_opt(18, 30, 9, 453_829)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let key = db.put(&event_message_at(ts, 1, 2)).unwrap();
+        drop(store);
+
+        let query =
+            format!("{{ event(id: \"{key}\") {{ ... on DnsCovertChannel {{ sensor }} }} }}");
+
+        // Scoped user assigned to customer 0 (which owns sensor1) can see it.
+        let res = schema
+            .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![0]))
+            .await;
+        assert_eq!(res.data.to_string(), r#"{event: {sensor: "sensor1"}}"#);
+
+        // Scoped user assigned to customer 1 (not owning sensor1) cannot.
+        let res = schema
+            .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![1]))
+            .await;
+        assert_eq!(res.data.to_string(), r"{event: null}");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn event_lookup_resolves_each_blocklist_kind() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let base = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+
+        let conn_ts = base;
+        let conn_key = db
+            .put(&EventMessage {
+                time: conn_ts,
+                kind: EventKind::BlocklistConn,
+                fields: bincode::serialize(&BlocklistConnFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 1).into(),
+                    orig_port: 1000,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 2).into(),
+                    resp_port: 80,
+                    proto: 6,
+                    conn_state: "S0".to_string(),
+                    start_time: conn_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    service: "http".to_string(),
+                    orig_bytes: 0,
+                    resp_bytes: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    confidence: 0.7,
+                    category: Some(EventCategory::InitialAccess),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let dns_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 1)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let dns_key = db
+            .put(&EventMessage {
+                time: dns_ts,
+                kind: EventKind::BlocklistDns,
+                fields: bincode::serialize(&BlocklistDnsFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 3).into(),
+                    orig_port: 50000,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 4).into(),
+                    resp_port: 53,
+                    proto: 17,
+                    start_time: dns_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    query: "evil.example.com".to_string(),
+                    answer: vec!["1.2.3.4".to_string()],
+                    trans_id: 1,
+                    rtt: 0,
+                    qclass: 1,
+                    qtype: 1,
+                    rcode: 0,
+                    aa_flag: false,
+                    tc_flag: false,
+                    rd_flag: true,
+                    ra_flag: true,
+                    ttl: vec![60],
+                    confidence: 0.7,
+                    category: Some(EventCategory::CommandAndControl),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let dcerpc_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 2)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let dcerpc_key = db
+            .put(&EventMessage {
+                time: dcerpc_ts,
+                kind: EventKind::BlocklistDceRpc,
+                fields: bincode::serialize(&BlocklistDceRpcFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 5).into(),
+                    orig_port: 1024,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 6).into(),
+                    resp_port: 135,
+                    proto: 6,
+                    start_time: dcerpc_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    context: Vec::new(),
+                    request: Vec::new(),
+                    confidence: 0.7,
+                    category: Some(EventCategory::LateralMovement),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let kerberos_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 3)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let kerberos_key = db
+            .put(&EventMessage {
+                time: kerberos_ts,
+                kind: EventKind::BlocklistKerberos,
+                fields: bincode::serialize(&BlocklistKerberosFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 7).into(),
+                    orig_port: 1025,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 8).into(),
+                    resp_port: 88,
+                    proto: 6,
+                    start_time: kerberos_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    client_time: 0,
+                    server_time: 0,
+                    error_code: 0,
+                    client_realm: "REALM".to_string(),
+                    cname_type: 1,
+                    client_name: vec!["alice".to_string()],
+                    realm: "REALM".to_string(),
+                    sname_type: 2,
+                    service_name: vec!["krbtgt".to_string()],
+                    confidence: 0.7,
+                    category: Some(EventCategory::LateralMovement),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let mqtt_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 4)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let mqtt_key = db
+            .put(&EventMessage {
+                time: mqtt_ts,
+                kind: EventKind::BlocklistMqtt,
+                fields: bincode::serialize(&BlocklistMqttFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 9).into(),
+                    orig_port: 1026,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 10).into(),
+                    resp_port: 1883,
+                    proto: 6,
+                    start_time: mqtt_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    protocol: "MQTT".to_string(),
+                    version: 4,
+                    client_id: "client".to_string(),
+                    connack_reason: 0,
+                    subscribe: vec!["topic".to_string()],
+                    suback_reason: vec![0],
+                    confidence: 0.7,
+                    category: Some(EventCategory::CommandAndControl),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let nfs_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 5)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let nfs_key = db
+            .put(&EventMessage {
+                time: nfs_ts,
+                kind: EventKind::BlocklistNfs,
+                fields: bincode::serialize(&BlocklistNfsFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 11).into(),
+                    orig_port: 1027,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 12).into(),
+                    resp_port: 2049,
+                    proto: 6,
+                    start_time: nfs_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    read_files: vec!["/etc/passwd".to_string()],
+                    write_files: vec![],
+                    confidence: 0.7,
+                    category: Some(EventCategory::Collection),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let ntlm_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 6)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let ntlm_key = db
+            .put(&EventMessage {
+                time: ntlm_ts,
+                kind: EventKind::BlocklistNtlm,
+                fields: bincode::serialize(&BlocklistNtlmFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 13).into(),
+                    orig_port: 1028,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 14).into(),
+                    resp_port: 445,
+                    proto: 6,
+                    start_time: ntlm_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    protocol: "NTLM".to_string(),
+                    username: "alice".to_string(),
+                    hostname: "host".to_string(),
+                    domainname: "domain".to_string(),
+                    success: "true".to_string(),
+                    confidence: 0.7,
+                    category: Some(EventCategory::CredentialAccess),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let rdp_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 7)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let rdp_key = db
+            .put(&EventMessage {
+                time: rdp_ts,
+                kind: EventKind::BlocklistRdp,
+                fields: bincode::serialize(&BlocklistRdpFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 15).into(),
+                    orig_port: 1029,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 16).into(),
+                    resp_port: 3389,
+                    proto: 6,
+                    start_time: rdp_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    cookie: "cookie".to_string(),
+                    confidence: 0.7,
+                    category: Some(EventCategory::LateralMovement),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let smb_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 8)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let smb_key = db
+            .put(&EventMessage {
+                time: smb_ts,
+                kind: EventKind::BlocklistSmb,
+                fields: bincode::serialize(&BlocklistSmbFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 17).into(),
+                    orig_port: 1030,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 18).into(),
+                    resp_port: 445,
+                    proto: 6,
+                    start_time: smb_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    command: 1,
+                    path: "/share".to_string(),
+                    service: "IPC".to_string(),
+                    file_name: "file".to_string(),
+                    file_size: 0,
+                    resource_type: 0,
+                    fid: 0,
+                    create_time: 0,
+                    access_time: 0,
+                    write_time: 0,
+                    change_time: 0,
+                    confidence: 0.7,
+                    category: Some(EventCategory::Collection),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let smtp_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 9)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let smtp_key = db
+            .put(&EventMessage {
+                time: smtp_ts,
+                kind: EventKind::BlocklistSmtp,
+                fields: bincode::serialize(&BlocklistSmtpFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 19).into(),
+                    orig_port: 1031,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 20).into(),
+                    resp_port: 25,
+                    proto: 6,
+                    start_time: smtp_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    mailfrom: "alice@example.com".to_string(),
+                    date: "2026-04-01".to_string(),
+                    from: "alice".to_string(),
+                    to: "bob".to_string(),
+                    subject: "subject".to_string(),
+                    agent: "agent".to_string(),
+                    state: "state".to_string(),
+                    confidence: 0.7,
+                    category: Some(EventCategory::Exfiltration),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let ssh_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 10)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let ssh_key = db
+            .put(&EventMessage {
+                time: ssh_ts,
+                kind: EventKind::BlocklistSsh,
+                fields: bincode::serialize(&BlocklistSshFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 21).into(),
+                    orig_port: 1032,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 22).into(),
+                    resp_port: 22,
+                    proto: 6,
+                    start_time: ssh_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    client: "OpenSSH".to_string(),
+                    server: "OpenSSH".to_string(),
+                    cipher_alg: "aes".to_string(),
+                    mac_alg: "hmac".to_string(),
+                    compression_alg: "none".to_string(),
+                    kex_alg: "kex".to_string(),
+                    host_key_alg: "rsa".to_string(),
+                    hassh_algorithms: "h".to_string(),
+                    hassh: "h".to_string(),
+                    hassh_server_algorithms: "h".to_string(),
+                    hassh_server: "h".to_string(),
+                    client_shka: "s".to_string(),
+                    server_shka: "s".to_string(),
+                    confidence: 0.7,
+                    category: Some(EventCategory::LateralMovement),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        drop(store);
+
+        let cases = [
+            (conn_key, "BlocklistConn"),
+            (dns_key, "BlocklistDns"),
+            (dcerpc_key, "BlocklistDceRpc"),
+            (kerberos_key, "BlocklistKerberos"),
+            (mqtt_key, "BlocklistMqtt"),
+            (nfs_key, "BlocklistNfs"),
+            (ntlm_key, "BlocklistNtlm"),
+            (rdp_key, "BlocklistRdp"),
+            (smb_key, "BlocklistSmb"),
+            (smtp_key, "BlocklistSmtp"),
+            (ssh_key, "BlocklistSsh"),
+        ];
+        for (key, typename) in cases {
+            let query = format!("{{ event(id: \"{key}\") {{ id __typename }} }}");
+            let res = schema.execute_as_system_admin(&query).await;
+            assert_eq!(
+                res.data.to_string(),
+                format!(r#"{{event: {{id: "{key}", __typename: "{typename}"}}}}"#)
+            );
         }
     }
 
@@ -2644,7 +3359,7 @@ mod tests {
             kind: EventKind::BlocklistDhcp,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
-        db.put(&message).unwrap();
+        let key = db.put(&message).unwrap();
 
         let res = schema
             .execute_as_system_admin(
@@ -2676,14 +3391,24 @@ mod tests {
                     customers: [0],
                     directions: [\"OUTBOUND\"],
                 }}) {{ \
-                    edges {{ node {{... on BlocklistDhcp {{ origAddr,giaddr,reqIpAddr,classId,clientId,options {{ code,value }} }} }} }} \
+                    edges {{ node {{ id, ... on BlocklistDhcp {{ origAddr,giaddr,reqIpAddr,classId,clientId,options {{ code,value }} }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "127.0.0.1", giaddr: "127.0.0.8", reqIpAddr: "127.0.0.100", classId: "04:05:06", clientId: "07:08:09", options: [{code: 53, value: [1]}, {code: 61, value: [7, 8, 9]}]}}]}}"#
+            format!(
+                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "127.0.0.1", giaddr: "127.0.0.8", reqIpAddr: "127.0.0.100", classId: "04:05:06", clientId: "07:08:09", options: [{{code: 53, value: [1]}}, {{code: 61, value: [7, 8, 9]}}]}}}}]}}}}"#
+            )
+        );
+
+        let lookup_query =
+            format!("{{ event(id: \"{key}\") {{ id, ... on BlocklistDhcp {{ origAddr }} }} }}");
+        let res = schema.execute_as_system_admin(&lookup_query).await;
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{event: {{id: "{key}", origAddr: "127.0.0.1"}}}}"#)
         );
     }
 
@@ -2731,7 +3456,7 @@ mod tests {
             kind: EventKind::BlocklistBootp,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
-        db.put(&message).unwrap();
+        let key = db.put(&message).unwrap();
 
         let res = schema
             .execute_as_system_admin(
@@ -2763,14 +3488,24 @@ mod tests {
                     customers: [0],
                     directions: [\"INBOUND\"],
                 }}) {{ \
-                    edges {{ node {{... on BlocklistBootp {{ origAddr,ciaddr,chaddr }} }} }} \
+                    edges {{ node {{ id, ... on BlocklistBootp {{ origAddr,ciaddr,chaddr }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "127.0.0.1", ciaddr: "127.0.0.5", chaddr: "01:02:03:04:05:06"}}]}}"#
+            format!(
+                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "127.0.0.1", ciaddr: "127.0.0.5", chaddr: "01:02:03:04:05:06"}}}}]}}}}"#
+            )
+        );
+
+        let lookup_query =
+            format!("{{ event(id: \"{key}\") {{ id, ... on BlocklistBootp {{ origAddr }} }} }}");
+        let res = schema.execute_as_system_admin(&lookup_query).await;
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{event: {{id: "{key}", origAddr: "127.0.0.1"}}}}"#)
         );
     }
 
@@ -2818,20 +3553,30 @@ mod tests {
             kind: EventKind::LockyRansomware,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
-        db.put(&message).unwrap();
+        let key = db.put(&message).unwrap();
         let query = format!(
             "{{ \
                 eventList(filter: {{
                     start:\"{timestamp}\"
                 }}) {{ \
-                    edges {{ node {{... on LockyRansomware {{ origAddr,rtt,query }} }} }} \
+                    edges {{ node {{ id, ... on LockyRansomware {{ origAddr,rtt,query }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "0.0.0.1", rtt: "10", query: "domain"}}]}}"#
+            format!(
+                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "0.0.0.1", rtt: "10", query: "domain"}}}}]}}}}"#
+            )
+        );
+
+        let lookup_query =
+            format!("{{ event(id: \"{key}\") {{ id, ... on LockyRansomware {{ origAddr }} }} }}");
+        let res = schema.execute_as_system_admin(&lookup_query).await;
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{event: {{id: "{key}", origAddr: "0.0.0.1"}}}}"#)
         );
     }
 
@@ -2889,20 +3634,31 @@ mod tests {
             kind: EventKind::SuspiciousTlsTraffic,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
-        db.put(&message).unwrap();
+        let key = db.put(&message).unwrap();
         let query = format!(
             "{{ \
                 eventList(filter: {{
                     start:\"{timestamp}\"
                 }}) {{ \
-                    edges {{ node {{... on SuspiciousTlsTraffic {{ origAddr,cipher,subjectCountry,confidence }} }} }} \
+                    edges {{ node {{ id, ... on SuspiciousTlsTraffic {{ origAddr,cipher,subjectCountry,confidence }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "0.0.0.1", cipher: 1234, subjectCountry: "US", confidence: 0.800000011920929}}]}}"#
+            format!(
+                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "0.0.0.1", cipher: 1234, subjectCountry: "US", confidence: 0.800000011920929}}}}]}}}}"#
+            )
+        );
+
+        let lookup_query = format!(
+            "{{ event(id: \"{key}\") {{ id, ... on SuspiciousTlsTraffic {{ origAddr }} }} }}"
+        );
+        let res = schema.execute_as_system_admin(&lookup_query).await;
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{event: {{id: "{key}", origAddr: "0.0.0.1"}}}}"#)
         );
     }
 
@@ -2955,7 +3711,7 @@ mod tests {
             kind: EventKind::BlocklistRadius,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
-        db.put(&message).unwrap();
+        let key = db.put(&message).unwrap();
 
         let res = schema
             .execute_as_system_admin(
@@ -2987,14 +3743,24 @@ mod tests {
                     customers: [0],
                     directions: [\"OUTBOUND\"],
                 }}) {{ \
-                    edges {{ node {{... on BlocklistRadius {{ origAddr,nasIp,userName,message }} }} }} \
+                    edges {{ node {{ id, ... on BlocklistRadius {{ origAddr,nasIp,userName,message }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "127.0.0.1", nasIp: "192.168.1.1", userName: "75:73:65:72", message: "RADIUS message"}}]}}"#
+            format!(
+                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "127.0.0.1", nasIp: "192.168.1.1", userName: "75:73:65:72", message: "RADIUS message"}}}}]}}}}"#
+            )
+        );
+
+        let lookup_query =
+            format!("{{ event(id: \"{key}\") {{ id, ... on BlocklistRadius {{ origAddr }} }} }}");
+        let res = schema.execute_as_system_admin(&lookup_query).await;
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{event: {{id: "{key}", origAddr: "127.0.0.1"}}}}"#)
         );
     }
 
@@ -3045,7 +3811,7 @@ mod tests {
             kind: EventKind::BlocklistMalformedDns,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
-        db.put(&message).unwrap();
+        let key = db.put(&message).unwrap();
 
         let res = schema
             .execute_as_system_admin(
@@ -3077,14 +3843,25 @@ mod tests {
                     customers: [0],
                     directions: [\"OUTBOUND\"],
                 }}) {{ \
-                    edges {{ node {{... on BlocklistMalformedDns {{ origAddr,respAddr,transId,queryBody,respBody }} }} }} \
+                    edges {{ node {{ id, ... on BlocklistMalformedDns {{ origAddr,respAddr,transId,queryBody,respBody }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "127.0.0.1", respAddr: "127.0.0.2", transId: 42, queryBody: ["de:ad"], respBody: ["ca:fe"]}}]}}"#
+            format!(
+                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "127.0.0.1", respAddr: "127.0.0.2", transId: 42, queryBody: ["de:ad"], respBody: ["ca:fe"]}}}}]}}}}"#
+            )
+        );
+
+        let lookup_query = format!(
+            "{{ event(id: \"{key}\") {{ id, ... on BlocklistMalformedDns {{ origAddr }} }} }}"
+        );
+        let res = schema.execute_as_system_admin(&lookup_query).await;
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{event: {{id: "{key}", origAddr: "127.0.0.1"}}}}"#)
         );
     }
 

@@ -1,4 +1,4 @@
-use async_graphql::{Context, Object, Result, StringNumber};
+use async_graphql::{Context, ID, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::event as database;
 
@@ -71,11 +71,17 @@ impl From<database::FtpCommand> for FtpCommand {
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct FtpBruteForce {
+    id: i128,
     inner: database::FtpBruteForce,
 }
 
 #[Object]
 impl FtpBruteForce {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -194,19 +200,25 @@ impl FtpBruteForce {
     }
 }
 
-impl From<database::FtpBruteForce> for FtpBruteForce {
-    fn from(inner: database::FtpBruteForce) -> Self {
-        Self { inner }
+impl From<(i128, database::FtpBruteForce)> for FtpBruteForce {
+    fn from((id, inner): (i128, database::FtpBruteForce)) -> Self {
+        Self { id, inner }
     }
 }
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct FtpPlainText {
+    id: i128,
     inner: database::FtpPlainText,
 }
 
 #[Object]
 impl FtpPlainText {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -362,19 +374,25 @@ impl FtpPlainText {
     }
 }
 
-impl From<database::FtpPlainText> for FtpPlainText {
-    fn from(inner: database::FtpPlainText) -> Self {
-        Self { inner }
+impl From<(i128, database::FtpPlainText)> for FtpPlainText {
+    fn from((id, inner): (i128, database::FtpPlainText)) -> Self {
+        Self { id, inner }
     }
 }
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct BlocklistFtp {
+    id: i128,
     inner: database::BlocklistFtp,
 }
 
 #[Object]
 impl BlocklistFtp {
+    /// Opaque event identifier.
+    pub async fn id(&self) -> ID {
+        super::opaque_event_id(self.id)
+    }
+
     /// Event Generation Time
     pub async fn time(&self) -> DateTime<Utc> {
         self.inner.time
@@ -530,8 +548,8 @@ impl BlocklistFtp {
     }
 }
 
-impl From<database::BlocklistFtp> for BlocklistFtp {
-    fn from(inner: database::BlocklistFtp) -> Self {
-        Self { inner }
+impl From<(i128, database::BlocklistFtp)> for BlocklistFtp {
+    fn from((id, inner): (i128, database::BlocklistFtp)) -> Self {
+        Self { id, inner }
     }
 }
