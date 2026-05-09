@@ -39,6 +39,26 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   see sensors of their accessible customers; passing a `customerIds` value
   containing an inaccessible customer returns an authorization error. Works
   under both `auth-jwt` and `auth-mtls` features.
+- Added `applyNodeDraft` and `applyAgentConfig` GraphQL mutations that split
+  the database-promotion and agent-notification concerns currently bundled in
+  `applyNode`. `applyNodeDraft(id: ID!, node: NodeInput!): Node!` performs the
+  database work (delegated to the atomic node update in `review-database`) and
+  broadcasts customer-specific networks when `profile.customer_id` changes; it
+  does not send agent-config notifications and preserves a no-op short-circuit
+  that returns the current DB `Node`. `applyAgentConfig(nodeId: ID!,
+  agentKeys: [String!]): ApplyAgentConfigOutput!` reads the node's current DB
+  state and, for each agent in the target set, attempts a notify when the
+  agent's current `config` is `Some(non-empty)`, skipping with reason
+  `DIRECT_SETUP` when `config` is `Some("")` and `NOT_CONFIGURED` when
+  `config` is `None`. Per-agent notify failures are reported in `attempts`
+  rather than only logged. `agentKeys` is tri-valued: absent or null targets
+  every agent, an empty array targets none, and a non-empty array targets
+  exactly the listed subset (rejected on duplicates or keys that do not belong
+  to the node). Output ordering follows the supplied `agentKeys` when
+  provided, otherwise the node's stored agent order. Hostname-unavailable is
+  a structural error rather than a silent skip. The existing `applyNode`
+  mutation is preserved unchanged for backwards compatibility. Both new
+  mutations enforce the same role guards and customer scoping as `applyNode`.
 - Added `accountLockoutPolicy` GraphQL query and
   `updateAccountLockoutPolicy` mutation for administering account lockout and
   suspension thresholds. The policy exposes three admin-configurable settings:
@@ -84,10 +104,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Bumped `review-database` dependency to 0.45.0, which makes node
   `Table::update` fully atomic across the Node, Agent, and ExternalService
   tables and changes its return type from `Result<()>` to `Result<Node>`.
-  No GraphQL contract changes; the returned `Node` is intentionally not
-  wired through the resolvers in this revision and will be consumed in a
-  follow-up that splits `applyNode` into `applyNodeDraft` and
-  `applyAgentConfig`.
+  No GraphQL contract changes.
+- `applyNode`'s internal implementation now consumes the post-update `Node`
+  returned by the atomic `Table::update`, so the resolver no longer performs
+  a separate read-back to obtain hostname for the agent-notify step. The
+  GraphQL response shape and observable behavior of `applyNode` remain
+  unchanged.
 
 ## [0.31.0] - 2026-04-18
 

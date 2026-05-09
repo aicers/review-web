@@ -1,4 +1,6 @@
-use async_graphql::{Context, ID, Object, Result};
+use std::collections::HashSet;
+
+use async_graphql::{Context, Enum, ID, Object, Result, SimpleObject};
 use futures::future::join_all;
 use itertools::Itertools;
 use review_database::AgentStatus;
@@ -6,7 +8,7 @@ use tracing::{error, info, warn};
 
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard, customer_access},
-    NodeControlMutation, SEMI_SUPERVISED_AGENT, gen_agent_key,
+    Node, NodeControlMutation, SEMI_SUPERVISED_AGENT, gen_agent_key,
 };
 use crate::graphql::{
     customer::{NetworksTargetAgentKeysPair, send_agent_specific_customer_networks},
@@ -14,6 +16,41 @@ use crate::graphql::{
     node::input::NodeInput,
 };
 use crate::{error_with_username, info_with_username, warn_with_username};
+
+#[derive(SimpleObject)]
+pub(super) struct AgentNotifyAttempt {
+    /// The bare agent key (matching `Agent.key`).
+    agent_key: String,
+    /// `true` if the manager accepted the notify request. Does not imply that the agent has
+    /// already applied the new config.
+    succeeded: bool,
+    /// Populated only when `succeeded` is `false`.
+    error: Option<String>,
+}
+
+#[derive(Clone, Copy, Enum, Eq, PartialEq)]
+pub(super) enum SkipReason {
+    /// The agent's current DB `config` is `None`.
+    NotConfigured,
+    /// The agent's current DB `config` is `Some("")` (direct-setup magic-string marker).
+    DirectSetup,
+}
+
+#[derive(SimpleObject)]
+pub(super) struct SkippedAgent {
+    /// The bare agent key (matching `Agent.key`).
+    agent_key: String,
+    reason: SkipReason,
+}
+
+#[derive(SimpleObject)]
+pub(super) struct ApplyAgentConfigOutput {
+    /// One entry per agent for whom a notify was attempted (current DB `config` is
+    /// `Some(non-empty)`).
+    attempts: Vec<AgentNotifyAttempt>,
+    /// One entry per agent in the target set that was not notified, with the reason.
+    skipped: Vec<SkippedAgent>,
+}
 
 fn update_agent_status_to_unknown(ctx: &Context<'_>, hostname: &str) {
     let Ok(store) = crate::graphql::get_store(ctx) else {
@@ -121,8 +158,8 @@ impl NodeControlMutation {
 
         let apply_scope = node_apply_scope(&node);
 
-        if apply_scope.db {
-            update_db(
+        let updated_node = if apply_scope.db {
+            let updated = update_db(
                 ctx,
                 i,
                 &node,
@@ -150,17 +187,18 @@ impl NodeControlMutation {
             );
 
             send_customer_change_if_needed(ctx, i, &node).await;
-        }
+            Some(updated)
+        } else {
+            None
+        };
 
         if let Some(ref target_agents) = apply_scope.agents {
-            let hostname = {
-                let store = crate::graphql::get_store(ctx)?;
-                let node_map = store.node_map();
-                let (node, _, _) = node_map.get_by_id(i)?.ok_or_else(|| {
-                    async_graphql::Error::new(format!("Node with ID {i} not found"))
-                })?;
-                node.profile.map(|p| p.hostname).unwrap_or_default()
-            };
+            // `apply_scope.agents` is `Some` only when `is_any_agent_changed`, which also makes
+            // `apply_scope.db` true, so `updated_node` is guaranteed to be `Some` here.
+            let hostname = updated_node
+                .as_ref()
+                .and_then(|n| n.profile.as_ref().map(|p| p.hostname.clone()))
+                .unwrap_or_default();
 
             if hostname.is_empty() {
                 info_with_username!(
@@ -193,6 +231,152 @@ impl NodeControlMutation {
         }
 
         Ok(id)
+    }
+
+    /// Applies the draft configuration to the node with the given ID at the database layer.
+    ///
+    /// Performs the database promotions (name, profile, agent configs, external services) in a
+    /// single atomic update, and broadcasts customer-specific networks when the node's
+    /// `customer_id` changes. Does not send agent-config notifications — use `applyAgentConfig`
+    /// for that.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    async fn apply_node_draft(&self, ctx: &Context<'_>, id: ID, node: NodeInput) -> Result<Node> {
+        let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
+
+        let current_node = customer_access::load_accessible_node(ctx, &id)?;
+        if let Some(profile_draft) = node.profile_draft.as_ref() {
+            customer_access::check_customer_membership(ctx, &profile_draft.customer_id)?;
+        }
+
+        if node.name_draft.is_none() {
+            return Err("Node is not valid for apply".into());
+        }
+
+        let apply_scope = node_apply_scope(&node);
+
+        if apply_scope.db {
+            let updated = update_db(
+                ctx,
+                i,
+                &node,
+                apply_scope.agents.as_ref().map_or(&[], |a| &a.disables),
+            )
+            .await?;
+
+            let now = chrono::Utc::now();
+            let name = node.name.as_str();
+            let name_draft = node
+                .name_draft
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_default();
+            let profile = node
+                .profile
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_default();
+            let profile_draft = node
+                .profile_draft
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_default();
+            info_with_username!(
+                ctx,
+                "[{now}] Node ID {i} - Node's drafts are applied.\nName: {name}, Name draft: {name_draft}\nProfile: {profile}, Profile draft: {profile_draft}",
+            );
+
+            send_customer_change_if_needed(ctx, i, &node).await;
+            Ok(updated.into())
+        } else {
+            Ok(current_node.into())
+        }
+    }
+
+    /// Notifies the agents of a node that their config has changed.
+    ///
+    /// Reads the current DB state of the node and, for each agent in the target set, attempts a
+    /// notify when the agent's current DB `config` is `Some(non-empty)`. Skips with reason
+    /// otherwise. The mutation performs no DB writes.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    async fn apply_agent_config(
+        &self,
+        ctx: &Context<'_>,
+        node_id: ID,
+        agent_keys: Option<Vec<String>>,
+    ) -> Result<ApplyAgentConfigOutput> {
+        let node = customer_access::load_accessible_node(ctx, &node_id)?;
+
+        let hostname = node
+            .profile
+            .as_ref()
+            .map(|p| p.hostname.as_str())
+            .unwrap_or_default();
+        if hostname.is_empty() {
+            return Err("Node hostname is unavailable".into());
+        }
+
+        let target_agents: Vec<&review_database::Agent> = match agent_keys.as_ref() {
+            None => node.agents.iter().collect(),
+            Some(keys) if keys.is_empty() => Vec::new(),
+            Some(keys) => {
+                let mut seen: HashSet<&str> = HashSet::new();
+                for key in keys {
+                    if !seen.insert(key.as_str()) {
+                        return Err(format!("Duplicate agent key: {key}").into());
+                    }
+                }
+                let agent_index: std::collections::HashMap<&str, &review_database::Agent> =
+                    node.agents.iter().map(|a| (a.key.as_str(), a)).collect();
+                let mut selected = Vec::with_capacity(keys.len());
+                for key in keys {
+                    let Some(agent) = agent_index.get(key.as_str()) else {
+                        return Err(format!(
+                            "Agent key {key} does not belong to node {}",
+                            node_id.as_str()
+                        )
+                        .into());
+                    };
+                    selected.push(*agent);
+                }
+                selected
+            }
+        };
+
+        let agent_manager = ctx.data::<BoxedAgentManager>()?;
+        let mut attempts = Vec::new();
+        let mut skipped = Vec::new();
+
+        for agent in target_agents {
+            match agent.config.as_ref() {
+                None => skipped.push(SkippedAgent {
+                    agent_key: agent.key.clone(),
+                    reason: SkipReason::NotConfigured,
+                }),
+                Some(config) if config.as_ref().is_empty() => skipped.push(SkippedAgent {
+                    agent_key: agent.key.clone(),
+                    reason: SkipReason::DirectSetup,
+                }),
+                Some(_) => {
+                    let manager_key = format!("{}@{hostname}", agent.key);
+                    match agent_manager.update_config(manager_key.as_str()).await {
+                        Ok(()) => attempts.push(AgentNotifyAttempt {
+                            agent_key: agent.key.clone(),
+                            succeeded: true,
+                            error: None,
+                        }),
+                        Err(e) => attempts.push(AgentNotifyAttempt {
+                            agent_key: agent.key.clone(),
+                            succeeded: false,
+                            error: Some(e.to_string()),
+                        }),
+                    }
+                }
+            }
+        }
+
+        Ok(ApplyAgentConfigOutput { attempts, skipped })
     }
 }
 
@@ -285,7 +469,7 @@ async fn update_db(
     i: u32,
     node: &NodeInput,
     disable_agent_ids: &[&str],
-) -> Result<()> {
+) -> Result<review_database::Node> {
     let store = crate::graphql::get_store(ctx)?;
     let mut map = store.node_map();
 
@@ -317,8 +501,7 @@ async fn update_db(
 
     let old = node.clone().try_into()?;
     let new = update.try_into()?;
-    map.update(i, &old, &new)?;
-    Ok(())
+    Ok(map.update(i, &old, &new)?)
 }
 
 async fn send_customer_change_if_needed(ctx: &Context<'_>, i: u32, node: &NodeInput) {
@@ -3181,5 +3364,940 @@ mod tests {
             .await;
         assert_eq!(res.errors.len(), 1);
         assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    fn put_node_with_agents(
+        store: &review_database::Store,
+        name: &str,
+        customer_id: u32,
+        hostname: &str,
+        agents: Vec<review_database::Agent>,
+    ) -> u32 {
+        let node = review_database::Node {
+            id: u32::MAX,
+            name: name.to_string(),
+            name_draft: Some(name.to_string()),
+            profile: Some(review_database::NodeProfile {
+                customer_id,
+                description: format!("Node for customer {customer_id}"),
+                hostname: hostname.to_string(),
+            }),
+            profile_draft: Some(review_database::NodeProfile {
+                customer_id,
+                description: format!("Node for customer {customer_id}"),
+                hostname: hostname.to_string(),
+            }),
+            agents,
+            external_services: vec![],
+            creation_time: chrono::Utc::now(),
+        };
+        store.node_map().put(&node).expect("insert node")
+    }
+
+    fn make_agent(
+        key: &str,
+        kind: review_database::AgentKind,
+        config: Option<&str>,
+    ) -> review_database::Agent {
+        review_database::Agent {
+            node: u32::MAX,
+            key: key.to_string(),
+            kind,
+            status: AgentStatus::Enabled,
+            config: config.map(|c| c.to_string().try_into().expect("valid toml")),
+            draft: config.map(|c| c.to_string().try_into().expect("valid toml")),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_apply_node_draft_db_only() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["unsupervised@all-in-one"],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "admin node",
+                        customerId: 0,
+                        description: "Description.",
+                        hostname: "all-in-one",
+                        agents: [{
+                            key: "unsupervised"
+                            kind: UNSUPERVISED
+                            status: ENABLED
+                            draft: "test = 'toml'"
+                        }],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNodeDraft(
+                        id: "0"
+                        node: {
+                            name: "admin node",
+                            nameDraft: "admin node",
+                            profile: null,
+                            profileDraft: {
+                                customerId: "0",
+                                description: "Description.",
+                                hostname: "all-in-one"
+                            },
+                            agents: [{
+                                key: "unsupervised",
+                                kind: UNSUPERVISED,
+                                status: ENABLED,
+                                config: null,
+                                draft: "test = 'toml'"
+                            }],
+                            externalServices: []
+                        }
+                    ) {
+                        id
+                        name
+                        profile { hostname customerId }
+                        agents { key config draft }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "applyNodeDraft": {
+                    "id": "0",
+                    "name": "admin node",
+                    "profile": {
+                        "hostname": "all-in-one",
+                        "customerId": "0",
+                    },
+                    "agents": [
+                        {
+                            "key": "unsupervised",
+                            "config": "test = 'toml'",
+                            "draft": "test = 'toml'",
+                        }
+                    ],
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_node_draft_missing_name_draft_errors() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let store = schema.store();
+        let id = put_node_with_agents(
+            &store,
+            "no-name-draft",
+            0,
+            "no-name-draft-host",
+            vec![make_agent(
+                "unsupervised",
+                review_database::AgentKind::Unsupervised,
+                Some("test = 'toml'"),
+            )],
+        );
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNodeDraft(
+                        id: "0"
+                        node: {
+                            name: "no-name-draft",
+                            nameDraft: null,
+                            profile: {
+                                customerId: "0",
+                                description: "Node for customer 0",
+                                hostname: "no-name-draft-host"
+                            },
+                            profileDraft: {
+                                customerId: "0",
+                                description: "Node for customer 0",
+                                hostname: "no-name-draft-host"
+                            },
+                            agents: [{
+                                key: "unsupervised",
+                                kind: UNSUPERVISED,
+                                status: ENABLED,
+                                config: "test = 'toml'",
+                                draft: "test = 'toml'"
+                            }],
+                            externalServices: []
+                        }
+                    ) {
+                        id
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            !res.errors.is_empty(),
+            "Expected an error when name_draft is null"
+        );
+        assert!(
+            res.errors
+                .iter()
+                .any(|e| e.message.contains("Node is not valid for apply")),
+            "Expected 'Node is not valid for apply' error, got: {:?}",
+            res.errors
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_node_draft_customer_change() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        // Seed a node whose profile (customer 0) differs from its profile_draft (customer 1) so
+        // that applyNodeDraft promotes a customer_id change and broadcasts customer networks.
+        let id = {
+            let store = schema.store();
+            let node = review_database::Node {
+                id: u32::MAX,
+                name: "node-a".to_string(),
+                name_draft: Some("node-a".to_string()),
+                profile: Some(review_database::NodeProfile {
+                    customer_id: 0,
+                    description: "desc".to_string(),
+                    hostname: "host-a".to_string(),
+                }),
+                profile_draft: Some(review_database::NodeProfile {
+                    customer_id: 1,
+                    description: "desc".to_string(),
+                    hostname: "host-a".to_string(),
+                }),
+                agents: vec![make_agent(
+                    "hog",
+                    review_database::AgentKind::SemiSupervised,
+                    Some("test = 'toml'"),
+                )],
+                external_services: vec![],
+                creation_time: chrono::Utc::now(),
+            };
+            store.node_map().put(&node).expect("insert node")
+        };
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNodeDraft(
+                        id: "0"
+                        node: {
+                            name: "node-a",
+                            nameDraft: "node-a",
+                            profile: {
+                                customerId: "0",
+                                description: "desc",
+                                hostname: "host-a"
+                            },
+                            profileDraft: {
+                                customerId: "1",
+                                description: "desc",
+                                hostname: "host-a"
+                            },
+                            agents: [{
+                                key: "hog",
+                                kind: SEMI_SUPERVISED,
+                                status: ENABLED,
+                                config: "test = 'toml'",
+                                draft: "test = 'toml'"
+                            }],
+                            externalServices: []
+                        }
+                    ) {
+                        id
+                        profile { customerId }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "applyNodeDraft": {
+                    "id": "0",
+                    "profile": { "customerId": "1" }
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_node_draft_no_op_short_circuit() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let store = schema.store();
+        let id = put_node_with_agents(
+            &store,
+            "noop-node",
+            7,
+            "noop-host",
+            vec![make_agent(
+                "unsupervised",
+                review_database::AgentKind::Unsupervised,
+                Some("test = 'toml'"),
+            )],
+        );
+        let (existing, _, _) = store.node_map().get_by_id(id).unwrap().unwrap();
+        let creation_time = existing.creation_time;
+
+        // Apply with input that exactly matches the current state — should short-circuit.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNodeDraft(
+                        id: "0"
+                        node: {
+                            name: "noop-node",
+                            nameDraft: "noop-node",
+                            profile: {
+                                customerId: "7",
+                                description: "Node for customer 7",
+                                hostname: "noop-host"
+                            },
+                            profileDraft: {
+                                customerId: "7",
+                                description: "Node for customer 7",
+                                hostname: "noop-host"
+                            },
+                            agents: [{
+                                key: "unsupervised",
+                                kind: UNSUPERVISED,
+                                status: ENABLED,
+                                config: "test = 'toml'",
+                                draft: "test = 'toml'"
+                            }],
+                            externalServices: []
+                        }
+                    ) {
+                        id
+                        name
+                        profile { hostname customerId }
+                        agents { key config draft }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "applyNodeDraft": {
+                    "id": "0",
+                    "name": "noop-node",
+                    "profile": { "hostname": "noop-host", "customerId": "7" },
+                    "agents": [{
+                        "key": "unsupervised",
+                        "config": "test = 'toml'",
+                        "draft": "test = 'toml'",
+                    }],
+                }
+            })
+        );
+
+        // creation_time remains unchanged, demonstrating that the no-op path returned the DB Node
+        // (a reconstruction from `NodeInput` would not preserve `creation_time`).
+        let (after, _, _) = store.node_map().get_by_id(id).unwrap().unwrap();
+        assert_eq!(after.creation_time, creation_time);
+    }
+
+    #[tokio::test]
+    async fn test_apply_agent_config_null_keys_mixed_states() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["unsupervised@mixed", "sensor@mixed", "hog@mixed"],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let store = schema.store();
+        let id = put_node_with_agents(
+            &store,
+            "mixed-node",
+            0,
+            "mixed",
+            vec![
+                make_agent(
+                    "unsupervised",
+                    review_database::AgentKind::Unsupervised,
+                    Some("test = 'toml'"),
+                ),
+                make_agent("sensor", review_database::AgentKind::Sensor, Some("")),
+                make_agent("hog", review_database::AgentKind::SemiSupervised, None),
+            ],
+        );
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0") {
+                        attempts { agentKey succeeded error }
+                        skipped { agentKey reason }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "applyAgentConfig": {
+                    "attempts": [
+                        { "agentKey": "unsupervised", "succeeded": true, "error": null }
+                    ],
+                    "skipped": [
+                        { "agentKey": "sensor", "reason": "DIRECT_SETUP" },
+                        { "agentKey": "hog", "reason": "NOT_CONFIGURED" }
+                    ]
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_agent_config_explicit_subset() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["unsupervised@subset", "sensor@subset"],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let store = schema.store();
+        let id = put_node_with_agents(
+            &store,
+            "subset-node",
+            0,
+            "subset",
+            vec![
+                make_agent(
+                    "unsupervised",
+                    review_database::AgentKind::Unsupervised,
+                    Some("test = 'toml'"),
+                ),
+                make_agent(
+                    "sensor",
+                    review_database::AgentKind::Sensor,
+                    Some("test = 'toml'"),
+                ),
+            ],
+        );
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0", agentKeys: ["sensor"]) {
+                        attempts { agentKey succeeded }
+                        skipped { agentKey reason }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "applyAgentConfig": {
+                    "attempts": [{ "agentKey": "sensor", "succeeded": true }],
+                    "skipped": []
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_agent_config_empty_array() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["unsupervised@empty"],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let store = schema.store();
+        let id = put_node_with_agents(
+            &store,
+            "empty-node",
+            0,
+            "empty",
+            vec![make_agent(
+                "unsupervised",
+                review_database::AgentKind::Unsupervised,
+                Some("test = 'toml'"),
+            )],
+        );
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0", agentKeys: []) {
+                        attempts { agentKey succeeded }
+                        skipped { agentKey reason }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "applyAgentConfig": {
+                    "attempts": [],
+                    "skipped": []
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_agent_config_duplicate_keys() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["unsupervised@dup"],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let store = schema.store();
+        let id = put_node_with_agents(
+            &store,
+            "dup-node",
+            0,
+            "dup",
+            vec![make_agent(
+                "unsupervised",
+                review_database::AgentKind::Unsupervised,
+                Some("test = 'toml'"),
+            )],
+        );
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0", agentKeys: ["unsupervised", "unsupervised"]) {
+                        attempts { agentKey }
+                        skipped { agentKey }
+                    }
+                }"#,
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(
+            res.errors[0].message.contains("Duplicate agent key"),
+            "unexpected error: {}",
+            res.errors[0].message
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_agent_config_unknown_key_rejected() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["unsupervised@unk"],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let store = schema.store();
+        let id = put_node_with_agents(
+            &store,
+            "unk-node",
+            0,
+            "unk",
+            vec![make_agent(
+                "unsupervised",
+                review_database::AgentKind::Unsupervised,
+                Some("test = 'toml'"),
+            )],
+        );
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0", agentKeys: ["nope"]) {
+                        attempts { agentKey }
+                        skipped { agentKey }
+                    }
+                }"#,
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(
+            res.errors[0].message.contains("does not belong to node"),
+            "unexpected error: {}",
+            res.errors[0].message
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_agent_config_ordering() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec!["unsupervised@order", "sensor@order", "hog@order"],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let store = schema.store();
+        // DB order is unsupervised, sensor, hog.
+        let id = put_node_with_agents(
+            &store,
+            "order-node",
+            0,
+            "order",
+            vec![
+                make_agent(
+                    "unsupervised",
+                    review_database::AgentKind::Unsupervised,
+                    Some("test = 'toml'"),
+                ),
+                make_agent("sensor", review_database::AgentKind::Sensor, Some("")),
+                make_agent(
+                    "hog",
+                    review_database::AgentKind::SemiSupervised,
+                    Some("test = 'toml'"),
+                ),
+            ],
+        );
+        assert_eq!(id, 0);
+
+        // With agentKeys absent, ordering follows DB agent order — across `attempts` and `skipped`
+        // the agent set is covered exactly once. `attempts` in DB-order: unsupervised, hog;
+        // `skipped` in DB-order: sensor.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0") {
+                        attempts { agentKey }
+                        skipped { agentKey reason }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "applyAgentConfig": {
+                    "attempts": [
+                        { "agentKey": "unsupervised" },
+                        { "agentKey": "hog" }
+                    ],
+                    "skipped": [
+                        { "agentKey": "sensor", "reason": "DIRECT_SETUP" }
+                    ]
+                }
+            })
+        );
+
+        // With agentKeys provided, ordering follows the supplied order.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0", agentKeys: ["hog", "sensor", "unsupervised"]) {
+                        attempts { agentKey }
+                        skipped { agentKey reason }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "applyAgentConfig": {
+                    "attempts": [
+                        { "agentKey": "hog" },
+                        { "agentKey": "unsupervised" }
+                    ],
+                    "skipped": [
+                        { "agentKey": "sensor", "reason": "DIRECT_SETUP" }
+                    ]
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_agent_config_missing_hostname_errors() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let store = schema.store();
+        let node = review_database::Node {
+            id: u32::MAX,
+            name: "no-host".to_string(),
+            name_draft: Some("no-host".to_string()),
+            profile: None,
+            profile_draft: Some(review_database::NodeProfile {
+                customer_id: 0,
+                description: String::new(),
+                hostname: "x".to_string(),
+            }),
+            agents: vec![make_agent(
+                "unsupervised",
+                review_database::AgentKind::Unsupervised,
+                Some("test = 'toml'"),
+            )],
+            external_services: vec![],
+            creation_time: chrono::Utc::now(),
+        };
+        let id = store.node_map().put(&node).expect("insert node");
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0") {
+                        attempts { agentKey }
+                        skipped { agentKey }
+                    }
+                }"#,
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert!(
+            res.errors[0].message.contains("hostname"),
+            "unexpected error: {}",
+            res.errors[0].message
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_agent_config_mixed_outcomes() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            // Only `unsupervised@mixfail` succeeds; `sensor@mixfail` will fail.
+            available_agents: vec!["unsupervised@mixfail"],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let store = schema.store();
+        let id = put_node_with_agents(
+            &store,
+            "mixfail-node",
+            0,
+            "mixfail",
+            vec![
+                make_agent(
+                    "unsupervised",
+                    review_database::AgentKind::Unsupervised,
+                    Some("test = 'toml'"),
+                ),
+                make_agent(
+                    "sensor",
+                    review_database::AgentKind::Sensor,
+                    Some("test = 'toml'"),
+                ),
+            ],
+        );
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0") {
+                        attempts { agentKey succeeded }
+                        skipped { agentKey }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        let data = res.data.into_json().unwrap();
+        let attempts = data["applyAgentConfig"]["attempts"].as_array().unwrap();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0]["agentKey"], "unsupervised");
+        assert_eq!(attempts[0]["succeeded"], true);
+        assert_eq!(attempts[1]["agentKey"], "sensor");
+        assert_eq!(attempts[1]["succeeded"], false);
+    }
+
+    #[tokio::test]
+    async fn apply_node_draft_customer_scoping_forbidden() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let id = put_node_with_agents(&schema.store(), "scoped-node", 2, "host-customer-2", vec![]);
+        assert_eq!(id, 0);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {
+                    applyNodeDraft(
+                        id: "0"
+                        node: {
+                            name: "scoped-node",
+                            nameDraft: "scoped-node",
+                            profile: {
+                                customerId: "2",
+                                description: "Node for customer 2",
+                                hostname: "host-customer-2"
+                            },
+                            profileDraft: {
+                                customerId: "2",
+                                description: "Node for customer 2",
+                                hostname: "host-customer-2"
+                            },
+                            agents: [],
+                            externalServices: []
+                        }
+                    ) { id }
+                }"#,
+                Role::SecurityAdministrator,
+                Some(vec![1]),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    #[tokio::test]
+    async fn apply_agent_config_customer_scoping_forbidden() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let id = put_node_with_agents(&schema.store(), "scoped-node", 2, "host-customer-2", vec![]);
+        assert_eq!(id, 0);
+
+        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0") {
+                        attempts { agentKey }
+                        skipped { agentKey }
+                    }
+                }"#,
+                Role::SecurityAdministrator,
+                Some(vec![1]),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Forbidden");
+    }
+
+    #[tokio::test]
+    async fn apply_node_draft_customer_scoping_admin_allowed() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "apply_target",
+                        customerId: 2,
+                        description: "Target node",
+                        hostname: "host-customer-2",
+                        agents: [],
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNodeDraft(
+                        id: "0"
+                        node: {
+                            name: "apply_target",
+                            nameDraft: "apply_target",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 2,
+                                description: "Target node",
+                                hostname: "host-customer-2",
+                            },
+                            agents: [],
+                            externalServices: []
+                        }
+                    ) { id }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
     }
 }
