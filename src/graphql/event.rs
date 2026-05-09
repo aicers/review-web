@@ -1459,16 +1459,46 @@ fn convert_triage_input(
     Ok(triage_policies)
 }
 
+/// Returns the list of sensor hostnames the caller is allowed to see, or
+/// `None` for unscoped (administrator) callers.
+fn sensors_for_user(ctx: &Context<'_>, store: &Store) -> Result<Option<Vec<String>>> {
+    let Some(customer_ids) = crate::graphql::customer_access::users_customers(ctx)? else {
+        return Ok(None);
+    };
+    if customer_ids.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+    let sensors = store
+        .node_map()
+        .iter(Direction::Forward, None)
+        .filter_map(Result::ok)
+        .filter(|node| {
+            node.agents
+                .iter()
+                .any(|agent| agent.kind == AgentKind::Sensor)
+                && node
+                    .profile
+                    .as_ref()
+                    .is_some_and(|profile| customer_ids.contains(&profile.customer_id))
+        })
+        .filter_map(|node| node.profile.map(|profile| profile.hostname))
+        .collect::<Vec<_>>();
+    Ok(Some(sensors))
+}
+
 async fn load_event(ctx: &Context<'_>, id: &ID) -> Result<Option<Event>> {
     let key = parse_event_id(id)?;
     let store = crate::graphql::get_store(ctx)?;
 
-    // Build a tenant-scope filter from an empty input so that
-    // `from_filter_input` derives the caller's allowed sensors from
-    // their `customer_ids`. SystemAdministrator (no customer_ids) sees
-    // every sensor; everyone else is restricted to sensors of their
-    // accessible customers.
-    let mut filter = from_filter_input(ctx, &store, &EventListFilterInput::default())?;
+    // Derive the caller's allowed sensors via the shared customer-access
+    // helper, which handles both auth-jwt (username -> account) and
+    // auth-mtls (`CustomerIds` data) request contexts. SystemAdministrator
+    // (no customer_ids) sees every sensor; everyone else is restricted to
+    // sensors owned by their accessible customers.
+    let sensors = sensors_for_user(ctx, &store)?;
+    let mut filter = EventFilter::new(
+        None, None, None, None, None, None, None, None, None, None, sensors, None, None, None,
+    );
     filter.moderate_kinds();
 
     let db = store.events();
@@ -2213,7 +2243,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "auth-jwt")]
     async fn event_lookup_respects_tenant_scope() {
         use crate::graphql::Role;
 
