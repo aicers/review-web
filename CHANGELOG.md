@@ -6,6 +6,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-05-10
+
 ### Added
 
 - Added `event(id: ID!): Event` GraphQL query for single-event lookup by an
@@ -1598,7 +1600,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
-[Unreleased]: https://github.com/aicers/review-web/compare/0.31.0...main
+[Unreleased]: https://github.com/aicers/review-web/compare/0.32.0...main
+[0.32.0]: https://github.com/aicers/review-web/compare/0.31.0...0.32.0
 [0.31.0]: https://github.com/aicers/review-web/compare/0.30.1...0.31.0
 [0.30.1]: https://github.com/aicers/review-web/compare/0.30.0...0.30.1
 [0.30.0]: https://github.com/aicers/review-web/compare/0.29.4...0.30.0
