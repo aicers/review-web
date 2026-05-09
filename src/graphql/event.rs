@@ -2892,7 +2892,7 @@ mod tests {
             kind: EventKind::BlocklistDhcp,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
-        db.put(&message).unwrap();
+        let key = db.put(&message).unwrap();
 
         let res = schema
             .execute_as_system_admin(
@@ -2924,14 +2924,24 @@ mod tests {
                     customers: [0],
                     directions: [\"OUTBOUND\"],
                 }}) {{ \
-                    edges {{ node {{... on BlocklistDhcp {{ origAddr,giaddr,reqIpAddr,classId,clientId,options {{ code,value }} }} }} }} \
+                    edges {{ node {{ id, ... on BlocklistDhcp {{ origAddr,giaddr,reqIpAddr,classId,clientId,options {{ code,value }} }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "127.0.0.1", giaddr: "127.0.0.8", reqIpAddr: "127.0.0.100", classId: "04:05:06", clientId: "07:08:09", options: [{code: 53, value: [1]}, {code: 61, value: [7, 8, 9]}]}}]}}"#
+            format!(
+                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "127.0.0.1", giaddr: "127.0.0.8", reqIpAddr: "127.0.0.100", classId: "04:05:06", clientId: "07:08:09", options: [{{code: 53, value: [1]}}, {{code: 61, value: [7, 8, 9]}}]}}}}]}}}}"#
+            )
+        );
+
+        let lookup_query =
+            format!("{{ event(id: \"{key}\") {{ id, ... on BlocklistDhcp {{ origAddr }} }} }}");
+        let res = schema.execute_as_system_admin(&lookup_query).await;
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{event: {{id: "{key}", origAddr: "127.0.0.1"}}}}"#)
         );
     }
 
@@ -2979,7 +2989,7 @@ mod tests {
             kind: EventKind::BlocklistBootp,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
-        db.put(&message).unwrap();
+        let key = db.put(&message).unwrap();
 
         let res = schema
             .execute_as_system_admin(
@@ -3011,14 +3021,24 @@ mod tests {
                     customers: [0],
                     directions: [\"INBOUND\"],
                 }}) {{ \
-                    edges {{ node {{... on BlocklistBootp {{ origAddr,ciaddr,chaddr }} }} }} \
+                    edges {{ node {{ id, ... on BlocklistBootp {{ origAddr,ciaddr,chaddr }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "127.0.0.1", ciaddr: "127.0.0.5", chaddr: "01:02:03:04:05:06"}}]}}"#
+            format!(
+                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "127.0.0.1", ciaddr: "127.0.0.5", chaddr: "01:02:03:04:05:06"}}}}]}}}}"#
+            )
+        );
+
+        let lookup_query =
+            format!("{{ event(id: \"{key}\") {{ id, ... on BlocklistBootp {{ origAddr }} }} }}");
+        let res = schema.execute_as_system_admin(&lookup_query).await;
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{event: {{id: "{key}", origAddr: "127.0.0.1"}}}}"#)
         );
     }
 
@@ -3066,20 +3086,30 @@ mod tests {
             kind: EventKind::LockyRansomware,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
-        db.put(&message).unwrap();
+        let key = db.put(&message).unwrap();
         let query = format!(
             "{{ \
                 eventList(filter: {{
                     start:\"{timestamp}\"
                 }}) {{ \
-                    edges {{ node {{... on LockyRansomware {{ origAddr,rtt,query }} }} }} \
+                    edges {{ node {{ id, ... on LockyRansomware {{ origAddr,rtt,query }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "0.0.0.1", rtt: "10", query: "domain"}}]}}"#
+            format!(
+                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "0.0.0.1", rtt: "10", query: "domain"}}}}]}}}}"#
+            )
+        );
+
+        let lookup_query =
+            format!("{{ event(id: \"{key}\") {{ id, ... on LockyRansomware {{ origAddr }} }} }}");
+        let res = schema.execute_as_system_admin(&lookup_query).await;
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{event: {{id: "{key}", origAddr: "0.0.0.1"}}}}"#)
         );
     }
 
@@ -3137,20 +3167,31 @@ mod tests {
             kind: EventKind::SuspiciousTlsTraffic,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
-        db.put(&message).unwrap();
+        let key = db.put(&message).unwrap();
         let query = format!(
             "{{ \
                 eventList(filter: {{
                     start:\"{timestamp}\"
                 }}) {{ \
-                    edges {{ node {{... on SuspiciousTlsTraffic {{ origAddr,cipher,subjectCountry,confidence }} }} }} \
+                    edges {{ node {{ id, ... on SuspiciousTlsTraffic {{ origAddr,cipher,subjectCountry,confidence }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "0.0.0.1", cipher: 1234, subjectCountry: "US", confidence: 0.800000011920929}}]}}"#
+            format!(
+                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "0.0.0.1", cipher: 1234, subjectCountry: "US", confidence: 0.800000011920929}}}}]}}}}"#
+            )
+        );
+
+        let lookup_query = format!(
+            "{{ event(id: \"{key}\") {{ id, ... on SuspiciousTlsTraffic {{ origAddr }} }} }}"
+        );
+        let res = schema.execute_as_system_admin(&lookup_query).await;
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{event: {{id: "{key}", origAddr: "0.0.0.1"}}}}"#)
         );
     }
 
@@ -3203,7 +3244,7 @@ mod tests {
             kind: EventKind::BlocklistRadius,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
-        db.put(&message).unwrap();
+        let key = db.put(&message).unwrap();
 
         let res = schema
             .execute_as_system_admin(
@@ -3235,14 +3276,24 @@ mod tests {
                     customers: [0],
                     directions: [\"OUTBOUND\"],
                 }}) {{ \
-                    edges {{ node {{... on BlocklistRadius {{ origAddr,nasIp,userName,message }} }} }} \
+                    edges {{ node {{ id, ... on BlocklistRadius {{ origAddr,nasIp,userName,message }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "127.0.0.1", nasIp: "192.168.1.1", userName: "75:73:65:72", message: "RADIUS message"}}]}}"#
+            format!(
+                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "127.0.0.1", nasIp: "192.168.1.1", userName: "75:73:65:72", message: "RADIUS message"}}}}]}}}}"#
+            )
+        );
+
+        let lookup_query =
+            format!("{{ event(id: \"{key}\") {{ id, ... on BlocklistRadius {{ origAddr }} }} }}");
+        let res = schema.execute_as_system_admin(&lookup_query).await;
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{event: {{id: "{key}", origAddr: "127.0.0.1"}}}}"#)
         );
     }
 
@@ -3293,7 +3344,7 @@ mod tests {
             kind: EventKind::BlocklistMalformedDns,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
-        db.put(&message).unwrap();
+        let key = db.put(&message).unwrap();
 
         let res = schema
             .execute_as_system_admin(
@@ -3325,14 +3376,25 @@ mod tests {
                     customers: [0],
                     directions: [\"OUTBOUND\"],
                 }}) {{ \
-                    edges {{ node {{... on BlocklistMalformedDns {{ origAddr,respAddr,transId,queryBody,respBody }} }} }} \
+                    edges {{ node {{ id, ... on BlocklistMalformedDns {{ origAddr,respAddr,transId,queryBody,respBody }} }} }} \
                 }} \
             }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "127.0.0.1", respAddr: "127.0.0.2", transId: 42, queryBody: ["de:ad"], respBody: ["ca:fe"]}}]}}"#
+            format!(
+                r#"{{eventList: {{edges: [{{node: {{id: "{key}", origAddr: "127.0.0.1", respAddr: "127.0.0.2", transId: 42, queryBody: ["de:ad"], respBody: ["ca:fe"]}}}}]}}}}"#
+            )
+        );
+
+        let lookup_query = format!(
+            "{{ event(id: \"{key}\") {{ id, ... on BlocklistMalformedDns {{ origAddr }} }} }}"
+        );
+        let res = schema.execute_as_system_admin(&lookup_query).await;
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{event: {{id: "{key}", origAddr: "127.0.0.1"}}}}"#)
         );
     }
 
