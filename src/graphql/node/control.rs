@@ -317,7 +317,8 @@ async fn update_db(
 
     let old = node.clone().try_into()?;
     let new = update.try_into()?;
-    Ok(map.update(i, &old, &new)?)
+    map.update(i, &old, &new)?;
+    Ok(())
 }
 
 async fn send_customer_change_if_needed(ctx: &Context<'_>, i: u32, node: &NodeInput) {

@@ -65,6 +65,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   mTLS peer-cert + JWT validation as any other peer. Operators who set
   this env as a workaround can drop it after upgrade. `auth-jwt`
   semantics are unchanged.
+- Bumped `review-database` dependency to 0.45.0, which makes node
+  `Table::update` fully atomic across the Node, Agent, and ExternalService
+  tables and changes its return type from `Result<()>` to `Result<Node>`.
+  No GraphQL contract changes; the returned `Node` is intentionally not
+  wired through the resolvers in this revision and will be consumed in a
+  follow-up that splits `applyNode` into `applyNodeDraft` and
+  `applyAgentConfig`.
 
 ## [0.31.0] - 2026-04-18
 
