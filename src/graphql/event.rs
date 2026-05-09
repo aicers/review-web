@@ -3625,6 +3625,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn event_list_with_triage_rejects_negative_policy_id() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(ts, 1, 2)).unwrap();
+
+        let query = format!(
+            "{{ eventListWithTriage( \
+                filter: {{ start:\"{ts}\" }}, \
+                triage: {{ \
+                    policies: [{{ \
+                        id: -1, \
+                        packetAttr: [], \
+                        confidence: [], \
+                        response: [] \
+                    }}] \
+                }} \
+            ) {{ totalCount }} }}",
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        assert!(
+            !res.errors.is_empty(),
+            "expected error for negative policy id"
+        );
+        assert!(
+            res.errors
+                .iter()
+                .any(|e| e.message.contains("non-negative")),
+            "expected non-negative error, got {:?}",
+            res.errors,
+        );
+    }
+
+    #[tokio::test]
     async fn event_list_with_triage_policy_non_match_preserves_event() {
         let schema = TestSchema::new().await;
         let store = schema.store();
