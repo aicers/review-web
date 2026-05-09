@@ -1806,7 +1806,9 @@ fn convert_event_triage_exclusions(
     let mut result = Vec::new();
     for exclusion in exclusions {
         let mut populated = false;
-        if let Some(group) = &exclusion.ip_address {
+        if let Some(group) = &exclusion.ip_address
+            && !(group.hosts.is_empty() && group.networks.is_empty() && group.ranges.is_empty())
+        {
             populated = true;
             let host_network_group: HostNetworkGroup = group.try_into()?;
             result.push(TriageExclusion::from(ExclusionReason::IpAddress(
@@ -3839,6 +3841,22 @@ mod tests {
         assert!(
             !res_empty.errors.is_empty(),
             "expected error for empty exclusion"
+        );
+
+        // An ipAddress group with all sub-fields empty is also treated as no
+        // populated field and rejected.
+        let query_empty_group = format!(
+            "{{ eventListWithTriage( \
+                filter: {{ start:\"{ts}\" }}, \
+                triage: {{ exclusions: [{{ \
+                    ipAddress: {{ hosts: [], networks: [], ranges: [] }} \
+                }}] }} \
+            ) {{ totalCount }} }}",
+        );
+        let res_empty_group = schema.execute_as_system_admin(&query_empty_group).await;
+        assert!(
+            !res_empty_group.errors.is_empty(),
+            "expected error for exclusion with empty ipAddress group"
         );
     }
 
