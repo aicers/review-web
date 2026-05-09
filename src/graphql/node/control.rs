@@ -264,23 +264,26 @@ impl NodeControlMutation {
             )
             .await?;
 
+            let now = chrono::Utc::now();
+            let name = node.name.as_str();
+            let name_draft = node
+                .name_draft
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_default();
+            let profile = node
+                .profile
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_default();
+            let profile_draft = node
+                .profile_draft
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_default();
             info_with_username!(
                 ctx,
-                "[{}] Node ID {i} - Node's drafts are applied.\nName: {}, Name draft: {}\nProfile: {}, Profile draft: {}",
-                chrono::Utc::now(),
-                node.name,
-                node.name_draft
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_default(),
-                node.profile
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_default(),
-                node.profile_draft
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_default(),
+                "[{now}] Node ID {i} - Node's drafts are applied.\nName: {name}, Name draft: {name_draft}\nProfile: {profile}, Profile draft: {profile_draft}",
             );
 
             send_customer_change_if_needed(ctx, i, &node).await;
@@ -3491,6 +3494,74 @@ mod tests {
                     ],
                 }
             })
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_node_draft_missing_name_draft_errors() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let store = schema.store();
+        let id = put_node_with_agents(
+            &store,
+            "no-name-draft",
+            0,
+            "no-name-draft-host",
+            vec![make_agent(
+                "unsupervised",
+                review_database::AgentKind::Unsupervised,
+                Some("test = 'toml'"),
+            )],
+        );
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNodeDraft(
+                        id: "0"
+                        node: {
+                            name: "no-name-draft",
+                            nameDraft: null,
+                            profile: {
+                                customerId: "0",
+                                description: "Node for customer 0",
+                                hostname: "no-name-draft-host"
+                            },
+                            profileDraft: {
+                                customerId: "0",
+                                description: "Node for customer 0",
+                                hostname: "no-name-draft-host"
+                            },
+                            agents: [{
+                                key: "unsupervised",
+                                kind: UNSUPERVISED,
+                                status: ENABLED,
+                                config: "test = 'toml'",
+                                draft: "test = 'toml'"
+                            }],
+                            externalServices: []
+                        }
+                    ) {
+                        id
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            !res.errors.is_empty(),
+            "Expected an error when name_draft is null"
+        );
+        assert!(
+            res.errors
+                .iter()
+                .any(|e| e.message.contains("Node is not valid for apply")),
+            "Expected 'Node is not valid for apply' error, got: {:?}",
+            res.errors
         );
     }
 
