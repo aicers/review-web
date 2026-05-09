@@ -206,8 +206,8 @@ struct Confidence<'a> {
 
 #[Object]
 impl Confidence<'_> {
-    async fn threat_category(&self) -> ThreatCategory {
-        self.inner.threat_category.into()
+    async fn threat_category(&self) -> Option<ThreatCategory> {
+        self.inner.threat_category.map(Into::into)
     }
 
     async fn threat_kind(&self) -> &str {
@@ -263,7 +263,7 @@ pub(super) struct PacketAttrInput {
 
 #[derive(Clone, InputObject)]
 pub(super) struct ConfidenceInput {
-    threat_category: ThreatCategory,
+    threat_category: Option<ThreatCategory>,
     threat_kind: String,
     confidence: f64,
     weight: Option<f64>,
@@ -272,7 +272,7 @@ pub(super) struct ConfidenceInput {
 impl From<&ConfidenceInput> for database::Confidence {
     fn from(c: &ConfidenceInput) -> Self {
         Self {
-            threat_category: c.threat_category.into(),
+            threat_category: c.threat_category.map(Into::into),
             threat_kind: c.threat_kind.clone(),
             confidence: c.confidence,
             weight: c.weight,

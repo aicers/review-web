@@ -36,7 +36,8 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
 use num_traits::FromPrimitive;
 use review_database::{
-    self as database, AgentKind, EventKind, IndexedTable, Iterable, Store,
+    self as database, AgentKind, EventKind, ExclusionReason, IndexedTable, Iterable, Store,
+    TriageExclusion, TriagePolicyInput as DbTriagePolicyInput,
     event::{Direction, EventFilter, EventIterator, RecordType},
     find_ip_country,
     types::{Endpoint, EventCategory, HostNetworkGroup},
@@ -78,7 +79,7 @@ use super::{
     customer::{Customer, HostNetworkGroupInput},
     filter::{FlowKind, LearningMethod, TrafficDirection},
     network::Network,
-    triage::ThreatCategory,
+    triage::{ConfidenceInput, PacketAttrInput, ResponseInput, ThreatCategory},
 };
 use crate::{error_with_username, graphql::query, warn_with_username};
 
@@ -681,12 +682,74 @@ impl EventQuery {
     ) -> Result<Vec<Event>> {
         load_triage_list(ctx, &filter, count).await
     }
+
+    /// A list of events that pass the standard filter, with optional inline
+    /// triage scoring and exclusions.
+    ///
+    /// Unlike `eventList`, this resolver returns every event passing the
+    /// standard filter regardless of whether any triage policy matched.
+    /// When `triage.policies` is supplied, matching policies attach their
+    /// scores via `triageScores`; events that score nothing keep
+    /// `triageScores: null` and remain in the connection. When
+    /// `triage.exclusions` is supplied, matching events are removed from
+    /// the connection. The cursor pagination contract matches `eventList`.
+    // Eight parameters mirror the cursor-pagination shape used by other event
+    // resolvers; the additional `triage` argument is what brings the count to
+    // eight. Splitting it would obscure the GraphQL signature.
+    #[allow(clippy::too_many_arguments)]
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityManager))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
+    async fn event_list_with_triage(
+        &self,
+        ctx: &Context<'_>,
+        filter: EventStandardFilterInput,
+        triage: Option<EventTriageInput>,
+        after: Option<String>,
+        before: Option<String>,
+        first: Option<i32>,
+        last: Option<i32>,
+    ) -> Result<Connection<String, Event, EventTotalCount, EmptyFields>> {
+        let policies = triage
+            .as_ref()
+            .and_then(|t| t.policies.as_deref())
+            .map(convert_event_triage_policies)
+            .transpose()?
+            .unwrap_or_default();
+        let exclusions = triage
+            .as_ref()
+            .and_then(|t| t.exclusions.as_deref())
+            .map(convert_event_triage_exclusions)
+            .transpose()?
+            .unwrap_or_default();
+        query(
+            after,
+            before,
+            first,
+            last,
+            |after, before, first, last| async move {
+                load_with_triage(
+                    ctx,
+                    &filter,
+                    &policies,
+                    &exclusions,
+                    after,
+                    before,
+                    first,
+                    last,
+                )
+                .await
+            },
+        )
+        .await
+    }
 }
 
 /// An endpoint of a network flow. One of `predefined`, `side`, and `custom` is
 /// required. Set `negate` to `true` to negate the endpoint. By default, the
 /// endpoint is not negated.
-#[derive(InputObject)]
+#[derive(Clone, InputObject)]
 pub(super) struct EndpointInput {
     pub(super) direction: Option<TrafficDirection>,
     pub(super) predefined: Option<ID>,
@@ -895,6 +958,68 @@ struct EventListFilterInput {
     triage_policies: Option<Vec<ID>>,
 }
 
+/// Standard event filter for `eventListWithTriage`. Identical to
+/// `EventListFilterInput` minus `triagePolicies`: triage policies are passed
+/// exclusively via the separate `triage` argument as inline data.
+#[derive(Clone, InputObject)]
+struct EventStandardFilterInput {
+    start: Option<DateTime<Utc>>,
+    end: Option<DateTime<Utc>>,
+    customers: Option<Vec<ID>>,
+    endpoints: Option<Vec<EndpointInput>>,
+    directions: Option<Vec<FlowKind>>,
+    source: Option<String>,
+    destination: Option<String>,
+    keywords: Option<Vec<String>>,
+    network_tags: Option<Vec<ID>>,
+    sensors: Option<Vec<ID>>,
+    os: Option<Vec<ID>>,
+    devices: Option<Vec<ID>>,
+    hostnames: Option<Vec<String>>,
+    user_ids: Option<Vec<String>>,
+    user_names: Option<Vec<String>>,
+    user_departments: Option<Vec<String>>,
+    countries: Option<Vec<String>>,
+    categories: Option<Vec<Option<u8>>>,
+    levels: Option<Vec<ThreatLevel>>,
+    kinds: Option<Vec<String>>,
+    learning_methods: Option<Vec<LearningMethod>>,
+    confidence_min: Option<f32>,
+    confidence_max: Option<f32>,
+}
+
+#[derive(InputObject)]
+struct EventTriageInput {
+    policies: Option<Vec<EventTriagePolicyInput>>,
+    exclusions: Option<Vec<EventTriageExclusionInput>>,
+}
+
+/// Inline triage policy input for `eventListWithTriage`.
+///
+/// `id` is constrained to non-negative `i32` (`0..=i32::MAX`) and is echoed
+/// back unchanged as `TriageScore.policyId`.
+#[derive(InputObject)]
+struct EventTriagePolicyInput {
+    id: i32,
+    packet_attr: Vec<PacketAttrInput>,
+    confidence: Vec<ConfidenceInput>,
+    response: Vec<ResponseInput>,
+}
+
+/// Inline exclusion input for `eventListWithTriage`.
+///
+/// All four fields are nullable at the schema level; an object with no
+/// populated field is rejected by the resolver. When more than one field is
+/// populated the object is flattened into independent `TriageExclusion`
+/// values that are OR-combined with the rest.
+#[derive(InputObject)]
+struct EventTriageExclusionInput {
+    ip_address: Option<HostNetworkGroupInput>,
+    domain: Option<Vec<String>>,
+    hostname: Option<Vec<String>>,
+    uri: Option<Vec<String>>,
+}
+
 struct TriageScore<'a> {
     inner: &'a database::event::TriageScore,
 }
@@ -948,6 +1073,7 @@ struct EventTotalCount {
     start: Option<DateTime<Utc>>,
     end: Option<DateTime<Utc>>,
     filter: EventFilter,
+    exclusions: Vec<TriageExclusion>,
 }
 
 #[Object]
@@ -996,6 +1122,9 @@ impl EventTotalCount {
                 break;
             }
             if !event.matches(locator, &self.filter)?.0 {
+                continue;
+            }
+            if !self.exclusions.is_empty() && event.matches_exclusion(&self.exclusions) {
                 continue;
             }
             count += 1;
@@ -1320,7 +1449,12 @@ async fn load(
     let mut connection = Connection::with_additional_fields(
         has_previous,
         has_next,
-        EventTotalCount { start, end, filter },
+        EventTotalCount {
+            start,
+            end,
+            filter,
+            exclusions: Vec::new(),
+        },
     );
     connection.edges.extend(
         events
@@ -1599,6 +1733,229 @@ fn iter_to_events(
         };
         if let Some(triage_score) = triage_score {
             event.set_triage_scores(triage_score);
+        }
+        events.push((key, event.into()));
+        exceeded = events.len() > len;
+        if exceeded {
+            break;
+        }
+    }
+    if exceeded {
+        events.pop();
+    }
+    Ok((events, exceeded))
+}
+
+impl From<EventStandardFilterInput> for EventListFilterInput {
+    fn from(input: EventStandardFilterInput) -> Self {
+        Self {
+            start: input.start,
+            end: input.end,
+            customers: input.customers,
+            endpoints: input.endpoints,
+            directions: input.directions,
+            source: input.source,
+            destination: input.destination,
+            keywords: input.keywords,
+            network_tags: input.network_tags,
+            sensors: input.sensors,
+            os: input.os,
+            devices: input.devices,
+            hostnames: input.hostnames,
+            user_ids: input.user_ids,
+            user_names: input.user_names,
+            user_departments: input.user_departments,
+            countries: input.countries,
+            categories: input.categories,
+            levels: input.levels,
+            kinds: input.kinds,
+            learning_methods: input.learning_methods,
+            confidence_min: input.confidence_min,
+            confidence_max: input.confidence_max,
+            triage_policies: None,
+        }
+    }
+}
+
+fn convert_event_triage_policies(
+    policies: &[EventTriagePolicyInput],
+) -> anyhow::Result<Vec<DbTriagePolicyInput>> {
+    let now = Utc::now();
+    let mut result = Vec::with_capacity(policies.len());
+    for policy in policies {
+        let id: u32 = policy
+            .id
+            .try_into()
+            .map_err(|_| anyhow!("triage policy id must be non-negative"))?;
+        result.push(DbTriagePolicyInput {
+            id,
+            name: id.to_string(),
+            creation_time: now,
+            triage_exclusion: Vec::new(),
+            packet_attr: policy.packet_attr.iter().map(Into::into).collect(),
+            confidence: policy.confidence.iter().map(Into::into).collect(),
+            response: policy.response.iter().map(Into::into).collect(),
+        });
+    }
+    Ok(result)
+}
+
+fn convert_event_triage_exclusions(
+    exclusions: &[EventTriageExclusionInput],
+) -> anyhow::Result<Vec<TriageExclusion>> {
+    let mut result = Vec::new();
+    for exclusion in exclusions {
+        let mut populated = false;
+        if let Some(group) = &exclusion.ip_address {
+            populated = true;
+            let host_network_group: HostNetworkGroup = group.try_into()?;
+            result.push(TriageExclusion::from(ExclusionReason::IpAddress(
+                host_network_group,
+            )));
+        }
+        if let Some(domains) = &exclusion.domain
+            && !domains.is_empty()
+        {
+            populated = true;
+            result.push(TriageExclusion::from(ExclusionReason::Domain(
+                domains.clone(),
+            )));
+        }
+        if let Some(hostnames) = &exclusion.hostname
+            && !hostnames.is_empty()
+        {
+            populated = true;
+            result.push(TriageExclusion::from(ExclusionReason::Hostname(
+                hostnames.clone(),
+            )));
+        }
+        if let Some(uris) = &exclusion.uri
+            && !uris.is_empty()
+        {
+            populated = true;
+            result.push(TriageExclusion::from(ExclusionReason::Uri(uris.clone())));
+        }
+        if !populated {
+            bail!("triage exclusion must have at least one populated field");
+        }
+    }
+    Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn load_with_triage(
+    ctx: &Context<'_>,
+    filter: &EventStandardFilterInput,
+    policies: &[DbTriagePolicyInput],
+    exclusions: &[TriageExclusion],
+    after: Option<String>,
+    before: Option<String>,
+    first: Option<usize>,
+    last: Option<usize>,
+) -> Result<Connection<String, Event, EventTotalCount, EmptyFields>> {
+    let store = crate::graphql::get_store(ctx)?;
+
+    let start = filter.start;
+    let end = filter.end;
+    let list_filter: EventListFilterInput = filter.clone().into();
+    let mut event_filter = from_filter_input(ctx, &store, &list_filter)?;
+    event_filter.moderate_kinds();
+    let db = store.events();
+    let (events, has_previous, has_next) = if let Some(last) = last {
+        let iter = db.iter_from(latest(end, before)?, Direction::Reverse);
+        let to = earliest(start, after)?;
+        let (events, has_more) = iter_to_events_with_triage(
+            ctx,
+            iter,
+            to,
+            cmp::Ordering::is_ge,
+            last,
+            &event_filter,
+            policies,
+            exclusions,
+        )
+        .map_err(|e| format!("{e}"))?;
+        (events.into_iter().rev().collect(), has_more, false)
+    } else {
+        let first = first.unwrap_or(DEFAULT_CONNECTION_SIZE);
+        let iter = db.iter_from(earliest(start, after)?, Direction::Forward);
+        let to = latest(end, before)?;
+        let (events, has_more) = iter_to_events_with_triage(
+            ctx,
+            iter,
+            to,
+            cmp::Ordering::is_le,
+            first,
+            &event_filter,
+            policies,
+            exclusions,
+        )
+        .map_err(|e| format!("{e}"))?;
+        (events, false, has_more)
+    };
+
+    let mut connection = Connection::with_additional_fields(
+        has_previous,
+        has_next,
+        EventTotalCount {
+            start,
+            end,
+            filter: event_filter,
+            exclusions: exclusions.to_vec(),
+        },
+    );
+    connection.edges.extend(
+        events
+            .into_iter()
+            .map(|(k, ev)| Edge::new(k.to_string(), ev)),
+    );
+    Ok(connection)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn iter_to_events_with_triage(
+    ctx: &Context<'_>,
+    iter: EventIterator,
+    to: i128,
+    cond: fn(cmp::Ordering) -> bool,
+    len: usize,
+    filter: &EventFilter,
+    policies: &[DbTriagePolicyInput],
+    exclusions: &[TriageExclusion],
+) -> anyhow::Result<(Vec<(i128, Event)>, bool)> {
+    let mut events = Vec::new();
+    let mut exceeded = false;
+    let locator = if filter.has_country() {
+        Some(
+            ctx.data::<ip2location::DB>()
+                .map_err(|_| anyhow!("unable to locate IP address"))?,
+        )
+    } else {
+        None
+    };
+
+    for item in iter {
+        let (key, mut event) = match item {
+            Ok(kv) => kv,
+            Err(e) => {
+                warn_with_username!(ctx, "Invalid event: {:?}", e);
+                continue;
+            }
+        };
+        if !(cond)(key.cmp(&to)) {
+            break;
+        }
+        if !event.matches(locator, filter)?.0 {
+            continue;
+        }
+        if !exclusions.is_empty() && event.matches_exclusion(exclusions) {
+            continue;
+        }
+        if !policies.is_empty() {
+            let scores = event.score_against_policies(policies);
+            if !scores.is_empty() {
+                event.set_triage_scores(scores);
+            }
         }
         events.push((key, event.into()));
         exceeded = events.len() > len;
@@ -3030,31 +3387,31 @@ mod tests {
             packet_attr: Vec::new(),
             confidence: vec![
                 database::Confidence {
-                    threat_category: database::EventCategory::CommandAndControl,
+                    threat_category: Some(database::EventCategory::CommandAndControl),
                     threat_kind: "dns covert channel".to_string(),
                     confidence: 0.0,
                     weight: Some(0.9),
                 },
                 database::Confidence {
-                    threat_category: database::EventCategory::CommandAndControl,
+                    threat_category: Some(database::EventCategory::CommandAndControl),
                     threat_kind: "http threat".to_string(),
                     confidence: 0.0,
                     weight: Some(0.9),
                 },
                 database::Confidence {
-                    threat_category: database::EventCategory::InitialAccess,
+                    threat_category: Some(database::EventCategory::InitialAccess),
                     threat_kind: "dga".to_string(),
                     confidence: 0.0,
                     weight: Some(0.8),
                 },
                 database::Confidence {
-                    threat_category: database::EventCategory::InitialAccess,
+                    threat_category: Some(database::EventCategory::InitialAccess),
                     threat_kind: "locky ransomware".to_string(),
                     confidence: 0.0,
                     weight: Some(0.8),
                 },
                 database::Confidence {
-                    threat_category: database::EventCategory::Discovery,
+                    threat_category: Some(database::EventCategory::Discovery),
                     threat_kind: "non browser".to_string(),
                     confidence: 0.0,
                     weight: Some(0.5),
@@ -3220,5 +3577,344 @@ mod tests {
         assert!(data.contains("level: MEDIUM"));
         assert!(data.contains("learningMethod: SEMI_SUPERVISED"));
         assert!(data.contains(r#"totalCount: "1""#));
+    }
+
+    #[tokio::test]
+    async fn event_list_with_triage_matches_event_list_cursor_semantics() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let timestamps: Vec<_> = (0u32..5)
+            .map(|i| {
+                NaiveDate::from_ymd_opt(2026, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, i)
+                    .unwrap()
+                    .and_local_timezone(Utc)
+                    .unwrap()
+            })
+            .collect();
+        for (i, ts) in timestamps.iter().enumerate() {
+            let src = u32::try_from(i + 1).unwrap();
+            db.put(&event_message_at(*ts, src, src + 100)).unwrap();
+        }
+        let start_ts = timestamps[0];
+
+        let event_list_query = format!(
+            "{{ eventList(filter: {{ start:\"{start_ts}\" }}, first: 3) {{ \
+                edges {{ cursor node {{... on DnsCovertChannel {{ time }} }} }} \
+                pageInfo {{ hasNextPage hasPreviousPage }} \
+            }} }}",
+        );
+        let event_list_res = schema.execute_as_system_admin(&event_list_query).await;
+        let event_list_data = event_list_res.data.to_string();
+
+        let with_triage_query = format!(
+            "{{ eventListWithTriage(filter: {{ start:\"{start_ts}\" }}, first: 3) {{ \
+                edges {{ cursor node {{... on DnsCovertChannel {{ time }} }} }} \
+                pageInfo {{ hasNextPage hasPreviousPage }} \
+            }} }}",
+        );
+        let with_triage_res = schema.execute_as_system_admin(&with_triage_query).await;
+        let with_triage_data = with_triage_res.data.to_string();
+
+        let normalized_event_list = event_list_data.replacen("eventList", "eventListWithTriage", 1);
+        assert_eq!(normalized_event_list, with_triage_data);
+    }
+
+    #[tokio::test]
+    async fn event_list_with_triage_policy_non_match_preserves_event() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(ts, 1, 2)).unwrap();
+
+        // Policy with very high minimum_score so the event scores nothing.
+        let query = format!(
+            "{{ eventListWithTriage( \
+                filter: {{ start:\"{ts}\" }}, \
+                triage: {{ \
+                    policies: [{{ \
+                        id: 7, \
+                        packetAttr: [], \
+                        confidence: [], \
+                        response: [{{ minimumScore: 999.0, kind: MANUAL }}] \
+                    }}] \
+                }} \
+            ) {{ \
+                edges {{ node {{... on DnsCovertChannel {{ triageScores {{ policyId }} }} }} }} \
+                totalCount \
+            }} }}",
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventListWithTriage: {edges: [{node: {triageScores: null}}], totalCount: "1"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn event_list_with_triage_inline_exclusion_cuts() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        // The default DnsCovertChannel test event has `query: "domain"`,
+        // which `TriageExclusion::Domain(["domain"])` matches via its regex.
+        db.put(&event_message_at(ts, 1, 2)).unwrap();
+
+        let query = format!(
+            "{{ eventListWithTriage( \
+                filter: {{ start:\"{ts}\" }}, \
+                triage: {{ exclusions: [{{ domain: [\"domain\"] }}] }} \
+            ) {{ \
+                edges {{ node {{... on DnsCovertChannel {{ time }} }} }} \
+                totalCount \
+            }} }}",
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventListWithTriage: {edges: [], totalCount: "0"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn event_list_with_triage_first_plus_one_on_surviving_events() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        // Insert 4 excluded events, then 2 surviving events.
+        let mut idx = 0u32;
+        let ts = |seconds: u32| {
+            NaiveDate::from_ymd_opt(2026, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, seconds)
+                .unwrap()
+                .and_local_timezone(Utc)
+                .unwrap()
+        };
+        for _ in 0..4 {
+            // The default `event_message_at` builder uses `query: "domain"`,
+            // matched by `TriageExclusion::Domain(["domain"])`.
+            db.put(&event_message_at(ts(idx), idx + 1, idx + 100))
+                .unwrap();
+            idx += 1;
+        }
+        // Insert surviving events with a different query string.
+        for _ in 0..2 {
+            let fields = DnsEventFields {
+                sensor: "sensor1".to_string(),
+                start_time: ts(idx).timestamp_nanos_opt().unwrap(),
+                duration: 0,
+                orig_addr: Ipv4Addr::from(idx + 1).into(),
+                orig_port: 10000,
+                resp_addr: Ipv4Addr::from(idx + 100).into(),
+                resp_port: 53,
+                proto: 17,
+                orig_pkts: 0,
+                resp_pkts: 0,
+                orig_l2_bytes: 0,
+                resp_l2_bytes: 0,
+                query: "survivor".into(),
+                answer: Vec::new(),
+                trans_id: 0,
+                rtt: 0,
+                qclass: 0,
+                qtype: 0,
+                rcode: 0,
+                aa_flag: false,
+                tc_flag: false,
+                rd_flag: false,
+                ra_flag: false,
+                ttl: Vec::new(),
+                confidence: 0.8,
+                category: Some(EventCategory::CommandAndControl),
+            };
+            db.put(&EventMessage {
+                time: ts(idx),
+                kind: EventKind::DnsCovertChannel,
+                fields: bincode::serialize(&fields).expect("serializable"),
+            })
+            .unwrap();
+            idx += 1;
+        }
+        let start_ts = ts(0);
+
+        // Request first=1 with exclusion that cuts the first 4. The resolver
+        // must keep scanning and return the 5th event with hasNextPage=true.
+        let query = format!(
+            "{{ eventListWithTriage( \
+                filter: {{ start:\"{start_ts}\" }}, \
+                triage: {{ exclusions: [{{ domain: [\"domain\"] }}] }}, \
+                first: 1 \
+            ) {{ \
+                edges {{ node {{... on DnsCovertChannel {{ time query }} }} }} \
+                pageInfo {{ hasNextPage }} \
+                totalCount \
+            }} }}",
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        let data = res.data.to_string();
+        assert!(data.contains(r#"query: "survivor""#), "got: {data}");
+        assert!(data.contains("hasNextPage: true"), "got: {data}");
+        assert!(data.contains(r#"totalCount: "2""#), "got: {data}");
+    }
+
+    #[tokio::test]
+    async fn event_list_with_triage_schema_rejects_filter_triage_policies() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin(
+                r#"{ eventListWithTriage(filter: { triagePolicies: ["1"] }) { totalCount } }"#,
+            )
+            .await;
+        assert!(!res.errors.is_empty(), "expected schema validation error");
+    }
+
+    #[tokio::test]
+    async fn event_list_with_triage_exclusion_flattens_and_rejects_empty() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(ts, 1, 2)).unwrap();
+
+        // Single multi-field exclusion: ipAddress (no match) + domain (matches).
+        let query_combined = format!(
+            "{{ eventListWithTriage( \
+                filter: {{ start:\"{ts}\" }}, \
+                triage: {{ exclusions: [{{ \
+                    ipAddress: {{ hosts: [\"99.99.99.99\"], networks: [], ranges: [] }}, \
+                    domain: [\"domain\"] \
+                }}] }} \
+            ) {{ totalCount }} }}",
+        );
+        let res_combined = schema.execute_as_system_admin(&query_combined).await;
+        assert_eq!(
+            res_combined.data.to_string(),
+            r#"{eventListWithTriage: {totalCount: "0"}}"#
+        );
+
+        // Equivalent two-element list.
+        let query_split = format!(
+            "{{ eventListWithTriage( \
+                filter: {{ start:\"{ts}\" }}, \
+                triage: {{ exclusions: [ \
+                    {{ ipAddress: {{ hosts: [\"99.99.99.99\"], networks: [], ranges: [] }} }}, \
+                    {{ domain: [\"domain\"] }} \
+                ] }} \
+            ) {{ totalCount }} }}",
+        );
+        let res_split = schema.execute_as_system_admin(&query_split).await;
+        assert_eq!(
+            res_split.data.to_string(),
+            r#"{eventListWithTriage: {totalCount: "0"}}"#
+        );
+
+        // Empty exclusion is rejected.
+        let query_empty = format!(
+            "{{ eventListWithTriage( \
+                filter: {{ start:\"{ts}\" }}, \
+                triage: {{ exclusions: [{{}}] }} \
+            ) {{ totalCount }} }}",
+        );
+        let res_empty = schema.execute_as_system_admin(&query_empty).await;
+        assert!(
+            !res_empty.errors.is_empty(),
+            "expected error for empty exclusion"
+        );
+    }
+
+    #[tokio::test]
+    async fn event_list_with_triage_total_count_matches_surviving() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let mut idx = 0u32;
+        let ts = |seconds: u32| {
+            NaiveDate::from_ymd_opt(2026, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, seconds)
+                .unwrap()
+                .and_local_timezone(Utc)
+                .unwrap()
+        };
+        // 3 events with default query "domain" (excluded), 2 with "survivor".
+        for _ in 0..3 {
+            db.put(&event_message_at(ts(idx), idx + 1, idx + 100))
+                .unwrap();
+            idx += 1;
+        }
+        for _ in 0..2 {
+            let fields = DnsEventFields {
+                sensor: "sensor1".to_string(),
+                start_time: ts(idx).timestamp_nanos_opt().unwrap(),
+                duration: 0,
+                orig_addr: Ipv4Addr::from(idx + 1).into(),
+                orig_port: 10000,
+                resp_addr: Ipv4Addr::from(idx + 100).into(),
+                resp_port: 53,
+                proto: 17,
+                orig_pkts: 0,
+                resp_pkts: 0,
+                orig_l2_bytes: 0,
+                resp_l2_bytes: 0,
+                query: "survivor".into(),
+                answer: Vec::new(),
+                trans_id: 0,
+                rtt: 0,
+                qclass: 0,
+                qtype: 0,
+                rcode: 0,
+                aa_flag: false,
+                tc_flag: false,
+                rd_flag: false,
+                ra_flag: false,
+                ttl: Vec::new(),
+                confidence: 0.8,
+                category: Some(EventCategory::CommandAndControl),
+            };
+            db.put(&EventMessage {
+                time: ts(idx),
+                kind: EventKind::DnsCovertChannel,
+                fields: bincode::serialize(&fields).expect("serializable"),
+            })
+            .unwrap();
+            idx += 1;
+        }
+        let start_ts = ts(0);
+
+        let query = format!(
+            "{{ eventListWithTriage( \
+                filter: {{ start:\"{start_ts}\" }}, \
+                triage: {{ exclusions: [{{ domain: [\"domain\"] }}] }}, \
+                first: 100 \
+            ) {{ \
+                edges {{ node {{... on DnsCovertChannel {{ time }} }} }} \
+                totalCount \
+            }} }}",
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        let data = res.data.to_string();
+        assert!(data.contains(r#"totalCount: "2""#), "got: {data}");
+        // Both surviving events should be in edges (count of "time:" occurrences = 2).
+        assert_eq!(data.matches("time:").count(), 2, "got: {data}");
     }
 }

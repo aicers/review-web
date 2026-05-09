@@ -4,6 +4,32 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `eventListWithTriage` GraphQL query that returns events passing the
+  standard filter regardless of policy match, with optional inline triage
+  scoring and exclusions. The new resolver supports two caller patterns:
+  the interactive/corpus B trigger path that supplies the `triage` argument
+  with inline `policies` and/or `exclusions`, and the cadence corpus A fill
+  path that calls with `triage = null`. Events that score nothing keep
+  `triageScores: null` and remain in the connection. Inline exclusions cut
+  events from the connection and from `totalCount`. Cursor pagination
+  matches `eventList` semantics, and `first + 1` / `last + 1` accounting is
+  performed on surviving (post-exclusion) events. Accepts the new input
+  types `EventStandardFilterInput`, `EventTriageInput`,
+  `EventTriagePolicyInput`, and `EventTriageExclusionInput`. Callable by
+  `SystemAdministrator | SecurityAdministrator | SecurityManager |
+  SecurityMonitor`.
+
+### Changed
+
+- `Confidence.threatCategory` and `ConfidenceInput.threatCategory` are now
+  nullable (`ThreatCategory` -> `Option<ThreatCategory>`) following the
+  underlying `review-database` change that made `Confidence::threat_category`
+  optional.
+
 ## [0.31.0] - 2026-04-18
 
 ### Added
