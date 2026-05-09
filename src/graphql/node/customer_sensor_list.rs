@@ -11,13 +11,13 @@ use super::super::customer_access::{is_member, users_customers};
 #[derive(SimpleObject)]
 pub(super) struct Sensor {
     /// The ID of the owning customer.
-    pub customer_id: i32,
+    customer_id: i32,
 
     /// The agent key (e.g., `agent@hostname`).
-    pub agent_key: String,
+    agent_key: String,
 
     /// The fully-qualified hostname of the host on which the sensor runs.
-    pub host_fqdn: String,
+    host_fqdn: String,
 }
 
 pub(super) struct SensorTotalCount {
@@ -42,9 +42,9 @@ impl SensorTotalCount {
 ///
 /// # Errors
 ///
-/// Returns an error if any provided ID is negative, the list is empty, the
-/// user's customer scope cannot be determined, or any provided ID falls
-/// outside the caller's accessible scope.
+/// Returns an error if any provided ID does not fit in `u32`, the list is
+/// empty, the user's customer scope cannot be determined, or any provided ID
+/// falls outside the caller's accessible scope.
 fn validate_customer_ids(
     ctx: &Context<'_>,
     customer_ids: Option<Vec<i32>>,
@@ -63,8 +63,9 @@ fn validate_customer_ids(
     }
     parsed.sort_unstable();
     parsed.dedup();
+    let scope = users_customers.as_deref();
     for id in &parsed {
-        if !is_member(users_customers.as_deref(), *id) {
+        if !is_member(scope, *id) {
             return Err("Forbidden".into());
         }
     }
@@ -97,17 +98,19 @@ fn collect_sensors(
             if agent.config.is_none() {
                 continue;
             }
+            let agent_key = agent.key.clone();
+            let cursor = agent_key.as_bytes().to_vec();
             sensors.push((
-                agent.key.as_bytes().to_vec(),
+                cursor,
                 Sensor {
                     customer_id,
-                    agent_key: agent.key.clone(),
+                    agent_key,
                     host_fqdn: profile.hostname.clone(),
                 },
             ));
         }
     }
-    sensors.sort_by(|a, b| a.0.cmp(&b.0));
+    sensors.sort_unstable_by(|a, b| a.0.cmp(&b.0));
     Ok(sensors)
 }
 
@@ -537,5 +540,99 @@ mod tests {
         let edges = data["customerSensorList"]["edges"].as_array().unwrap();
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0]["node"]["agentKey"], "piglet@a.example.com");
+    }
+
+    fn seed_three_sensors(schema: &TestSchema) {
+        let store = schema.store();
+        for (name, host) in [
+            ("node-a", "a.example.com"),
+            ("node-b", "b.example.com"),
+            ("node-c", "c.example.com"),
+        ] {
+            insert_node(
+                &store,
+                name,
+                Some(profile(1, host)),
+                None,
+                vec![agent(
+                    AgentKind::Sensor,
+                    &format!("piglet@{host}"),
+                    Some(""),
+                    None,
+                )],
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn first_paginates_with_after_cursor() {
+        let schema = TestSchema::new().await;
+        seed_three_sensors(&schema);
+
+        let res = schema
+            .execute_as_system_admin(
+                r"{customerSensorList(first: 2) { totalCount edges { cursor node { agentKey } } pageInfo { endCursor hasNextPage hasPreviousPage } } }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        let edges = data["customerSensorList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[0]["node"]["agentKey"], "piglet@a.example.com");
+        assert_eq!(edges[1]["node"]["agentKey"], "piglet@b.example.com");
+        assert_eq!(data["customerSensorList"]["totalCount"], json!("3"));
+        assert_eq!(
+            data["customerSensorList"]["pageInfo"]["hasNextPage"],
+            json!(true)
+        );
+        assert_eq!(
+            data["customerSensorList"]["pageInfo"]["hasPreviousPage"],
+            json!(false)
+        );
+
+        let end_cursor = data["customerSensorList"]["pageInfo"]["endCursor"]
+            .as_str()
+            .expect("endCursor")
+            .to_string();
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"{{customerSensorList(first: 2, after: "{end_cursor}") {{ edges {{ node {{ agentKey }} }} pageInfo {{ hasNextPage }} }} }}"#
+            ))
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        let edges = data["customerSensorList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["node"]["agentKey"], "piglet@c.example.com");
+        assert_eq!(
+            data["customerSensorList"]["pageInfo"]["hasNextPage"],
+            json!(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn last_returns_trailing_edges() {
+        let schema = TestSchema::new().await;
+        seed_three_sensors(&schema);
+
+        let res = schema
+            .execute_as_system_admin(
+                r"{customerSensorList(last: 2) { edges { node { agentKey } } pageInfo { hasNextPage hasPreviousPage } } }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        let edges = data["customerSensorList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[0]["node"]["agentKey"], "piglet@b.example.com");
+        assert_eq!(edges[1]["node"]["agentKey"], "piglet@c.example.com");
+        assert_eq!(
+            data["customerSensorList"]["pageInfo"]["hasPreviousPage"],
+            json!(true)
+        );
+        assert_eq!(
+            data["customerSensorList"]["pageInfo"]["hasNextPage"],
+            json!(false)
+        );
     }
 }
