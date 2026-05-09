@@ -59,6 +59,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `comprehensiveUserList` now reports `isLocked` based on the account's
   current temporary-lock expiry and `isSuspended` from the account's
   suspension state, rather than deriving both from a single flag.
+- Scoped `REVIEW_WEB_DISABLE_LOCAL_AUTH_BYPASS` and the `is_local`
+  loopback-bypass plumbing to the `auth-jwt` build only. Under `auth-mtls`
+  the env var is now a no-op; loopback callers are subject to the same
+  mTLS peer-cert + JWT validation as any other peer. Operators who set
+  this env as a workaround can drop it after upgrade. `auth-jwt`
+  semantics are unchanged.
 
 ## [0.31.0] - 2026-04-18
 

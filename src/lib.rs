@@ -23,9 +23,11 @@ use async_graphql::{
     http::{GraphQLPlaygroundConfig, playground_source},
 };
 use async_graphql_axum::{GraphQLProtocol, GraphQLRequest, GraphQLResponse, GraphQLWebSocket};
+#[cfg(feature = "auth-jwt")]
+use axum::extract::ConnectInfo;
 use axum::{
     Json, Router,
-    extract::{ConnectInfo, Extension, WebSocketUpgrade},
+    extract::{Extension, WebSocketUpgrade},
     response::{Html, IntoResponse, Response},
     routing::{get, get_service},
 };
@@ -73,6 +75,7 @@ const ERR_MTLS_REQUIRED: &str = "mTLS is required";
 const ERR_MTLS_MISSING_CERT: &str = "mTLS client certificate is missing";
 #[cfg(feature = "auth-mtls")]
 const ERR_MISSING_AUTHORIZATION: &str = "Missing Authorization";
+#[cfg(feature = "auth-jwt")]
 const DISABLE_LOCAL_AUTH_BYPASS_ENV: &str = "REVIEW_WEB_DISABLE_LOCAL_AUTH_BYPASS";
 
 /// Parameters for a web server.
@@ -365,6 +368,7 @@ async fn graphql_playground() -> Result<impl IntoResponse, Error> {
     )))
 }
 
+#[cfg(feature = "auth-jwt")]
 fn is_local(addr: SocketAddr) -> bool {
     if std::env::var_os(DISABLE_LOCAL_AUTH_BYPASS_ENV).is_some() {
         return false;
@@ -412,19 +416,11 @@ async fn graphql_handler(
     Extension(schema): Extension<graphql::Schema>,
     Extension(_store): Extension<Arc<RwLock<Store>>>,
     Extension(authenticator): Extension<Arc<dyn MtlsAuthenticator>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     peer: Option<Extension<Arc<TlsPeerInfo>>>,
     auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
     request: GraphQLRequest,
 ) -> Result<GraphQLResponse, Error> {
     let request = request.into_inner();
-    if is_local(addr) {
-        return Ok(schema
-            .execute(request.data(RoleGuard::Local).data(addr))
-            .await
-            .into());
-    }
-
     let peer = peer
         .map(|Extension(p)| p)
         .ok_or_else(|| Error::Unauthorized(ERR_MTLS_REQUIRED.to_string()))?;
@@ -490,7 +486,6 @@ async fn graphql_ws_handler(
     Extension(authenticator): Extension<Arc<dyn MtlsAuthenticator>>,
     protocol: GraphQLProtocol,
     websocket: WebSocketUpgrade,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     peer: Option<Extension<Arc<TlsPeerInfo>>>,
 ) -> Response {
     let peer = peer.map(|Extension(p)| p);
@@ -509,12 +504,6 @@ async fn graphql_ws_handler(
                             auth: String,
                         }
                         let mut data = Data::default();
-
-                        if is_local(addr) {
-                            data.insert(RoleGuard::Local);
-                            data.insert(addr);
-                            return Ok(data);
-                        }
 
                         let peer =
                             peer.ok_or_else(|| async_graphql::Error::new(ERR_MTLS_REQUIRED))?;
