@@ -2075,7 +2075,10 @@ mod tests {
     use review_database::{
         self as database, EventCategory, EventKind, EventMessage,
         event::{
-            BlocklistBootpFields, BlocklistDhcpFields, BlocklistTlsFields, DnsEventFields,
+            BlocklistBootpFields, BlocklistConnFields, BlocklistDceRpcFields, BlocklistDhcpFields,
+            BlocklistDnsFields, BlocklistKerberosFields, BlocklistMqttFields, BlocklistNfsFields,
+            BlocklistNtlmFields, BlocklistRdpFields, BlocklistSmbFields, BlocklistSmtpFields,
+            BlocklistSshFields, BlocklistTlsFields, DnsEventFields,
             UnusualDestinationPatternFields,
         },
     };
@@ -2288,6 +2291,441 @@ mod tests {
             .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![1]))
             .await;
         assert_eq!(res.data.to_string(), r"{event: null}");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn event_lookup_resolves_each_blocklist_kind() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let base = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+
+        let conn_ts = base;
+        let conn_key = db
+            .put(&EventMessage {
+                time: conn_ts,
+                kind: EventKind::BlocklistConn,
+                fields: bincode::serialize(&BlocklistConnFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 1).into(),
+                    orig_port: 1000,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 2).into(),
+                    resp_port: 80,
+                    proto: 6,
+                    conn_state: "S0".to_string(),
+                    start_time: conn_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    service: "http".to_string(),
+                    orig_bytes: 0,
+                    resp_bytes: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    confidence: 0.7,
+                    category: Some(EventCategory::InitialAccess),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let dns_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 1)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let dns_key = db
+            .put(&EventMessage {
+                time: dns_ts,
+                kind: EventKind::BlocklistDns,
+                fields: bincode::serialize(&BlocklistDnsFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 3).into(),
+                    orig_port: 50000,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 4).into(),
+                    resp_port: 53,
+                    proto: 17,
+                    start_time: dns_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    query: "evil.example.com".to_string(),
+                    answer: vec!["1.2.3.4".to_string()],
+                    trans_id: 1,
+                    rtt: 0,
+                    qclass: 1,
+                    qtype: 1,
+                    rcode: 0,
+                    aa_flag: false,
+                    tc_flag: false,
+                    rd_flag: true,
+                    ra_flag: true,
+                    ttl: vec![60],
+                    confidence: 0.7,
+                    category: Some(EventCategory::CommandAndControl),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let dcerpc_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 2)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let dcerpc_key = db
+            .put(&EventMessage {
+                time: dcerpc_ts,
+                kind: EventKind::BlocklistDceRpc,
+                fields: bincode::serialize(&BlocklistDceRpcFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 5).into(),
+                    orig_port: 1024,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 6).into(),
+                    resp_port: 135,
+                    proto: 6,
+                    start_time: dcerpc_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    context: Vec::new(),
+                    request: Vec::new(),
+                    confidence: 0.7,
+                    category: Some(EventCategory::LateralMovement),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let kerberos_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 3)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let kerberos_key = db
+            .put(&EventMessage {
+                time: kerberos_ts,
+                kind: EventKind::BlocklistKerberos,
+                fields: bincode::serialize(&BlocklistKerberosFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 7).into(),
+                    orig_port: 1025,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 8).into(),
+                    resp_port: 88,
+                    proto: 6,
+                    start_time: kerberos_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    client_time: 0,
+                    server_time: 0,
+                    error_code: 0,
+                    client_realm: "REALM".to_string(),
+                    cname_type: 1,
+                    client_name: vec!["alice".to_string()],
+                    realm: "REALM".to_string(),
+                    sname_type: 2,
+                    service_name: vec!["krbtgt".to_string()],
+                    confidence: 0.7,
+                    category: Some(EventCategory::LateralMovement),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let mqtt_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 4)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let mqtt_key = db
+            .put(&EventMessage {
+                time: mqtt_ts,
+                kind: EventKind::BlocklistMqtt,
+                fields: bincode::serialize(&BlocklistMqttFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 9).into(),
+                    orig_port: 1026,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 10).into(),
+                    resp_port: 1883,
+                    proto: 6,
+                    start_time: mqtt_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    protocol: "MQTT".to_string(),
+                    version: 4,
+                    client_id: "client".to_string(),
+                    connack_reason: 0,
+                    subscribe: vec!["topic".to_string()],
+                    suback_reason: vec![0],
+                    confidence: 0.7,
+                    category: Some(EventCategory::CommandAndControl),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let nfs_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 5)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let nfs_key = db
+            .put(&EventMessage {
+                time: nfs_ts,
+                kind: EventKind::BlocklistNfs,
+                fields: bincode::serialize(&BlocklistNfsFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 11).into(),
+                    orig_port: 1027,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 12).into(),
+                    resp_port: 2049,
+                    proto: 6,
+                    start_time: nfs_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    read_files: vec!["/etc/passwd".to_string()],
+                    write_files: vec![],
+                    confidence: 0.7,
+                    category: Some(EventCategory::Collection),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let ntlm_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 6)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let ntlm_key = db
+            .put(&EventMessage {
+                time: ntlm_ts,
+                kind: EventKind::BlocklistNtlm,
+                fields: bincode::serialize(&BlocklistNtlmFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 13).into(),
+                    orig_port: 1028,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 14).into(),
+                    resp_port: 445,
+                    proto: 6,
+                    start_time: ntlm_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    protocol: "NTLM".to_string(),
+                    username: "alice".to_string(),
+                    hostname: "host".to_string(),
+                    domainname: "domain".to_string(),
+                    success: "true".to_string(),
+                    confidence: 0.7,
+                    category: Some(EventCategory::CredentialAccess),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let rdp_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 7)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let rdp_key = db
+            .put(&EventMessage {
+                time: rdp_ts,
+                kind: EventKind::BlocklistRdp,
+                fields: bincode::serialize(&BlocklistRdpFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 15).into(),
+                    orig_port: 1029,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 16).into(),
+                    resp_port: 3389,
+                    proto: 6,
+                    start_time: rdp_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    cookie: "cookie".to_string(),
+                    confidence: 0.7,
+                    category: Some(EventCategory::LateralMovement),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let smb_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 8)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let smb_key = db
+            .put(&EventMessage {
+                time: smb_ts,
+                kind: EventKind::BlocklistSmb,
+                fields: bincode::serialize(&BlocklistSmbFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 17).into(),
+                    orig_port: 1030,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 18).into(),
+                    resp_port: 445,
+                    proto: 6,
+                    start_time: smb_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    command: 1,
+                    path: "/share".to_string(),
+                    service: "IPC".to_string(),
+                    file_name: "file".to_string(),
+                    file_size: 0,
+                    resource_type: 0,
+                    fid: 0,
+                    create_time: 0,
+                    access_time: 0,
+                    write_time: 0,
+                    change_time: 0,
+                    confidence: 0.7,
+                    category: Some(EventCategory::Collection),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let smtp_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 9)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let smtp_key = db
+            .put(&EventMessage {
+                time: smtp_ts,
+                kind: EventKind::BlocklistSmtp,
+                fields: bincode::serialize(&BlocklistSmtpFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 19).into(),
+                    orig_port: 1031,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 20).into(),
+                    resp_port: 25,
+                    proto: 6,
+                    start_time: smtp_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    mailfrom: "alice@example.com".to_string(),
+                    date: "2026-04-01".to_string(),
+                    from: "alice".to_string(),
+                    to: "bob".to_string(),
+                    subject: "subject".to_string(),
+                    agent: "agent".to_string(),
+                    state: "state".to_string(),
+                    confidence: 0.7,
+                    category: Some(EventCategory::Exfiltration),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        let ssh_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 10)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let ssh_key = db
+            .put(&EventMessage {
+                time: ssh_ts,
+                kind: EventKind::BlocklistSsh,
+                fields: bincode::serialize(&BlocklistSshFields {
+                    sensor: "sensor1".to_string(),
+                    orig_addr: Ipv4Addr::new(10, 0, 0, 21).into(),
+                    orig_port: 1032,
+                    resp_addr: Ipv4Addr::new(10, 0, 0, 22).into(),
+                    resp_port: 22,
+                    proto: 6,
+                    start_time: ssh_ts.timestamp_nanos_opt().unwrap(),
+                    duration: 0,
+                    orig_pkts: 0,
+                    resp_pkts: 0,
+                    orig_l2_bytes: 0,
+                    resp_l2_bytes: 0,
+                    client: "OpenSSH".to_string(),
+                    server: "OpenSSH".to_string(),
+                    cipher_alg: "aes".to_string(),
+                    mac_alg: "hmac".to_string(),
+                    compression_alg: "none".to_string(),
+                    kex_alg: "kex".to_string(),
+                    host_key_alg: "rsa".to_string(),
+                    hassh_algorithms: "h".to_string(),
+                    hassh: "h".to_string(),
+                    hassh_server_algorithms: "h".to_string(),
+                    hassh_server: "h".to_string(),
+                    client_shka: "s".to_string(),
+                    server_shka: "s".to_string(),
+                    confidence: 0.7,
+                    category: Some(EventCategory::LateralMovement),
+                })
+                .unwrap(),
+            })
+            .unwrap();
+
+        drop(store);
+
+        let cases = [
+            (conn_key, "BlocklistConn"),
+            (dns_key, "BlocklistDns"),
+            (dcerpc_key, "BlocklistDceRpc"),
+            (kerberos_key, "BlocklistKerberos"),
+            (mqtt_key, "BlocklistMqtt"),
+            (nfs_key, "BlocklistNfs"),
+            (ntlm_key, "BlocklistNtlm"),
+            (rdp_key, "BlocklistRdp"),
+            (smb_key, "BlocklistSmb"),
+            (smtp_key, "BlocklistSmtp"),
+            (ssh_key, "BlocklistSsh"),
+        ];
+        for (key, typename) in cases {
+            let query = format!("{{ event(id: \"{key}\") {{ id __typename }} }}");
+            let res = schema.execute_as_system_admin(&query).await;
+            assert_eq!(
+                res.data.to_string(),
+                format!(r#"{{event: {{id: "{key}", __typename: "{typename}"}}}}"#)
+            );
+        }
     }
 
     #[tokio::test]
