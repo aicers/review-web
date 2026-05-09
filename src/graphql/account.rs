@@ -83,7 +83,7 @@ const MAX_FAILED_ATTEMPTS_TEMP_LOCK_KEY: &str = "max failed attempts before temp
 const TEMP_LOCK_DURATION_SECONDS_KEY: &str = "temporary lock duration in seconds";
 const MAX_FAILED_ATTEMPTS_SUSPEND_KEY: &str = "max failed attempts before suspension";
 const DEFAULT_MAX_FAILED_ATTEMPTS_TEMP_LOCK: u8 = 5;
-const DEFAULT_TEMP_LOCK_DURATION_SECONDS: u32 = 900;
+const DEFAULT_TEMP_LOCK_DURATION_SECONDS: u32 = 1800;
 const DEFAULT_MAX_FAILED_ATTEMPTS_SUSPEND: u8 = 10;
 
 #[derive(Default)]
@@ -897,9 +897,9 @@ impl AccountMutation {
     async fn update_account_lockout_policy(
         &self,
         ctx: &Context<'_>,
-        #[graphql(validator(minimum = 1))] max_failed_attempts_temp_lock: u8,
-        #[graphql(validator(minimum = 1))] temp_lock_duration_seconds: u32,
-        #[graphql(validator(minimum = 1))] max_failed_attempts_suspend: u8,
+        #[graphql(validator(minimum = 3))] max_failed_attempts_temp_lock: u8,
+        #[graphql(validator(minimum = 60))] temp_lock_duration_seconds: u32,
+        #[graphql(validator(minimum = 3))] max_failed_attempts_suspend: u8,
     ) -> Result<AccountLockoutPolicy> {
         if max_failed_attempts_suspend < max_failed_attempts_temp_lock {
             return Err(
@@ -4975,7 +4975,7 @@ mod tests {
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
         assert_eq!(
             res.data.to_string(),
-            r"{accountLockoutPolicy: {maxFailedAttemptsTempLock: 5, tempLockDurationSeconds: 900, maxFailedAttemptsSuspend: 10}}"
+            r"{accountLockoutPolicy: {maxFailedAttemptsTempLock: 5, tempLockDurationSeconds: 1800, maxFailedAttemptsSuspend: 10}}"
         );
     }
 
@@ -5102,7 +5102,7 @@ mod tests {
             .execute_as_system_admin(
                 r"mutation {
                     updateAccountLockoutPolicy(
-                        maxFailedAttemptsTempLock: 2,
+                        maxFailedAttemptsTempLock: 3,
                         tempLockDurationSeconds: 60,
                         maxFailedAttemptsSuspend: 5
                     ) { maxFailedAttemptsTempLock }
@@ -5115,11 +5115,13 @@ mod tests {
             signIn(username: "lockee", password: "wrong") { reviewToken }
         }"#;
 
-        let res = schema.execute_as_system_admin(wrong_password).await;
-        assert_eq!(
-            res.errors.first().unwrap().message,
-            "incorrect username or password"
-        );
+        for _ in 0..2 {
+            let res = schema.execute_as_system_admin(wrong_password).await;
+            assert_eq!(
+                res.errors.first().unwrap().message,
+                "incorrect username or password"
+            );
+        }
 
         let res = schema.execute_as_system_admin(wrong_password).await;
         assert!(
@@ -5133,7 +5135,7 @@ mod tests {
         let store = schema.store();
         let map = store.account_map();
         let account = map.get("lockee").unwrap().unwrap();
-        assert_eq!(account.failed_login_attempts, 2);
+        assert_eq!(account.failed_login_attempts, 3);
         assert!(account.locked_out_until.is_some());
         assert!(!account.is_suspended);
     }
@@ -5163,8 +5165,8 @@ mod tests {
             .execute_as_system_admin(
                 r"mutation {
                     updateAccountLockoutPolicy(
-                        maxFailedAttemptsTempLock: 1,
-                        tempLockDurationSeconds: 1,
+                        maxFailedAttemptsTempLock: 3,
+                        tempLockDurationSeconds: 60,
                         maxFailedAttemptsSuspend: 3
                     ) { maxFailedAttemptsTempLock }
                 }",
@@ -5221,9 +5223,9 @@ mod tests {
             .execute_as_system_admin(
                 r"mutation {
                     updateAccountLockoutPolicy(
-                        maxFailedAttemptsTempLock: 1,
-                        tempLockDurationSeconds: 1,
-                        maxFailedAttemptsSuspend: 2
+                        maxFailedAttemptsTempLock: 3,
+                        tempLockDurationSeconds: 60,
+                        maxFailedAttemptsSuspend: 3
                     ) { maxFailedAttemptsTempLock }
                 }",
             )
@@ -5235,7 +5237,7 @@ mod tests {
         let mut account = map.get("sysadmin2").unwrap().unwrap();
         // Simulate an account already one failure below the suspend threshold
         // with an expired lock so the next failure would normally suspend.
-        account.failed_login_attempts = 1;
+        account.failed_login_attempts = 2;
         account.locked_out_until = Some(Utc::now() - chrono::Duration::seconds(1));
         map.put(&account).unwrap();
 

@@ -36,7 +36,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `maxFailedAttemptsSuspend` (failed sign-in attempts before the account is
   suspended). The query is available to `SystemAdministrator` and
   `SecurityAdministrator`; only `SystemAdministrator` may update the policy.
-  Values default to 5 attempts, 900 seconds, and 10 attempts when unset.
+  Values default to 5 attempts, 1800 seconds, and 10 attempts when unset.
+  `updateAccountLockoutPolicy` enforces minimums of 3 attempts for both
+  thresholds and 60 seconds for the temporary lock duration to prevent
+  policies that effectively disable lockout protection or trigger immediate
+  lock/suspension on a single mistyped password.
 
 ### Changed
 
