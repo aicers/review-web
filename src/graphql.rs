@@ -849,6 +849,10 @@ where
 #[derive(Debug, PartialEq)]
 pub(crate) enum RoleGuard {
     Role(database::Role),
+    // The `Local` variant is constructed only by the `auth-jwt` loopback bypass
+    // in `lib.rs`, but is referenced as a guard in resolvers that compile under
+    // both feature flags.
+    #[cfg_attr(not(feature = "auth-jwt"), allow(dead_code))]
     Local,
 }
 

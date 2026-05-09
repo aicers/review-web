@@ -42,6 +42,7 @@ mod mtls_integration {
     const ERR_SAN_SERVICE_MISMATCH: &str = "Client certificate SAN does not match service name";
     const ERR_JWT_ALG_EC_MISMATCH: &str = "JWT algorithm does not match EC key";
     const ERR_MISSING_CUSTOMER_IDS: &str = "Missing customer_ids claim for non-admin role";
+    const ERR_MTLS_REQUIRED: &str = "mTLS is required";
     const WS_RECV_TIMEOUT: Duration = Duration::from_secs(5);
     // Fixed RSA private key used only to produce an RS256 JWT for alg-mismatch tests.
     const RSA_PRIVATE_KEY_PEM: &str = r"-----BEGIN PRIVATE KEY-----
@@ -318,10 +319,6 @@ xvcNsYaYqk6sRk/INvcaN2E=
     }
 
     fn start_test_server() -> anyhow::Result<TestServer> {
-        // SAFETY: test-only environment override for auth bypass is scoped to this process.
-        unsafe {
-            std::env::set_var("REVIEW_WEB_DISABLE_LOCAL_AUTH_BYPASS", "1");
-        }
         let addr_ip = LOCALHOST_IP;
         let port = {
             let listener =
@@ -544,6 +541,14 @@ xvcNsYaYqk6sRk/INvcaN2E=
         let client = build_client_without_identity(&server.ca_cert)?;
         let response = send_graphql_request(&client, &server.url, None).await?;
         assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+        let body: serde_json::Value =
+            serde_json::from_str(&response.text().await.context("read response body")?)
+                .context("parse response JSON")?;
+        let error = body
+            .get("error")
+            .and_then(|value| value.as_str())
+            .context("read error")?;
+        assert!(error.contains(ERR_MTLS_REQUIRED));
         server.shutdown.notify_one();
         server.shutdown.notified().await;
         Ok(())
