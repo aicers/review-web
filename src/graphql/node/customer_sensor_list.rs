@@ -74,10 +74,22 @@ fn validate_customer_ids(
     Ok(Some(parsed))
 }
 
+/// Builds a pagination cursor whose bytewise ordering matches the
+/// `(host_fqdn, node_id)` tuple ordering.
+///
+/// The terminator byte `0x00` separates the hostname from the big-endian
+/// node ID. Because hostnames per RFC 1123 are restricted to letters,
+/// digits, `-`, and `.` (none of which is `0x00`), the terminator never
+/// occurs inside `host_fqdn` and is strictly less than every byte that
+/// can. This makes the cursor of `("a", _)` sort before `("aa", _)`
+/// regardless of node ID — matching the documented sort order — and
+/// keeps `after`/`before` window filtering consistent with that order.
 fn cursor_for(host_fqdn: &str, node_id: u32) -> Vec<u8> {
+    const TERMINATOR: u8 = 0x00;
     let host_bytes = host_fqdn.as_bytes();
-    let mut cursor = Vec::with_capacity(host_bytes.len() + 4);
+    let mut cursor = Vec::with_capacity(host_bytes.len() + 1 + 4);
     cursor.extend_from_slice(host_bytes);
+    cursor.push(TERMINATOR);
     cursor.extend_from_slice(&node_id.to_be_bytes());
     cursor
 }
@@ -777,6 +789,114 @@ mod tests {
             data["customerSensorList"]["pageInfo"]["hasNextPage"],
             json!(false)
         );
+    }
+
+    #[tokio::test]
+    async fn prefix_hostnames_preserve_sort_order() {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            // "a" is a strict prefix of "aa". Tuple ordering requires the row
+            // for "a" to sort before any row for "aa", regardless of node ID.
+            // Insert "aa" first so its node ID is smaller than the one for
+            // "a"; this catches a regression where the cursor concatenated the
+            // hostname bytes with node_id.to_be_bytes() and let the first byte
+            // of the node ID be compared against the next hostname byte.
+            insert_node(
+                &store,
+                "node-aa",
+                Some(profile(1, "aa.example.com")),
+                None,
+                vec![agent(
+                    AgentKind::Sensor,
+                    "piglet@aa.example.com",
+                    Some(""),
+                    None,
+                )],
+            );
+            insert_node(
+                &store,
+                "node-a",
+                Some(profile(1, "a.example.com")),
+                None,
+                vec![agent(
+                    AgentKind::Sensor,
+                    "piglet@a.example.com",
+                    Some(""),
+                    None,
+                )],
+            );
+        }
+
+        let res = schema
+            .execute_as_system_admin(
+                r"{customerSensorList(first: 10) { edges { node { hostFqdn } } } }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        let edges = data["customerSensorList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[0]["node"]["hostFqdn"], "a.example.com");
+        assert_eq!(edges[1]["node"]["hostFqdn"], "aa.example.com");
+    }
+
+    #[tokio::test]
+    async fn prefix_hostnames_paginate_with_after_cursor() {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            insert_node(
+                &store,
+                "node-aa",
+                Some(profile(1, "aa.example.com")),
+                None,
+                vec![agent(
+                    AgentKind::Sensor,
+                    "piglet@aa.example.com",
+                    Some(""),
+                    None,
+                )],
+            );
+            insert_node(
+                &store,
+                "node-a",
+                Some(profile(1, "a.example.com")),
+                None,
+                vec![agent(
+                    AgentKind::Sensor,
+                    "piglet@a.example.com",
+                    Some(""),
+                    None,
+                )],
+            );
+        }
+
+        let res = schema
+            .execute_as_system_admin(
+                r"{customerSensorList(first: 1) { edges { cursor node { hostFqdn } } pageInfo { endCursor hasNextPage } } }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        let edges = data["customerSensorList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["node"]["hostFqdn"], "a.example.com");
+        let end_cursor = data["customerSensorList"]["pageInfo"]["endCursor"]
+            .as_str()
+            .expect("endCursor")
+            .to_string();
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"{{customerSensorList(first: 10, after: "{end_cursor}") {{ edges {{ node {{ hostFqdn }} }} }} }}"#
+            ))
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        let edges = data["customerSensorList"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["node"]["hostFqdn"], "aa.example.com");
     }
 
     #[tokio::test]
