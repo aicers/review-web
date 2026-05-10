@@ -4,6 +4,28 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Replaced `agentKey` on the `customerSensorList` `Sensor` type with
+  `nodeId: ID!`, and switched the result grain to one row per node. The shape
+  is now `Sensor { customerId, nodeId, hostFqdn }`. Each `nodeId` is the
+  parent node's database ID rendered as a string and is directly substitutable
+  into `EventListFilterInput.sensors`. Pagination cursors now order by
+  `hostFqdn` with `nodeId` as a tiebreak.
+- Widened the role guard on `customerSensorList` to
+  `SystemAdministrator | SecurityAdministrator | SecurityManager |
+  SecurityMonitor` so Detection-side BFF callers can populate a sensor
+  selector without falling back to `nodeList`. Customer-scope enforcement on
+  the `customerIds` argument is unchanged.
+- Tightened `eventList(filter: { sensors: [...] })` to enforce the caller's
+  customer scope on the explicit-sensors path. Supplying a `nodeId` whose
+  owning customer falls outside the caller's accessible scope now returns a
+  `Forbidden` authorization error instead of leaking events for that node's
+  hostname. Unscoped (administrator) callers retain full access. The
+  implicit (no-`sensors`) path is unchanged.
+
 ## [0.32.0] - 2026-05-10
 
 ### Added

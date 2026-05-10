@@ -1267,8 +1267,10 @@ fn from_filter_input(
     };
 
     let sensors = if let Some(sensors_input) = &input.sensors {
+        let scope = crate::graphql::customer_access::users_customers(ctx)
+            .map_err(|e| anyhow!("{}", e.message))?;
         let map = store.node_map();
-        Some(convert_sensors(&map, sensors_input)?)
+        Some(convert_sensors(&map, sensors_input, scope.as_deref())?)
     } else {
         match ctx
             .data::<String>()
@@ -1421,7 +1423,11 @@ fn internal_customer_networks(
     Ok(customer_networks)
 }
 
-fn convert_sensors(map: &database::NodeTable, sensors: &[ID]) -> anyhow::Result<Vec<String>> {
+fn convert_sensors(
+    map: &database::NodeTable,
+    sensors: &[ID],
+    users_customers: Option<&[u32]>,
+) -> anyhow::Result<Vec<String>> {
     let mut converted_sensors: Vec<String> = Vec::with_capacity(sensors.len());
     for id in sensors {
         let i = id
@@ -1431,6 +1437,17 @@ fn convert_sensors(map: &database::NodeTable, sensors: &[ID]) -> anyhow::Result<
         let Some((node, _invalid_agents, _invalid_external_services)) = map.get_by_id(i)? else {
             bail!("no such sensor")
         };
+
+        if let Some(allowed) = users_customers {
+            let customer_id = node
+                .profile
+                .as_ref()
+                .map(|profile| profile.customer_id)
+                .ok_or_else(|| anyhow!("Forbidden"))?;
+            if !allowed.contains(&customer_id) {
+                bail!("Forbidden");
+            }
+        }
 
         if let Some(node_profile) = node.profile
             && !node_profile.hostname.is_empty()
@@ -2113,7 +2130,7 @@ mod tests {
         },
     };
 
-    use crate::graphql::TestSchema;
+    use crate::graphql::{Role, TestSchema};
 
     /// Creates an event message at `timestamp` with the given sensor and
     /// destination `IPv4` addresses.
@@ -2244,8 +2261,6 @@ mod tests {
 
     #[tokio::test]
     async fn event_lookup_respects_tenant_scope() {
-        use crate::graphql::Role;
-
         let schema = TestSchema::new().await;
 
         let res = schema
@@ -2938,6 +2953,84 @@ mod tests {
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00", sensor: "sensor1"}}], totalCount: "1"}}"#
         );
+    }
+
+    #[tokio::test]
+    async fn explicit_sensors_outside_scope_returns_forbidden() {
+        let schema = TestSchema::new().await;
+
+        // Insert and apply a sensor node owned by customer 0.
+        let _ = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "sensor1",
+                        customerId: 0,
+                        description: "",
+                        hostname: "sensor1",
+                        agents: [{
+                            key: "sensor"
+                            kind: SENSOR
+                            status: ENABLED
+                        }],
+                        externalServices: [],
+                    )
+                }"#,
+            )
+            .await;
+        let _ = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNode(
+                        id: "0"
+                        node: {
+                            name: "sensor1",
+                            nameDraft: "sensor1",
+                            profile: null,
+                            profileDraft: {
+                                customerId: 0,
+                                description: "",
+                                hostname: "sensor1",
+                            }
+                            agents: [
+                                {
+                                    key: "sensor",
+                                    kind: "SENSOR",
+                                    status: "ENABLED"
+                                }
+                            ],
+                            externalServices: []
+                        }
+                    )
+                }"#,
+            )
+            .await;
+
+        // Caller scoped to customer 1 (out of scope for sensor node 0) must be
+        // rejected when supplying `sensors: [0]`.
+        let res = schema
+            .execute_as_scoped_user(
+                "{ eventList(filter: { sensors: [0] }) { edges { node { ... on DnsCovertChannel { sensor } } } totalCount } }",
+                Role::SecurityMonitor,
+                Some(vec![1]),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1, "errors: {:?}", res.errors);
+        assert!(
+            res.errors[0].message.contains("Forbidden"),
+            "message: {}",
+            res.errors[0].message
+        );
+
+        // Caller scoped to customer 0 (in scope) succeeds.
+        let res = schema
+            .execute_as_scoped_user(
+                "{ eventList(filter: { sensors: [0] }) { totalCount } }",
+                Role::SecurityMonitor,
+                Some(vec![0]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
     }
 
     #[tokio::test]
