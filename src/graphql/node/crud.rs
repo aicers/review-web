@@ -53,12 +53,13 @@ impl NodeQuery {
         Ok(node.into())
     }
 
-    /// A list of sensors deployed across customers the caller can access.
-    ///
-    /// A sensor is an entry in `Node.agents` whose `kind` is `SENSOR` and
-    /// whose `config` is set. Nodes whose `profile` is `None` are excluded.
+    /// A list of nodes that have at least one deployed sensor agent
+    /// (`SENSOR`-kind agent with `config` set), scoped to customers the caller
+    /// can access. Nodes whose `profile` is `None` are excluded.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityManager))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
     async fn customer_sensor_list(
         &self,
         ctx: &Context<'_>,
