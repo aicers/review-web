@@ -21,6 +21,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Fixed mTLS multi-instance addressability so distinct agents on the same host
   remain routable by their full lookup key instead of collapsing to a single
   entry.
+- Bumped `review-database` dependency to commit `bd30664`, which renames
+  several fields used internally by this crate: `Agent.node` and
+  `ExternalService.node` are now `node_id`, `TrafficFilter.agent` is now
+  `host_fqdn`, and `BlocklistKerberos.client_name` / `service_name` are
+  now `cname` / `sname`. Call sites have been updated; the GraphQL
+  contract is unchanged.
 
 ## [0.33.0] - 2026-05-11
 
@@ -1686,3 +1692,4 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 [0.3.0]: https://github.com/aicers/review-web/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/aicers/review-web/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/aicers/review-web/tree/0.1.0
+

@@ -86,7 +86,7 @@ pub struct Agent {
 impl From<&database::Agent> for Agent {
     fn from(input: &database::Agent) -> Self {
         Self {
-            node: input.node,
+            node: input.node_id,
             key: input.key.clone(),
             kind: input.kind.into(),
             status: input.status.into(),
@@ -108,7 +108,7 @@ pub struct ExternalService {
 impl From<&database::ExternalService> for ExternalService {
     fn from(input: &database::ExternalService) -> Self {
         Self {
-            node: input.node,
+            node: input.node_id,
             key: input.key.clone(),
             kind: input.kind.into(),
             status: input.status.into(),

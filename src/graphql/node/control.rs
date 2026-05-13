@@ -3420,7 +3420,7 @@ mod tests {
         config: Option<&str>,
     ) -> review_database::Agent {
         review_database::Agent {
-            node: u32::MAX,
+            node_id: u32::MAX,
             key: key.to_string(),
             kind,
             status: AgentStatus::Enabled,

@@ -163,7 +163,7 @@ struct TrafficFilter {
 impl TrafficFilter {
     /// Agent name
     async fn agent(&self) -> &str {
-        &self.inner.agent
+        &self.inner.host_fqdn
     }
 
     /// The traffic filter rules.

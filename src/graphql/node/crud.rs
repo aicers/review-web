@@ -127,7 +127,7 @@ impl NodeMutation {
                 };
 
                 Ok::<_, Error>(review_database::Agent {
-                    node: u32::MAX,
+                    node_id: u32::MAX,
                     key: new_agent.key,
                     kind: new_agent.kind.into(),
                     status: new_agent.status.into(),
@@ -151,7 +151,7 @@ impl NodeMutation {
                 };
 
                 Ok::<_, Error>(review_database::ExternalService {
-                    node: u32::MAX,
+                    node_id: u32::MAX,
                     key: new_external_service.key,
                     kind: new_external_service.kind.into(),
                     status: new_external_service.status.into(),
