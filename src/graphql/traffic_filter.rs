@@ -23,12 +23,12 @@ impl TrafficFilterQuery {
     async fn traffic_filter_list(
         &self,
         ctx: &Context<'_>,
-        agents: Option<Vec<String>>,
+        host_fqdns: Option<Vec<String>>,
     ) -> Result<Option<Vec<TrafficFilter>>> {
         let store = crate::graphql::get_store(ctx)?;
         let table = store.traffic_filter_map();
 
-        let res = table.get_list(&agents)?;
+        let res = table.get_list(&host_fqdns)?;
         Ok(res.map(|r| r.into_iter().map(Into::into).collect()))
     }
 }
@@ -45,7 +45,7 @@ impl TrafficFilterMutation {
     async fn insert_traffic_filter_rules(
         &self,
         ctx: &Context<'_>,
-        agent: String,
+        host_fqdn: String,
         network: String,
         tcp_ports: Option<Vec<u16>>,
         udp_ports: Option<Vec<u16>>,
@@ -56,7 +56,7 @@ impl TrafficFilterMutation {
         let table = store.traffic_filter_map();
 
         table
-            .add_rules(&agent, network, tcp_ports, udp_ports, description)
+            .add_rules(&host_fqdn, network, tcp_ports, udp_ports, description)
             .map_err(Into::into)
     }
 
@@ -67,7 +67,7 @@ impl TrafficFilterMutation {
     async fn update_traffic_filter_rules(
         &self,
         ctx: &Context<'_>,
-        agent: String,
+        host_fqdn: String,
         network: String,
         tcp_ports: Option<Vec<u16>>,
         udp_ports: Option<Vec<u16>>,
@@ -78,7 +78,7 @@ impl TrafficFilterMutation {
         let table = store.traffic_filter_map();
 
         table
-            .update(&agent, network, tcp_ports, udp_ports, description)
+            .update(&host_fqdn, network, tcp_ports, udp_ports, description)
             .map_err(Into::into)
     }
 
@@ -86,12 +86,16 @@ impl TrafficFilterMutation {
     #[graphql(
         guard = "RoleGuard::new(Role::SystemAdministrator).or(RoleGuard::new(Role::SecurityAdministrator))"
     )]
-    async fn clear_traffic_filter_rules(&self, ctx: &Context<'_>, agent: String) -> Result<usize> {
+    async fn clear_traffic_filter_rules(
+        &self,
+        ctx: &Context<'_>,
+        host_fqdn: String,
+    ) -> Result<usize> {
         let store = crate::graphql::get_store(ctx)?;
         let table = store.traffic_filter_map();
 
         info_with_username!(ctx, "All traffic filters have been deleted");
-        table.remove(&agent).map_err(Into::into).map(|()| 0)
+        table.remove(&host_fqdn).map_err(Into::into).map(|()| 0)
     }
 
     /// removes traffic filtering rules from the agent
@@ -101,7 +105,7 @@ impl TrafficFilterMutation {
     async fn remove_traffic_filter_rules(
         &self,
         ctx: &Context<'_>,
-        agent: String,
+        host_fqdn: String,
         networks: Vec<String>,
     ) -> Result<usize> {
         let mut new_rules: Vec<IpNet> = Vec::new();
@@ -111,7 +115,9 @@ impl TrafficFilterMutation {
         let store = crate::graphql::get_store(ctx)?;
         let table = store.traffic_filter_map();
 
-        table.remove_rules(&agent, &new_rules).map_err(Into::into)
+        table
+            .remove_rules(&host_fqdn, &new_rules)
+            .map_err(Into::into)
     }
 
     /// applies traffic filtering rules to the agents if it is connected
@@ -121,26 +127,26 @@ impl TrafficFilterMutation {
     async fn apply_traffic_filter_rules(
         &self,
         ctx: &Context<'_>,
-        agents: Vec<String>,
+        host_fqdns: Vec<String>,
     ) -> Result<Vec<String>> {
         let agent_manager = ctx.data::<BoxedAgentManager>()?;
         let mut res = Vec::new();
-        for agent in &agents {
+        for host_fqdn in &host_fqdns {
             let rules = {
                 let store = crate::graphql::get_store(ctx)?;
                 let table = store.traffic_filter_map();
-                table.get(agent)?.map_or(vec![], |tf| tf.rules())
+                table.get(host_fqdn)?.map_or(vec![], |tf| tf.rules())
             };
             if let Err(e) = agent_manager
-                .update_traffic_filter_rules(agent, &rules)
+                .update_traffic_filter_rules(host_fqdn, &rules)
                 .await
             {
-                res.push(format!("{agent}: update request failed. {e:?}"));
+                res.push(format!("{host_fqdn}: update request failed. {e:?}"));
             } else {
                 let store = crate::graphql::get_store(ctx)?;
                 let table = store.traffic_filter_map();
-                table.update_time(agent)?;
-                res.push(format!("{agent}: {} rules are updated.", rules.len()));
+                table.update_time(host_fqdn)?;
+                res.push(format!("{host_fqdn}: {} rules are updated.", rules.len()));
             }
         }
         Ok(res)
@@ -161,8 +167,8 @@ struct TrafficFilter {
 
 #[Object]
 impl TrafficFilter {
-    /// Agent name
-    async fn agent(&self) -> &str {
+    /// Host FQDN
+    async fn host_fqdn(&self) -> &str {
         &self.inner.host_fqdn
     }
 
@@ -215,7 +221,7 @@ mod tests {
             .execute_as_system_admin(
                 r#"mutation {
                     insertTrafficFilterRules(
-                        agent: "moon"
+                        hostFqdn: "moon"
                         network: "172.30.1.0/24"
                         tcpPorts: [80, 8080]
                     )
@@ -228,7 +234,7 @@ mod tests {
             .execute_as_system_admin(
                 r#"mutation {
                     insertTrafficFilterRules(
-                        agent: "moon"
+                        hostFqdn: "moon"
                         network: "192.168.0.0/16"
                         tcpPorts: [80, 8000, 8080]
                     )
@@ -241,7 +247,7 @@ mod tests {
             .execute_as_system_admin(
                 r#"mutation {
                     insertTrafficFilterRules(
-                        agent: "sun"
+                        hostFqdn: "sun"
                         network: "0.0.0.0/0"
                         udpPorts: [53]
                     )
@@ -254,7 +260,7 @@ mod tests {
             .execute_as_system_admin(
                 r#"mutation {
                     updateTrafficFilterRules(
-                        agent: "sun"
+                        hostFqdn: "sun"
                         network: "0.0.0.0/0"
                         udpPorts: [37, 53]
                         description: "drop NTP, DNS UDP ports"
@@ -267,8 +273,8 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r"query {
-                    trafficFilterList(agents: null) {
-                        agent
+                    trafficFilterList(hostFqdns: null) {
+                        hostFqdn
                         rules
                     }
                 }",
@@ -276,7 +282,7 @@ mod tests {
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{trafficFilterList: [{agent: "moon", rules: ["172.30.1.0/24\t80,8080\t-", "192.168.0.0/16\t80,8000,8080\t-"]}, {agent: "sun", rules: ["0.0.0.0/0\t-\t37,53"]}]}"#
+            r#"{trafficFilterList: [{hostFqdn: "moon", rules: ["172.30.1.0/24\t80,8080\t-", "192.168.0.0/16\t80,8000,8080\t-"]}, {hostFqdn: "sun", rules: ["0.0.0.0/0\t-\t37,53"]}]}"#
         );
     }
 
@@ -288,7 +294,7 @@ mod tests {
             .execute_as_system_admin(
                 r#"mutation {
                     insertTrafficFilterRules(
-                        agent: "moon"
+                        hostFqdn: "moon"
                         network: "172.30.1.0/24"
                         tcpPorts: [80, 8080]
                     )
@@ -301,7 +307,7 @@ mod tests {
             .execute_as_system_admin(
                 r#"mutation {
                     insertTrafficFilterRules(
-                        agent: "moon"
+                        hostFqdn: "moon"
                         network: "0.0.0.0/0"
                         udpPorts: [37, 53]
                         description: "drop NTP, DNS UDP ports"
@@ -316,7 +322,7 @@ mod tests {
             .execute_as_system_admin(
                 r#"mutation {
                     removeTrafficFilterRules(
-                        agent: "moon"
+                        hostFqdn: "moon"
                         networks: ["0.0.0.0/0"]
                     )
                 }"#,
@@ -328,7 +334,7 @@ mod tests {
             .execute_as_system_admin(
                 r#"mutation {
                     clearTrafficFilterRules(
-                        agent: "moon"
+                        hostFqdn: "moon"
                     )
                 }"#,
             )

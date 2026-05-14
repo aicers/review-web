@@ -650,7 +650,7 @@ mod tests {
                                 hostname
                             }
                             agents {
-                                node
+                                nodeId
                                 key
                                 kind
                                 status
@@ -658,7 +658,7 @@ mod tests {
                                 draft
                             }
                             externalServices {
-                                node
+                                nodeId
                                 key
                                 kind
                                 status
@@ -689,7 +689,7 @@ mod tests {
                                 },
                                 "agents": [
                                     {
-                                      "node": 0,
+                                      "nodeId": 0,
                                       "key": "unsupervised",
                                       "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
@@ -697,7 +697,7 @@ mod tests {
                                       "draft": "test = 'toml'"
                                     },
                                     {
-                                      "node": 0,
+                                      "nodeId": 0,
                                       "key": "sensor",
                                       "kind": "SENSOR",
                                       "status": "ENABLED",
@@ -774,7 +774,7 @@ mod tests {
                                 hostname
                             }
                             agents {
-                                node
+                                nodeId
                                 key
                                 kind
                                 status
@@ -782,7 +782,7 @@ mod tests {
                                 draft
                             }
                             externalServices {
-                                node
+                                nodeId
                                 key
                                 kind
                                 status
@@ -817,7 +817,7 @@ mod tests {
                                 },
                                 "agents": [
                                     {
-                                      "node": 0,
+                                      "nodeId": 0,
                                       "key": "unsupervised",
                                       "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
@@ -825,7 +825,7 @@ mod tests {
                                       "draft": "test = 'toml'"
                                     },
                                     {
-                                      "node": 0,
+                                      "nodeId": 0,
                                       "key": "sensor",
                                       "kind": "SENSOR",
                                       "status": "ENABLED",
@@ -929,7 +929,7 @@ mod tests {
                                 hostname
                             }
                             agents {
-                                node
+                                nodeId
                                 key
                                 kind
                                 status
@@ -937,7 +937,7 @@ mod tests {
                                 draft
                             }
                             externalServices {
-                                node
+                                nodeId
                                 key
                                 kind
                                 status
@@ -973,7 +973,7 @@ mod tests {
                                 },
                                 "agents": [
                                     {
-                                      "node": 0,
+                                      "nodeId": 0,
                                       "key": "unsupervised",
                                       "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
@@ -981,7 +981,7 @@ mod tests {
                                       "draft": "test = 'toml'"
                                     },
                                     {
-                                      "node": 0,
+                                      "nodeId": 0,
                                       "key": "sensor",
                                       "kind": "SENSOR",
                                       "status": "ENABLED",
@@ -1062,7 +1062,7 @@ mod tests {
                                 hostname
                             }
                             agents {
-                                node
+                                nodeId
                                 key
                                 kind
                                 status
@@ -1070,7 +1070,7 @@ mod tests {
                                 draft
                             }
                             externalServices {
-                                node
+                                nodeId
                                 key
                                 kind
                                 status
@@ -1105,7 +1105,7 @@ mod tests {
                                 },
                                 "agents": [
                                     {
-                                      "node": 0,
+                                      "nodeId": 0,
                                       "key": "unsupervised",
                                       "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
@@ -1113,7 +1113,7 @@ mod tests {
                                       "draft": "test = 'toml'"
                                     },
                                     {
-                                      "node": 0,
+                                      "nodeId": 0,
                                       "key": "sensor",
                                       "kind": "SENSOR",
                                       "status": "ENABLED",
@@ -1276,7 +1276,7 @@ mod tests {
                                     hostname
                                 }
                                 agents {
-                                    node
+                                    nodeId
                                     key
                                     kind
                                     status
@@ -1284,7 +1284,7 @@ mod tests {
                                     draft
                                 }
                                 externalServices {
-                                    node
+                                    nodeId
                                     key
                                     kind
                                     status
@@ -1320,7 +1320,7 @@ mod tests {
                                 },
                                 "agents": [
                                     {
-                                        "node": 0,
+                                        "nodeId": 0,
                                         "key": "unsupervised",
                                         "kind": "UNSUPERVISED",
                                         "status": "ENABLED",
@@ -1328,7 +1328,7 @@ mod tests {
                                         "draft": "test = 'toml'"
                                     },
                                     {
-                                        "node": 0,
+                                        "nodeId": 0,
                                         "key": "sensor",
                                         "kind": "SENSOR",
                                         "status": "ENABLED",
@@ -1338,7 +1338,7 @@ mod tests {
                                 ],
                                 "externalServices": [
                                     {
-                                        "node": 0,
+                                        "nodeId": 0,
                                         "key": "data_store",
                                         "kind": "DATA_STORE",
                                         "status": "ENABLED",
@@ -1455,7 +1455,7 @@ mod tests {
                                 hostname
                             }
                             agents {
-                                node
+                                nodeId
                                 key
                                 kind
                                 status
@@ -1463,7 +1463,7 @@ mod tests {
                                 draft
                             }
                             externalServices {
-                                node
+                                nodeId
                                 key
                                 kind
                                 status
@@ -1499,7 +1499,7 @@ mod tests {
                                 },
                                 "agents": [
                                     {
-                                      "node": 0,
+                                      "nodeId": 0,
                                       "key": "unsupervised",
                                       "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
@@ -1507,7 +1507,7 @@ mod tests {
                                       "draft": "test = 'toml'"
                                     },
                                     {
-                                      "node": 0,
+                                      "nodeId": 0,
                                       "key": "sensor",
                                       "kind": "SENSOR",
                                       "status": "ENABLED",
@@ -1517,7 +1517,7 @@ mod tests {
                                   ],
                                 "externalServices": [
                                     {
-                                        "node": 0,
+                                        "nodeId": 0,
                                         "key": "data_store",
                                         "kind": "DATA_STORE",
                                         "status": "ENABLED",
@@ -1604,7 +1604,7 @@ mod tests {
                                     hostname
                                 }
                                 agents {
-                                    node
+                                    nodeId
                                     key
                                     kind
                                     status
@@ -1612,7 +1612,7 @@ mod tests {
                                     draft
                                 }
                                 externalServices {
-                                    node
+                                    nodeId
                                     key
                                     kind
                                     status
@@ -1648,7 +1648,7 @@ mod tests {
                                 },
                                 "agents": [
                                     {
-                                        "node": 0,
+                                        "nodeId": 0,
                                         "key": "unsupervised",
                                         "kind": "UNSUPERVISED",
                                         "status": "ENABLED",
@@ -1656,7 +1656,7 @@ mod tests {
                                         "draft": "test = 'toml'"
                                     },
                                     {
-                                        "node": 0,
+                                        "nodeId": 0,
                                         "key": "sensor",
                                         "kind": "SENSOR",
                                         "status": "ENABLED",
@@ -1666,7 +1666,7 @@ mod tests {
                                 ],
                                 "externalServices": [
                                     {
-                                        "node": 0,
+                                        "nodeId": 0,
                                         "key": "data_store",
                                         "kind": "DATA_STORE",
                                         "status": "ENABLED",
@@ -1783,7 +1783,7 @@ mod tests {
                                 hostname
                             }
                             agents {
-                                node
+                                nodeId
                                 key
                                 kind
                                 status
@@ -1791,7 +1791,7 @@ mod tests {
                                 draft
                             }
                             externalServices {
-                                node
+                                nodeId
                                 key
                                 kind
                                 status
@@ -1827,7 +1827,7 @@ mod tests {
                                 },
                                 "agents": [
                                     {
-                                      "node": 0,
+                                      "nodeId": 0,
                                       "key": "unsupervised",
                                       "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
@@ -1835,7 +1835,7 @@ mod tests {
                                       "draft": "test = 'toml'"
                                     },
                                     {
-                                      "node": 0,
+                                      "nodeId": 0,
                                       "key": "sensor",
                                       "kind": "SENSOR",
                                       "status": "ENABLED",
@@ -1845,7 +1845,7 @@ mod tests {
                                   ],
                                 "externalServices": [
                                     {
-                                        "node": 0,
+                                        "nodeId": 0,
                                         "key": "data_store",
                                         "kind": "DATA_STORE",
                                         "status": "ENABLED",
@@ -1932,7 +1932,7 @@ mod tests {
                                     hostname
                                 }
                                 agents {
-                                    node
+                                    nodeId
                                     key
                                     kind
                                     status
@@ -1940,7 +1940,7 @@ mod tests {
                                     draft
                                 }
                                 externalServices {
-                                    node
+                                    nodeId
                                     key
                                     kind
                                     status
@@ -1976,7 +1976,7 @@ mod tests {
                                 },
                                 "agents": [
                                     {
-                                      "node": 0,
+                                      "nodeId": 0,
                                       "key": "unsupervised",
                                       "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
@@ -1986,7 +1986,7 @@ mod tests {
                                 ],
                                 "externalServices": [
                                     {
-                                        "node": 0,
+                                        "nodeId": 0,
                                         "key": "data_store",
                                         "kind": "DATA_STORE",
                                         "status": "ENABLED",
@@ -2089,7 +2089,7 @@ mod tests {
                                     hostname
                                 }
                                 agents {
-                                    node
+                                    nodeId
                                     key
                                     kind
                                     status
@@ -2097,7 +2097,7 @@ mod tests {
                                     draft
                                 }
                                 externalServices {
-                                    node
+                                    nodeId
                                     key
                                     kind
                                     status
@@ -2132,7 +2132,7 @@ mod tests {
                                 },
                                 "agents": [
                                     {
-                                      "node": 0,
+                                      "nodeId": 0,
                                       "key": "unsupervised",
                                       "kind": "UNSUPERVISED",
                                       "status": "ENABLED",

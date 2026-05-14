@@ -25,8 +25,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   several fields used internally by this crate: `Agent.node` and
   `ExternalService.node` are now `node_id`, `TrafficFilter.agent` is now
   `host_fqdn`, and `BlocklistKerberos.client_name` / `service_name` are
-  now `cname` / `sname`. Call sites have been updated; the GraphQL
-  contract is unchanged.
+  now `cname` / `sname`.
+- Renamed the corresponding GraphQL schema fields and arguments to match the
+  upstream `review-database` field names:
+  - `Agent.node` and `ExternalService.node` are now `nodeId`.
+  - `TrafficFilter.agent` is now `hostFqdn`. The `agent` argument on the
+    `insertTrafficFilterRules`, `updateTrafficFilterRules`,
+    `clearTrafficFilterRules`, and `removeTrafficFilterRules` mutations is now
+    `hostFqdn`, and the `agents` argument on the `trafficFilterList` query and
+    the `applyTrafficFilterRules` mutation is now `hostFqdns`.
+  - `BlocklistKerberos.clientName` / `serviceName` are now `cname` / `sname`.
 
 ## [0.33.0] - 2026-05-11
 

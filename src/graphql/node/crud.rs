@@ -452,7 +452,7 @@ mod tests {
                         draft
                     }
                     externalServices {
-                        node
+                        nodeId
                         key
                         kind
                         status
@@ -587,7 +587,7 @@ mod tests {
                         draft
                     }
                     externalServices {
-                        node
+                        nodeId
                         key
                         kind
                         status
@@ -757,7 +757,7 @@ mod tests {
                         status
                     }
                     externalServices {
-                        node
+                        nodeId
                         key
                         kind
                         status
@@ -1072,7 +1072,7 @@ mod tests {
                         draft
                     }
                     externalServices {
-                        node
+                        nodeId
                         key
                         kind
                         status
@@ -1250,7 +1250,7 @@ mod tests {
                         draft
                     }
                     externalServices {
-                        node
+                        nodeId
                         key
                         kind
                         status
@@ -1382,7 +1382,7 @@ mod tests {
                         draft
                     }
                     externalServices {
-                        node
+                        nodeId
                         key
                         kind
                         status

@@ -75,7 +75,7 @@ pub enum ExternalServiceStatus {
 
 #[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
 pub struct Agent {
-    pub node: u32,
+    pub node_id: u32,
     pub key: String,
     pub kind: AgentKind,
     pub status: AgentStatus,
@@ -86,7 +86,7 @@ pub struct Agent {
 impl From<&database::Agent> for Agent {
     fn from(input: &database::Agent) -> Self {
         Self {
-            node: input.node_id,
+            node_id: input.node_id,
             key: input.key.clone(),
             kind: input.kind.into(),
             status: input.status.into(),
@@ -98,7 +98,7 @@ impl From<&database::Agent> for Agent {
 
 #[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
 pub struct ExternalService {
-    pub node: u32,
+    pub node_id: u32,
     pub key: String,
     pub kind: ExternalServiceKind,
     pub status: ExternalServiceStatus,
@@ -108,7 +108,7 @@ pub struct ExternalService {
 impl From<&database::ExternalService> for ExternalService {
     fn from(input: &database::ExternalService) -> Self {
         Self {
-            node: input.node_id,
+            node_id: input.node_id,
             key: input.key.clone(),
             kind: input.kind.into(),
             status: input.status.into(),

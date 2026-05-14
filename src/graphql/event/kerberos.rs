@@ -154,7 +154,7 @@ impl BlocklistKerberos {
     }
 
     /// Client Name
-    async fn client_name(&self) -> &[String] {
+    async fn cname(&self) -> &[String] {
         &self.inner.cname
     }
 
@@ -169,7 +169,7 @@ impl BlocklistKerberos {
     }
 
     /// Service Name
-    async fn service_name(&self) -> &[String] {
+    async fn sname(&self) -> &[String] {
         &self.inner.sname
     }
 
