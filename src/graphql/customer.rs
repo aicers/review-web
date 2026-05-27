@@ -14,37 +14,39 @@ use serde::{Deserialize, Serialize};
 use tracing::error;
 use tracing::info;
 
-use super::node::SEMI_SUPERVISED_AGENT;
-use super::{BoxedAgentManager, Role, RoleGuard, agent_keys_by_customer_id};
+use super::node::{SEMI_SUPERVISED_AGENT, agent_lookup_key_service_token};
+use super::{BoxedAgentManager, Role, RoleGuard, agent_lookup_keys_by_customer_id};
 use crate::error_with_username;
 use crate::graphql::query_with_constraints;
 use crate::info_with_username;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct NetworksTargetAgentKeysPair {
+pub struct NetworksTargetAgentLookupKeysPair {
     networks: database::HostNetworkGroup,
-    target_agent_keys: Vec<String>,
+    target_agent_lookup_keys: Vec<String>,
 }
 
-impl NetworksTargetAgentKeysPair {
+impl NetworksTargetAgentLookupKeysPair {
     #[must_use]
     pub fn new(
         networks: database::HostNetworkGroup,
-        agent_keys: Vec<String>,
+        agent_lookup_keys: Vec<String>,
         target_agent: &str,
     ) -> Self {
         Self {
             networks,
-            target_agent_keys: agent_keys
+            target_agent_lookup_keys: agent_lookup_keys
                 .into_iter()
-                .filter(|s| s.starts_with(target_agent))
+                .filter(|agent_lookup_key| {
+                    agent_lookup_key_service_token(agent_lookup_key) == Some(target_agent)
+                })
                 .collect(),
         }
     }
 
     #[must_use]
-    pub fn target_agent_keys(&self) -> &[String] {
-        &self.target_agent_keys
+    pub fn target_agent_lookup_keys(&self) -> &[String] {
+        &self.target_agent_lookup_keys
     }
 
     #[must_use]
@@ -152,7 +154,7 @@ impl CustomerMutation {
             // Validate that no accounts or nodes reference these customers
             validate_customer_removal(&store, &customer_ids)?;
 
-            let customer_id_hash = agent_keys_by_customer_id(&store)?;
+            let customer_id_hash = agent_lookup_keys_by_customer_id(&store)?;
             let mut removed_customer_networks = Vec::new();
             let mut removed = Vec::<String>::with_capacity(customer_ids.len());
             for i in customer_ids {
@@ -165,10 +167,10 @@ impl CustomerMutation {
                 info_with_username!(ctx, "Customer {name} has been deleted");
                 removed.push(name);
 
-                if let Some(agent_keys) = customer_id_hash.get(&i) {
-                    let network_list = NetworksTargetAgentKeysPair::new(
+                if let Some(agent_lookup_keys) = customer_id_hash.get(&i) {
+                    let network_list = NetworksTargetAgentLookupKeysPair::new(
                         database::HostNetworkGroup::new(vec![], vec![], vec![]),
-                        agent_keys.clone(),
+                        agent_lookup_keys.clone(),
                         SEMI_SUPERVISED_AGENT,
                     );
                     removed_customer_networks.push(network_list);
@@ -219,8 +221,8 @@ impl CustomerMutation {
             );
 
             if let Some(new_networks) = new.networks {
-                let customer_id_hash = agent_keys_by_customer_id(&store)?;
-                if let Some(agent_keys) = customer_id_hash.get(&i) {
+                let customer_id_hash = agent_lookup_keys_by_customer_id(&store)?;
+                if let Some(agent_lookup_keys) = customer_id_hash.get(&i) {
                     let (hosts, networks, ip_ranges) = new_networks.iter().fold(
                         (vec![], vec![], vec![]),
                         |(mut hosts, mut networks, mut ip_ranges), nn| {
@@ -231,9 +233,9 @@ impl CustomerMutation {
                         },
                     );
 
-                    Some(NetworksTargetAgentKeysPair::new(
+                    Some(NetworksTargetAgentLookupKeysPair::new(
                         database::HostNetworkGroup::new(hosts, networks, ip_ranges),
-                        agent_keys.clone(),
+                        agent_lookup_keys.clone(),
                         SEMI_SUPERVISED_AGENT,
                     ))
                 } else {
@@ -673,7 +675,7 @@ pub fn get_customer_networks(db: &Store, customer_id: u32) -> Result<database::H
 /// Returns an error if the broadcast fail.
 pub async fn send_agent_specific_customer_networks(
     ctx: &Context<'_>,
-    networks: &[NetworksTargetAgentKeysPair],
+    networks: &[NetworksTargetAgentLookupKeysPair],
 ) -> Result<Vec<String>> {
     let agent_manager = ctx.data::<BoxedAgentManager>()?;
     agent_manager
@@ -684,7 +686,56 @@ pub async fn send_agent_specific_customer_networks(
 
 #[cfg(test)]
 mod tests {
+    use review_database as database;
+
+    use super::NetworksTargetAgentLookupKeysPair;
     use crate::graphql::TestSchema;
+
+    #[test]
+    #[cfg(feature = "auth-jwt")]
+    fn network_target_agent_lookup_keys_pair_filters_jwt_service_tokens() {
+        let networks = database::HostNetworkGroup::new(vec![], vec![], vec![]);
+        let pair = NetworksTargetAgentLookupKeysPair::new(
+            networks.clone(),
+            vec![
+                "hog@node-01".to_string(),
+                "hog@node-02".to_string(),
+                "reconverge@node-01".to_string(),
+            ],
+            "hog",
+        );
+        assert_eq!(
+            pair.target_agent_lookup_keys(),
+            &["hog@node-01".to_string(), "hog@node-02".to_string()]
+        );
+
+        let pair = NetworksTargetAgentLookupKeysPair::new(
+            networks,
+            pair.target_agent_lookup_keys().to_vec(),
+            "piglet",
+        );
+        assert!(pair.target_agent_lookup_keys().is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "auth-mtls")]
+    fn network_target_agent_lookup_keys_pair_filters_mtls_service_tokens() {
+        let networks = database::HostNetworkGroup::new(vec![], vec![], vec![]);
+        let agent_lookup_keys = vec![
+            "001.hog.node-01.customer.internal".to_string(),
+            "002.hog.node-01.customer.internal".to_string(),
+            "001.reconverge.node-01.customer.internal".to_string(),
+        ];
+        let pair = NetworksTargetAgentLookupKeysPair::new(
+            networks.clone(),
+            agent_lookup_keys.clone(),
+            "hog",
+        );
+        assert_eq!(pair.target_agent_lookup_keys(), &agent_lookup_keys[..2]);
+
+        let pair = NetworksTargetAgentLookupKeysPair::new(networks, agent_lookup_keys, "piglet");
+        assert!(pair.target_agent_lookup_keys().is_empty());
+    }
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]

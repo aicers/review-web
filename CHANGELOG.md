@@ -4,6 +4,17 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Renamed the library-facing agent lookup terminology from `agentKey`/
+  `agent_keys` to `agent_lookup_key`/`agent_lookup_keys`, including the
+  `AgentManager::update_config` callback and the customer-network helper
+  types. This change also fixes mTLS multi-instance addressability so
+  distinct agents on the same host remain addressable by their full lookup
+  key instead of collapsing to a single entry.
+
 ## [0.33.0] - 2026-05-11
 
 ### Changed

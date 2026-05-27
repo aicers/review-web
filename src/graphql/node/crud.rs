@@ -15,7 +15,7 @@ use super::{
     super::{Role, RoleGuard, customer_access},
     Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, customer_sensor_list,
     customer_sensor_list::{Sensor, SensorTotalCount},
-    gen_agent_key,
+    gen_agent_lookup_key,
     input::{AgentDraftInput, ExternalServiceInput, NodeDraftInput},
 };
 use crate::{graphql::query_with_constraints, info_with_username};
@@ -280,13 +280,12 @@ async fn load(
     Ok(connection)
 }
 
-/// Returns a customer id and the agent key(agent@hostname) list for the node corresponding to
-/// that customer id.
+/// Returns a customer id and agent lookup keys for the node corresponding to that customer id.
 ///
 /// # Errors
 ///
 /// Returns an error if the node profile could not be retrieved.
-pub fn agent_keys_by_customer_id(db: &Store) -> Result<HashMap<u32, Vec<String>>> {
+pub fn agent_lookup_keys_by_customer_id(db: &Store) -> Result<HashMap<u32, Vec<String>>> {
     let map = db.node_map();
     let mut customer_id_hash = HashMap::new();
 
@@ -294,15 +293,15 @@ pub fn agent_keys_by_customer_id(db: &Store) -> Result<HashMap<u32, Vec<String>>
         let node = entry.map_err(|_| "invalid value in database")?;
 
         if let Some(node_profile) = &node.profile {
-            let agent_keys = node
+            let agent_lookup_keys = node
                 .agents
                 .iter()
-                .filter_map(|agent| gen_agent_key(agent.kind.into(), &node_profile.hostname).ok())
+                .map(|agent| gen_agent_lookup_key(&agent.key, &node_profile.hostname))
                 .collect::<Vec<String>>();
             customer_id_hash
                 .entry(node_profile.customer_id)
                 .or_insert_with(Vec::new)
-                .extend_from_slice(&agent_keys);
+                .extend_from_slice(&agent_lookup_keys);
         }
     }
     Ok(customer_id_hash)
@@ -311,10 +310,76 @@ pub fn agent_keys_by_customer_id(db: &Store) -> Result<HashMap<u32, Vec<String>>
 #[cfg(test)]
 mod tests {
     use assert_json_diff::assert_json_eq;
+    #[cfg(feature = "auth-mtls")]
+    use review_database as database;
     use serde_json::json;
 
     use super::super::test_support::{insert_active_node, update_account_customers};
+    #[cfg(feature = "auth-mtls")]
+    use super::agent_lookup_keys_by_customer_id;
     use crate::graphql::{Role, TestSchema};
+
+    #[tokio::test]
+    #[cfg(feature = "auth-mtls")]
+    async fn agent_lookup_keys_by_customer_id_keeps_mtls_instances() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let node = database::Node {
+            id: u32::MAX,
+            name: "multi-instance".to_string(),
+            name_draft: Some("multi-instance".to_string()),
+            profile: Some(database::NodeProfile {
+                customer_id: 7,
+                description: String::new(),
+                hostname: "node-01.customer.internal".to_string(),
+            }),
+            profile_draft: None,
+            agents: vec![
+                database::Agent {
+                    node: u32::MAX,
+                    key: "001.hog".to_string(),
+                    kind: database::AgentKind::SemiSupervised,
+                    status: database::AgentStatus::Enabled,
+                    config: None,
+                    draft: None,
+                },
+                database::Agent {
+                    node: u32::MAX,
+                    key: "002.hog".to_string(),
+                    kind: database::AgentKind::SemiSupervised,
+                    status: database::AgentStatus::Enabled,
+                    config: None,
+                    draft: None,
+                },
+                database::Agent {
+                    node: u32::MAX,
+                    key: "001.piglet".to_string(),
+                    kind: database::AgentKind::Sensor,
+                    status: database::AgentStatus::Enabled,
+                    config: None,
+                    draft: None,
+                },
+            ],
+            external_services: vec![],
+            creation_time: chrono::Utc::now(),
+        };
+        store.node_map().put(&node).expect("insert node");
+
+        let mut lookup_keys = agent_lookup_keys_by_customer_id(&store)
+            .expect("lookup keys")
+            .remove(&7)
+            .expect("customer lookup keys");
+        lookup_keys.sort();
+
+        assert_eq!(
+            lookup_keys,
+            vec![
+                "001.hog.node-01.customer.internal",
+                "001.piglet.node-01.customer.internal",
+                "002.hog.node-01.customer.internal",
+            ]
+        );
+    }
 
     // test scenario : insert node -> update node with different name -> remove node
     #[tokio::test]
