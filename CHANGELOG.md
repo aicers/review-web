@@ -8,12 +8,19 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
-- Renamed the library-facing agent lookup terminology from `agentKey`/
-  `agent_keys` to `agent_lookup_key`/`agent_lookup_keys`, including the
-  `AgentManager::update_config` callback and the customer-network helper
-  types. This change also fixes mTLS multi-instance addressability so
-  distinct agents on the same host remain addressable by their full lookup
-  key instead of collapsing to a single entry.
+- Renamed exported Rust lookup-key APIs to the `agent_lookup_key`
+  terminology: `NetworksTargetAgentKeysPair` →
+  `NetworksTargetAgentLookupKeysPair` (including `target_agent_lookup_keys()`),
+  `agent_keys_by_customer_id` → `agent_lookup_keys_by_customer_id`, and
+  `gen_agent_key` → `gen_agent_lookup_key`; added the public helper
+  `agent_lookup_key_service_token`.
+- Updated the `AgentManager` callback surface to match the rename:
+  `send_agent_specific_{internal,allow,block}_networks` now accept
+  `NetworksTargetAgentLookupKeysPair`, and `update_config` now uses
+  `agent_lookup_key` terminology.
+- Fixed mTLS multi-instance addressability so distinct agents on the same host
+  remain routable by their full lookup key instead of collapsing to a single
+  entry.
 
 ## [0.33.0] - 2026-05-11
 
@@ -1631,6 +1638,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.33.0...HEAD
 [0.33.0]: https://github.com/aicers/review-web/compare/0.32.0...0.33.0
 [0.32.0]: https://github.com/aicers/review-web/compare/0.31.0...0.32.0
 [0.31.0]: https://github.com/aicers/review-web/compare/0.30.1...0.31.0
