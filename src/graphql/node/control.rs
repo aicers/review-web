@@ -574,15 +574,22 @@ mod tests {
     use super::super::test_support::{insert_active_node, insert_apps, update_account_customers};
     use crate::graphql::{
         AgentManager, BoxedAgentManager, Role, SamplingPolicy, TestSchema,
-        customer::NetworksTargetAgentLookupKeysPair,
+        customer::NetworksTargetAgentLookupKeysPair, gen_agent_lookup_key,
     };
+
+    fn test_agent_lookup_key(agent_key: &str, hostname: &str) -> String {
+        gen_agent_lookup_key(agent_key, hostname)
+    }
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn test_apply_node() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@all-in-one", "sensor@all-in-one"],
+            available_agents: vec![
+                test_agent_lookup_key("unsupervised", "all-in-one"),
+                test_agent_lookup_key("sensor", "all-in-one"),
+            ],
         });
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -2146,7 +2153,10 @@ mod tests {
     async fn test_apply_node_error_due_to_invalid_drafts() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@all-in-one", "sensor@all-in-one"],
+            available_agents: vec![
+                test_agent_lookup_key("unsupervised", "all-in-one"),
+                test_agent_lookup_key("sensor", "all-in-one"),
+            ],
         });
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -2234,7 +2244,10 @@ mod tests {
     async fn test_apply_node_error_due_to_different_node_input() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@all-in-one", "sensor@all-in-one"],
+            available_agents: vec![
+                test_agent_lookup_key("unsupervised", "all-in-one"),
+                test_agent_lookup_key("sensor", "all-in-one"),
+            ],
         });
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -2313,7 +2326,10 @@ mod tests {
     async fn test_apply_node_empty_hostname() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@all-in-one", "sensor@all-in-one"],
+            available_agents: vec![
+                test_agent_lookup_key("unsupervised", "all-in-one"),
+                test_agent_lookup_key("sensor", "all-in-one"),
+            ],
         });
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -2393,7 +2409,7 @@ mod tests {
     async fn test_apply_node_external_service_removal() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@all-in-one"],
+            available_agents: vec![test_agent_lookup_key("unsupervised", "all-in-one")],
         });
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -2655,7 +2671,7 @@ mod tests {
 
     struct MockAgentManager {
         pub online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,
-        pub available_agents: Vec<&'static str>,
+        pub available_agents: Vec<String>,
     }
 
     #[async_trait]
@@ -2673,7 +2689,7 @@ mod tests {
             &self,
             _networks: &[NetworksTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
-            Ok(vec!["semi-supervised@hostA".to_string()])
+            Ok(vec![test_agent_lookup_key("semi-supervised", "hostA")])
         }
 
         async fn send_agent_specific_allow_networks(
@@ -2730,15 +2746,11 @@ mod tests {
         }
 
         async fn update_config(&self, agent_lookup_key: &str) -> Result<(), anyhow::Error> {
-            let is_available = self.available_agents.contains(&agent_lookup_key);
-            #[cfg(feature = "auth-mtls")]
-            let is_available = is_available
-                || self
-                    .available_agents
-                    .iter()
-                    .any(|available_agent| available_agent.replace('@', ".") == agent_lookup_key);
-
-            if is_available {
+            if self
+                .available_agents
+                .iter()
+                .any(|available_agent| available_agent == agent_lookup_key)
+            {
                 Ok(())
             } else {
                 anyhow::bail!("Notifying agent {agent_lookup_key} to update config failed")
@@ -2853,7 +2865,7 @@ mod tests {
 
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id,
-            available_agents: vec!["semi-supervised@analysis"],
+            available_agents: vec![test_agent_lookup_key("semi-supervised", "analysis")],
         });
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -2944,7 +2956,7 @@ mod tests {
 
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id,
-            available_agents: vec!["semi-supervised@analysis"],
+            available_agents: vec![test_agent_lookup_key("semi-supervised", "analysis")],
         });
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -3035,7 +3047,7 @@ mod tests {
 
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id,
-            available_agents: vec!["semi-supervised@host-customer-1"],
+            available_agents: vec![test_agent_lookup_key("semi-supervised", "host-customer-1")],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3069,7 +3081,7 @@ mod tests {
 
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id,
-            available_agents: vec!["semi-supervised@host-customer-2"],
+            available_agents: vec![test_agent_lookup_key("semi-supervised", "host-customer-2")],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3141,7 +3153,7 @@ mod tests {
 
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id,
-            available_agents: vec!["semi-supervised@host-customer-2"],
+            available_agents: vec![test_agent_lookup_key("semi-supervised", "host-customer-2")],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3421,7 +3433,7 @@ mod tests {
     async fn test_apply_node_draft_db_only() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@all-in-one"],
+            available_agents: vec![test_agent_lookup_key("unsupervised", "all-in-one")],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3752,7 +3764,11 @@ mod tests {
     async fn test_apply_agent_config_null_keys_mixed_states() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@mixed", "sensor@mixed", "hog@mixed"],
+            available_agents: vec![
+                test_agent_lookup_key("unsupervised", "mixed"),
+                test_agent_lookup_key("sensor", "mixed"),
+                test_agent_lookup_key("hog", "mixed"),
+            ],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3809,7 +3825,10 @@ mod tests {
     async fn test_apply_agent_config_explicit_subset() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@subset", "sensor@subset"],
+            available_agents: vec![
+                test_agent_lookup_key("unsupervised", "subset"),
+                test_agent_lookup_key("sensor", "subset"),
+            ],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3864,7 +3883,7 @@ mod tests {
     async fn test_apply_agent_config_empty_array() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@empty"],
+            available_agents: vec![test_agent_lookup_key("unsupervised", "empty")],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3912,7 +3931,7 @@ mod tests {
     async fn test_apply_agent_config_duplicate_keys() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@dup"],
+            available_agents: vec![test_agent_lookup_key("unsupervised", "dup")],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3952,7 +3971,7 @@ mod tests {
     async fn test_apply_agent_config_unknown_key_rejected() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@unk"],
+            available_agents: vec![test_agent_lookup_key("unsupervised", "unk")],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3992,7 +4011,11 @@ mod tests {
     async fn test_apply_agent_config_ordering() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@order", "sensor@order", "hog@order"],
+            available_agents: vec![
+                test_agent_lookup_key("unsupervised", "order"),
+                test_agent_lookup_key("sensor", "order"),
+                test_agent_lookup_key("hog", "order"),
+            ],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -4136,8 +4159,8 @@ mod tests {
     async fn test_apply_agent_config_mixed_outcomes() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            // Only `unsupervised@mixfail` succeeds; `sensor@mixfail` will fail.
-            available_agents: vec!["unsupervised@mixfail"],
+            // Only the unsupervised lookup key succeeds; the sensor lookup key will fail.
+            available_agents: vec![test_agent_lookup_key("unsupervised", "mixfail")],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -4188,10 +4211,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_agent_config_multi_instance_lookup_keys() {
-        #[cfg(feature = "auth-jwt")]
-        let available_agents = vec!["001.hog@multi-instance"];
+        let available_agents = vec![test_agent_lookup_key("001.hog", "multi-instance")];
         #[cfg(feature = "auth-mtls")]
-        let available_agents = vec!["001.hog.multi-instance", "002.hog.multi-instance"];
+        available_agents.push(test_agent_lookup_key("002.hog", "multi-instance"));
 
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
@@ -4236,36 +4258,36 @@ mod tests {
             res.errors
         );
 
+        let data = res.data.into_json().unwrap();
+        let attempts = data["applyAgentConfig"]["attempts"].as_array().unwrap();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0]["agentKey"], "001.hog");
+        assert_eq!(attempts[0]["succeeded"], true);
+        assert_eq!(attempts[1]["agentKey"], "002.hog");
         #[cfg(feature = "auth-jwt")]
-        assert_json_eq!(
-            res.data.into_json().unwrap(),
-            json!({
-                "applyAgentConfig": {
-                    "attempts": [
-                        { "agentKey": "001.hog", "succeeded": true, "error": null },
-                        {
-                            "agentKey": "002.hog",
-                            "succeeded": false,
-                            "error": "Notifying agent 002.hog@multi-instance to update config failed"
-                        }
-                    ],
-                    "skipped": []
-                }
-            })
-        );
-
+        {
+            assert_eq!(attempts[1]["succeeded"], false);
+            assert_eq!(
+                attempts[1]["error"].as_str(),
+                Some(
+                    format!(
+                        "Notifying agent {} to update config failed",
+                        test_agent_lookup_key("002.hog", "multi-instance")
+                    )
+                    .as_str()
+                )
+            );
+        }
         #[cfg(feature = "auth-mtls")]
-        assert_json_eq!(
-            res.data.into_json().unwrap(),
-            json!({
-                "applyAgentConfig": {
-                    "attempts": [
-                        { "agentKey": "001.hog", "succeeded": true, "error": null },
-                        { "agentKey": "002.hog", "succeeded": true, "error": null }
-                    ],
-                    "skipped": []
-                }
-            })
+        {
+            assert_eq!(attempts[1]["succeeded"], true);
+            assert!(attempts[1]["error"].is_null());
+        }
+        assert!(
+            data["applyAgentConfig"]["skipped"]
+                .as_array()
+                .unwrap()
+                .is_empty()
         );
     }
 
