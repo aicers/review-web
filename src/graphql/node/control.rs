@@ -4211,7 +4211,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_agent_config_multi_instance_lookup_keys() {
-        let available_agents = vec![test_agent_lookup_key("001.hog", "multi-instance")];
+        let mut available_agents = vec![test_agent_lookup_key("001.hog", "multi-instance")];
         #[cfg(feature = "auth-mtls")]
         available_agents.push(test_agent_lookup_key("002.hog", "multi-instance"));
 
