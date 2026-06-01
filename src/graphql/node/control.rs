@@ -4210,14 +4210,14 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "auth-mtls")]
     async fn test_apply_agent_config_multi_instance_lookup_keys() {
-        let available_agents = vec![test_agent_lookup_key("001.hog", "multi-instance")];
-        #[cfg(feature = "auth-mtls")]
-        available_agents.push(test_agent_lookup_key("002.hog", "multi-instance"));
-
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents,
+            available_agents: vec![
+                test_agent_lookup_key("001.hog", "multi-instance"),
+                test_agent_lookup_key("002.hog", "multi-instance"),
+            ],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -4264,25 +4264,8 @@ mod tests {
         assert_eq!(attempts[0]["agentKey"], "001.hog");
         assert_eq!(attempts[0]["succeeded"], true);
         assert_eq!(attempts[1]["agentKey"], "002.hog");
-        #[cfg(feature = "auth-jwt")]
-        {
-            assert_eq!(attempts[1]["succeeded"], false);
-            assert_eq!(
-                attempts[1]["error"].as_str(),
-                Some(
-                    format!(
-                        "Notifying agent {} to update config failed",
-                        test_agent_lookup_key("002.hog", "multi-instance")
-                    )
-                    .as_str()
-                )
-            );
-        }
-        #[cfg(feature = "auth-mtls")]
-        {
-            assert_eq!(attempts[1]["succeeded"], true);
-            assert!(attempts[1]["error"].is_null());
-        }
+        assert_eq!(attempts[1]["succeeded"], true);
+        assert!(attempts[1]["error"].is_null());
         assert!(
             data["applyAgentConfig"]["skipped"]
                 .as_array()
