@@ -68,7 +68,7 @@ fn normalize_rsa_der(secret: &[u8]) -> Vec<u8> {
     secret.to_vec()
 }
 
-pub trait TokenSigner: Send + Sync {
+pub(crate) trait TokenSigner: Send + Sync {
     /// Signs an Aimer-compatible JWT token for the given expiration timestamp.
     ///
     /// # Errors
@@ -78,7 +78,7 @@ pub trait TokenSigner: Send + Sync {
     fn sign_aimer_token(&self, exp: i64) -> Result<String, AuthError>;
 }
 
-pub struct ProductionTokenSigner;
+pub(crate) struct ProductionTokenSigner;
 
 /// Creates a JWT token with the given username and role.
 ///
@@ -147,7 +147,7 @@ impl TokenSigner for ProductionTokenSigner {
 /// # Errors
 ///
 /// Returns an error if the signer cannot create the token.
-pub fn create_aimer_token(signer: &dyn TokenSigner, exp: i64) -> Result<String, AuthError> {
+pub(crate) fn create_aimer_token(signer: &dyn TokenSigner, exp: i64) -> Result<String, AuthError> {
     signer.sign_aimer_token(exp)
 }
 

@@ -2542,6 +2542,112 @@ mod tests {
         };
         assert!(!review_token.is_empty());
         assert!(matches!(payload.get("aimerToken"), Some(Value::Null)));
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertAccount(
+                        username: "user1",
+                        password: "pw1",
+                        role: "SECURITY_ADMINISTRATOR",
+                        name: "User One",
+                        department: "Test",
+                        customerIds: [0]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertAccount: "user1"}"#);
+        update_account_last_signin_time(&schema, "user1").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    signIn(username: "user1", password: "pw1") {
+                        reviewToken
+                        aimerToken
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "expected request-scoped signer failure not to leak, got {:?}",
+            res.errors
+        );
+        let Value::Object(root) = res.data else {
+            panic!("unexpected response: {res:?}");
+        };
+        let Some(Value::Object(payload)) = root.get("signIn") else {
+            panic!("unexpected response: {root:?}");
+        };
+        let Some(Value::String(aimer_token)) = payload.get("aimerToken") else {
+            panic!("missing aimerToken: {payload:?}");
+        };
+        assert!(!aimer_token.is_empty());
+
+        restore_review_admin(original_review_admin);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn issue_aimer_token_reports_signing_failure() {
+        let original_review_admin = backup_and_set_review_admin();
+        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
+
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        super::init_expiration_time(&store, 3600).unwrap();
+        drop(store);
+        update_account_last_signin_time(&schema, "admin").await;
+
+        let sign_in_res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    signIn(username: "admin", password: "admin") {
+                        reviewToken
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            sign_in_res.errors.is_empty(),
+            "errors: {:?}",
+            sign_in_res.errors
+        );
+        let Value::Object(sign_in_root) = sign_in_res.data else {
+            panic!("unexpected response: {sign_in_res:?}");
+        };
+        let Some(Value::Object(sign_in_payload)) = sign_in_root.get("signIn") else {
+            panic!("unexpected response: {sign_in_root:?}");
+        };
+        let Some(Value::String(review_token)) = sign_in_payload.get("reviewToken") else {
+            panic!("missing reviewToken: {sign_in_payload:?}");
+        };
+
+        let mutation = format!(
+            r#"mutation {{
+                issueAimerToken(reviewToken: "{review_token}") {{
+                    aimerToken
+                    expirationTime
+                }}
+            }}"#
+        );
+        let res = schema
+            .execute_as_system_admin_with_data(
+                &mutation,
+                Arc::new(FailingTokenSigner) as Arc<dyn crate::auth::TokenSigner>,
+            )
+            .await;
+        assert!(
+            res.errors
+                .iter()
+                .any(|err| err.message.contains("Failed to issue aimer token")),
+            "expected aimer token failure, got {:?}",
+            res.errors
+        );
+        assert!(matches!(res.data, Value::Null));
+
         restore_review_admin(original_review_admin);
     }
 

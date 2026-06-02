@@ -5,14 +5,13 @@ mod mtls;
 #[cfg(feature = "auth-jwt")]
 mod store;
 
+#[cfg(feature = "auth-jwt")]
+pub(crate) use jwt::{ProductionTokenSigner, TokenSigner, create_aimer_token};
 #[cfg(feature = "auth-mtls")]
 pub use mtls::{MtlsAuthError, MtlsAuthenticator, MtlsIdentity, validate_context_jwt};
 #[cfg(feature = "auth-jwt")]
 pub use {
-    jwt::{
-        ProductionTokenSigner, TokenSigner, create_aimer_token, create_token, decode_token,
-        update_jwt_expires_in, update_jwt_secret, validate_token,
-    },
+    jwt::{create_token, decode_token, update_jwt_expires_in, update_jwt_secret, validate_token},
     store::{insert_token, revoke_token},
 };
 

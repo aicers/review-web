@@ -1156,7 +1156,7 @@ impl TestSchema {
             crate::auth::update_jwt_secret(test_jwt_secret_der().to_vec()).unwrap();
         }
 
-        let mut builder = Schema::build(
+        let builder = Schema::build(
             Query::default(),
             Mutation::default(),
             Subscription::default(),
@@ -1165,9 +1165,7 @@ impl TestSchema {
         .data(store.clone())
         .data(username.to_string());
         #[cfg(feature = "auth-jwt")]
-        {
-            builder = builder.data(Arc::new(ProductionTokenSigner) as Arc<dyn TokenSigner>);
-        }
+        let builder = builder.data(Arc::new(ProductionTokenSigner) as Arc<dyn TokenSigner>);
         let schema = builder.finish();
 
         Self {
