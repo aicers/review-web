@@ -440,8 +440,8 @@ pub fn matches_manager_hostname(hostname: &str) -> bool {
 /// `@` for `auth-jwt`, `.` for `auth-mtls`.
 ///
 /// For `auth-mtls`, `agent_key` is the certificate identity prefix
-/// (`{instance}.{service}`, e.g. `001.hog`) before the host name; for `auth-jwt`,
-/// `agent_key` uses the legacy agent name form (e.g. `hog`).
+/// (`{instance}.{service}`, e.g. `001.hog`) before the DNS SAN hostname.
+/// For `auth-jwt`, `agent_key` uses the legacy agent name form (e.g. `hog`).
 #[must_use]
 pub fn gen_agent_lookup_key(agent_key: &str, host_fqdn: &str) -> String {
     #[cfg(feature = "auth-jwt")]
