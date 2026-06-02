@@ -3,6 +3,7 @@ mod username_validation;
 use std::{
     env,
     net::{IpAddr, SocketAddr},
+    sync::Arc,
 };
 
 use anyhow::anyhow;
@@ -24,7 +25,7 @@ use super::{IpAddress, RoleGuard, cluster::try_id_args_into_ints};
 use crate::graphql::query_with_constraints;
 use crate::{
     auth::{
-        create_aimer_token, create_token, decode_token, insert_token, revoke_token,
+        TokenSigner, create_aimer_token, create_token, decode_token, insert_token, revoke_token,
         update_jwt_expires_in, validate_token,
     },
     info_with_username,
@@ -852,7 +853,8 @@ impl AccountMutation {
             .ok_or_else(|| async_graphql::Error::new("invalid expiration timestamp"))?
             .naive_utc();
 
-        let aimer_token = create_aimer_token(exp_timestamp).map_err(|err| {
+        let signer = ctx.data::<Arc<dyn TokenSigner>>()?;
+        let aimer_token = create_aimer_token(signer.as_ref(), exp_timestamp).map_err(|err| {
             tracing::error!(error = %err, "Failed to create aimer_token");
             async_graphql::Error::new(format!("{AIMER_TOKEN_ERROR_MESSAGE}: {err}"))
         })?;
@@ -1288,7 +1290,13 @@ fn validate_update_new_password(password: &str, new_password: &str, username: &s
 }
 
 fn generate_aimer_token(ctx: &Context<'_>, exp_timestamp: i64) -> Option<String> {
-    match create_aimer_token(exp_timestamp) {
+    let Ok(signer) = ctx.data::<Arc<dyn TokenSigner>>() else {
+        let server_error =
+            ctx.set_error_path(ServerError::new("Aimer token signer is unavailable", None));
+        ctx.add_error(server_error);
+        return None;
+    };
+    match create_aimer_token(signer.as_ref(), exp_timestamp) {
         Ok(token) => Some(token),
         Err(err) => {
             tracing::error!(error = %err, "Failed to create aimer_token");
@@ -1694,7 +1702,7 @@ fn read_review_admin() -> anyhow::Result<(String, String)> {
 #[cfg(test)]
 #[allow(clippy::await_holding_lock)]
 mod tests {
-    use std::{env, net::SocketAddr};
+    use std::{env, net::SocketAddr, sync::Arc};
 
     use assert_json_diff::assert_json_eq;
     use async_graphql::Value;
@@ -1707,6 +1715,16 @@ mod tests {
         BoxedAgentManager, MockAgentManager, RoleGuard, TestSchema,
         account::{REVIEW_ADMIN, read_review_admin},
     };
+
+    struct FailingTokenSigner;
+
+    impl crate::auth::TokenSigner for FailingTokenSigner {
+        fn sign_aimer_token(&self, _exp: i64) -> Result<String, crate::auth::AuthError> {
+            Err(crate::auth::AuthError::Other(
+                "Forced Aimer token failure (test)".to_string(),
+            ))
+        }
+    }
 
     async fn update_account_last_signin_time(schema: &TestSchema, name: &str) {
         let store = schema.store();
@@ -2493,16 +2511,15 @@ mod tests {
 
         update_account_last_signin_time(&schema, "admin").await;
 
-        let _force_failure = crate::auth::ForceAimerTokenFailureGuard::new();
-
         let res = schema
-            .execute_as_system_admin(
+            .execute_as_system_admin_with_data(
                 r#"mutation {
                     signIn(username: "admin", password: "admin") {
                         reviewToken
                         aimerToken
                     }
                 }"#,
+                Arc::new(FailingTokenSigner) as Arc<dyn crate::auth::TokenSigner>,
             )
             .await;
 

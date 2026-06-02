@@ -68,6 +68,8 @@ pub use self::sampling::{
     Interval as SamplingInterval, Kind as SamplingKind, Period as SamplingPeriod,
     Policy as SamplingPolicy, get_sampling_policies,
 };
+#[cfg(feature = "auth-jwt")]
+use crate::auth::{ProductionTokenSigner, TokenSigner};
 use crate::backend::{AgentManager, CertManager};
 
 /// GraphQL schema type.
@@ -99,6 +101,10 @@ where
     .data(agent_manager)
     .data(cert_manager)
     .data(tls_reload_handle);
+    #[cfg(feature = "auth-jwt")]
+    {
+        builder = builder.data(Arc::new(ProductionTokenSigner) as Arc<dyn TokenSigner>);
+    }
     if let Some(ip_locator) = ip_locator {
         builder = builder.data(ip_locator);
     }
@@ -1150,15 +1156,19 @@ impl TestSchema {
             crate::auth::update_jwt_secret(test_jwt_secret_der().to_vec()).unwrap();
         }
 
-        let schema = Schema::build(
+        let mut builder = Schema::build(
             Query::default(),
             Mutation::default(),
             Subscription::default(),
         )
         .data(agent_manager)
         .data(store.clone())
-        .data(username.to_string())
-        .finish();
+        .data(username.to_string());
+        #[cfg(feature = "auth-jwt")]
+        {
+            builder = builder.data(Arc::new(ProductionTokenSigner) as Arc<dyn TokenSigner>);
+        }
+        let schema = builder.finish();
 
         Self {
             _dir: db_dir,
