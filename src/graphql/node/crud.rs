@@ -336,7 +336,7 @@ mod tests {
             profile_draft: None,
             agents: vec![
                 database::Agent {
-                    node: u32::MAX,
+                    node_id: u32::MAX,
                     key: "001.hog".to_string(),
                     kind: database::AgentKind::SemiSupervised,
                     status: database::AgentStatus::Enabled,
@@ -344,7 +344,7 @@ mod tests {
                     draft: None,
                 },
                 database::Agent {
-                    node: u32::MAX,
+                    node_id: u32::MAX,
                     key: "002.hog".to_string(),
                     kind: database::AgentKind::SemiSupervised,
                     status: database::AgentStatus::Enabled,
@@ -352,7 +352,7 @@ mod tests {
                     draft: None,
                 },
                 database::Agent {
-                    node: u32::MAX,
+                    node_id: u32::MAX,
                     key: "001.piglet".to_string(),
                     kind: database::AgentKind::Sensor,
                     status: database::AgentStatus::Enabled,

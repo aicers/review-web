@@ -35,17 +35,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `hostFqdn`, and the `agents` argument on the `trafficFilterList` query and
     the `applyTrafficFilterRules` mutation is now `hostFqdns`.
   - `BlocklistKerberos.clientName` / `serviceName` are now `cname` / `sname`.
-- Renamed several GraphQL fields and arguments to align with the updated
-  `review-database` schema:
-  - `Agent.node` and `ExternalService.node` are now `nodeId`.
-  - `TrafficFilter.agent` is now `hostFqdn`.
-  - The `agent` argument on `insertTrafficFilterRules`,
-    `updateTrafficFilterRules`, `clearTrafficFilterRules`, and
-    `removeTrafficFilterRules` is now `hostFqdn`.
-  - The `agents` argument on `trafficFilterList` and
-    `applyTrafficFilterRules` is now `hostFqdns`.
-  - `BlocklistKerberos.clientName` and `serviceName` are now `cname` and
-    `sname`.
 
 ## [0.33.0] - 2026-05-11
 
