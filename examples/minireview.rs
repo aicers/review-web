@@ -25,7 +25,9 @@ use review_web::graphql::account::set_initial_admin_password;
 use review_web::{
     self as web,
     backend::{AgentManager, CertManager},
-    graphql::{Process, ResourceUsage, SamplingPolicy, customer::NetworksTargetAgentKeysPair},
+    graphql::{
+        Process, ResourceUsage, SamplingPolicy, customer::NetworksTargetAgentLookupKeysPair,
+    },
 };
 use serde::Deserialize;
 use tokio::signal::unix::{SignalKind, signal};
@@ -147,21 +149,21 @@ impl AgentManager for Manager {
 
     async fn send_agent_specific_internal_networks(
         &self,
-        _networks: &[NetworksTargetAgentKeysPair],
+        _networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, Error> {
         bail!("Not supported")
     }
 
     async fn send_agent_specific_allow_networks(
         &self,
-        _networks: &[NetworksTargetAgentKeysPair],
+        _networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, Error> {
         bail!("Not supported")
     }
 
     async fn send_agent_specific_block_networks(
         &self,
-        _networks: &[NetworksTargetAgentKeysPair],
+        _networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, Error> {
         bail!("Not supported")
     }
@@ -199,8 +201,8 @@ impl AgentManager for Manager {
         bail!("Host {hostname} is unreachable")
     }
 
-    async fn update_config(&self, agent_key: &str) -> Result<(), Error> {
-        bail!("Agent {agent_key} is unreachable")
+    async fn update_config(&self, agent_lookup_key: &str) -> Result<(), Error> {
+        bail!("Agent {agent_lookup_key} is unreachable")
     }
 
     async fn update_traffic_filter_rules(

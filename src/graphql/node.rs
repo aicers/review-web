@@ -15,15 +15,13 @@ use async_graphql::{
 use bincode::Options;
 use chrono::{DateTime, TimeZone, Utc};
 #[allow(clippy::module_name_repetitions)]
-pub use crud::agent_keys_by_customer_id;
+pub use crud::agent_lookup_keys_by_customer_id;
 use database::{Indexable, event::Direction};
 use input::NodeInput;
 use review_database as database;
 use roxy::Process as RoxyProcess;
 use serde::{Deserialize, Serialize};
 
-const SENSOR_AGENT: &str = "piglet";
-const UNSUPERVISED_AGENT: &str = "reconverge";
 pub(super) const SEMI_SUPERVISED_AGENT: &str = "hog";
 
 #[derive(Default)]
@@ -436,12 +434,35 @@ pub fn matches_manager_hostname(hostname: &str) -> bool {
     !manager_hostname.is_empty() && manager_hostname == hostname
 }
 
-fn gen_agent_key(kind: AgentKind, hostname: &str) -> Result<String> {
-    match kind {
-        AgentKind::Unsupervised => Ok(format!("{UNSUPERVISED_AGENT}@{hostname}")),
-        AgentKind::Sensor => Ok(format!("{SENSOR_AGENT}@{hostname}")),
-        AgentKind::SemiSupervised => Ok(format!("{SEMI_SUPERVISED_AGENT}@{hostname}")),
-        AgentKind::TimeSeriesGenerator => Err(anyhow::anyhow!("invalid node's agent type").into()),
+/// Builds the runtime agent lookup key from an agent key and node hostname.
+///
+/// The separator between `agent_key` and `host_fqdn` depends on the auth feature:
+/// `@` for `auth-jwt`, `.` for `auth-mtls`.
+///
+/// For `auth-mtls`, `agent_key` is the certificate identity prefix
+/// (`{instance}.{service}`, e.g. `001.hog`) before the DNS SAN hostname.
+/// For `auth-jwt`, `agent_key` uses the legacy agent name form (e.g. `hog`).
+#[must_use]
+pub fn gen_agent_lookup_key(agent_key: &str, host_fqdn: &str) -> String {
+    #[cfg(feature = "auth-jwt")]
+    let separator = '@';
+    #[cfg(feature = "auth-mtls")]
+    let separator = '.';
+
+    format!("{agent_key}{separator}{host_fqdn}")
+}
+
+#[must_use]
+pub fn agent_lookup_key_service_token(agent_lookup_key: &str) -> Option<&str> {
+    #[cfg(feature = "auth-jwt")]
+    {
+        agent_lookup_key
+            .split_once('@')
+            .map(|(agent_key, _)| agent_key)
+    }
+    #[cfg(feature = "auth-mtls")]
+    {
+        agent_lookup_key.split('.').nth(1)
     }
 }
 
@@ -450,7 +471,40 @@ mod tests {
     use serde_json::json;
 
     use super::test_support::{MockAgentManager, insert_active_node, update_account_customers};
-    use crate::graphql::{BoxedAgentManager, CustomerIds, Role, RoleGuard, TestSchema};
+    use crate::graphql::{
+        BoxedAgentManager, CustomerIds, Role, RoleGuard, TestSchema,
+        agent_lookup_key_service_token, gen_agent_lookup_key,
+    };
+
+    #[test]
+    #[cfg(feature = "auth-jwt")]
+    fn gen_agent_lookup_key_uses_jwt_separator() {
+        assert_eq!(gen_agent_lookup_key("hog", "node-01"), "hog@node-01");
+    }
+
+    #[test]
+    #[cfg(feature = "auth-mtls")]
+    fn gen_agent_lookup_key_uses_mtls_separator() {
+        assert_eq!(
+            gen_agent_lookup_key("001.hog", "node-01.customer.internal"),
+            "001.hog.node-01.customer.internal"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "auth-jwt")]
+    fn agent_lookup_key_service_token_extracts_jwt_agent_key() {
+        assert_eq!(agent_lookup_key_service_token("hog@node-01"), Some("hog"));
+    }
+
+    #[test]
+    #[cfg(feature = "auth-mtls")]
+    fn agent_lookup_key_service_token_extracts_mtls_service_token() {
+        assert_eq!(
+            agent_lookup_key_service_token("001.hog.node-01.customer.internal"),
+            Some("hog")
+        );
+    }
 
     async fn new_schema() -> TestSchema {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {

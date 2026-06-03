@@ -60,8 +60,10 @@ use vinum::signal;
 pub use self::allow_network::get_allow_networks;
 pub use self::block_network::get_block_networks;
 pub use self::cert::ParsedCertificate;
-pub use self::customer::get_customer_networks;
-pub use self::node::agent_keys_by_customer_id;
+pub use self::customer::{NetworksTargetAgentLookupKeysPair, get_customer_networks};
+pub use self::node::{
+    agent_lookup_key_service_token, agent_lookup_keys_by_customer_id, gen_agent_lookup_key,
+};
 pub use self::sampling::{
     Interval as SamplingInterval, Kind as SamplingKind, Period as SamplingPeriod,
     Policy as SamplingPolicy, get_sampling_policies,
@@ -960,14 +962,14 @@ impl AgentManager for MockAgentManager {
 
     async fn send_agent_specific_internal_networks(
         &self,
-        _networks: &[customer::NetworksTargetAgentKeysPair],
+        _networks: &[customer::NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         Ok(vec!["semi-supervised@hostA".to_string()])
     }
 
     async fn send_agent_specific_allow_networks(
         &self,
-        _networks: &[customer::NetworksTargetAgentKeysPair],
+        _networks: &[customer::NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         Ok(vec![
             "semi-supervised@hostA".to_string(),
@@ -977,7 +979,7 @@ impl AgentManager for MockAgentManager {
 
     async fn send_agent_specific_block_networks(
         &self,
-        _networks: &[customer::NetworksTargetAgentKeysPair],
+        _networks: &[customer::NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         Ok(vec![
             "semi-supervised@hostA".to_string(),
@@ -1019,7 +1021,7 @@ impl AgentManager for MockAgentManager {
         unimplemented!()
     }
 
-    async fn update_config(&self, _agent_key: &str) -> Result<(), anyhow::Error> {
+    async fn update_config(&self, _agent_lookup_key: &str) -> Result<(), anyhow::Error> {
         unimplemented!()
     }
 }

@@ -103,21 +103,21 @@ xvcNsYaYqk6sRk/INvcaN2E=
     impl AgentManager for StubAgentManager {
         async fn send_agent_specific_internal_networks(
             &self,
-            _networks: &[review_web::graphql::customer::NetworksTargetAgentKeysPair],
+            _networks: &[review_web::graphql::customer::NetworksTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             Ok(Vec::new())
         }
 
         async fn send_agent_specific_allow_networks(
             &self,
-            _networks: &[review_web::graphql::customer::NetworksTargetAgentKeysPair],
+            _networks: &[review_web::graphql::customer::NetworksTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             Ok(Vec::new())
         }
 
         async fn send_agent_specific_block_networks(
             &self,
-            _networks: &[review_web::graphql::customer::NetworksTargetAgentKeysPair],
+            _networks: &[review_web::graphql::customer::NetworksTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             Ok(Vec::new())
         }
@@ -162,7 +162,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
             Ok(())
         }
 
-        async fn update_config(&self, _agent_key: &str) -> Result<(), anyhow::Error> {
+        async fn update_config(&self, _agent_lookup_key: &str) -> Result<(), anyhow::Error> {
             Ok(())
         }
     }

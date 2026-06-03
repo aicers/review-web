@@ -8,7 +8,7 @@ use tracing::{error, info};
 
 use super::{
     BoxedAgentManager, Role, RoleGuard,
-    customer::{HostNetworkGroup, HostNetworkGroupInput, NetworksTargetAgentKeysPair},
+    customer::{HostNetworkGroup, HostNetworkGroupInput, NetworksTargetAgentLookupKeysPair},
 };
 use crate::graphql::{
     customer_access, node::SEMI_SUPERVISED_AGENT, parse_and_validate_customer_ids,
@@ -103,17 +103,19 @@ impl BlockNetworkMutation {
             let id = map.put(value)?;
             info_with_username!(ctx, "Blocklist {name} has been registered");
 
-            let agent_keys = crate::graphql::agent_keys_by_customer_id(&store)?;
+            let agent_lookup_keys = crate::graphql::agent_lookup_keys_by_customer_id(&store)?;
             let network_list = get_block_networks(&store, customer_id)
                 .ok()
                 .and_then(|networks| {
-                    agent_keys.get(&customer_id).map(|agent_keys| {
-                        NetworksTargetAgentKeysPair::new(
-                            networks,
-                            agent_keys.clone(),
-                            SEMI_SUPERVISED_AGENT,
-                        )
-                    })
+                    agent_lookup_keys
+                        .get(&customer_id)
+                        .map(|agent_lookup_keys| {
+                            NetworksTargetAgentLookupKeysPair::new(
+                                networks,
+                                agent_lookup_keys.clone(),
+                                SEMI_SUPERVISED_AGENT,
+                            )
+                        })
                 });
 
             (id, network_list)
@@ -182,16 +184,16 @@ impl BlockNetworkMutation {
                 return Err("None of the specified blocked networks was removed.".into());
             }
 
-            let agent_keys_map = crate::graphql::agent_keys_by_customer_id(&store)?;
-            let network_lists: Vec<NetworksTargetAgentKeysPair> = affected_customers
+            let agent_lookup_keys_map = crate::graphql::agent_lookup_keys_by_customer_id(&store)?;
+            let network_lists: Vec<NetworksTargetAgentLookupKeysPair> = affected_customers
                 .into_iter()
                 .filter_map(|customer_id| {
                     let networks = get_block_networks(&store, customer_id).ok()?;
-                    let agent_keys = agent_keys_map.get(&customer_id)?;
+                    let agent_lookup_keys = agent_lookup_keys_map.get(&customer_id)?;
 
-                    Some(NetworksTargetAgentKeysPair::new(
+                    Some(NetworksTargetAgentLookupKeysPair::new(
                         networks,
-                        agent_keys.clone(),
+                        agent_lookup_keys.clone(),
                         SEMI_SUPERVISED_AGENT,
                     ))
                 })
@@ -274,16 +276,16 @@ impl BlockNetworkMutation {
                 new.name
             );
 
-            let agent_keys = crate::graphql::agent_keys_by_customer_id(&store)?;
+            let agent_lookup_keys = crate::graphql::agent_lookup_keys_by_customer_id(&store)?;
             get_block_networks(&store, current_block_network.customer_id)
                 .ok()
                 .and_then(|networks| {
-                    agent_keys
+                    agent_lookup_keys
                         .get(&current_block_network.customer_id)
-                        .map(|agent_keys| {
-                            NetworksTargetAgentKeysPair::new(
+                        .map(|agent_lookup_keys| {
+                            NetworksTargetAgentLookupKeysPair::new(
                                 networks,
-                                agent_keys.clone(),
+                                agent_lookup_keys.clone(),
                                 SEMI_SUPERVISED_AGENT,
                             )
                         })
@@ -457,7 +459,7 @@ pub fn get_block_networks(db: &Store, customer_id: u32) -> Result<database::Host
 
 async fn apply_block_networks(
     ctx: &Context<'_>,
-    networks: &[NetworksTargetAgentKeysPair],
+    networks: &[NetworksTargetAgentLookupKeysPair],
 ) -> Result<()> {
     let agent_manager = ctx.data::<BoxedAgentManager>()?;
     agent_manager

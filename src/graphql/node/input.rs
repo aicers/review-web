@@ -39,6 +39,12 @@ impl fmt::Display for NodeProfileInput {
 #[derive(Clone, InputObject)]
 pub struct AgentInput {
     pub(super) kind: AgentKind,
+    /// Agent identity segment combined with the node profile hostname to form the
+    /// runtime agent lookup key used for routing and notifications.
+    ///
+    /// For auth-mtls builds, use `{instance}.{service}` (e.g. `001.hog`, `002.hog`)
+    /// matching the certificate identity prefix before the DNS SAN hostname.
+    /// For auth-jwt builds, use the legacy agent name (e.g. `hog`).
     pub(super) key: String,
     status: AgentStatus,
     pub(super) config: Option<String>,
@@ -62,6 +68,12 @@ impl From<AgentInput> for review_database::Agent {
 #[derive(Clone, InputObject)]
 pub struct AgentDraftInput {
     pub(super) kind: AgentKind,
+    /// Agent identity segment combined with the node profile hostname to form the
+    /// runtime agent lookup key used for routing and notifications.
+    ///
+    /// For auth-mtls builds, use `{instance}.{service}` (e.g. `001.hog`, `002.hog`)
+    /// matching the certificate identity prefix before the DNS SAN hostname.
+    /// For auth-jwt builds, use the legacy agent name (e.g. `hog`).
     pub(super) key: String,
     pub(super) status: AgentStatus,
     pub(super) draft: Option<String>,

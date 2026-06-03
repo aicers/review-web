@@ -5,7 +5,7 @@ use chrono::Utc;
 use review_database::{Role, types};
 use roxy::ResourceUsage;
 
-use crate::graphql::{AgentManager, SamplingPolicy, customer::NetworksTargetAgentKeysPair};
+use crate::graphql::{AgentManager, SamplingPolicy, customer::NetworksTargetAgentLookupKeysPair};
 
 pub(super) struct MockAgentManager {
     pub(super) online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,
@@ -15,21 +15,21 @@ pub(super) struct MockAgentManager {
 impl AgentManager for MockAgentManager {
     async fn send_agent_specific_internal_networks(
         &self,
-        _networks: &[NetworksTargetAgentKeysPair],
+        _networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         anyhow::bail!("not expected to be called")
     }
 
     async fn send_agent_specific_allow_networks(
         &self,
-        _networks: &[NetworksTargetAgentKeysPair],
+        _networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         unimplemented!()
     }
 
     async fn send_agent_specific_block_networks(
         &self,
-        _networks: &[NetworksTargetAgentKeysPair],
+        _networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         unimplemented!()
     }
@@ -76,7 +76,7 @@ impl AgentManager for MockAgentManager {
         unimplemented!()
     }
 
-    async fn update_config(&self, _agent_key: &str) -> Result<(), anyhow::Error> {
+    async fn update_config(&self, _agent_lookup_key: &str) -> Result<(), anyhow::Error> {
         Ok(())
     }
 }

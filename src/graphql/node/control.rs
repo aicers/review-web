@@ -8,10 +8,10 @@ use tracing::{error, info, warn};
 
 use super::{
     super::{BoxedAgentManager, Role, RoleGuard, customer_access},
-    Node, NodeControlMutation, SEMI_SUPERVISED_AGENT, gen_agent_key,
+    Node, NodeControlMutation, SEMI_SUPERVISED_AGENT, gen_agent_lookup_key,
 };
 use crate::graphql::{
-    customer::{NetworksTargetAgentKeysPair, send_agent_specific_customer_networks},
+    customer::{NetworksTargetAgentLookupKeysPair, send_agent_specific_customer_networks},
     get_customer_networks,
     node::input::NodeInput,
 };
@@ -359,8 +359,8 @@ impl NodeControlMutation {
                     reason: SkipReason::DirectSetup,
                 }),
                 Some(_) => {
-                    let manager_key = format!("{}@{hostname}", agent.key);
-                    match agent_manager.update_config(manager_key.as_str()).await {
+                    let agent_lookup_key = gen_agent_lookup_key(&agent.key, hostname);
+                    match agent_manager.update_config(agent_lookup_key.as_str()).await {
                         Ok(()) => attempts.push(AgentNotifyAttempt {
                             agent_key: agent.key.clone(),
                             succeeded: true,
@@ -383,23 +383,23 @@ impl NodeControlMutation {
 async fn notify_agents(
     agent_manager: &BoxedAgentManager,
     hostname: &str,
-    update_agent_ids: &[&str],
-    disable_agent_ids: &[&str],
+    update_agent_keys: &[&str],
+    disable_agent_keys: &[&str],
 ) -> Result<()> {
-    let update_futures = update_agent_ids.iter().map(|agent_id| async move {
-        let agent_key = format!("{agent_id}@{hostname}");
+    let update_futures = update_agent_keys.iter().map(|agent_key| async move {
+        let agent_lookup_key = gen_agent_lookup_key(agent_key, hostname);
         agent_manager
-            .update_config(agent_key.as_str())
+            .update_config(agent_lookup_key.as_str())
             .await
             .map_err(|e| {
                 async_graphql::Error::new(format!(
-                    "Failed to notify agent for config update {agent_key}: {e}"
+                    "Failed to notify agent for config update {agent_lookup_key}: {e}"
                 ))
             })
     });
 
     // TODO: #281
-    info!("Agents {disable_agent_ids:?} need to be notified to be disabled");
+    info!("Agents {disable_agent_keys:?} need to be notified to be disabled");
 
     let notification_results: Vec<Result<_>> = join_all(update_futures).await;
 
@@ -468,7 +468,7 @@ async fn update_db(
     ctx: &Context<'_>,
     i: u32,
     node: &NodeInput,
-    disable_agent_ids: &[&str],
+    disable_agent_keys: &[&str],
 ) -> Result<review_database::Node> {
     let store = crate::graphql::get_store(ctx)?;
     let mut map = store.node_map();
@@ -480,12 +480,12 @@ async fn update_db(
 
     update.profile.clone_from(&update.profile_draft);
 
-    // Update agents, removing those whose keys are in `disable_agent_ids`
+    // Update agents, removing those whose keys are in `disable_agent_keys`
     update.agents = update
         .agents
         .into_iter()
         .filter_map(|mut agent| {
-            if disable_agent_ids.contains(&agent.key.as_str()) {
+            if disable_agent_keys.contains(&agent.key.as_str()) {
                 None
             } else {
                 agent.config.clone_from(&agent.draft);
@@ -511,10 +511,10 @@ async fn send_customer_change_if_needed(ctx: &Context<'_>, i: u32, node: &NodeIn
             .as_ref()
             .expect("When customer_id exists, `nodeInput.profile_draft` means Some, which means that the values of the other fields in the `NodeProfileInput` also exist. Therefore, their values are always valid.")
             .hostname.as_str();
-        let agent_keys = node
+        let agent_lookup_keys = node
             .agents
             .iter()
-            .filter_map(|agent| gen_agent_key(agent.kind, hostname).ok())
+            .map(|agent| gen_agent_lookup_key(&agent.key, hostname))
             .collect::<Vec<String>>();
         let Ok(customer_id) = customer_id.parse::<u32>() else {
             error_with_username!(
@@ -523,7 +523,7 @@ async fn send_customer_change_if_needed(ctx: &Context<'_>, i: u32, node: &NodeIn
             );
             return;
         };
-        if let Err(e) = send_customer_change(ctx, customer_id, agent_keys).await {
+        if let Err(e) = send_customer_change(ctx, customer_id, agent_lookup_keys).await {
             error_with_username!(
                 ctx,
                 "Failed to broadcast customer change for customer ID {customer_id} on node {i}. The failure did not affect the node application operation. Error: {e:?}",
@@ -546,12 +546,12 @@ fn customer_id_to_send(node: &NodeInput) -> Option<&str> {
 async fn send_customer_change(
     ctx: &Context<'_>,
     customer_id: u32,
-    agent_keys: Vec<String>,
+    agent_lookup_keys: Vec<String>,
 ) -> Result<()> {
     let network_list = {
         let store = crate::graphql::get_store(ctx)?;
         let networks = get_customer_networks(&store, customer_id)?;
-        NetworksTargetAgentKeysPair::new(networks, agent_keys, SEMI_SUPERVISED_AGENT)
+        NetworksTargetAgentLookupKeysPair::new(networks, agent_lookup_keys, SEMI_SUPERVISED_AGENT)
     };
     if let Err(e) = send_agent_specific_customer_networks(ctx, &[network_list]).await {
         error_with_username!(ctx, "Failed to broadcast internal networks: {e:?}");
@@ -574,15 +574,22 @@ mod tests {
     use super::super::test_support::{insert_active_node, insert_apps, update_account_customers};
     use crate::graphql::{
         AgentManager, BoxedAgentManager, Role, SamplingPolicy, TestSchema,
-        customer::NetworksTargetAgentKeysPair,
+        customer::NetworksTargetAgentLookupKeysPair, gen_agent_lookup_key,
     };
+
+    fn test_agent_lookup_key(agent_key: &str, hostname: &str) -> String {
+        gen_agent_lookup_key(agent_key, hostname)
+    }
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn test_apply_node() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@all-in-one", "sensor@all-in-one"],
+            available_agents: vec![
+                test_agent_lookup_key("unsupervised", "all-in-one"),
+                test_agent_lookup_key("sensor", "all-in-one"),
+            ],
         });
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -2146,7 +2153,10 @@ mod tests {
     async fn test_apply_node_error_due_to_invalid_drafts() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@all-in-one", "sensor@all-in-one"],
+            available_agents: vec![
+                test_agent_lookup_key("unsupervised", "all-in-one"),
+                test_agent_lookup_key("sensor", "all-in-one"),
+            ],
         });
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -2234,7 +2244,10 @@ mod tests {
     async fn test_apply_node_error_due_to_different_node_input() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@all-in-one", "sensor@all-in-one"],
+            available_agents: vec![
+                test_agent_lookup_key("unsupervised", "all-in-one"),
+                test_agent_lookup_key("sensor", "all-in-one"),
+            ],
         });
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -2313,7 +2326,10 @@ mod tests {
     async fn test_apply_node_empty_hostname() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@all-in-one", "sensor@all-in-one"],
+            available_agents: vec![
+                test_agent_lookup_key("unsupervised", "all-in-one"),
+                test_agent_lookup_key("sensor", "all-in-one"),
+            ],
         });
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -2393,7 +2409,7 @@ mod tests {
     async fn test_apply_node_external_service_removal() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@all-in-one"],
+            available_agents: vec![test_agent_lookup_key("unsupervised", "all-in-one")],
         });
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -2655,7 +2671,7 @@ mod tests {
 
     struct MockAgentManager {
         pub online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,
-        pub available_agents: Vec<&'static str>,
+        pub available_agents: Vec<String>,
     }
 
     #[async_trait]
@@ -2671,21 +2687,21 @@ mod tests {
         }
         async fn send_agent_specific_internal_networks(
             &self,
-            _networks: &[NetworksTargetAgentKeysPair],
+            _networks: &[NetworksTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
-            Ok(vec!["semi-supervised@hostA".to_string()])
+            Ok(vec![test_agent_lookup_key("semi-supervised", "hostA")])
         }
 
         async fn send_agent_specific_allow_networks(
             &self,
-            _networks: &[NetworksTargetAgentKeysPair],
+            _networks: &[NetworksTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             Ok(vec![])
         }
 
         async fn send_agent_specific_block_networks(
             &self,
-            _networks: &[NetworksTargetAgentKeysPair],
+            _networks: &[NetworksTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             Ok(vec![])
         }
@@ -2729,11 +2745,15 @@ mod tests {
             Ok(())
         }
 
-        async fn update_config(&self, agent_key: &str) -> Result<(), anyhow::Error> {
-            if self.available_agents.contains(&agent_key) {
+        async fn update_config(&self, agent_lookup_key: &str) -> Result<(), anyhow::Error> {
+            if self
+                .available_agents
+                .iter()
+                .any(|available_agent| available_agent == agent_lookup_key)
+            {
                 Ok(())
             } else {
-                anyhow::bail!("Notifying agent {agent_key} to update config failed")
+                anyhow::bail!("Notifying agent {agent_lookup_key} to update config failed")
             }
         }
 
@@ -2763,21 +2783,21 @@ mod tests {
         }
         async fn send_agent_specific_internal_networks(
             &self,
-            _networks: &[NetworksTargetAgentKeysPair],
+            _networks: &[NetworksTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             anyhow::bail!("Failed to broadcast internal networks")
         }
 
         async fn send_agent_specific_allow_networks(
             &self,
-            _networks: &[NetworksTargetAgentKeysPair],
+            _networks: &[NetworksTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             anyhow::bail!("Failed to broadcast allow networks")
         }
 
         async fn send_agent_specific_block_networks(
             &self,
-            _networks: &[NetworksTargetAgentKeysPair],
+            _networks: &[NetworksTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             anyhow::bail!("Failed to broadcast block networks")
         }
@@ -2821,8 +2841,8 @@ mod tests {
             anyhow::bail!("{hostname} is unreachable")
         }
 
-        async fn update_config(&self, agent_key: &str) -> Result<(), anyhow::Error> {
-            anyhow::bail!("Notifying agent {agent_key} to update config failed")
+        async fn update_config(&self, agent_lookup_key: &str) -> Result<(), anyhow::Error> {
+            anyhow::bail!("Notifying agent {agent_lookup_key} to update config failed")
         }
 
         async fn update_traffic_filter_rules(
@@ -2845,7 +2865,7 @@ mod tests {
 
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id,
-            available_agents: vec!["semi-supervised@analysis"],
+            available_agents: vec![test_agent_lookup_key("semi-supervised", "analysis")],
         });
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -2936,7 +2956,7 @@ mod tests {
 
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id,
-            available_agents: vec!["semi-supervised@analysis"],
+            available_agents: vec![test_agent_lookup_key("semi-supervised", "analysis")],
         });
 
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -3027,7 +3047,7 @@ mod tests {
 
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id,
-            available_agents: vec!["semi-supervised@host-customer-1"],
+            available_agents: vec![test_agent_lookup_key("semi-supervised", "host-customer-1")],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3061,7 +3081,7 @@ mod tests {
 
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id,
-            available_agents: vec!["semi-supervised@host-customer-2"],
+            available_agents: vec![test_agent_lookup_key("semi-supervised", "host-customer-2")],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3133,7 +3153,7 @@ mod tests {
 
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id,
-            available_agents: vec!["semi-supervised@host-customer-2"],
+            available_agents: vec![test_agent_lookup_key("semi-supervised", "host-customer-2")],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3413,7 +3433,7 @@ mod tests {
     async fn test_apply_node_draft_db_only() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@all-in-one"],
+            available_agents: vec![test_agent_lookup_key("unsupervised", "all-in-one")],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3744,7 +3764,11 @@ mod tests {
     async fn test_apply_agent_config_null_keys_mixed_states() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@mixed", "sensor@mixed", "hog@mixed"],
+            available_agents: vec![
+                test_agent_lookup_key("unsupervised", "mixed"),
+                test_agent_lookup_key("sensor", "mixed"),
+                test_agent_lookup_key("hog", "mixed"),
+            ],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3801,7 +3825,10 @@ mod tests {
     async fn test_apply_agent_config_explicit_subset() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@subset", "sensor@subset"],
+            available_agents: vec![
+                test_agent_lookup_key("unsupervised", "subset"),
+                test_agent_lookup_key("sensor", "subset"),
+            ],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3856,7 +3883,7 @@ mod tests {
     async fn test_apply_agent_config_empty_array() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@empty"],
+            available_agents: vec![test_agent_lookup_key("unsupervised", "empty")],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3904,7 +3931,7 @@ mod tests {
     async fn test_apply_agent_config_duplicate_keys() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@dup"],
+            available_agents: vec![test_agent_lookup_key("unsupervised", "dup")],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3944,7 +3971,7 @@ mod tests {
     async fn test_apply_agent_config_unknown_key_rejected() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@unk"],
+            available_agents: vec![test_agent_lookup_key("unsupervised", "unk")],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -3984,7 +4011,11 @@ mod tests {
     async fn test_apply_agent_config_ordering() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            available_agents: vec!["unsupervised@order", "sensor@order", "hog@order"],
+            available_agents: vec![
+                test_agent_lookup_key("unsupervised", "order"),
+                test_agent_lookup_key("sensor", "order"),
+                test_agent_lookup_key("hog", "order"),
+            ],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -4128,8 +4159,8 @@ mod tests {
     async fn test_apply_agent_config_mixed_outcomes() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
-            // Only `unsupervised@mixfail` succeeds; `sensor@mixfail` will fail.
-            available_agents: vec!["unsupervised@mixfail"],
+            // Only the unsupervised lookup key succeeds; the sensor lookup key will fail.
+            available_agents: vec![test_agent_lookup_key("unsupervised", "mixfail")],
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
@@ -4176,6 +4207,71 @@ mod tests {
         assert_eq!(attempts[0]["succeeded"], true);
         assert_eq!(attempts[1]["agentKey"], "sensor");
         assert_eq!(attempts[1]["succeeded"], false);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "auth-mtls")]
+    async fn test_apply_agent_config_multi_instance_lookup_keys() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![
+                test_agent_lookup_key("001.hog", "multi-instance"),
+                test_agent_lookup_key("002.hog", "multi-instance"),
+            ],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let store = schema.store();
+        let id = put_node_with_agents(
+            &store,
+            "multi-instance-node",
+            0,
+            "multi-instance",
+            vec![
+                make_agent(
+                    "001.hog",
+                    review_database::AgentKind::SemiSupervised,
+                    Some("test = 'toml'"),
+                ),
+                make_agent(
+                    "002.hog",
+                    review_database::AgentKind::SemiSupervised,
+                    Some("test = 'toml'"),
+                ),
+            ],
+        );
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0") {
+                        attempts { agentKey succeeded error }
+                        skipped { agentKey reason }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+
+        let data = res.data.into_json().unwrap();
+        let attempts = data["applyAgentConfig"]["attempts"].as_array().unwrap();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0]["agentKey"], "001.hog");
+        assert_eq!(attempts[0]["succeeded"], true);
+        assert_eq!(attempts[1]["agentKey"], "002.hog");
+        assert_eq!(attempts[1]["succeeded"], true);
+        assert!(attempts[1]["error"].is_null());
+        assert!(
+            data["applyAgentConfig"]["skipped"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use ipnet::IpNet;
 pub use roxy::{Process, ResourceUsage};
 
-use crate::graphql::customer::NetworksTargetAgentKeysPair;
+use crate::graphql::customer::NetworksTargetAgentLookupKeysPair;
 pub use crate::graphql::{ParsedCertificate, SamplingPolicy};
 
 #[async_trait]
@@ -16,17 +16,17 @@ pub trait AgentManager: Send + Sync {
 
     async fn send_agent_specific_internal_networks(
         &self,
-        networks: &[NetworksTargetAgentKeysPair],
+        networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error>;
 
     async fn send_agent_specific_allow_networks(
         &self,
-        networks: &[NetworksTargetAgentKeysPair],
+        networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error>;
 
     async fn send_agent_specific_block_networks(
         &self,
-        networks: &[NetworksTargetAgentKeysPair],
+        networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error>;
 
     async fn broadcast_trusted_user_agent_list(
@@ -65,8 +65,8 @@ pub trait AgentManager: Send + Sync {
     /// Reboots the node with the given hostname.
     async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error>;
 
-    /// Notifies agents to update their configuration.
-    async fn update_config(&self, _agent_key: &str) -> Result<(), anyhow::Error>;
+    /// Notifies the agent identified by the runtime lookup key to update its configuration.
+    async fn update_config(&self, _agent_lookup_key: &str) -> Result<(), anyhow::Error>;
 
     /// Updates the traffic filter rules for the given host.
     async fn update_traffic_filter_rules(
