@@ -64,6 +64,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [[example]]
 name = "minireview"
 
+[[example]]
+name = "schema_sdl"
+path = "examples/schema_sdl.rs"
+required-features = ["auth-mtls"]
+
 [features]
 default = ["auth-jwt"]
 auth-jwt = []

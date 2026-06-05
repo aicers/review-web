@@ -22,6 +22,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   remain routable by their full lookup key instead of collapsing to a single
   entry.
 
+### Added
+
+- Added the `schema_sdl` example for generating `schema.graphql` SDL with the
+  `auth-mtls` feature enabled. The example writes the schema to stdout so it
+  can be redirected to a file.
+
 ## [0.33.0] - 2026-05-11
 
 ### Changed

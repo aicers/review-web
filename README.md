@@ -59,6 +59,17 @@ base = "ti-container"                       # proxy name for TI container
 uri = "https://<SERVER_NAME>:8444/graphql"  # TI container's GraphQL address
 ```
 
+## Generate schema.graphql
+
+Generate the GraphQL SDL with the `auth-mtls` feature as follows:
+
+```sh
+cargo run --example schema_sdl --no-default-features --features auth-mtls > schema.graphql
+```
+
+The example writes the schema to stdout, so redirect it to the desired output
+file.
+
 ## License
 
 Copyright 2018-2023 Petabi, Inc.  
