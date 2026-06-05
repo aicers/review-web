@@ -110,6 +110,7 @@ pub fn create_token(username: String, role: String) -> Result<(String, NaiveDate
 }
 
 impl TokenSigner for ProductionTokenSigner {
+    /// Signs an Aimer-compatible JWT token with RS256 signing.
     fn sign_aimer_token(&self, exp: i64) -> Result<String, AuthError> {
         let jwt_secret = JWT_SECRET
             .read()
@@ -142,7 +143,7 @@ impl TokenSigner for ProductionTokenSigner {
     }
 }
 
-/// Creates an Aimer-compatible JWT token with RS256 signing.
+/// Creates an Aimer-compatible JWT token with the supplied signer.
 ///
 /// # Errors
 ///

@@ -22,12 +22,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   remain routable by their full lookup key instead of collapsing to a single
   entry.
 
-### Fixed
-
-- Replaced the global test-only Aimer token failure injection with
-  dependency-injected token signing so `auth-jwt` account tests no longer
-  interfere with one another.
-
 ## [0.33.0] - 2026-05-11
 
 ### Changed
@@ -1692,4 +1686,3 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 [0.3.0]: https://github.com/aicers/review-web/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/aicers/review-web/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/aicers/review-web/tree/0.1.0
-
