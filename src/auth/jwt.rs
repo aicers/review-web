@@ -1,5 +1,3 @@
-#[cfg(test)]
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     str::FromStr,
     sync::{LazyLock, RwLock},
@@ -20,9 +18,6 @@ const AIMER_SUBJECT: &str = "aice-web";
 
 static JWT_EXPIRES_IN: LazyLock<RwLock<u32>> = LazyLock::new(|| RwLock::new(3600));
 static JWT_SECRET: LazyLock<RwLock<Vec<u8>>> = LazyLock::new(|| RwLock::new(vec![]));
-
-#[cfg(test)]
-static FORCE_AIMER_TOKEN_FAILURE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Claims {
@@ -73,28 +68,17 @@ fn normalize_rsa_der(secret: &[u8]) -> Vec<u8> {
     secret.to_vec()
 }
 
-#[cfg(test)]
-pub(crate) fn set_force_aimer_token_failure(enabled: bool) {
-    FORCE_AIMER_TOKEN_FAILURE.store(enabled, Ordering::SeqCst);
+pub(crate) trait TokenSigner: Send + Sync {
+    /// Signs an Aimer-compatible JWT token for the given expiration timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signing key cannot be read, if the hostname cannot be determined,
+    /// or if token signing fails.
+    fn sign_aimer_token(&self, exp: i64) -> Result<String, AuthError>;
 }
 
-#[cfg(test)]
-pub(crate) struct ForceAimerTokenFailureGuard;
-
-#[cfg(test)]
-impl ForceAimerTokenFailureGuard {
-    pub(crate) fn new() -> Self {
-        set_force_aimer_token_failure(true);
-        Self
-    }
-}
-
-#[cfg(test)]
-impl Drop for ForceAimerTokenFailureGuard {
-    fn drop(&mut self) {
-        set_force_aimer_token_failure(false);
-    }
-}
+pub(crate) struct ProductionTokenSigner;
 
 /// Creates a JWT token with the given username and role.
 ///
@@ -125,48 +109,47 @@ pub fn create_token(username: String, role: String) -> Result<(String, NaiveDate
     Ok((token, expiration_time))
 }
 
-/// Creates an Aimer-compatible JWT token with RS256 signing.
+impl TokenSigner for ProductionTokenSigner {
+    /// Signs an Aimer-compatible JWT token with RS256 signing.
+    fn sign_aimer_token(&self, exp: i64) -> Result<String, AuthError> {
+        let jwt_secret = JWT_SECRET
+            .read()
+            .map_err(|e| AuthError::ReadJwtSecret(e.to_string()))?;
+
+        let hostname = roxy::hostname();
+        if hostname.is_empty() {
+            return Err(AuthError::Other(
+                "Failed to obtain hostname for Aimer token".to_string(),
+            ));
+        }
+
+        let iat = chrono::Utc::now().timestamp();
+        let iss = format!("https://{hostname}");
+
+        let claims = AimerClaims {
+            sub: AIMER_SUBJECT.to_string(),
+            iss,
+            iat,
+            exp,
+        };
+
+        let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
+        header.kid = Some(hostname);
+
+        let rsa_der = normalize_rsa_der(&jwt_secret);
+        let token = encode(&header, &claims, &EncodingKey::from_rsa_der(&rsa_der))?;
+
+        Ok(token)
+    }
+}
+
+/// Creates an Aimer-compatible JWT token with the supplied signer.
 ///
 /// # Errors
 ///
-/// Returns an error if the JWT locks are poisoned, if the JWT secret cannot be read,
-/// or if the hostname cannot be determined.
-pub fn create_aimer_token(exp: i64) -> Result<String, AuthError> {
-    let jwt_secret = JWT_SECRET
-        .read()
-        .map_err(|e| AuthError::ReadJwtSecret(e.to_string()))?;
-
-    #[cfg(test)]
-    if FORCE_AIMER_TOKEN_FAILURE.load(Ordering::SeqCst) {
-        return Err(AuthError::Other(
-            "Forced Aimer token failure (test)".to_string(),
-        ));
-    }
-
-    let hostname = roxy::hostname();
-    if hostname.is_empty() {
-        return Err(AuthError::Other(
-            "Failed to obtain hostname for Aimer token".to_string(),
-        ));
-    }
-
-    let iat = chrono::Utc::now().timestamp();
-    let iss = format!("https://{hostname}");
-
-    let claims = AimerClaims {
-        sub: AIMER_SUBJECT.to_string(),
-        iss,
-        iat,
-        exp,
-    };
-
-    let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
-    header.kid = Some(hostname);
-
-    let rsa_der = normalize_rsa_der(&jwt_secret);
-    let token = encode(&header, &claims, &EncodingKey::from_rsa_der(&rsa_der))?;
-
-    Ok(token)
+/// Returns an error if the signer cannot create the token.
+pub(crate) fn create_aimer_token(signer: &dyn TokenSigner, exp: i64) -> Result<String, AuthError> {
+    signer.sign_aimer_token(exp)
 }
 
 /// Decodes a JWT token and returns the claims.
