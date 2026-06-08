@@ -4,6 +4,25 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Bumped `review-database` dependency to commit `bd30664`, which renames
+  several fields used internally by this crate: `Agent.node` and
+  `ExternalService.node` are now `node_id`, `TrafficFilter.agent` is now
+  `host_fqdn`, and `BlocklistKerberos.client_name` / `service_name` are
+  now `cname` / `sname`.
+- Renamed the corresponding GraphQL schema fields and arguments to match the
+  upstream `review-database` field names:
+  - `Agent.node` and `ExternalService.node` are now `nodeId`.
+  - `TrafficFilter.agent` is now `hostFqdn`. The `agent` argument on the
+    `insertTrafficFilterRules`, `updateTrafficFilterRules`,
+    `clearTrafficFilterRules`, and `removeTrafficFilterRules` mutations is now
+    `hostFqdn`, and the `agents` argument on the `trafficFilterList` query and
+    the `applyTrafficFilterRules` mutation is now `hostFqdns`.
+  - `BlocklistKerberos.clientName` / `serviceName` are now `cname` / `sname`.
+
 ## [0.34.0] - 2026-06-03
 
 ### Changed
@@ -21,20 +40,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Fixed mTLS multi-instance addressability so distinct agents on the same host
   remain routable by their full lookup key instead of collapsing to a single
   entry.
-- Bumped `review-database` dependency to commit `bd30664`, which renames
-  several fields used internally by this crate: `Agent.node` and
-  `ExternalService.node` are now `node_id`, `TrafficFilter.agent` is now
-  `host_fqdn`, and `BlocklistKerberos.client_name` / `service_name` are
-  now `cname` / `sname`.
-- Renamed the corresponding GraphQL schema fields and arguments to match the
-  upstream `review-database` field names:
-  - `Agent.node` and `ExternalService.node` are now `nodeId`.
-  - `TrafficFilter.agent` is now `hostFqdn`. The `agent` argument on the
-    `insertTrafficFilterRules`, `updateTrafficFilterRules`,
-    `clearTrafficFilterRules`, and `removeTrafficFilterRules` mutations is now
-    `hostFqdn`, and the `agents` argument on the `trafficFilterList` query and
-    the `applyTrafficFilterRules` mutation is now `hostFqdns`.
-  - `BlocklistKerberos.clientName` / `serviceName` are now `cname` / `sname`.
 
 ## [0.33.0] - 2026-05-11
 
@@ -1652,6 +1657,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.34.0...main
 [0.34.0]: https://github.com/aicers/review-web/compare/0.33.0...0.34.0
 [0.33.0]: https://github.com/aicers/review-web/compare/0.32.0...0.33.0
 [0.32.0]: https://github.com/aicers/review-web/compare/0.31.0...0.32.0
