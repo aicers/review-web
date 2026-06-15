@@ -1646,7 +1646,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
-[Unreleased]: https://github.com/aicers/review-web/compare/0.34.0...HEAD
+[Unreleased]: https://github.com/aicers/review-web/compare/0.34.0...main
 [0.34.0]: https://github.com/aicers/review-web/compare/0.33.0...0.34.0
 [0.33.0]: https://github.com/aicers/review-web/compare/0.32.0...0.33.0
 [0.32.0]: https://github.com/aicers/review-web/compare/0.31.0...0.32.0
