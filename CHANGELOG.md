@@ -4,6 +4,14 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `applyNode` and `applyNodeDraft` now reject invalid agent config/draft TOML
+  and invalid external-service draft TOML instead of silently treating them as
+  absent values.
+
 ## [0.34.0] - 2026-06-03
 
 ### Changed
@@ -1638,6 +1646,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.34.0...HEAD
 [0.34.0]: https://github.com/aicers/review-web/compare/0.33.0...0.34.0
 [0.33.0]: https://github.com/aicers/review-web/compare/0.32.0...0.33.0
 [0.32.0]: https://github.com/aicers/review-web/compare/0.31.0...0.32.0

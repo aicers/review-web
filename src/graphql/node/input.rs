@@ -51,16 +51,37 @@ pub struct AgentInput {
     pub(super) draft: Option<String>,
 }
 
-impl From<AgentInput> for review_database::Agent {
-    fn from(input: AgentInput) -> Self {
-        Self {
+impl TryFrom<AgentInput> for review_database::Agent {
+    type Error = anyhow::Error;
+
+    fn try_from(input: AgentInput) -> Result<Self, Self::Error> {
+        let config = match input.config {
+            Some(config) => Some(config.try_into().map_err(|_| {
+                anyhow::anyhow!(
+                    "Failed to convert the config to TOML for the agent: {}",
+                    input.key
+                )
+            })?),
+            None => None,
+        };
+        let draft = match input.draft {
+            Some(draft) => Some(draft.try_into().map_err(|_| {
+                anyhow::anyhow!(
+                    "Failed to convert the draft to TOML for the agent: {}",
+                    input.key
+                )
+            })?),
+            None => None,
+        };
+
+        Ok(Self {
             node: u32::MAX,
             key: input.key,
             kind: input.kind.into(),
             status: input.status.into(),
-            config: input.config.and_then(|config| config.try_into().ok()),
-            draft: input.draft.and_then(|draft| draft.try_into().ok()),
-        }
+            config,
+            draft,
+        })
     }
 }
 
@@ -87,15 +108,27 @@ pub struct ExternalServiceInput {
     pub(super) draft: Option<String>,
 }
 
-impl From<ExternalServiceInput> for review_database::ExternalService {
-    fn from(input: ExternalServiceInput) -> Self {
-        Self {
+impl TryFrom<ExternalServiceInput> for review_database::ExternalService {
+    type Error = anyhow::Error;
+
+    fn try_from(input: ExternalServiceInput) -> Result<Self, Self::Error> {
+        let draft = match input.draft {
+            Some(draft) => Some(draft.try_into().map_err(|_| {
+                anyhow::anyhow!(
+                    "Failed to convert the draft to TOML for the external service: {}",
+                    input.key
+                )
+            })?),
+            None => None,
+        };
+
+        Ok(Self {
             node: u32::MAX,
             key: input.key,
             kind: input.kind.into(),
             status: input.status.into(),
-            draft: input.draft.and_then(|draft| draft.try_into().ok()),
-        }
+            draft,
+        })
     }
 }
 
@@ -119,12 +152,16 @@ impl TryFrom<NodeInput> for review_database::NodeUpdate {
             name_draft: input.name_draft,
             profile: input.profile.map(TryInto::try_into).transpose()?,
             profile_draft: input.profile_draft.map(TryInto::try_into).transpose()?,
-            agents: input.agents.into_iter().map(Into::into).collect(),
+            agents: input
+                .agents
+                .into_iter()
+                .map(TryInto::try_into)
+                .collect::<std::result::Result<Vec<_>, _>>()?,
             external_services: input
                 .external_services
                 .into_iter()
-                .map(Into::into)
-                .collect(),
+                .map(TryInto::try_into)
+                .collect::<std::result::Result<Vec<_>, _>>()?,
         })
     }
 }
