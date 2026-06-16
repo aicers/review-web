@@ -13,7 +13,7 @@ use super::{
 use crate::graphql::{
     customer::{NetworksTargetAgentLookupKeysPair, send_agent_specific_customer_networks},
     get_customer_networks,
-    node::input::NodeInput,
+    node::input::{NodeInput, validate_node_input_toml},
 };
 use crate::{error_with_username, info_with_username, warn_with_username};
 
@@ -156,6 +156,8 @@ impl NodeControlMutation {
             return Err("Node is not valid for apply".into());
         }
 
+        validate_node_input_toml(&node)?;
+
         let apply_scope = node_apply_scope(&node);
 
         let updated_node = if apply_scope.db {
@@ -252,6 +254,8 @@ impl NodeControlMutation {
         if node.name_draft.is_none() {
             return Err("Node is not valid for apply".into());
         }
+
+        validate_node_input_toml(&node)?;
 
         let apply_scope = node_apply_scope(&node);
 
@@ -2627,6 +2631,196 @@ mod tests {
         assert_eq!(
             res.errors[0].message,
             "Failed to convert the draft to TOML for the external service: data_store"
+        );
+        assert_node_config_unchanged_after_failed_apply(&schema).await;
+    }
+
+    const APPLIED_PROFILE: &str = r#"
+        customerId: "0",
+        description: "This is the admin node running review.",
+        hostname: "all-in-one"
+    "#;
+
+    #[tokio::test]
+    async fn test_apply_node_rejects_invalid_external_service_draft_toml_when_unchanged() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![test_agent_lookup_key("unsupervised", "all-in-one")],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        insert_and_apply_node_with_external_service(&schema).await;
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"mutation {{
+                    applyNode(
+                        id: "0"
+                        node: {{
+                            name: "admin node",
+                            nameDraft: "admin node",
+                            profile: {{ {APPLIED_PROFILE} }},
+                            profileDraft: {{ {APPLIED_PROFILE} }},
+                            agents: [{{
+                                key: "unsupervised",
+                                kind: UNSUPERVISED,
+                                status: ENABLED,
+                                config: "test = 'toml'",
+                                draft: "test = 'toml'"
+                            }}],
+                            externalServices: [{{
+                                key: "data_store",
+                                kind: DATA_STORE,
+                                status: ENABLED,
+                                draft: "{INVALID_TOML}"
+                            }}]
+                        }}
+                    )
+                }}"#
+            ))
+            .await;
+
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(
+            res.errors[0].message,
+            "Failed to convert the draft to TOML for the external service: data_store"
+        );
+        assert_node_config_unchanged_after_failed_apply(&schema).await;
+    }
+
+    #[tokio::test]
+    async fn test_apply_node_rejects_invalid_agent_toml_when_config_equals_draft() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![test_agent_lookup_key("unsupervised", "all-in-one")],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        insert_and_apply_node_with_external_service(&schema).await;
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"mutation {{
+                    applyNode(
+                        id: "0"
+                        node: {{
+                            name: "admin node",
+                            nameDraft: "admin node",
+                            profile: {{ {APPLIED_PROFILE} }},
+                            profileDraft: {{ {APPLIED_PROFILE} }},
+                            agents: [{{
+                                key: "unsupervised",
+                                kind: UNSUPERVISED,
+                                status: ENABLED,
+                                config: "{INVALID_TOML}",
+                                draft: "{INVALID_TOML}"
+                            }}],
+                            externalServices: [{{
+                                key: "data_store",
+                                kind: DATA_STORE,
+                                status: ENABLED,
+                                draft: "test = 'data_store_toml'"
+                            }}]
+                        }}
+                    )
+                }}"#
+            ))
+            .await;
+
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(
+            res.errors[0].message,
+            "Failed to convert the config to TOML for the agent: unsupervised"
+        );
+        assert_node_config_unchanged_after_failed_apply(&schema).await;
+    }
+
+    #[tokio::test]
+    async fn test_apply_node_draft_rejects_invalid_external_service_draft_toml_when_unchanged() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![test_agent_lookup_key("unsupervised", "all-in-one")],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        insert_and_apply_node_with_external_service(&schema).await;
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"mutation {{
+                    applyNodeDraft(
+                        id: "0"
+                        node: {{
+                            name: "admin node",
+                            nameDraft: "admin node",
+                            profile: {{ {APPLIED_PROFILE} }},
+                            profileDraft: {{ {APPLIED_PROFILE} }},
+                            agents: [{{
+                                key: "unsupervised",
+                                kind: UNSUPERVISED,
+                                status: ENABLED,
+                                config: "test = 'toml'",
+                                draft: "test = 'toml'"
+                            }}],
+                            externalServices: [{{
+                                key: "data_store",
+                                kind: DATA_STORE,
+                                status: ENABLED,
+                                draft: "{INVALID_TOML}"
+                            }}]
+                        }}
+                    ) {{ id }}
+                }}"#
+            ))
+            .await;
+
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(
+            res.errors[0].message,
+            "Failed to convert the draft to TOML for the external service: data_store"
+        );
+        assert_node_config_unchanged_after_failed_apply(&schema).await;
+    }
+
+    #[tokio::test]
+    async fn test_apply_node_draft_rejects_invalid_agent_toml_when_config_equals_draft() {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+            available_agents: vec![test_agent_lookup_key("unsupervised", "all-in-one")],
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        insert_and_apply_node_with_external_service(&schema).await;
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"mutation {{
+                    applyNodeDraft(
+                        id: "0"
+                        node: {{
+                            name: "admin node",
+                            nameDraft: "admin node",
+                            profile: {{ {APPLIED_PROFILE} }},
+                            profileDraft: {{ {APPLIED_PROFILE} }},
+                            agents: [{{
+                                key: "unsupervised",
+                                kind: UNSUPERVISED,
+                                status: ENABLED,
+                                config: "{INVALID_TOML}",
+                                draft: "{INVALID_TOML}"
+                            }}],
+                            externalServices: [{{
+                                key: "data_store",
+                                kind: DATA_STORE,
+                                status: ENABLED,
+                                draft: "test = 'data_store_toml'"
+                            }}]
+                        }}
+                    ) {{ id }}
+                }}"#
+            ))
+            .await;
+
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(
+            res.errors[0].message,
+            "Failed to convert the config to TOML for the agent: unsupervised"
         );
         assert_node_config_unchanged_after_failed_apply(&schema).await;
     }
