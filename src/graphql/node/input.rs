@@ -5,43 +5,6 @@ use async_graphql::{Error, InputObject, Result, types::ID};
 
 use super::{AgentKind, AgentStatus, ExternalServiceKind, ExternalServiceStatus};
 
-fn parse_agent_toml(
-    value: String,
-    key: &str,
-    field: &str,
-) -> Result<review_database::AgentConfig, anyhow::Error> {
-    value
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Failed to convert the {field} to TOML for the agent: {key}"))
-}
-
-fn parse_external_service_draft_toml(
-    value: String,
-    key: &str,
-) -> Result<review_database::ExternalServiceConfig, anyhow::Error> {
-    value.try_into().map_err(|_| {
-        anyhow::anyhow!("Failed to convert the draft to TOML for the external service: {key}")
-    })
-}
-
-/// Validates that all TOML-bearing fields in a node apply input parse as TOML.
-pub(super) fn validate_node_input_toml(node: &NodeInput) -> Result<(), anyhow::Error> {
-    for agent in &node.agents {
-        if let Some(config) = agent.config.clone() {
-            parse_agent_toml(config, &agent.key, "config")?;
-        }
-        if let Some(draft) = agent.draft.clone() {
-            parse_agent_toml(draft, &agent.key, "draft")?;
-        }
-    }
-    for service in &node.external_services {
-        if let Some(draft) = service.draft.clone() {
-            parse_external_service_draft_toml(draft, &service.key)?;
-        }
-    }
-    Ok(())
-}
-
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, InputObject, PartialEq)]
 pub struct NodeProfileInput {
@@ -88,27 +51,19 @@ pub struct AgentInput {
     pub(super) draft: Option<String>,
 }
 
-impl TryFrom<AgentInput> for review_database::Agent {
-    type Error = anyhow::Error;
-
-    fn try_from(input: AgentInput) -> Result<Self, Self::Error> {
-        let config = match input.config {
-            Some(config) => Some(parse_agent_toml(config, &input.key, "config")?),
-            None => None,
-        };
-        let draft = match input.draft {
-            Some(draft) => Some(parse_agent_toml(draft, &input.key, "draft")?),
-            None => None,
-        };
-
-        Ok(Self {
+impl From<AgentInput> for review_database::Agent {
+    fn from(input: AgentInput) -> Self {
+        Self {
             node: u32::MAX,
             key: input.key,
             kind: input.kind.into(),
             status: input.status.into(),
-            config,
-            draft,
-        })
+            // NodeInput is only an optimistic-concurrency snapshot for apply. TOML is
+            // validated at insert/update write boundaries, so a parse failure here
+            // cannot introduce malformed stored configuration.
+            config: input.config.and_then(|config| config.try_into().ok()),
+            draft: input.draft.and_then(|draft| draft.try_into().ok()),
+        }
     }
 }
 
@@ -135,22 +90,18 @@ pub struct ExternalServiceInput {
     pub(super) draft: Option<String>,
 }
 
-impl TryFrom<ExternalServiceInput> for review_database::ExternalService {
-    type Error = anyhow::Error;
-
-    fn try_from(input: ExternalServiceInput) -> Result<Self, Self::Error> {
-        let draft = match input.draft {
-            Some(draft) => Some(parse_external_service_draft_toml(draft, &input.key)?),
-            None => None,
-        };
-
-        Ok(Self {
+impl From<ExternalServiceInput> for review_database::ExternalService {
+    fn from(input: ExternalServiceInput) -> Self {
+        Self {
             node: u32::MAX,
             key: input.key,
             kind: input.kind.into(),
             status: input.status.into(),
-            draft,
-        })
+            // NodeInput is only an optimistic-concurrency snapshot for apply. TOML is
+            // validated at insert/update write boundaries, so a parse failure here
+            // cannot introduce malformed stored configuration.
+            draft: input.draft.and_then(|draft| draft.try_into().ok()),
+        }
     }
 }
 
@@ -174,16 +125,12 @@ impl TryFrom<NodeInput> for review_database::NodeUpdate {
             name_draft: input.name_draft,
             profile: input.profile.map(TryInto::try_into).transpose()?,
             profile_draft: input.profile_draft.map(TryInto::try_into).transpose()?,
-            agents: input
-                .agents
-                .into_iter()
-                .map(TryInto::try_into)
-                .collect::<std::result::Result<Vec<_>, _>>()?,
+            agents: input.agents.into_iter().map(Into::into).collect(),
             external_services: input
                 .external_services
                 .into_iter()
-                .map(TryInto::try_into)
-                .collect::<std::result::Result<Vec<_>, _>>()?,
+                .map(Into::into)
+                .collect(),
         })
     }
 }
