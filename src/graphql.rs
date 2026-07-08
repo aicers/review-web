@@ -71,7 +71,7 @@ pub use self::sampling::{
 use crate::backend::{AgentManager, CertManager};
 
 /// GraphQL schema type.
-pub(super) type Schema = async_graphql::Schema<Query, Mutation, Subscription>;
+pub type Schema = async_graphql::Schema<Query, Mutation, Subscription>;
 
 type BoxedAgentManager = Box<dyn AgentManager>;
 
@@ -107,7 +107,7 @@ where
 
 /// A set of queries defined in the schema.
 #[derive(MergedObject, Default)]
-pub(super) struct Query(SubQueryOneA, SubQueryOneB, SubQueryTwoA, SubQueryTwoB);
+pub struct Query(SubQueryOneA, SubQueryOneB, SubQueryTwoA, SubQueryTwoB);
 
 #[cfg(not(feature = "auth-mtls"))]
 #[derive(MergedObject, Default)]
@@ -189,10 +189,8 @@ struct SubQueryTwoB(
 );
 
 /// A set of mutations defined in the schema.
-///
-/// This is exposed only for [`Schema`], and not used directly.
 #[derive(MergedObject, Default)]
-pub(super) struct Mutation(
+pub struct Mutation(
     SubMutationOneA,
     SubMutationOneB,
     SubMutationTwoA,
@@ -273,7 +271,7 @@ struct SubMutationTwoB(
 
 /// A set of subscription defined in the schema.
 #[derive(MergedSubscription, Default)]
-pub(super) struct Subscription(event::EventStream, outlier::OutlierStream);
+pub struct Subscription(event::EventStream, outlier::OutlierStream);
 
 #[derive(Debug)]
 pub struct ParseEnumError;

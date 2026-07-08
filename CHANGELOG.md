@@ -23,6 +23,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     the `applyTrafficFilterRules` mutation is now `hostFqdns`.
   - `BlocklistKerberos.clientName` / `serviceName` are now `cname` / `sname`.
 
+### Added
+
+- Added the `schema_sdl` example for generating `schema.graphql` SDL with the
+  `auth-mtls` feature enabled. The example writes the schema to stdout so it
+  can be redirected to a file.
+
 ## [0.34.0] - 2026-06-03
 
 ### Changed
