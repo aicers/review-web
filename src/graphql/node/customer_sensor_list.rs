@@ -200,7 +200,7 @@ mod tests {
 
     fn agent(kind: AgentKind, key: &str, config: Option<&str>, draft: Option<&str>) -> Agent {
         Agent {
-            node: u32::MAX,
+            node_id: u32::MAX,
             key: key.to_string(),
             kind,
             status: AgentStatus::Enabled,

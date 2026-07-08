@@ -2481,10 +2481,10 @@ mod tests {
                     error_code: 0,
                     client_realm: "REALM".to_string(),
                     cname_type: 1,
-                    client_name: vec!["alice".to_string()],
+                    cname: vec!["alice".to_string()],
                     realm: "REALM".to_string(),
                     sname_type: 2,
-                    service_name: vec!["krbtgt".to_string()],
+                    sname: vec!["krbtgt".to_string()],
                     confidence: 0.7,
                     category: Some(EventCategory::LateralMovement),
                 })
