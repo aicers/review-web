@@ -22,6 +22,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   remain routable by their full lookup key instead of collapsing to a single
   entry.
 
+### Removed
+
+- Removed the `topClustersByScore` GraphQL query and its supporting
+  `ClusterScore` and `ClusterScoreSet` types. The resolver had been a stub
+  returning empty result sets since `csv_indicator` is no longer populated
+  upstream and the underlying scoring path is slated for removal. Callers
+  should migrate to other clustering queries (for example, `topColumns` or
+  `topMultimaps`).
+
 ## [0.33.0] - 2026-05-11
 
 ### Changed
