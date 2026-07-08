@@ -154,8 +154,8 @@ impl BlocklistKerberos {
     }
 
     /// Client Name
-    async fn client_name(&self) -> &[String] {
-        &self.inner.client_name
+    async fn cname(&self) -> &[String] {
+        &self.inner.cname
     }
 
     /// Realm
@@ -169,8 +169,8 @@ impl BlocklistKerberos {
     }
 
     /// Service Name
-    async fn service_name(&self) -> &[String] {
-        &self.inner.service_name
+    async fn sname(&self) -> &[String] {
+        &self.inner.sname
     }
 
     /// MITRE Tactic

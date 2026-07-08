@@ -169,24 +169,6 @@ impl ModelQuery {
         Ok(time_series)
     }
 
-    #[allow(unused_variables)] // This will be deleted in the future (#309)
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))
-        .or(RoleGuard::new(Role::SecurityManager))
-        .or(RoleGuard::new(Role::SecurityMonitor))")]
-    async fn top_clusters_by_score(
-        &self,
-        _ctx: &Context<'_>,
-        model: ID,
-        size: Option<i32>,
-        time: Option<NaiveDateTime>,
-    ) -> Result<ClusterScoreSet> {
-        Ok(ClusterScoreSet {
-            top_n_sum: Vec::new(),
-            top_n_rate: Vec::new(),
-        })
-    }
-
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -421,19 +403,6 @@ fn sort_on_category(category: &str, series: &mut Vec<TopTrendsByColumn>) {
         }
         _ => (),
     }
-}
-
-#[derive(SimpleObject)]
-struct ClusterScore {
-    cluster_id: ID,
-    cluster_name: String,
-    score: f64,
-}
-
-#[derive(SimpleObject)]
-struct ClusterScoreSet {
-    top_n_sum: Vec<ClusterScore>,
-    top_n_rate: Vec<ClusterScore>,
 }
 
 struct CsvColumnExtraConfig {
@@ -1108,4 +1077,37 @@ fn load_cluster_ids_with_size_limit(
         .collect();
 
     Ok(cluster_ids)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::graphql::TestSchema;
+
+    #[tokio::test]
+    async fn schema_does_not_expose_top_clusters_by_score() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin(r#"{ __type(name: "Query") { fields { name } } }"#)
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        let fields = data["__type"]["fields"].as_array().expect("fields array");
+        let names: Vec<&str> = fields.iter().filter_map(|f| f["name"].as_str()).collect();
+        assert!(!names.contains(&"topClustersByScore"));
+    }
+
+    #[tokio::test]
+    async fn schema_does_not_define_cluster_score_types() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin(
+                r#"{ clusterScore: __type(name: "ClusterScore") { name }
+                    clusterScoreSet: __type(name: "ClusterScoreSet") { name } }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        assert!(data["clusterScore"].is_null());
+        assert!(data["clusterScoreSet"].is_null());
+    }
 }

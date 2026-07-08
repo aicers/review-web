@@ -8,6 +8,31 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- Bumped `review-database` dependency to commit `bd30664`, which renames
+  several fields used internally by this crate: `Agent.node` and
+  `ExternalService.node` are now `node_id`, `TrafficFilter.agent` is now
+  `host_fqdn`, and `BlocklistKerberos.client_name` / `service_name` are
+  now `cname` / `sname`.
+- Renamed the corresponding GraphQL schema fields and arguments to match the
+  upstream `review-database` field names:
+  - `Agent.node` and `ExternalService.node` are now `nodeId`.
+  - `TrafficFilter.agent` is now `hostFqdn`. The `agent` argument on the
+    `insertTrafficFilterRules`, `updateTrafficFilterRules`,
+    `clearTrafficFilterRules`, and `removeTrafficFilterRules` mutations is now
+    `hostFqdn`, and the `agents` argument on the `trafficFilterList` query and
+    the `applyTrafficFilterRules` mutation is now `hostFqdns`.
+  - `BlocklistKerberos.clientName` / `serviceName` are now `cname` / `sname`.
+
+### Added
+
+- Added the `schema_sdl` example for generating `schema.graphql` SDL with the
+  `auth-mtls` feature enabled. The example writes the schema to stdout so it
+  can be redirected to a file.
+
+## [0.34.0] - 2026-06-03
+
+### Changed
+
 - Renamed exported Rust lookup-key APIs to the `agent_lookup_key`
   terminology: `NetworksTargetAgentKeysPair` →
   `NetworksTargetAgentLookupKeysPair` (including `target_agent_lookup_keys()`),
@@ -22,11 +47,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   remain routable by their full lookup key instead of collapsing to a single
   entry.
 
-### Added
+### Removed
 
-- Added the `schema_sdl` example for generating `schema.graphql` SDL with the
-  `auth-mtls` feature enabled. The example writes the schema to stdout so it
-  can be redirected to a file.
+- Removed the `topClustersByScore` GraphQL query and its supporting
+  `ClusterScore` and `ClusterScoreSet` types. The resolver had been a stub
+  returning empty result sets since `csv_indicator` is no longer populated
+  upstream and the underlying scoring path is slated for removal. Callers
+  should migrate to other clustering queries (for example, `topColumns` or
+  `topMultimaps`).
 
 ## [0.33.0] - 2026-05-11
 
@@ -1644,7 +1672,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
-[Unreleased]: https://github.com/aicers/review-web/compare/0.33.0...main
+[Unreleased]: https://github.com/aicers/review-web/compare/0.34.0...main
+[0.34.0]: https://github.com/aicers/review-web/compare/0.33.0...0.34.0
 [0.33.0]: https://github.com/aicers/review-web/compare/0.32.0...0.33.0
 [0.32.0]: https://github.com/aicers/review-web/compare/0.31.0...0.32.0
 [0.31.0]: https://github.com/aicers/review-web/compare/0.30.1...0.31.0
