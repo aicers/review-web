@@ -344,7 +344,8 @@ xvcNsYaYqk6sRk/INvcaN2E=
 
         let store_dir = tempfile::tempdir().context("create store dir")?;
         let backup_dir = tempfile::tempdir().context("create backup dir")?;
-        let store = Store::new(store_dir.path(), backup_dir.path()).context("create store")?;
+        let store =
+            Store::new(store_dir.path(), backup_dir.path(), None).context("create store")?;
         let store = Arc::new(RwLock::new(store));
 
         let config = ServerConfig {

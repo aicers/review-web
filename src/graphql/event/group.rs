@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use async_graphql::{Context, Object, OutputType, Result, SimpleObject};
 use num_traits::ToPrimitive;
@@ -242,8 +242,9 @@ impl EventGroupQuery {
         let db = store.events();
         let locator = if filter.has_country() {
             Some(
-                ctx.data::<ip2location::DB>()
-                    .map_err(|_| "IP location database unavailable")?,
+                ctx.data::<Arc<ip2location::DB>>()
+                    .map_err(|_| "IP location database unavailable")?
+                    .as_ref(),
             )
         } else {
             None
@@ -319,7 +320,7 @@ async fn count_events<T>(
     let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
     let db = store.events();
-    let locator = ctx.data::<ip2location::DB>().ok();
+    let locator = ctx.data::<Arc<ip2location::DB>>().ok().map(AsRef::as_ref);
 
     let mut counter = HashMap::new();
     for item in db.iter_from(start, Direction::Forward) {
@@ -372,7 +373,7 @@ async fn count_events_by_network(
     let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
     let db = store.events();
-    let locator = ctx.data::<ip2location::DB>().ok();
+    let locator = ctx.data::<Arc<ip2location::DB>>().ok().map(AsRef::as_ref);
 
     let mut counter = HashMap::new();
     for item in db.iter_from(start, Direction::Forward) {

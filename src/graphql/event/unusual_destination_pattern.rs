@@ -2,7 +2,7 @@ use async_graphql::{Context, ID, Object, Result};
 use chrono::{DateTime, Utc};
 use review_database::event as database;
 
-use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
+use super::{ThreatLevel, TriageScore, country_codes, find_ip_customer, find_ip_network};
 use crate::graphql::{
     customer::Customer, filter::LearningMethod, network::Network, triage::ThreatCategory,
 };
@@ -54,12 +54,8 @@ impl UnusualDestinationPattern {
     /// The two-letter country codes of the responder IP addresses. `"XX"` if
     /// the location of an address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn resp_countries(&self, ctx: &Context<'_>) -> Vec<String> {
-        self.inner
-            .destination_ips
-            .iter()
-            .map(|resp_addr| country_code(ctx, *resp_addr))
-            .collect()
+    async fn resp_countries(&self, _ctx: &Context<'_>) -> Vec<String> {
+        country_codes(&self.inner.resp_country_codes)
     }
 
     /// Responder Customer List
