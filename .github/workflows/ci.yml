@@ -55,6 +55,7 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         features: [auth-jwt, auth-mtls]
     steps:
@@ -72,5 +73,6 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
+          version: v11.3.0
           files: lcov-${{ matrix.features }}.info
           fail_ci_if_error: true
