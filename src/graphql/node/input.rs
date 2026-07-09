@@ -58,6 +58,9 @@ impl From<AgentInput> for review_database::Agent {
             key: input.key,
             kind: input.kind.into(),
             status: input.status.into(),
+            // NodeInput is only an optimistic-concurrency snapshot for apply. TOML is
+            // validated at insert/update write boundaries, so a parse failure here
+            // cannot introduce malformed stored configuration.
             config: input.config.and_then(|config| config.try_into().ok()),
             draft: input.draft.and_then(|draft| draft.try_into().ok()),
         }
@@ -94,6 +97,9 @@ impl From<ExternalServiceInput> for review_database::ExternalService {
             key: input.key,
             kind: input.kind.into(),
             status: input.status.into(),
+            // NodeInput is only an optimistic-concurrency snapshot for apply. TOML is
+            // validated at insert/update write boundaries, so a parse failure here
+            // cannot introduce malformed stored configuration.
             draft: input.draft.and_then(|draft| draft.try_into().ok()),
         }
     }
