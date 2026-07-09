@@ -1,4 +1,4 @@
-use std::net::IpAddr;
+use std::{net::IpAddr, sync::Arc};
 
 use async_graphql::{Context, Object, Result, SimpleObject};
 
@@ -32,9 +32,9 @@ fn get_locator<'ctx>(ctx: &'ctx Context<'ctx>) -> Result<IpLocatorSource<'ctx>> 
     }
 
     let locator = ctx
-        .data::<ip2location::DB>()
+        .data::<Arc<ip2location::DB>>()
         .map_err(|_| "IP location database unavailable")?;
-    Ok(IpLocatorSource::Db(locator))
+    Ok(IpLocatorSource::Db(locator.as_ref()))
 }
 
 #[derive(Default)]

@@ -84,7 +84,7 @@ type BoxedAgentManager = Box<dyn AgentManager>;
 pub(super) fn schema<B>(
     store: Arc<RwLock<Store>>,
     agent_manager: B,
-    ip_locator: Option<ip2location::DB>,
+    ip_locator: Option<Arc<ip2location::DB>>,
     cert_manager: Arc<dyn CertManager>,
     tls_reload_handle: Arc<Notify>,
 ) -> Schema
@@ -1141,7 +1141,7 @@ impl TestSchema {
     ) -> Self {
         let db_dir = tempfile::tempdir().unwrap();
         let backup_dir = tempfile::tempdir().unwrap();
-        let store = Store::new(db_dir.path(), backup_dir.path()).unwrap();
+        let store = Store::new(db_dir.path(), backup_dir.path(), None).unwrap();
         #[cfg(not(feature = "auth-mtls"))]
         {
             use self::account::set_initial_admin_password;

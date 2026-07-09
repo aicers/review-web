@@ -2,7 +2,9 @@ use async_graphql::{Context, ID, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::event as database;
 
-use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
+use super::{
+    ThreatLevel, TriageScore, country_code, country_codes, find_ip_customer, find_ip_network,
+};
 use crate::graphql::{
     customer::Customer, filter::LearningMethod, network::Network, triage::ThreatCategory,
 };
@@ -39,8 +41,8 @@ impl PortScan {
     /// The two-letter country code of the originator IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn orig_country(&self, ctx: &Context<'_>) -> String {
-        country_code(ctx, self.inner.orig_addr)
+    async fn orig_country(&self, _ctx: &Context<'_>) -> String {
+        country_code(&self.inner.orig_country_code)
     }
 
     /// Originator Customer
@@ -66,8 +68,8 @@ impl PortScan {
     /// The two-letter country code of the responder IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn resp_country(&self, ctx: &Context<'_>) -> String {
-        country_code(ctx, self.inner.resp_addr)
+    async fn resp_country(&self, _ctx: &Context<'_>) -> String {
+        country_code(&self.inner.resp_country_code)
     }
 
     /// Responder Customer
@@ -165,8 +167,8 @@ impl MultiHostPortScan {
     /// The two-letter country code of the originator IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn orig_country(&self, ctx: &Context<'_>) -> String {
-        country_code(ctx, self.inner.orig_addr)
+    async fn orig_country(&self, _ctx: &Context<'_>) -> String {
+        country_code(&self.inner.orig_country_code)
     }
 
     /// Originator Customer
@@ -196,12 +198,8 @@ impl MultiHostPortScan {
     /// The two-letter country code of the responder IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn resp_countries(&self, ctx: &Context<'_>) -> Vec<String> {
-        self.inner
-            .resp_addrs
-            .iter()
-            .map(|resp_addr| country_code(ctx, *resp_addr))
-            .collect()
+    async fn resp_countries(&self, _ctx: &Context<'_>) -> Vec<String> {
+        country_codes(&self.inner.resp_country_codes)
     }
 
     /// Responder Customer List
@@ -314,12 +312,8 @@ impl ExternalDdos {
     /// The two-letter country code of the originator IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn orig_countries(&self, ctx: &Context<'_>) -> Vec<String> {
-        self.inner
-            .orig_addrs
-            .iter()
-            .map(|orig_addr| country_code(ctx, *orig_addr))
-            .collect()
+    async fn orig_countries(&self, _ctx: &Context<'_>) -> Vec<String> {
+        country_codes(&self.inner.orig_country_codes)
     }
 
     /// Originator Customer List
@@ -356,8 +350,8 @@ impl ExternalDdos {
     /// The two-letter country code of the responder IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn resp_country(&self, ctx: &Context<'_>) -> String {
-        country_code(ctx, self.inner.resp_addr)
+    async fn resp_country(&self, _ctx: &Context<'_>) -> String {
+        country_code(&self.inner.resp_country_code)
     }
 
     /// Responder Customer
@@ -449,8 +443,8 @@ impl BlocklistConn {
     /// The two-letter country code of the originator IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn orig_country(&self, ctx: &Context<'_>) -> String {
-        country_code(ctx, self.inner.orig_addr)
+    async fn orig_country(&self, _ctx: &Context<'_>) -> String {
+        country_code(&self.inner.orig_country_code)
     }
 
     /// Originator Customer
@@ -481,8 +475,8 @@ impl BlocklistConn {
     /// The two-letter country code of the responder IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn resp_country(&self, ctx: &Context<'_>) -> String {
-        country_code(ctx, self.inner.resp_addr)
+    async fn resp_country(&self, _ctx: &Context<'_>) -> String {
+        country_code(&self.inner.resp_country_code)
     }
 
     /// Responder Customer
@@ -622,8 +616,8 @@ impl TorConnectionConn {
     /// The two-letter country code of the originator IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn orig_country(&self, ctx: &Context<'_>) -> String {
-        country_code(ctx, self.inner.orig_addr)
+    async fn orig_country(&self, _ctx: &Context<'_>) -> String {
+        country_code(&self.inner.orig_country_code)
     }
 
     /// Originator Customer
@@ -654,8 +648,8 @@ impl TorConnectionConn {
     /// The two-letter country code of the responder IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn resp_country(&self, ctx: &Context<'_>) -> String {
-        country_code(ctx, self.inner.resp_addr)
+    async fn resp_country(&self, _ctx: &Context<'_>) -> String {
+        country_code(&self.inner.resp_country_code)
     }
 
     /// Responder Customer
