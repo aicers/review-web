@@ -55,6 +55,7 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         features: [auth-jwt, auth-mtls]
     steps:
@@ -68,6 +69,19 @@ jobs:
       - name: Generate code coverage
         run: cargo llvm-cov --no-default-features --features ${{ matrix.features }} --workspace --lcov --output-path lcov-${{ matrix.features }}.info
       - name: Upload coverage to Codecov
+        id: codecov
+        uses: codecov/codecov-action@v6
+        continue-on-error: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          files: lcov-${{ matrix.features }}.info
+          fail_ci_if_error: true
+      - name: Wait before Codecov retry
+        if: steps.codecov.outcome == 'failure'
+        run: sleep 30
+      - name: Upload coverage to Codecov (retry)
+        if: steps.codecov.outcome == 'failure'
         uses: codecov/codecov-action@v6
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
