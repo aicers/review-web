@@ -893,8 +893,7 @@ mod tests {
         }
 
         let res = schema.execute_as_system_admin(&format!(
-                "query {{rankedOutliers(modelId: 3, time: \"{}\", first: 1) {{ nodes {{ id }} }} }}",
-                &t2_str
+                "query {{rankedOutliers(modelId: 3, time: \"{t2_str}\", first: 1) {{ nodes {{ id }} }} }}"
             ))
             .await;
         assert_eq!(
@@ -904,12 +903,11 @@ mod tests {
 
         let res = schema
             .execute_as_system_admin(&format!(
-                "query {{rankedOutliers(modelId: 3, time: \"{}\", first: 3) {{ pageInfo {{
+                "query {{rankedOutliers(modelId: 3, time: \"{t2_str}\", first: 3) {{ pageInfo {{
                 hasNextPage,
                 startCursor,
                 endCursor
-            }} }} }}",
-                &t2_str
+            }} }} }}"
             ))
             .await;
         let Value::Object(retval) = res.data else {
@@ -930,8 +928,7 @@ mod tests {
         };
 
         let res = schema.execute_as_system_admin(&format!(
-                "query {{rankedOutliers(modelId: 3, time: \"{}\", after: \"{cursor}\", first: 1) {{ nodes {{ id }} }} }}",
-                &t2_str
+                "query {{rankedOutliers(modelId: 3, time: \"{t2_str}\", after: \"{cursor}\", first: 1) {{ nodes {{ id }} }} }}"
             ))
             .await;
         assert_eq!(
@@ -941,8 +938,7 @@ mod tests {
 
         let res = schema
             .execute_as_system_admin(&format!(
-                "query {{rankedOutliers(modelId: 3, time: \"{}\", last: 2) {{ nodes {{ id }} }} }}",
-                &t2_str
+                "query {{rankedOutliers(modelId: 3, time: \"{t2_str}\", last: 2) {{ nodes {{ id }} }} }}"
             ))
             .await;
         assert_eq!(
@@ -956,12 +952,11 @@ mod tests {
 
         let res = schema
             .execute_as_system_admin(&format!(
-                "query {{rankedOutliers(modelId: 3, time: \"{}\", last: 3) {{ pageInfo {{
+                "query {{rankedOutliers(modelId: 3, time: \"{t2_str}\", last: 3) {{ pageInfo {{
             hasPreviousPage,
             startCursor,
             endCursor
-        }} }} }}",
-                &t2_str
+        }} }} }}"
             ))
             .await;
         let Value::Object(retval) = res.data else {
@@ -982,8 +977,7 @@ mod tests {
         };
 
         let res = schema.execute_as_system_admin(&format!(
-            "query {{rankedOutliers(modelId: 3, time: \"{}\", before: \"{cursor}\", last: 1) {{ nodes {{ id }} }} }}",
-            &t2_str
+            "query {{rankedOutliers(modelId: 3, time: \"{t2_str}\", before: \"{cursor}\", last: 1) {{ nodes {{ id }} }} }}"
         ))
         .await;
         assert_eq!(
@@ -1017,8 +1011,7 @@ mod tests {
 
         let res = schema
             .execute_as_system_admin(&format!(
-                "query {{savedOutliers(modelId: {model}, time: \"{}\") {{ totalCount }} }}",
-                &t_str
+                "query {{savedOutliers(modelId: {model}, time: \"{t_str}\") {{ totalCount }} }}"
             ))
             .await;
         assert_eq!(
@@ -1048,8 +1041,7 @@ mod tests {
 
         let res = schema
             .execute_as_system_admin(&format!(
-                "query {{savedOutliers(modelId: {model}, time: \"{}\") {{ totalCount }} }}",
-                &t_str
+                "query {{savedOutliers(modelId: {model}, time: \"{t_str}\") {{ totalCount }} }}"
             ))
             .await;
         assert_eq!(
