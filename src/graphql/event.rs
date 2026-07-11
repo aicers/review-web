@@ -1084,13 +1084,12 @@ impl<'a> From<&'a database::event::TriageScore> for TriageScore<'a> {
     }
 }
 
-#[allow(clippy::trivially_copy_pass_by_ref)]
-fn country_code(code: &[u8; 2]) -> String {
-    std::str::from_utf8(code).unwrap_or("XX").to_owned()
+fn country_code(code: [u8; 2]) -> String {
+    std::str::from_utf8(&code).unwrap_or("XX").to_owned()
 }
 
 fn country_codes(codes: &[[u8; 2]]) -> Vec<String> {
-    codes.iter().map(country_code).collect()
+    codes.iter().map(|code| country_code(*code)).collect()
 }
 
 fn find_ip_customer(
@@ -2196,15 +2195,15 @@ mod tests {
 
     #[test]
     fn country_code_converts_stored_bytes() {
-        assert_eq!(super::country_code(b"KR"), "KR");
-        assert_eq!(super::country_code(b"ZZ"), "ZZ");
-        assert_eq!(super::country_code(b"XX"), "XX");
-        assert_eq!(super::country_code(&[0xff, b'X']), "XX");
+        assert_eq!(super::country_code(*b"KR"), "KR");
+        assert_eq!(super::country_code(*b"ZZ"), "ZZ");
+        assert_eq!(super::country_code(*b"XX"), "XX");
+        assert_eq!(super::country_code([0xff, b'X']), "XX");
     }
 
     #[test]
     fn country_codes_preserves_order_and_cardinality() {
-        let codes = [[b'U', b'S'], [b'Z', b'Z'], [0xff, 0xfe], [b'J', b'P']];
+        let codes = [*b"US", *b"ZZ", [0xff, 0xfe], *b"JP"];
 
         assert_eq!(
             super::country_codes(&codes),
