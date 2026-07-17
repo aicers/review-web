@@ -37,8 +37,8 @@ impl BlocklistMalformedDns {
     /// The two-letter country code of the originator IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn orig_country(&self) -> String {
-        country_code(self.inner.orig_country_code)
+    async fn orig_country(&self) -> &str {
+        country_code(&self.inner.orig_country_code)
     }
 
     /// Originator Customer
@@ -69,8 +69,8 @@ impl BlocklistMalformedDns {
     /// The two-letter country code of the responder IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn resp_country(&self) -> String {
-        country_code(self.inner.resp_country_code)
+    async fn resp_country(&self) -> &str {
+        country_code(&self.inner.resp_country_code)
     }
 
     /// Responder Customer
