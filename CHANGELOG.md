@@ -8,7 +8,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
-- Bumped `review-database` dependency to commit `bd30664`, which renames
+- Bumped `review-database` dependency to commit `1e943dc`, which renames
   several fields used internally by this crate: `Agent.node` and
   `ExternalService.node` are now `node_id`, `TrafficFilter.agent` is now
   `host_fqdn`, and `BlocklistKerberos.client_name` / `service_name` are

@@ -41,8 +41,8 @@ impl PortScan {
     /// The two-letter country code of the originator IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn orig_country(&self) -> String {
-        country_code(self.inner.orig_country_code)
+    async fn orig_country(&self) -> &str {
+        country_code(&self.inner.orig_country_code)
     }
 
     /// Originator Customer
@@ -68,8 +68,8 @@ impl PortScan {
     /// The two-letter country code of the responder IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn resp_country(&self) -> String {
-        country_code(self.inner.resp_country_code)
+    async fn resp_country(&self) -> &str {
+        country_code(&self.inner.resp_country_code)
     }
 
     /// Responder Customer
@@ -167,8 +167,8 @@ impl MultiHostPortScan {
     /// The two-letter country code of the originator IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn orig_country(&self) -> String {
-        country_code(self.inner.orig_country_code)
+    async fn orig_country(&self) -> &str {
+        country_code(&self.inner.orig_country_code)
     }
 
     /// Originator Customer
@@ -198,7 +198,7 @@ impl MultiHostPortScan {
     /// The two-letter country code of the responder IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn resp_countries(&self) -> Vec<String> {
+    async fn resp_countries(&self) -> Vec<&str> {
         country_codes(&self.inner.resp_country_codes)
     }
 
@@ -312,7 +312,7 @@ impl ExternalDdos {
     /// The two-letter country code of the originator IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn orig_countries(&self) -> Vec<String> {
+    async fn orig_countries(&self) -> Vec<&str> {
         country_codes(&self.inner.orig_country_codes)
     }
 
@@ -350,8 +350,8 @@ impl ExternalDdos {
     /// The two-letter country code of the responder IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn resp_country(&self) -> String {
-        country_code(self.inner.resp_country_code)
+    async fn resp_country(&self) -> &str {
+        country_code(&self.inner.resp_country_code)
     }
 
     /// Responder Customer
@@ -443,8 +443,8 @@ impl BlocklistConn {
     /// The two-letter country code of the originator IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn orig_country(&self) -> String {
-        country_code(self.inner.orig_country_code)
+    async fn orig_country(&self) -> &str {
+        country_code(&self.inner.orig_country_code)
     }
 
     /// Originator Customer
@@ -475,8 +475,8 @@ impl BlocklistConn {
     /// The two-letter country code of the responder IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn resp_country(&self) -> String {
-        country_code(self.inner.resp_country_code)
+    async fn resp_country(&self) -> &str {
+        country_code(&self.inner.resp_country_code)
     }
 
     /// Responder Customer
@@ -616,8 +616,8 @@ impl TorConnectionConn {
     /// The two-letter country code of the originator IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn orig_country(&self) -> String {
-        country_code(self.inner.orig_country_code)
+    async fn orig_country(&self) -> &str {
+        country_code(&self.inner.orig_country_code)
     }
 
     /// Originator Customer
@@ -648,8 +648,8 @@ impl TorConnectionConn {
     /// The two-letter country code of the responder IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn resp_country(&self) -> String {
-        country_code(self.inner.resp_country_code)
+    async fn resp_country(&self) -> &str {
+        country_code(&self.inner.resp_country_code)
     }
 
     /// Responder Customer
