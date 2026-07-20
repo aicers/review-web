@@ -101,8 +101,8 @@ impl FtpBruteForce {
     /// The two-letter country code of the originator IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn orig_country(&self, ctx: &Context<'_>) -> String {
-        country_code(ctx, self.inner.orig_addr)
+    async fn orig_country(&self) -> &str {
+        country_code(&self.inner.orig_country_code)
     }
 
     /// Originator Customer
@@ -128,8 +128,8 @@ impl FtpBruteForce {
     /// The two-letter country code of the responder IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn resp_country(&self, ctx: &Context<'_>) -> String {
-        country_code(ctx, self.inner.resp_addr)
+    async fn resp_country(&self) -> &str {
+        country_code(&self.inner.resp_country_code)
     }
 
     /// Responder Customer
@@ -238,8 +238,8 @@ impl FtpPlainText {
     /// The two-letter country code of the originator IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn orig_country(&self, ctx: &Context<'_>) -> String {
-        country_code(ctx, self.inner.orig_addr)
+    async fn orig_country(&self) -> &str {
+        country_code(&self.inner.orig_country_code)
     }
 
     /// Originator Customer
@@ -270,8 +270,8 @@ impl FtpPlainText {
     /// The two-letter country code of the responder IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn resp_country(&self, ctx: &Context<'_>) -> String {
-        country_code(ctx, self.inner.resp_addr)
+    async fn resp_country(&self) -> &str {
+        country_code(&self.inner.resp_country_code)
     }
 
     /// Responder Customer
@@ -412,8 +412,8 @@ impl BlocklistFtp {
     /// The two-letter country code of the originator IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn orig_country(&self, ctx: &Context<'_>) -> String {
-        country_code(ctx, self.inner.orig_addr)
+    async fn orig_country(&self) -> &str {
+        country_code(&self.inner.orig_country_code)
     }
 
     /// Originator Customer
@@ -444,8 +444,8 @@ impl BlocklistFtp {
     /// The two-letter country code of the responder IP address. `"XX"` if the
     /// location of the address is not known, and `"ZZ"` if the location
     /// database is unavailable.
-    async fn resp_country(&self, ctx: &Context<'_>) -> String {
-        country_code(ctx, self.inner.resp_addr)
+    async fn resp_country(&self) -> &str {
+        country_code(&self.inner.resp_country_code)
     }
 
     /// Responder Customer

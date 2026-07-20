@@ -392,21 +392,30 @@ async fn main() -> Result<()> {
 }
 
 fn run(config: &Config) -> Result<Arc<Notify>> {
-    migrate_data_dir(config.data_dir(), config.backup_dir()).context("migration failed")?;
+    let ip_locator = if let Some(path) = config.ip2location() {
+        Some(Arc::new(ip2location::DB::from_file(path).map_err(|e| {
+            anyhow!("cannot read IP location database: {e:#?}")
+        })?))
+    } else {
+        None
+    };
+
+    migrate_data_dir(
+        config.data_dir(),
+        config.backup_dir(),
+        ip_locator.as_ref().map(Arc::clone),
+    )
+    .context("migration failed")?;
 
     let cert_manager: Arc<dyn CertManager> = Arc::new(MiniCertManager::new(
         config.cert.clone(),
         config.key.clone(),
     ));
-    let ip_locator = if let Some(path) = config.ip2location() {
-        Some(
-            ip2location::DB::from_file(path)
-                .map_err(|e| anyhow!("cannot read IP location database: {e:#?}"))?,
-        )
-    } else {
-        None
-    };
-    let store = Store::new(config.data_dir(), config.backup_dir())?;
+    let store = Store::new(
+        config.data_dir(),
+        config.backup_dir(),
+        ip_locator.as_ref().map(Arc::clone),
+    )?;
     #[cfg(not(feature = "auth-mtls"))]
     {
         // Ignores the error if the initial admin password is already set.

@@ -13,6 +13,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `ExternalService.node` are now `node_id`, `TrafficFilter.agent` is now
   `host_fqdn`, and `BlocklistKerberos.client_name` / `service_name` are
   now `cname` / `sname`.
+- Event GraphQL `country` fields now return the country codes stored with the
+  event record instead of resolving them at query time through the IP location
+  database.
+- Changed the public `serve` function to accept
+  `Option<Arc<ip2location::DB>>` instead of `Option<ip2location::DB>`. This is a
+  breaking API change for callers that initialize the server.
 - Renamed the corresponding GraphQL schema fields and arguments to match the
   upstream `review-database` field names:
   - `Agent.node` and `ExternalService.node` are now `nodeId`.
