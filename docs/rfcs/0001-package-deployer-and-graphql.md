@@ -3,8 +3,9 @@
 **Repo:** `aicers/review-web` · **Grounded on** `origin/main` @ `5d0eba5`
 (v0.34.0). Re-verify before relying.
 
-**Status:** `aicers/review-web` — an aicers repo (in-repo issue flow,
-AgentCoop-decomposable; **not** draft-only). Derived from the RFC-D scope
+**Status:** Accepted; implementation is decomposed from §7.
+`aicers/review-web` is an aicers repo (in-repo issue flow,
+AgentCoop-decomposable, no external gate). Derived from the RFC-D scope
 (the review-web slice). This
 document is **self-contained**: it restates inline every cross-repo contract an
 issue needs.
