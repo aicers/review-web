@@ -320,7 +320,23 @@ New mutations:
   `HOLD` deliberately is making a deliberate choice, and a contract field whose
   only purpose is friction protects nobody. (`roxyd` is not in this carve-out —
   a failed roxyd update leaves the UI up, and the bootler supervisor, RFC-A §8,
-  is its own defense.)
+  is its own defense **where it exists**; see the capability gate below, which
+  is what makes that parenthetical true rather than assumed.)
+- **[DECISION] `onFailure = ROLLBACK` is REJECTED for a host that does not
+  advertise `rollback-supervisor`.** Automatic binary rollback for roxyd's own
+  update depends on a **bootler-installed** supervisor unit (RFC-A §8), and a
+  host onboarded by `roxyd join` has one only because the join installs it
+  (RFC-B §7 step 1b) — a host provisioned before that, or one whose unit is
+  masked, has none. roxyd advertises the tag in its capability set when the
+  supervisor answers a heartbeat (RFC-C §6, RFC-B §8). Without this gate the
+  default `ROLLBACK` (RFC-C §4) reaches such a host and is silently downgraded
+  to `HOLD`: the operator believes rollback is armed for every future update
+  and it never is, in a state indistinguishable from a healthy one until an
+  update fails. So `installService` / `updateService` / `updateCoreComponent`
+  **reject `ROLLBACK`** with a typed error naming the missing capability rather
+  than coercing it, and the gate is enforced **here at the mutation boundary**,
+  not only in the UI — a resumed operation or a non-UI caller reaches this path
+  with the default already set, so a UI-only check would not hold.
 - **`onboardHost(host)`** — issue a join token (review commands the registrar,
   D2 §4d); returns the one-time token/one-liner for the UI (RFC-E §6). The
   pending host + its expiry/cancel cleanup are review-side (D2 §4d).
@@ -494,6 +510,11 @@ New mutations:
 
 ## 6. Acceptance criteria
 
+- **`ROLLBACK` is refused where it cannot be honored.** A test asserts a
+  mutation carrying `onFailure = ROLLBACK` against a host whose capability set
+  lacks `rollback-supervisor` is **rejected with a typed error**, not coerced
+  to `HOLD`, and that the same request succeeds once the tag is present. The
+  gate lives at the mutation boundary, so the test drives it without the UI.
 - `PackageDeployer` compiles as a sibling trait in `backend.rs`; review (D2)
   implements it; resolvers obtain it from context like `AgentManager`.
 - **Every host-scoped mutation authorizes before any backend call**, matching
@@ -576,6 +597,12 @@ Self-contained issues; dependency order within this repo:
    `installedCommit` / `lifecycle` / `updateAvailable` + agent version on the
    node/agent/external-service + core-component read path; SDL regen. Depends
    on D1's types.
+2b. **`rollback-supervisor` capability gate** (§5a) — reject
+   `onFailure = ROLLBACK` at the mutation boundary when the target host's
+   capability set lacks the tag, with a typed error rather than coercion to
+   `HOLD` (RFC-A §8, RFC-B §8, RFC-C §6). Small, but it is what makes §5a's
+   "the bootler supervisor is its own defense" true instead of assumed.
+   Depends on 3.
 3. **Immediate-action mutations** (§5a) — the five mutations + `buildSelector`
    / `onFailure` inputs, wired to `PackageDeployer`, **each with the full
    `control.rs` auth chain** (RoleGuard + `check_hostname_access` for module
