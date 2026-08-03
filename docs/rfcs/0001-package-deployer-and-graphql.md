@@ -137,29 +137,20 @@ model (**no `desiredVersion`**):
       async fn read_version(
           &self, host: &str, target: &str, instance: Option<u32>,
       ) -> Result<BuildId, anyhow::Error>;
-      // register/deregister mint / tear down a bootroot identity via the
-      // registrar roxyd (node.enroll). `service_name` is the component's
-      // PLAIN keyword ("piglet"), never a composed <component>-<host>
-      // string: the registrar derives registration_id + SAN from the parts
-      // (service_name, host, instance) (RFC-C §5, RFC-F §5.5), so there is
-      // no caller-composed name to disagree with. register ALLOCATES the
-      // module instance (lowest free for (component, host), RFC-D2 §4d) and
-      // returns it with the material, so the resolver hands the same number
-      // to deploy; the reservation, not a placeholder service row, is what
-      // holds the number until the install succeeds. The `spec` (RFC-A §4
-      // registration template) and
+      // register mints a bootroot identity for ONE instance. v1 pins the
+      // instance to Some(1) for a module and None for a core component
+      // (RFC-A §4) -- nothing here allocates. The registrar derives the
+      // registration_id and the SAN from the parts (service_name, host,
+      // instance); `service_name` is the component's PLAIN keyword, never a
+      // composed name. The `spec` (RFC-A §4 registration template) and
       // `idempotency_key` (operation_attempt ledger, D1 §4d) are NOT
       // parameters: the caller holds neither the signed package nor the
-      // ledger — review's impl resolves both and puts them, with the
-      // instance, on the node.enroll Register wire (RFC-C §5). The returned
-      // instance is None for a component with no instance dimension: host
-      // onboarding mints "roxyd" with NO instance (RFC-D2 §4d), and the
-      // registrar REFUSES a Register whose instance presence contradicts the
-      // component's multiplicity (ServiceInstanceMismatch, RFC-C §5,
-      // RFC-F §5.1) -- so a mandatory u32 here would fail every onboardHost.
+      // ledger -- review's impl resolves both and puts them, with the
+      // instance, on the node.enroll Register wire (RFC-C §5).
       async fn register(
-          &self, service_name: &str, host: &str, mode: DeliveryMode,
-      ) -> Result<(Option<u32>, BootstrapMaterial), anyhow::Error>;
+          &self, service_name: &str, host: &str, instance: Option<u32>,
+          mode: DeliveryMode,
+      ) -> Result<BootstrapMaterial, anyhow::Error>;
       async fn deregister(
           &self, service_name: &str, host: &str, instance: Option<u32>,
       ) -> Result<(), anyhow::Error>;
@@ -197,33 +188,27 @@ on a host outside their customer. Specifically:
 
 New mutations:
 
-- **[DECISION] A module install ADDS AN INSTANCE, so the mutations name
-  one.** A host may run several instances of one module (RFC-A §4), so
-  `(host, target)` no longer identifies an installation. `installService`
-  therefore **allocates** a new instance rather than naming one — review
-  assigns the lowest free number for `(component, host)` (RFC-D2 §4d) and
-  returns it with the operation — while `updateService` and `removeService`
-  **take an `instance` argument** identifying which one to act on, and
-  reject a value that does not exist. The instance is a **number the
-  operator never types** (RFC-A §4): the UI passes back what it read from
-  the row it acted on (RFC-E §4). Core components take **no** instance and
+- **[DECISION] v1 installs ONE instance per `(component, host)`; the
+  mutations still name it.** RFC-A §4 pins the instance to `1` for v1 and
+  defers allocation, so `installService` for a `(component, host)` that
+  already has a service row is **rejected** with a typed error rather than
+  adding a second one. The mutations nevertheless **carry an `instance`**
+  (`Some(1)` for a module, `None` for a core component) so that v2 changes
+  which values are accepted and not the surface: `updateService` and
+  `removeService` take it and reject a value that does not exist. The
+  instance is a **number the operator never types** (RFC-A §4): the UI
+  passes back what it read from the row it acted on (RFC-E §4). Core
+  components take **no** instance and
   a request that supplies one for them is rejected — only the five modules
   are multi-instance.
-- **`installService(host, target, buildSelector, onFailure, idempotencyKey)`**
-  — adds an
-  instance of a module. **[DECISION] `installService` carries a
-  client-supplied `idempotencyKey`, because single-flight cannot protect
-  it.** The other mutations name the instance they act on, so
-  `(host, target, instance)` dedupes them. `installService` **allocates**
-  its instance, so a repeated call forms a *new* triple by construction and
-  single-flight — correctly — does not block it (RFC-D2 §4b): that is what
-  lets an operator add a second instance while the first is still
-  installing. A double-click is therefore indistinguishable from a
-  deliberate second add at the key level, and would allocate two numbers and
-  drive two registrar mints. The UI generates one key per initiated action
-  (RFC-E §4), so a retried or double-submitted request **joins the existing
-  attempt** (the ledger's `idempotency_key` is globally unique, RFC-D1 §4d)
-  while a genuine second add carries a new key and proceeds.
+- **`installService(host, target, buildSelector, onFailure)`** — installs
+  the module on a host that does not have it. Because v1 does not allocate,
+  the triple `(host, target, instance)` is fully determined by the request,
+  so **single-flight dedupes a double-click on its own** — no
+  client-supplied key is needed. (This is the direct benefit of pinning the
+  number: an allocating mutation would form a fresh triple on every click
+  and single-flight could not tell a double-submit from a deliberate second
+  add.)
   **[DECISION] Single-flight per
   `(host, target, instance)`:** like
   `onboardHost` is idempotent-per-hostname (D2 §4d), `installService` /
@@ -255,17 +240,14 @@ New mutations:
   composed name and there is no caller value to disagree with. The
   module-enrollment `DeliveryMode` is the **`RemoteBootstrap`** variant (RFC-C
   §5; bootroot-remote enrollment via the on-host agent, RFC-B §5). `register`
-  **allocates the instance** (lowest free for `(component, host)`, creating
-  the `Agent` row that reserves it, D2 §4d),
-  mints the bootroot identity, and returns the allocated **`instance`** with
-  the `BootstrapMaterial` (review derives the `spec` + `idempotency_key`
-  internally, D2 §4d). The returned instance is `Option<u32>` because the
-  same method mints identities that have **no** instance — `onboardHost`
-  registers `roxyd` for a new host with none, and the registrar refuses a
-  mismatched shape (`ServiceInstanceMismatch`, RFC-C §5) — so for a module
-  install it is always `Some`. Then (2) calls
+  takes the **`instance`** — `Some(1)` for a module in v1, `None` for a
+  core component or for `onboardHost`'s `roxyd` (RFC-A §4) — and mints the
+  bootroot identity, returning the `BootstrapMaterial` (review derives the
+  `spec` + `idempotency_key` internally, D2 §4d). The registrar refuses a
+  `Register` whose `instance` presence contradicts the component's
+  multiplicity (`ServiceInstanceMismatch`, RFC-C §5). Then (2) calls
   **`deploy(host, target, instance, selector, Some(material), onFailure)`** —
-  passing that same allocated number — to stream +
+  with the same `instance` — to stream +
   apply. A first install is **never** `deploy(..., None, ...)`; if a `None`
   first-install ever reaches roxyd, roxyd **fail-closes with
   `MissingBootstrapMaterial`** (RFC-C §4), so a resolver that skipped `register`
@@ -355,8 +337,8 @@ New mutations:
   node may hold several instances of one module (RFC-A §4), each a separate
   backend row (RFC-D1 §2), so the list resolvers return them all and each
   entry carries its **`instance`** number alongside the fields below. An
-  install **in flight** has no row yet — the number is held by an
-  `instance_reservation` (RFC-D1 §4g) — so its card comes from the
+  install **in flight** has no row yet — review creates the row only on
+  terminal success (RFC-D2 §4b) — so its card comes from the
   **non-terminal `operation_attempt`** surfaced below, not from a
   placeholder row; that is what keeps the config plane and the certificate
   lookup free of entries no peer will ever match. A
@@ -535,14 +517,17 @@ New mutations:
   the install actually succeeded on the host` and asserts the module is torn
   down (unit stopped, artifacts removed) **and then** deregistered — never a
   running module stripped of its identity.
-- **Instances are addressed, not named:** `installService` allocates the
-  instance and returns it; `updateService` / `removeService` take an
-  `instance` and reject one that does not exist; a core component rejects
-  any `instance` argument; and single-flight is keyed
-  `(host, target, instance)` — a test adds a second instance while the
-  first install is in flight and asserts it is **not** blocked. Read types
-  return **one entry per instance**, each carrying its number — a test with
-  two `piglet` instances on one node asserts both appear.
+- **Instances are addressed, not allocated:** every mutation carries the
+  `instance` (`Some(1)` for a module, `None` for a core component);
+  `updateService` / `removeService` reject a value that does not exist; a
+  core component rejects any `instance`; and single-flight is keyed
+  `(host, target, instance)`, which — because v1 does not allocate — is
+  fully determined by the request, so a test asserts a **double-submitted**
+  `installService` is coalesced without any client-supplied key. A test
+  asserts a second `installService` for a `(component, host)` that already
+  has a row is **rejected** with a typed error. Read types return **one
+  entry per instance**, each carrying its number, so the shape does not
+  change when v2 allows more than one.
 - Each mutation is an immediate action returning success/failure (no draft
   state); `buildSelector` accepts `version` **xor** `commit` (both/neither
   rejected) and is passed through the trait as `BuildSelector`, with **review
