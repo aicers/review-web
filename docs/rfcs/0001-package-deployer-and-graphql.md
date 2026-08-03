@@ -145,7 +145,9 @@ model (**no `desiredVersion`**):
       // no caller-composed name to disagree with. register ALLOCATES the
       // module instance (lowest free for (component, host), RFC-D2 §4d) and
       // returns it with the material, so the resolver hands the same number
-      // to deploy. The `spec` (RFC-A §4 registration template) and
+      // to deploy; the reservation, not a placeholder service row, is what
+      // holds the number until the install succeeds. The `spec` (RFC-A §4
+      // registration template) and
       // `idempotency_key` (operation_attempt ledger, D1 §4d) are NOT
       // parameters: the caller holds neither the signed package nor the
       // ledger — review's impl resolves both and puts them, with the
@@ -207,8 +209,22 @@ New mutations:
   the row it acted on (RFC-E §4). Core components take **no** instance and
   a request that supplies one for them is rejected — only the five modules
   are multi-instance.
-- **`installService(host, target, buildSelector, onFailure)`** — adds an
-  instance of a module. **[DECISION] Single-flight per
+- **`installService(host, target, buildSelector, onFailure, idempotencyKey)`**
+  — adds an
+  instance of a module. **[DECISION] `installService` carries a
+  client-supplied `idempotencyKey`, because single-flight cannot protect
+  it.** The other mutations name the instance they act on, so
+  `(host, target, instance)` dedupes them. `installService` **allocates**
+  its instance, so a repeated call forms a *new* triple by construction and
+  single-flight — correctly — does not block it (RFC-D2 §4b): that is what
+  lets an operator add a second instance while the first is still
+  installing. A double-click is therefore indistinguishable from a
+  deliberate second add at the key level, and would allocate two numbers and
+  drive two registrar mints. The UI generates one key per initiated action
+  (RFC-E §4), so a retried or double-submitted request **joins the existing
+  attempt** (the ledger's `idempotency_key` is globally unique, RFC-D1 §4d)
+  while a genuine second add carries a new key and proceeds.
+  **[DECISION] Single-flight per
   `(host, target, instance)`:** like
   `onboardHost` is idempotent-per-hostname (D2 §4d), `installService` /
   `updateService` / **`removeService`** must be **single-flight per
@@ -338,7 +354,12 @@ New mutations:
 - **Read types return one entry per installed instance, not per kind.** A
   node may hold several instances of one module (RFC-A §4), each a separate
   backend row (RFC-D1 §2), so the list resolvers return them all and each
-  entry carries its **`instance`** number alongside the fields below. A
+  entry carries its **`instance`** number alongside the fields below. An
+  install **in flight** has no row yet — the number is held by an
+  `instance_reservation` (RFC-D1 §4g) — so its card comes from the
+  **non-terminal `operation_attempt`** surfaced below, not from a
+  placeholder row; that is what keeps the config plane and the certificate
+  lookup free of entries no peer will ever match. A
   resolver that collapses to one entry per `AgentKind` would hide every
   instance after the first.
 - Extend the agent / external-service / node GraphQL types **and** add a
@@ -347,8 +368,11 @@ New mutations:
   `STOPPED` / `FAILED` / `REMOVING`), and **`updateAvailable: Boolean`**
   (computed per build). **No `desiredVersion`.**
 - **Surface `boundAddrs`** on the external-service type — the `(config-key,
-  host:port)` pairs the instance actually bound, as reported by roxyd and
-  recorded by review (RFC-D1 §4b, RFC-C §4). It is empty for the four agent
+  host:port)` pairs the instance **is currently bound to**, as reported by
+  roxyd on **every** status report and recorded by review (RFC-D1 §4b,
+  RFC-C §4). Because it is refreshed rather than captured at install, it
+  stays correct after an operator changes a port through the config plane.
+  It is empty for the four agent
   modules, which bind nothing. Without it the UI cannot tell where a Giganto
   instance is listening and would keep offering the package default to an
   instance roxyd put somewhere else (RFC-E §4). It is **read-only** — the
