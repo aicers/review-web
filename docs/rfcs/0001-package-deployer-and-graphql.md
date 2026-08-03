@@ -174,15 +174,33 @@ on a host outside their customer. Specifically:
 
 New mutations:
 
-- **`installService(host, target, buildSelector, onFailure)`** — first install
-  of a module. **[DECISION] Single-flight per `(host, target)`:** like
+- **[DECISION] A module install ADDS AN INSTANCE, so the mutations name
+  one.** A host may run several instances of one module (RFC-A §4), so
+  `(host, target)` no longer identifies an installation. `installService`
+  therefore **allocates** a new instance rather than naming one — review
+  assigns the lowest free number for `(component, host)` (RFC-D2 §4d) and
+  returns it with the operation — while `updateService` and `removeService`
+  **take an `instance` argument** identifying which one to act on, and
+  reject a value that does not exist. The instance is a **number the
+  operator never types** (RFC-A §4): the UI passes back what it read from
+  the row it acted on (RFC-E §4). Core components take **no** instance and
+  a request that supplies one for them is rejected — only the five modules
+  are multi-instance.
+- **`installService(host, target, buildSelector, onFailure)`** — adds an
+  instance of a module. **[DECISION] Single-flight per
+  `(host, target, instance)`:** like
   `onboardHost` is idempotent-per-hostname (D2 §4d), `installService` /
   `updateService` / **`removeService`** must be **single-flight per
   `(host, target)`** — a second call
   while one is in flight is coalesced/rejected, not started, so a double-click
   does not spawn two `operation_attempt`s (with distinct `idempotency_key`s) and
   two concurrent applies (which roxyd's per-target apply lock, RFC-B §4, would
-  otherwise have to serialize). **`removeService` is in the rule, not just the
+  otherwise have to serialize). **The instance is part of the key**: keying
+  on `(host, target)` alone would block adding a second instance while the
+  first one's install is still running, which is a legitimate concurrent
+  operation rather than a repeated click (RFC-D2 §4b). Instance *allocation*
+  is serialized separately and more coarsely, per `(component, host)`
+  (RFC-D2 §4d). **`removeService` is in the rule, not just the
   two install mutations**: a `remove` and an `update` dispatched close together
   otherwise reach roxyd concurrently and interleave into a half-removed,
   half-updated module with an owed `Deregister` against an identity the update
@@ -278,6 +296,12 @@ New mutations:
 
 ### 5b. Read types — inline version/lifecycle
 
+- **Read types return one entry per installed instance, not per kind.** A
+  node may hold several instances of one module (RFC-A §4), each a separate
+  backend row (RFC-D1 §2), so the list resolvers return them all and each
+  entry carries its **`instance`** number alongside the fields below. A
+  resolver that collapses to one entry per `AgentKind` would hide every
+  instance after the first.
 - Extend the agent / external-service / node GraphQL types **and** add a
   core-component listing type with: `installedVersion`, `installedCommit`,
   `lifecycle` (enum mirroring D1: `NOT_INSTALLED` / `INSTALLING` / `RUNNING` /
@@ -425,6 +449,14 @@ New mutations:
   the install actually succeeded on the host` and asserts the module is torn
   down (unit stopped, artifacts removed) **and then** deregistered — never a
   running module stripped of its identity.
+- **Instances are addressed, not named:** `installService` allocates the
+  instance and returns it; `updateService` / `removeService` take an
+  `instance` and reject one that does not exist; a core component rejects
+  any `instance` argument; and single-flight is keyed
+  `(host, target, instance)` — a test adds a second instance while the
+  first install is in flight and asserts it is **not** blocked. Read types
+  return **one entry per instance**, each carrying its number — a test with
+  two `piglet` instances on one node asserts both appear.
 - Each mutation is an immediate action returning success/failure (no draft
   state); `buildSelector` accepts `version` **xor** `commit` (both/neither
   rejected) and is passed through the trait as `BuildSelector`, with **review
