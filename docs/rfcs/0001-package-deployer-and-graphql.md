@@ -347,7 +347,12 @@ New mutations:
 - Extend the agent / external-service / node GraphQL types **and** add a
   core-component listing type with: `installedVersion`, `installedCommit`,
   `lifecycle` (enum mirroring D1: `NOT_INSTALLED` / `INSTALLING` / `RUNNING` /
-  `STOPPED` / `FAILED` / `REMOVING`), and **`updateAvailable: Boolean`**
+  `STOPPED` / `FAILED` / `REMOVING` / **`UNKNOWN`** — the last is not
+  optional: D1 stores `Unknown` as the fallback for a value this build does
+  not recognize (RFC-D1 §4a), and omitting it from the GraphQL enum leaves a
+  stored state with no representation, which the resolver can only handle by
+  erroring or by silently substituting another state), and
+  **`updateAvailable: Boolean`**
   (computed per build). **No `desiredVersion`.**
 - **Surface `boundAddrs`** on the external-service type — the `(config-key,
   host:port)` pairs the instance **is currently bound to**, as reported by
