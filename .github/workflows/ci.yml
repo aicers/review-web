@@ -1,3 +1,23 @@
+# CHANGE FILTER: `changes` classifies the run's diff and the expensive jobs
+# gate on its `docs_only` output, so a pull request that only touches inert
+# documentation does not build and test the crate across the operating-system
+# and feature matrix. `markdown` is deliberately ungated — a docs-only change
+# is exactly the change that needs the Markdown lint to run.
+#
+# THE GATE IS FAIL-CLOSED. Each gated job's `if:` runs the job whenever the
+# filter did not positively report docs-only, including when the filter itself
+# failed. Without `!cancelled()` a failing `changes` would skip its dependants
+# instead, and GitHub counts a skipped required status check as a pass — so a
+# broken filter would wave an untested change through. Detection must fail red,
+# never open.
+#
+# `CI Gate` IS THE REQUIRED STATUS CHECK, not the individual jobs. A matrix job
+# skipped at the job level is never expanded, so a docs-only run reports
+# `test`, not `test (ubuntu-latest, auth-jwt)` — and a protection rule naming
+# the expanded contexts would wait forever for statuses that are never coming.
+# `CI Gate` always reports, under one stable name, and it also stops protection
+# from having to track matrix leg names at all.
+
 name: CI
 
 on:
@@ -12,8 +32,95 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  changes:
+    name: Change Filter
+    runs-on: ubuntu-latest
+    # Scoped to this job alone. `pull-requests: read` is what
+    # dorny/paths-filter needs to list a pull request's files; without it the
+    # job dies with "Resource not accessible by integration". Declaring the
+    # block here rather than at workflow level leaves every other job's token
+    # exactly as it is today.
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      docs_only: ${{ steps.decide.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # a push diffs against its base commit locally
+
+      # A push carries its base in `github.event.before`. That sha is all-zeros
+      # on a branch's first push and can name a commit a force-push discarded,
+      # so establish that it is real and reachable before diffing. Leaving
+      # `sha` empty skips the filter below, which lands on docs_only=false.
+      - name: Resolve the push base
+        id: base
+        if: github.event_name != 'pull_request'
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ -n "${BEFORE}" ] \
+            && [ "${BEFORE}" != '0000000000000000000000000000000000000000' ] \
+            && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null
+          then
+            echo "sha=${BEFORE}" >> "$GITHUB_OUTPUT"
+          else
+            echo "Push base missing or unreachable; running the full suite."
+          fi
+
+      # On `pull_request` the action reads the file list from the API and
+      # ignores `base`; on `push` it diffs against the sha resolved above.
+      - name: Filter Paths
+        id: filter
+        if: github.event_name == 'pull_request' || steps.base.outputs.sha != ''
+        uses: dorny/paths-filter@v4
+        with:
+          base: ${{ steps.base.outputs.sha }}
+          filters: |
+            docs:
+              - "docs/**"
+              - "**/*.md"
+              - "LICENSE"
+              - ".markdownlint*"
+            code:
+              - "src/**"
+              - "tests/**"
+              - "examples/**"
+              - "Cargo.toml"
+              - ".clippy.toml"
+              - ".github/workflows/**"
+
+      # Docs-only requires a POSITIVE result on both halves: documentation
+      # touched, code untouched. A path in neither list leaves `docs` false and
+      # falls through here to the full suite, so a directory nobody thought to
+      # enumerate defaults to running everything rather than to running
+      # nothing. This is an allowlist of the inert, not a denylist.
+      - name: Decide Docs-Only
+        id: decide
+        run: |
+          if [ "${{ steps.filter.outputs.docs }}" = "true" ] \
+            && [ "${{ steps.filter.outputs.code }}" != "true" ]; then
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Lifting this out of `check` also drops a duplicate: `check` is a two-leg
+  # feature matrix, and both legs used to lint the same Markdown.
+  markdown:
+    name: Markdown
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: markdownlint
+        uses: DavidAnson/markdownlint-cli2-action@v23
+
   check:
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') }}
     strategy:
       matrix:
         features: [auth-jwt, auth-mtls]
@@ -29,11 +136,11 @@ jobs:
         run: cargo clippy --no-default-features --features ${{ matrix.features }} --tests --examples -- -D warnings
       - name: Check (${{ matrix.features }})
         run: cargo check --no-default-features --features ${{ matrix.features }} --examples
-      - name: markdownlint
-        uses: DavidAnson/markdownlint-cli2-action@v23
 
   test:
     runs-on: ${{ matrix.os }}
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') }}
     strategy:
       matrix:
         os: [ubuntu-latest, macOS-latest]
@@ -54,6 +161,8 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -88,3 +197,40 @@ jobs:
         with:
           files: lcov-${{ matrix.features }}.info
           fail_ci_if_error: true
+
+  # `always()`, deliberately, and not `!cancelled()`: a cancelled run would
+  # otherwise skip this job, and GitHub counts a skipped required check as a
+  # pass. Running through cancellation lets the assertions below see the
+  # cancelled results and report red.
+  gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    needs: [changes, markdown, check, test, coverage]
+    if: ${{ always() }}
+    steps:
+      # A filter that errored is a defect, not a tolerable outcome. The gated
+      # jobs did still run — their `if:` fails closed — but the breakage has to
+      # be visible rather than absorbed.
+      - name: Assert the change filter succeeded
+        if: ${{ needs.changes.result != 'success' }}
+        run: |
+          echo "Change Filter: ${{ needs.changes.result }}" >&2
+          exit 1
+
+      # `skipped` is a pass here, and only here: it is what a gated job reports
+      # on a docs-only change. `cancelled` is not.
+      - name: Assert every job passed or was skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "${RESULTS}"
+          bad="$(printf '%s' "${RESULTS}" \
+            | jq -r 'to_entries[]
+                     | select(.value.result != "success" and .value.result != "skipped")
+                     | "  \(.key): \(.value.result)"')"
+          if [ -n "${bad}" ]; then
+            echo "Not green:" >&2
+            echo "${bad}" >&2
+            exit 1
+          fi
