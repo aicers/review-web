@@ -118,28 +118,44 @@ model (**no `desiredVersion`**):
       //            A bare Result<()> cannot express this, and the resolver
       //            must not report it as "done" — it returns the operation
       //            id and the UI polls (§5b).
+      // Every package-scoped method carries the `instance` it acts on
+      // (Option<u32>: None = a single-instance core component, Some(n) = one
+      // of a module's instances). A host may run 001.piglet and 002.piglet
+      // at once (RFC-D1 §2), so (host, target) alone is ambiguous.
       async fn deploy(
-          &self, host: &str, target: &str, selector: BuildSelector,
+          &self, host: &str, target: &str, instance: Option<u32>,
+          selector: BuildSelector,
           bootstrap_material: Option<BootstrapMaterial>,
           on_failure: FailurePolicy,
       ) -> Result<DeployOutcome, anyhow::Error>;
-      async fn remove(&self, host: &str, target: &str)
-          -> Result<(), anyhow::Error>;
-      async fn package_status(&self, host: &str, target: &str)
-          -> Result<PackageState, anyhow::Error>;
-      async fn read_version(&self, host: &str, target: &str)
-          -> Result<BuildId, anyhow::Error>;
+      async fn remove(
+          &self, host: &str, target: &str, instance: Option<u32>,
+      ) -> Result<(), anyhow::Error>;
+      async fn package_status(
+          &self, host: &str, target: &str, instance: Option<u32>,
+      ) -> Result<PackageState, anyhow::Error>;
+      async fn read_version(
+          &self, host: &str, target: &str, instance: Option<u32>,
+      ) -> Result<BuildId, anyhow::Error>;
       // register/deregister mint / tear down a bootroot identity via the
-      // registrar roxyd (node.enroll). The `spec` (RFC-A §4 registration
-      // template) and `idempotency_key` (operation_attempt ledger, D1 §4d)
-      // are NOT parameters here: the caller (review-web) holds neither the
-      // signed package nor the ledger. review's impl resolves both and puts
-      // them on the node.enroll Register wire (RFC-C §5), where they belong.
+      // registrar roxyd (node.enroll). `service_name` is the component's
+      // PLAIN keyword ("piglet"), never a composed <component>-<host>
+      // string: the registrar derives registration_id + SAN from the parts
+      // (service_name, host, instance) (RFC-C §5, RFC-F §5.5), so there is
+      // no caller-composed name to disagree with. register ALLOCATES the
+      // module instance (lowest free for (component, host), RFC-D2 §4d) and
+      // returns it with the material, so the resolver hands the same number
+      // to deploy. The `spec` (RFC-A §4 registration template) and
+      // `idempotency_key` (operation_attempt ledger, D1 §4d) are NOT
+      // parameters: the caller holds neither the signed package nor the
+      // ledger — review's impl resolves both and puts them, with the
+      // instance, on the node.enroll Register wire (RFC-C §5).
       async fn register(
           &self, service_name: &str, host: &str, mode: DeliveryMode,
-      ) -> Result<BootstrapMaterial, anyhow::Error>;
-      async fn deregister(&self, service_name: &str, host: &str)
-          -> Result<(), anyhow::Error>;
+      ) -> Result<(u32, BootstrapMaterial), anyhow::Error>;
+      async fn deregister(
+          &self, service_name: &str, host: &str, instance: Option<u32>,
+      ) -> Result<(), anyhow::Error>;
   }
   ```
   Resolvers hold a `dyn PackageDeployer` the same way they hold the
@@ -191,7 +207,7 @@ New mutations:
   `(host, target, instance)`:** like
   `onboardHost` is idempotent-per-hostname (D2 §4d), `installService` /
   `updateService` / **`removeService`** must be **single-flight per
-  `(host, target)`** — a second call
+  `(host, target, instance)`** — a second call
   while one is in flight is coalesced/rejected, not started, so a double-click
   does not spawn two `operation_attempt`s (with distinct `idempotency_key`s) and
   two concurrent applies (which roxyd's per-target apply lock, RFC-B §4, would
@@ -211,12 +227,19 @@ New mutations:
   (RFC-D1 §4d provides the index), and the resolver surfaces that as a typed
   rejection. **Explicit two-step, in this order:** the
   resolver
-  (1) calls **`register(service_name = "<target>-<host>", host, mode)`** with the
-  module-enrollment `DeliveryMode` — the **`RemoteBootstrap`** variant (RFC-C §5;
-  bootroot-remote enrollment via the on-host agent, RFC-B §5) — which mints
-  the bootroot identity and returns `BootstrapMaterial` (review derives the
-  `spec` + `idempotency_key` internally, D2 §4d); then (2) calls
-  **`deploy(host, target, selector, Some(material), onFailure)`** to stream +
+  (1) calls **`register(service_name = "<target>", host, mode)`** — the
+  component's **plain keyword**, never a composed `<target>-<host>` string:
+  the registrar derives `registration_id` + SAN from the parts
+  `(service_name, host, instance)` (RFC-C §5, RFC-F §5.5), so review sends no
+  composed name and there is no caller value to disagree with. The
+  module-enrollment `DeliveryMode` is the **`RemoteBootstrap`** variant (RFC-C
+  §5; bootroot-remote enrollment via the on-host agent, RFC-B §5). `register`
+  **allocates the instance** (lowest free for `(component, host)`, D2 §4d),
+  mints the bootroot identity, and returns the allocated **`instance`** with
+  the `BootstrapMaterial` (review derives the `spec` + `idempotency_key`
+  internally, D2 §4d); then (2) calls
+  **`deploy(host, target, instance, selector, Some(material), onFailure)`** —
+  passing that same allocated number — to stream +
   apply. A first install is **never** `deploy(..., None, ...)`; if a `None`
   first-install ever reaches roxyd, roxyd **fail-closes with
   `MissingBootstrapMaterial`** (RFC-C §4), so a resolver that skipped `register`
@@ -224,7 +247,9 @@ New mutations:
   compensation:** because `register` mints an identity **before** `deploy`
   applies, a first install is **not terminal until `deploy` completes** —
   review arms the `operation_attempt` `cleanup_state` with an owed `Deregister`
-  of `<target>-<host>` **before** the mint (D2 §4d). So if `deploy` **fails,
+  of the same parts `(service_name, host, instance)` — from which the
+  registrar re-derives the identity to tear down — **before** the mint (D2
+  §4d). So if `deploy` **fails,
   times out, or is cancelled** after a successful `register`, review discharges
   that compensation and the minted identity **never orphans** (a resume
   re-drives the idempotent `register` if the operation continues instead of
@@ -245,11 +270,15 @@ New mutations:
   unreachable precisely when the ambiguity arises — a probe would then leave
   the attempt non-terminal with the obligation still owed, converting a
   determinable case into an indefinite one.
-- **`updateService(host, target, buildSelector, onFailure)`** — update to a
+- **`updateService(host, target, instance, buildSelector, onFailure)`** —
+  update the named instance to a
   selected build (install=update); the identity already exists, so it calls
-  **`deploy(host, target, selector, None, onFailure)`** — **no** `register`
-  (a stray `Some` on an existing identity is ignored, RFC-C §4).
-- **`removeService(host, target)`** — behind the same guard; drives `remove`
+  **`deploy(host, target, instance, selector, None, onFailure)`** — **no**
+  `register` (a stray `Some` on an existing identity is ignored, RFC-C §4).
+  The `instance` is the number the UI read from the row it acted on (RFC-E §4),
+  not typed by the operator; the resolver rejects one that does not exist.
+- **`removeService(host, target, instance)`** — behind the same guard; drives
+  **`remove(host, target, instance)`**
   then crash-safe `deregister` (D2 §4d). Confirmation is a UI concern (RFC-E).
 - **[DECISION] Bind the target's package class to the mutation's guard tier —
   at the resolver, not by convention.** The three module mutations above
@@ -326,8 +355,12 @@ New mutations:
     **`cleanupOwed`** with a human-readable reason when compensation is still
     owed (D2 §4d). `cleanupOwed` is what makes a blocked re-install or
     re-onboard legible instead of a mysterious rejection.
-  - the **latest attempt per `(host, target)` inline** on the same read path as
-    the fields above — **not** a separate history query. This matches the
+  - the **latest attempt per `(host, target, instance)` inline** on the same
+    read path as
+    the fields above — **not** a separate history query. Keying on
+    `(host, target)` would collapse several instances of one module onto a
+    single attempt, so an instance's card could show a sibling's outcome. This
+    matches the
     inline-fields decision (RFC-E §8) and keeps a future fleet view
     frontend-only; a full attempt history is post-v1.
   - **the five mutations return the operation id** (`idempotencyKey`), so the
@@ -442,7 +475,8 @@ New mutations:
 - **First-install failure leaves no orphan identity:** on a first install where
   `register` **succeeds** but `deploy` **errors** (fails / times out / is
   cancelled), the compensation armed before the mint is discharged
-  (D2 §4d), so the minted `<target>-<host>` bootroot identity is torn down — a
+  (D2 §4d), so the minted identity — derived by the registrar from the parts,
+  not a review-composed name — is torn down — a
   test drives `register ok + deploy error` and asserts the identity is
   deregistered, not left orphaned. **The compensation runs `remove` before
   `deregister`:** a second test drives `register ok + deploy TIMES OUT while
