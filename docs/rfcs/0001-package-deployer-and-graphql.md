@@ -336,6 +336,13 @@ New mutations:
   `lifecycle` (enum mirroring D1: `NOT_INSTALLED` / `INSTALLING` / `RUNNING` /
   `STOPPED` / `FAILED` / `REMOVING`), and **`updateAvailable: Boolean`**
   (computed per build). **No `desiredVersion`.**
+- **Surface `boundAddrs`** on the external-service type — the `(config-key,
+  host:port)` pairs the instance actually bound, as reported by roxyd and
+  recorded by review (RFC-D1 §4b, RFC-C §4). It is empty for the four agent
+  modules, which bind nothing. Without it the UI cannot tell where a Giganto
+  instance is listening and would keep offering the package default to an
+  instance roxyd put somewhere else (RFC-E §4). It is **read-only** — the
+  operator changes ports through the config plane, not by writing this.
 - These are **inline** on the existing list/status read path (extend the
   `node/status.rs` resolvers), not a separate rollup — a future fleet view is
   then frontend-only (RFC-E §8).
