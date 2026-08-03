@@ -149,10 +149,15 @@ model (**no `desiredVersion`**):
       // `idempotency_key` (operation_attempt ledger, D1 §4d) are NOT
       // parameters: the caller holds neither the signed package nor the
       // ledger — review's impl resolves both and puts them, with the
-      // instance, on the node.enroll Register wire (RFC-C §5).
+      // instance, on the node.enroll Register wire (RFC-C §5). The returned
+      // instance is None for a component with no instance dimension: host
+      // onboarding mints "roxyd" with NO instance (RFC-D2 §4d), and the
+      // registrar REFUSES a Register whose instance presence contradicts the
+      // component's multiplicity (ServiceInstanceMismatch, RFC-C §5,
+      // RFC-F §5.1) -- so a mandatory u32 here would fail every onboardHost.
       async fn register(
           &self, service_name: &str, host: &str, mode: DeliveryMode,
-      ) -> Result<(u32, BootstrapMaterial), anyhow::Error>;
+      ) -> Result<(Option<u32>, BootstrapMaterial), anyhow::Error>;
       async fn deregister(
           &self, service_name: &str, host: &str, instance: Option<u32>,
       ) -> Result<(), anyhow::Error>;
@@ -234,10 +239,15 @@ New mutations:
   composed name and there is no caller value to disagree with. The
   module-enrollment `DeliveryMode` is the **`RemoteBootstrap`** variant (RFC-C
   §5; bootroot-remote enrollment via the on-host agent, RFC-B §5). `register`
-  **allocates the instance** (lowest free for `(component, host)`, D2 §4d),
+  **allocates the instance** (lowest free for `(component, host)`, creating
+  the `Agent` row that reserves it, D2 §4d),
   mints the bootroot identity, and returns the allocated **`instance`** with
   the `BootstrapMaterial` (review derives the `spec` + `idempotency_key`
-  internally, D2 §4d); then (2) calls
+  internally, D2 §4d). The returned instance is `Option<u32>` because the
+  same method mints identities that have **no** instance — `onboardHost`
+  registers `roxyd` for a new host with none, and the registrar refuses a
+  mismatched shape (`ServiceInstanceMismatch`, RFC-C §5) — so for a module
+  install it is always `Some`. Then (2) calls
   **`deploy(host, target, instance, selector, Some(material), onFailure)`** —
   passing that same allocated number — to stream +
   apply. A first install is **never** `deploy(..., None, ...)`; if a `None`
@@ -441,6 +451,17 @@ New mutations:
   store and `latest_build` **unchanged**. **Acceptance:** a
   `SecurityAdministrator` streaming a validly-signed **core** build is rejected
   **and** `accepted/`, `index.json`, and `latest_build` are unchanged.
+  **Scope of the guarantee — it is about this ROUTE, not about the bytes on
+  disk.** The store is writable by REView's service account, and every
+  component on that host except roxyd shares it (RFC-A §4, RFC-B §4), so a
+  compromised module on the REView host can edit `accepted/`/`index.json`
+  directly without traversing any route. This criterion asserts that the
+  upload path cannot be used to cross a tier — not that the store is
+  protected from a same-uid compromise, which it is not. What still holds in
+  that case is the apply-time check: roxyd verifies signature, `key_id` and
+  the withdrawn list against its root-owned trust set (RFC-A §5), so the
+  reachable outcome is an **authentic older build**, not attacker-chosen
+  code.
 - Fronted by the aice-web-next BFF (RFC-E §7); air-gapped USB→browser→BFF→here
   works.
 - **[DECISION] A SEPARATE trust-plane ingress route — not the module store.**
