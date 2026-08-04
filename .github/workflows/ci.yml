@@ -116,6 +116,13 @@ jobs:
       - uses: actions/checkout@v5
       - name: markdownlint
         uses: DavidAnson/markdownlint-cli2-action@v23
+        with:
+          # Recursive, deliberately. The action's default glob is
+          # `*.{md,markdown}` — repository root only — and this repository's
+          # markdownlint config supplies no `globs` of its own, so `docs/**`
+          # went unlinted. A docs-only change skips every other job, so this
+          # is the only check it gets.
+          globs: "**/*.md"
 
   check:
     runs-on: ubuntu-latest
