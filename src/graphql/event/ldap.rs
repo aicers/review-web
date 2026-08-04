@@ -34,9 +34,9 @@ impl LdapBruteForce {
     }
 
     /// Originator Country
-    /// The two-letter country code of the originator IP address. `"XX"` if the
-    /// location of the address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country code of the originator IP address. `"XX"` if the
+    /// country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -61,9 +61,9 @@ impl LdapBruteForce {
     }
 
     /// Responder Country
-    /// The two-letter country code of the responder IP address. `"XX"` if the
-    /// location of the address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country code of the responder IP address. `"XX"` if the
+    /// country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }
@@ -170,9 +170,9 @@ impl LdapPlainText {
     }
 
     /// Originator Country
-    /// The two-letter country code of the originator IP address. `"XX"` if the
-    /// location of the address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country code of the originator IP address. `"XX"` if the
+    /// country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -202,9 +202,9 @@ impl LdapPlainText {
     }
 
     /// Responder Country
-    /// The two-letter country code of the responder IP address. `"XX"` if the
-    /// location of the address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country code of the responder IP address. `"XX"` if the
+    /// country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }
@@ -358,9 +358,9 @@ impl BlocklistLdap {
     }
 
     /// Originator Country
-    /// The two-letter country code of the originator IP address. `"XX"` if the
-    /// location of the address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country code of the originator IP address. `"XX"` if the
+    /// country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -390,9 +390,9 @@ impl BlocklistLdap {
     }
 
     /// Responder Country
-    /// The two-letter country code of the responder IP address. `"XX"` if the
-    /// location of the address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country code of the responder IP address. `"XX"` if the
+    /// country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }

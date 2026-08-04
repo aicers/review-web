@@ -38,9 +38,9 @@ impl PortScan {
     }
 
     /// Originator Country
-    /// The two-letter country code of the originator IP address. `"XX"` if the
-    /// location of the address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country code of the originator IP address. `"XX"` if the
+    /// country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -65,9 +65,9 @@ impl PortScan {
     }
 
     /// Responder Country
-    /// The two-letter country code of the responder IP address. `"XX"` if the
-    /// location of the address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country code of the responder IP address. `"XX"` if the
+    /// country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }
@@ -164,9 +164,9 @@ impl MultiHostPortScan {
     }
 
     /// Originator Country
-    /// The two-letter country code of the originator IP address. `"XX"` if the
-    /// location of the address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country code of the originator IP address. `"XX"` if the
+    /// country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -195,9 +195,9 @@ impl MultiHostPortScan {
     }
 
     /// Responder Country List
-    /// The two-letter country code of the responder IP address. `"XX"` if the
-    /// location of the address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country codes of the responder IP addresses. `"XX"` if
+    /// a country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn resp_countries(&self) -> Vec<&str> {
         country_codes(&self.inner.resp_country_codes)
     }
@@ -309,9 +309,9 @@ impl ExternalDdos {
     }
 
     /// Originator Country List
-    /// The two-letter country code of the originator IP address. `"XX"` if the
-    /// location of the address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country codes of the originator IP addresses. `"XX"` if
+    /// a country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn orig_countries(&self) -> Vec<&str> {
         country_codes(&self.inner.orig_country_codes)
     }
@@ -347,9 +347,9 @@ impl ExternalDdos {
     }
 
     /// Responder Country
-    /// The two-letter country code of the responder IP address. `"XX"` if the
-    /// location of the address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country code of the responder IP address. `"XX"` if the
+    /// country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }
@@ -440,9 +440,9 @@ impl BlocklistConn {
     }
 
     /// Originator Country
-    /// The two-letter country code of the originator IP address. `"XX"` if the
-    /// location of the address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country code of the originator IP address. `"XX"` if the
+    /// country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -472,9 +472,9 @@ impl BlocklistConn {
     }
 
     /// Responder Country
-    /// The two-letter country code of the responder IP address. `"XX"` if the
-    /// location of the address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country code of the responder IP address. `"XX"` if the
+    /// country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }
@@ -613,9 +613,9 @@ impl TorConnectionConn {
     }
 
     /// Originator Country
-    /// The two-letter country code of the originator IP address. `"XX"` if the
-    /// location of the address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country code of the originator IP address. `"XX"` if the
+    /// country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -645,9 +645,9 @@ impl TorConnectionConn {
     }
 
     /// Responder Country
-    /// The two-letter country code of the responder IP address. `"XX"` if the
-    /// location of the address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country code of the responder IP address. `"XX"` if the
+    /// country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }

@@ -51,9 +51,9 @@ impl UnusualDestinationPattern {
     }
 
     /// Responder Country List
-    /// The two-letter country codes of the responder IP addresses. `"XX"` if
-    /// the location of an address is not known, and `"ZZ"` if the location
-    /// database is unavailable.
+    /// The stored two-letter country codes of the responder IP addresses. `"XX"` if
+    /// a country is unknown or invalid, and `"ZZ"` if country-code
+    /// resolution was not performed or is pending.
     async fn resp_countries(&self) -> Vec<&str> {
         country_codes(&self.inner.resp_country_codes)
     }
