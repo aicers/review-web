@@ -1,3 +1,5 @@
+<!-- markdownlint-configure-file { "MD031": { "list_items": false } } -->
+
 # Implementation doc D3: review-web — PackageDeployer trait, mutations, upload route
 
 **Repo:** `aicers/review-web` · **Grounded on** `origin/main` @ `5d0eba5`
