@@ -628,6 +628,53 @@ Self-contained issues; dependency order within this repo:
 Cross-repo: issue 1 (trait def) should land **before** review D2's trait-impl
 issue; the mutations/route are exercised end-to-end once review (D2) is wired.
 
+### Issue-writing guidance
+
+The three rules below bind every issue cut from this section. Where they
+differ from the default issue template, they win; where they are silent,
+the template applies. Each is here because the review of this RFC set
+produced that failure more than once, in more than one repository.
+
+**1. When the named mechanism is unavailable, keep the property.** Where
+this document names a specific mechanism and the code cannot express it,
+neither escalate the gap nor reach for the mechanism at any cost. Name the
+property the mechanism was there to protect, achieve that property with the
+least coupling that works, and record the deviation in the issue: which
+property is preserved, which named mechanism was unavailable and why, and
+what stands in for it. Two limits bind the substitute — it must not open a
+new dependency on another repository, and it must not differ from what a
+sibling issue in this tree does about the same gap. A deviation taken in
+one issue and not in its sibling is how one surface ends up carrying two
+contracts.
+
+**2. Resolve cross-repository conditionals from source before escalating.**
+When an option's cost or its risk is stated as a conditional about another
+repository's behaviour — "if that configuration rejects unknown keys", "if
+that caller already validates this", "if that default is N" — that is a
+fact, not a judgement call, and a decision escalated with it unresolved
+asks for a ruling on the wrong question. Read the other repository at a
+pinned revision, write into the issue what was read (repository, file, line
+and revision) and what it says, and escalate only what genuinely remains
+open afterwards. A stated rationale the source contradicts is corrected in
+the issue rather than carried forward.
+
+**3. On a contradiction between two issues, take the stricter invariant and
+add a named door.** When two issues in this tree would give the same shared
+primitive contradicting contracts, keep the one that preserves the stricter
+safety invariant and give the looser caller an explicitly named, documented
+entry point instead. Do not relax the primitive and push its safety onto
+caller discipline: that makes the strict caller depend on every future
+caller getting it right, which is not a property a test can hold, and it
+leaves no greppable record of the exception. And do not reintroduce under
+another name a capability this document explicitly rejected — an issue that
+cannot be written without it is an escalation, not a renaming.
+
+Rule 3 already has a worked example in this section: issue 2b rejects
+`onFailure = ROLLBACK` at the mutation boundary with a typed error rather
+than silently coercing it to `HOLD`, so the capability gate stays checkable
+instead of becoming something every caller is trusted to honour. Cut new
+contradictions the same way.
+
 ## 8. Non-goals
 
 - **No `desiredVersion` / reconcile** — immediate action only.
