@@ -1142,11 +1142,6 @@ impl TestSchema {
         let db_dir = tempfile::tempdir().unwrap();
         let backup_dir = tempfile::tempdir().unwrap();
         let store = Store::new(db_dir.path(), backup_dir.path()).unwrap();
-        #[cfg(not(feature = "auth-mtls"))]
-        {
-            use self::account::set_initial_admin_password;
-            let _ = set_initial_admin_password(&store);
-        }
         let store = Arc::new(RwLock::new(store));
 
         #[cfg(feature = "auth-jwt")]

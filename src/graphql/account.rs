@@ -1646,21 +1646,21 @@ async fn load(
 /// fails to generate random bytes for password.
 pub fn set_initial_admin_password(store: &Store) -> anyhow::Result<()> {
     let map = store.account_map();
-    let account = initial_credential()?;
+    let (username, password) = read_review_admin()?;
+    let account = initial_credential(&username, &password)?;
     map.insert(&account)
 }
 
-/// Returns the initial administrator username and salted password.
+/// Returns the initial administrator account for the given username, holding the given
+/// password salted.
 ///
 /// # Errors
 ///
 /// This function returns an error if it fails to generate random bytes for password.
-fn initial_credential() -> anyhow::Result<types::Account> {
-    let (username, password) = read_review_admin()?;
-
+fn initial_credential(username: &str, password: &str) -> anyhow::Result<types::Account> {
     let initial_account = types::Account::new(
-        &username,
-        &password,
+        username,
+        password,
         database::Role::SystemAdministrator,
         "System Administrator".to_owned(),
         String::new(),
@@ -1683,38 +1683,48 @@ fn initial_credential() -> anyhow::Result<types::Account> {
 /// - `Err(anyhow::Error)`: If the `REVIEW_ADMIN` environment variable is not set or its format is invalid.
 fn read_review_admin() -> anyhow::Result<(String, String)> {
     match env::var(REVIEW_ADMIN) {
-        Ok(admin) => {
-            let admin_parts: Vec<&str> = admin.split(':').collect();
-            if admin_parts.len() == 2 {
-                let username = admin_parts[0].to_string();
-                let password = admin_parts[1].to_string();
-                Ok((username, password))
-            } else {
-                Err(anyhow!(
-                    "Invalid format for {REVIEW_ADMIN} environment variable"
-                ))
-            }
-        }
+        Ok(admin) => parse_review_admin(&admin),
         Err(_) => Err(anyhow!("{REVIEW_ADMIN} environment variable not found")),
+    }
+}
+
+/// Parses the value of the `REVIEW_ADMIN` environment variable into a tuple of (username, password).
+///
+/// # Returns
+///
+/// - `Ok((String, String))`: If `value` has the format "username:password".
+/// - `Err(anyhow::Error)`: If `value` does not consist of exactly two `:`-separated components.
+fn parse_review_admin(value: &str) -> anyhow::Result<(String, String)> {
+    let admin_parts: Vec<&str> = value.split(':').collect();
+    if admin_parts.len() == 2 {
+        let username = admin_parts[0].to_string();
+        let password = admin_parts[1].to_string();
+        Ok((username, password))
+    } else {
+        Err(anyhow!(
+            "Invalid format for {REVIEW_ADMIN} environment variable"
+        ))
     }
 }
 
 #[cfg(test)]
 #[allow(clippy::await_holding_lock)]
 mod tests {
-    use std::{env, net::SocketAddr, sync::Arc};
+    use std::{net::SocketAddr, sync::Arc};
 
     use assert_json_diff::assert_json_eq;
     use async_graphql::Value;
     use chrono::Utc;
     use review_database::Role;
     use serde_json::json;
-    use serial_test::serial;
 
     use crate::graphql::{
         BoxedAgentManager, MockAgentManager, RoleGuard, TestSchema,
-        account::{REVIEW_ADMIN, read_review_admin},
+        account::{initial_credential, parse_review_admin},
     };
+
+    const ADMIN_USERNAME: &str = "admin";
+    const ADMIN_PASSWORD: &str = "admin";
 
     struct FailingTokenSigner;
 
@@ -1726,6 +1736,18 @@ mod tests {
         }
     }
 
+    /// Inserts the `admin` account that production creates from
+    /// `REVIEW_ADMIN=admin:admin`, for the tests that need it to exist.
+    fn seed_admin_account(schema: &TestSchema) {
+        let account = initial_credential(ADMIN_USERNAME, ADMIN_PASSWORD)
+            .expect("initial admin account construction should always succeed");
+        let store = schema.store();
+        store
+            .account_map()
+            .insert(&account)
+            .expect("initial admin account insert should always succeed");
+    }
+
     async fn update_account_last_signin_time(schema: &TestSchema, name: &str) {
         let store = schema.store();
         let map = store.account_map();
@@ -1735,12 +1757,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial]
+    // The body was always this long; the serialisation attribute that used to
+    // sit here wrapped it in a macro expansion, where the lint does not look.
+    #[allow(clippy::too_many_lines)]
     async fn pagination() {
-        let original_review_admin = backup_and_set_review_admin();
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
-
         let schema = TestSchema::new().await;
+        seed_admin_account(&schema);
         let res = schema
             .execute_as_system_admin(r"{accountList{totalCount}}")
             .await;
@@ -2005,8 +2027,6 @@ mod tests {
             panic!("unexpected response: {node:?}");
         };
         assert_eq!(username, "user1");
-
-        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
@@ -2064,13 +2084,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial]
     async fn remove_accounts() {
-        let original_review_admin = backup_and_set_review_admin();
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
-
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
         let schema = TestSchema::new_with_params(agent_manager, None, "admin").await;
+        seed_admin_account(&schema);
         let res = schema
             .execute_as_system_admin(r"{accountList{totalCount}}")
             .await;
@@ -2132,18 +2149,13 @@ mod tests {
             .execute_as_system_admin(r"{accountList{totalCount}}")
             .await;
         assert_eq!(res.data.to_string(), r#"{accountList: {totalCount: "1"}}"#);
-
-        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
-    #[serial]
     async fn prevent_admin_self_deletion() {
-        let original_review_admin = backup_and_set_review_admin();
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
-
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
         let schema = TestSchema::new_with_params(agent_manager, None, "admin").await;
+        seed_admin_account(&schema);
 
         // Start with default admin account (SystemAdministrator)
         let res = schema
@@ -2161,8 +2173,6 @@ mod tests {
                 .message
                 .contains("Users cannot delete themselves")
         );
-
-        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
@@ -2182,12 +2192,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial]
     async fn remove_accounts_with_normalization() {
-        let original_review_admin = backup_and_set_review_admin();
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
-
         let schema = TestSchema::new().await;
+        seed_admin_account(&schema);
 
         // Insert an account with a username that will be normalized
         let res = schema
@@ -2217,17 +2224,12 @@ mod tests {
             .execute_as_system_admin(r"{accountList{totalCount}}")
             .await;
         assert_eq!(res.data.to_string(), r#"{accountList: {totalCount: "1"}}"#);
-
-        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
-    #[serial]
     async fn remove_accounts_exact() {
-        let original_review_admin = backup_and_set_review_admin();
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
-
         let schema = TestSchema::new().await;
+        seed_admin_account(&schema);
 
         // Insert an account using GraphQL - this will be normalized
         let res = schema
@@ -2267,17 +2269,12 @@ mod tests {
             .execute_as_system_admin(r"{accountList{totalCount}}")
             .await;
         assert_eq!(res.data.to_string(), r#"{accountList: {totalCount: "1"}}"#);
-
-        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
-    #[serial]
     async fn default_account() {
-        let original_review_admin = backup_and_set_review_admin();
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
-
         let schema = TestSchema::new().await;
+        seed_admin_account(&schema);
         let store = schema.store();
         super::init_expiration_time(&store, 3600).unwrap();
         update_account_last_signin_time(&schema, "admin").await;
@@ -2355,17 +2352,12 @@ mod tests {
             account.get("role").unwrap(),
             &Value::Enum(async_graphql::Name::new("SYSTEM_ADMINISTRATOR"))
         );
-
-        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
-    #[serial]
     async fn refresh_token_returns_dual_tokens() {
-        let original_review_admin = backup_and_set_review_admin();
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
-
         let schema = TestSchema::new().await;
+        seed_admin_account(&schema);
         let store = schema.store();
         super::init_expiration_time(&store, 3600).unwrap();
         drop(store);
@@ -2433,17 +2425,12 @@ mod tests {
         };
         assert!(!new_aimer_token.is_empty());
         assert!(refresh_payload.contains_key("expirationTime"));
-
-        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
-    #[serial]
     async fn issue_aimer_token_success() {
-        let original_review_admin = backup_and_set_review_admin();
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
-
         let schema = TestSchema::new().await;
+        seed_admin_account(&schema);
         let store = schema.store();
         super::init_expiration_time(&store, 3600).unwrap();
         drop(store);
@@ -2494,17 +2481,12 @@ mod tests {
         };
         assert!(!aimer_token.is_empty());
         assert!(payload.contains_key("expirationTime"));
-
-        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
-    #[serial]
     async fn sign_in_reports_aimer_token_signing_failure() {
-        let original_review_admin = backup_and_set_review_admin();
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
-
         let schema = TestSchema::new().await;
+        seed_admin_account(&schema);
         let store = schema.store();
         super::init_expiration_time(&store, 3600).unwrap();
         drop(store);
@@ -2585,17 +2567,12 @@ mod tests {
             panic!("missing aimerToken: {payload:?}");
         };
         assert!(!aimer_token.is_empty());
-
-        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
-    #[serial]
     async fn issue_aimer_token_reports_signing_failure() {
-        let original_review_admin = backup_and_set_review_admin();
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
-
         let schema = TestSchema::new().await;
+        seed_admin_account(&schema);
         let store = schema.store();
         super::init_expiration_time(&store, 3600).unwrap();
         drop(store);
@@ -2647,17 +2624,12 @@ mod tests {
             res.errors
         );
         assert!(matches!(res.data, Value::Null));
-
-        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
-    #[serial]
     async fn issue_aimer_token_invalid_review_token_fails() {
-        let original_review_admin = backup_and_set_review_admin();
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
-
         let schema = TestSchema::new().await;
+        seed_admin_account(&schema);
         let store = schema.store();
         super::init_expiration_time(&store, 3600).unwrap();
         drop(store);
@@ -2680,61 +2652,39 @@ mod tests {
             res.errors
         );
         assert!(matches!(res.data, Value::Null));
-
-        restore_review_admin(original_review_admin);
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    #[serial]
-    async fn test_read_review_admin() {
-        let original_review_admin = backup_and_set_review_admin();
-
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
-
-        let result = read_review_admin();
+    #[test]
+    fn test_parse_review_admin() {
+        let result = parse_review_admin("admin:admin");
         assert_eq!(result.unwrap(), ("admin".to_string(), "admin".to_string()));
 
-        // Set the temporary `REVIEW_ADMIN` with invalid format
-        unsafe {
-            env::set_var(REVIEW_ADMIN, "adminadmin");
-        }
-
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("adminadmin".to_string()));
-
-        let result = read_review_admin();
+        // A value without a separator has one component, not two.
+        let result = parse_review_admin("adminadmin");
         assert!(result.is_err());
 
-        // Unset the `REVIEW_ADMIN`
-        unsafe {
-            env::remove_var(REVIEW_ADMIN);
-        }
-
-        assert!(env::var(REVIEW_ADMIN).is_err());
-
-        let result = read_review_admin();
+        // So does an empty value: `"".split(':')` yields one empty component.
+        let result = parse_review_admin("");
         assert!(result.is_err());
 
-        restore_review_admin(original_review_admin);
-    }
+        // A value with a second separator has three components, not two.
+        let result = parse_review_admin("a:b:c");
+        assert!(result.is_err());
 
-    fn backup_and_set_review_admin() -> Option<String> {
-        let original_review_admin = env::var(REVIEW_ADMIN).ok();
-        unsafe {
-            env::set_var(REVIEW_ADMIN, "admin:admin");
-        }
-        original_review_admin
-    }
-
-    fn restore_review_admin(original_review_admin: Option<String>) {
-        if let Some(value) = original_review_admin {
-            unsafe {
-                env::set_var(REVIEW_ADMIN, value);
-            }
-        } else {
-            unsafe {
-                env::remove_var(REVIEW_ADMIN);
-            }
-        }
+        // The rule counts components, not their contents, so an empty one is
+        // accepted.
+        assert_eq!(
+            parse_review_admin(":").unwrap(),
+            (String::new(), String::new())
+        );
+        assert_eq!(
+            parse_review_admin("admin:").unwrap(),
+            ("admin".to_string(), String::new())
+        );
+        assert_eq!(
+            parse_review_admin(":admin").unwrap(),
+            (String::new(), "admin".to_string())
+        );
     }
 
     #[tokio::test]
@@ -2809,12 +2759,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial]
     async fn reset_admin_password_system_administrator() {
         // given
-        let original_review_admin = backup_and_set_review_admin();
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
         let schema = TestSchema::new().await;
+        seed_admin_account(&schema);
 
         // when
         // : Change password in local
@@ -2844,8 +2792,6 @@ mod tests {
         // then
         assert_eq!(res.data.to_string(), r"null");
         assert!(!res.errors.is_empty());
-
-        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
@@ -3212,11 +3158,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial]
     async fn update_account_case_system_administrator() {
-        let original_review_admin = backup_and_set_review_admin();
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
         let schema = TestSchema::new().await;
+        seed_admin_account(&schema);
 
         // Failure Case 3 Related to customer id: Update `role` to a value other than
         // `SYSTEM_ADMINISTRATOR` while the current account's `customer_ids` is set to `None`.
@@ -3236,7 +3180,6 @@ mod tests {
             .await;
 
         assert_eq!(res.errors.first().unwrap().message, "Role not allowed.");
-        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
@@ -3540,7 +3483,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial]
     async fn sign_in_with_new_password_proceed() {
         let schema = TestSchema::new().await;
         let res = schema
@@ -3828,10 +3770,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial]
     async fn prevent_password_reuse_reset_admin_password() {
-        let original_review_admin = backup_and_set_review_admin();
         let schema = TestSchema::new().await;
+        seed_admin_account(&schema);
 
         // Try to reset admin password with the same password (should fail)
         let res = schema
@@ -3867,8 +3808,6 @@ mod tests {
         let account = map.get("admin").unwrap().unwrap();
         assert!(account.verify_password("newadminpassword"));
         assert!(!account.verify_password("adminpassword"));
-
-        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
@@ -4195,11 +4134,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial]
     async fn force_sign_out() {
-        let original_review_admin = backup_and_set_review_admin();
-
         let schema = TestSchema::new().await;
+        seed_admin_account(&schema);
         let store = schema.store();
         super::init_expiration_time(&store, 3600).unwrap();
 
@@ -4287,8 +4224,6 @@ mod tests {
             )
             .await;
         assert!(!res.data.to_string().contains("testuser"));
-
-        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
@@ -4366,7 +4301,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial]
     async fn comprehensive_user_list() {
         let schema = TestSchema::new().await;
 
@@ -4613,12 +4547,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial]
     async fn reset_admin_password_and_force_password_change() {
-        let original_review_admin = backup_and_set_review_admin();
-        assert_eq!(env::var(REVIEW_ADMIN), Ok("admin:admin".to_string()));
-
         let schema = TestSchema::new().await;
+        seed_admin_account(&schema);
         let store = schema.store();
         let account_map = store.account_map();
 
@@ -4688,11 +4619,9 @@ mod tests {
         assert!(res.is_ok());
         let account = account_map.get("admin").unwrap().unwrap();
         assert!(account.verify_password("finalpassword"));
-        restore_review_admin(original_review_admin);
     }
 
     #[tokio::test]
-    #[serial]
     async fn update_account_and_force_password_change() {
         let schema = TestSchema::new().await;
         let store = schema.store();
