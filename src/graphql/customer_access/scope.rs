@@ -151,7 +151,7 @@ mod tests {
         fn new_with_account(username: &str, customer_ids: Option<Vec<u32>>) -> Self {
             let db_dir = tempfile::tempdir().expect("create data dir");
             let backup_dir = tempfile::tempdir().expect("create backup dir");
-            let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+            let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("create store");
             let account = types::Account::new(
                 username,
                 "password",
@@ -184,7 +184,7 @@ mod tests {
         fn new_without_account(username: &str) -> Self {
             let db_dir = tempfile::tempdir().expect("create data dir");
             let backup_dir = tempfile::tempdir().expect("create backup dir");
-            let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+            let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("create store");
             let store = Arc::new(RwLock::new(store));
             let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
                 .data(store)
@@ -201,7 +201,7 @@ mod tests {
         fn new_without_username() -> Self {
             let db_dir = tempfile::tempdir().expect("create data dir");
             let backup_dir = tempfile::tempdir().expect("create backup dir");
-            let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+            let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("create store");
             let store = Arc::new(RwLock::new(store));
             let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
                 .data(store)

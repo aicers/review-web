@@ -102,7 +102,7 @@ pub struct ServerConfig {
 pub fn serve<A>(
     config: ServerConfig,
     store: Arc<RwLock<Store>>,
-    ip_locator: Option<ip2location::DB>,
+    ip_locator: Option<Arc<ip2location::DB>>,
     agent_manager: A,
 ) -> Arc<Notify>
 where

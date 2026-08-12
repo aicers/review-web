@@ -130,7 +130,7 @@ mod tests {
     ) -> (tempfile::TempDir, tempfile::TempDir, Store) {
         let db_dir = tempfile::tempdir().expect("create data dir");
         let backup_dir = tempfile::tempdir().expect("create backup dir");
-        let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+        let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("create store");
         let node = review_database::Node {
             id: u32::MAX,
             name: hostname.to_string(),
@@ -176,7 +176,7 @@ mod tests {
         ) -> Self {
             let db_dir = tempfile::tempdir().expect("create data dir");
             let backup_dir = tempfile::tempdir().expect("create backup dir");
-            let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+            let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("create store");
             let account = types::Account::new(
                 username,
                 "password",
@@ -201,7 +201,7 @@ mod tests {
         fn new_without_account(username: &str, nodes: &[(&str, u32)]) -> Self {
             let db_dir = tempfile::tempdir().expect("create data dir");
             let backup_dir = tempfile::tempdir().expect("create backup dir");
-            let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+            let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("create store");
             Self::with_nodes(store, db_dir, backup_dir, Some(username), nodes)
         }
 
@@ -301,7 +301,7 @@ mod tests {
     fn test_derive_customer_id_ignores_profile_draft() {
         let db_dir = tempfile::tempdir().expect("create data dir");
         let backup_dir = tempfile::tempdir().expect("create backup dir");
-        let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+        let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("create store");
         let node = review_database::Node {
             id: u32::MAX,
             name: "draft-only".to_string(),
@@ -326,7 +326,7 @@ mod tests {
     fn test_hostname_customer_id_map_ignores_profile_draft() {
         let db_dir = tempfile::tempdir().expect("create data dir");
         let backup_dir = tempfile::tempdir().expect("create backup dir");
-        let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+        let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("create store");
         let node = review_database::Node {
             id: u32::MAX,
             name: "draft-only".to_string(),
@@ -351,7 +351,7 @@ mod tests {
     fn test_derive_customer_id_duplicate_hostname_rejected_by_db() {
         let db_dir = tempfile::tempdir().expect("create data dir");
         let backup_dir = tempfile::tempdir().expect("create backup dir");
-        let store = Store::new(db_dir.path(), backup_dir.path()).expect("create store");
+        let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("create store");
         let node1 = review_database::Node {
             id: u32::MAX,
             name: "node1".to_string(),

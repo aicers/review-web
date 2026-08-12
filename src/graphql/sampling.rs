@@ -717,7 +717,7 @@ mod tests {
     fn get_sampling_policies_filters_by_customer() {
         let db_dir = tempfile::tempdir().unwrap();
         let backup_dir = tempfile::tempdir().unwrap();
-        let store = Store::new(db_dir.path(), backup_dir.path()).unwrap();
+        let store = Store::new(db_dir.path(), backup_dir.path(), None).unwrap();
 
         // Nodes use distinct `name` and `hostname` values so the test
         // distinguishes which field the join key is — `SamplingPolicy.node`

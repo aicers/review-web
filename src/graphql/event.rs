@@ -39,7 +39,6 @@ use review_database::{
     self as database, AgentKind, EventKind, ExclusionReason, IndexedTable, Iterable, Store,
     TriageExclusion, TriagePolicyInput as DbTriagePolicyInput,
     event::{Direction, EventFilter, EventIterator, RecordType},
-    find_ip_country,
     types::{Endpoint, EventCategory, HostNetworkGroup},
 };
 use tokio::time;
@@ -1085,9 +1084,12 @@ impl<'a> From<&'a database::event::TriageScore> for TriageScore<'a> {
     }
 }
 
-fn country_code(ctx: &Context<'_>, addr: IpAddr) -> String {
-    ctx.data::<ip2location::DB>()
-        .map_or_else(|_| "ZZ".to_string(), |l| find_ip_country(l, addr))
+fn country_code(code: &[u8; 2]) -> &str {
+    std::str::from_utf8(code).unwrap_or("XX")
+}
+
+fn country_codes(codes: &[[u8; 2]]) -> Vec<&str> {
+    codes.iter().map(country_code).collect()
 }
 
 fn find_ip_customer(
@@ -1128,8 +1130,9 @@ impl EventTotalCount {
         let events = store.events();
         let locator = if self.filter.has_country() {
             Some(
-                ctx.data::<ip2location::DB>()
-                    .map_err(|_| "unable to locate IP address")?,
+                ctx.data::<Arc<ip2location::DB>>()
+                    .map_err(|_| "unable to locate IP address")?
+                    .as_ref(),
             )
         } else {
             None
@@ -1536,8 +1539,9 @@ async fn load_event(ctx: &Context<'_>, id: &ID) -> Result<Option<Event>> {
 
     let locator = if filter.has_country() {
         Some(
-            ctx.data::<ip2location::DB>()
-                .map_err(|_| "unable to locate IP address")?,
+            ctx.data::<Arc<ip2location::DB>>()
+                .map_err(|_| "unable to locate IP address")?
+                .as_ref(),
         )
     } else {
         None
@@ -1647,8 +1651,9 @@ async fn load_triage_list(
     let iter = db.iter_from(start_key, Direction::Forward);
     let locator = if filter.has_country() {
         Some(
-            ctx.data::<ip2location::DB>()
-                .map_err(|_| "unable to locate IP address")?,
+            ctx.data::<Arc<ip2location::DB>>()
+                .map_err(|_| "unable to locate IP address")?
+                .as_ref(),
         )
     } else {
         None
@@ -1847,8 +1852,9 @@ fn iter_to_events(
     let mut exceeded = false;
     let locator = if filter.has_country() {
         Some(
-            ctx.data::<ip2location::DB>()
-                .map_err(|_| anyhow!("unable to locate IP address"))?,
+            ctx.data::<Arc<ip2location::DB>>()
+                .map_err(|_| anyhow!("unable to locate IP address"))?
+                .as_ref(),
         )
     } else {
         None
@@ -2070,8 +2076,9 @@ fn iter_to_events_with_triage(
     let mut exceeded = false;
     let locator = if filter.has_country() {
         Some(
-            ctx.data::<ip2location::DB>()
-                .map_err(|_| anyhow!("unable to locate IP address"))?,
+            ctx.data::<Arc<ip2location::DB>>()
+                .map_err(|_| anyhow!("unable to locate IP address"))?
+                .as_ref(),
         )
     } else {
         None
@@ -2125,7 +2132,7 @@ mod tests {
             BlocklistBootpFields, BlocklistConnFields, BlocklistDceRpcFields, BlocklistDhcpFields,
             BlocklistDnsFields, BlocklistKerberosFields, BlocklistMqttFields, BlocklistNfsFields,
             BlocklistNtlmFields, BlocklistRdpFields, BlocklistSmbFields, BlocklistSmtpFields,
-            BlocklistSshFields, BlocklistTlsFields, DnsEventFields,
+            BlocklistSshFields, BlocklistTlsFields, DnsEventFields, MultiHostPortScanFields,
             UnusualDestinationPatternFields,
         },
     };
@@ -2186,6 +2193,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn country_code_converts_stored_bytes() {
+        assert_eq!(super::country_code(b"KR"), "KR");
+        assert_eq!(super::country_code(b"ZZ"), "ZZ");
+        assert_eq!(super::country_code(b"XX"), "XX");
+        assert_eq!(super::country_code(&[0xff, b'X']), "XX");
+    }
+
+    #[test]
+    fn country_codes_preserves_order_and_cardinality() {
+        let codes = [*b"US", *b"ZZ", [0xff, 0xfe], *b"JP"];
+
+        assert_eq!(super::country_codes(&codes), vec!["US", "ZZ", "XX", "JP"]);
+    }
+
     #[tokio::test]
     async fn event_lookup_by_id_returns_matching_event() {
         let schema = TestSchema::new().await;
@@ -2209,6 +2231,77 @@ mod tests {
             format!(
                 r#"{{event: {{id: "{key}", time: "2018-01-26T18:30:09.453829+00:00", query: "domain"}}}}"#
             )
+        );
+    }
+
+    #[tokio::test]
+    async fn single_endpoint_event_countries_use_stored_codes_without_locator() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let key = db.put(&event_message_at(ts, 1, 2)).unwrap();
+        drop(store);
+
+        let query = format!(
+            "{{ event(id: \"{key}\") {{ \
+                ... on DnsCovertChannel {{ origCountry respCountry }} \
+            }} }}"
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+
+        assert_eq!(
+            res.data.to_string(),
+            r#"{event: {origCountry: "ZZ", respCountry: "ZZ"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn multi_endpoint_event_countries_use_stored_codes_without_locator() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let fields = MultiHostPortScanFields {
+            sensor: "sensor1".to_string(),
+            orig_addr: Ipv4Addr::from(1).into(),
+            resp_port: 443,
+            resp_addrs: vec![Ipv4Addr::from(2).into(), Ipv4Addr::from(3).into()],
+            proto: 6,
+            start_time: ts.timestamp_nanos_opt().unwrap(),
+            end_time: ts.timestamp_nanos_opt().unwrap(),
+            confidence: 0.8,
+            category: Some(EventCategory::CommandAndControl),
+        };
+        let key = db
+            .put(&EventMessage {
+                time: ts,
+                kind: EventKind::MultiHostPortScan,
+                fields: bincode::serialize(&fields).expect("serializable"),
+            })
+            .unwrap();
+        drop(store);
+
+        let query = format!(
+            "{{ event(id: \"{key}\") {{ \
+                ... on MultiHostPortScan {{ origCountry respCountries }} \
+            }} }}"
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+
+        assert_eq!(
+            res.data.to_string(),
+            r#"{event: {origCountry: "ZZ", respCountries: ["ZZ", "ZZ"]}}"#
         );
     }
 
