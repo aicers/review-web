@@ -35,6 +35,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `auth-mtls` feature enabled. The example writes the schema to stdout so it
   can be redirected to a file.
 
+### Fixed
+
+- Stopped the library's `serve` function from selecting ring as the process-wide
+  rustls crypto provider, allowing applications embedding `review-web` to choose
+  their own provider. The `minireview` executable now selects ring during
+  application startup instead.
+
 ## [0.34.0] - 2026-06-03
 
 ### Changed

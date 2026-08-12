@@ -3,7 +3,7 @@ mod mtls_integration {
     use std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::PathBuf,
-        sync::{Arc, RwLock},
+        sync::{Arc, Once, RwLock},
         time::Duration,
     };
 
@@ -44,6 +44,7 @@ mod mtls_integration {
     const ERR_MISSING_CUSTOMER_IDS: &str = "Missing customer_ids claim for non-admin role";
     const ERR_MTLS_REQUIRED: &str = "mTLS is required";
     const WS_RECV_TIMEOUT: Duration = Duration::from_secs(5);
+    static INSTALL_CRYPTO_PROVIDER: Once = Once::new();
     // Fixed RSA private key used only to produce an RS256 JWT for alg-mismatch tests.
     const RSA_PRIVATE_KEY_PEM: &str = r"-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDL3Xrm3ySgvLcF
@@ -319,6 +320,12 @@ xvcNsYaYqk6sRk/INvcaN2E=
     }
 
     fn start_test_server() -> anyhow::Result<TestServer> {
+        INSTALL_CRYPTO_PROVIDER.call_once(|| {
+            rustls::crypto::ring::default_provider()
+                .install_default()
+                .expect("no TLS configuration exists before test initialization");
+        });
+
         let addr_ip = LOCALHOST_IP;
         let port = {
             let listener =
