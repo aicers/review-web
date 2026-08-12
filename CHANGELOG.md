@@ -8,7 +8,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
-- Bumped `review-database` dependency to commit `bd30664`, which renames
+- Bumped `review-database` dependency to commit `644db00`, which renames
   several fields used internally by this crate: `Agent.node` and
   `ExternalService.node` are now `node_id`, `TrafficFilter.agent` is now
   `host_fqdn`, and `BlocklistKerberos.client_name` / `service_name` are
@@ -28,6 +28,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `hostFqdn`, and the `agents` argument on the `trafficFilterList` query and
     the `applyTrafficFilterRules` mutation is now `hostFqdns`.
   - `BlocklistKerberos.clientName` / `serviceName` are now `cname` / `sname`.
+- Renamed `startTime` / `endTime` on the `PortScan`, `MultiHostPortScan`,
+  `ExternalDdos`, `FtpBruteForce`, `LdapBruteForce`, `RdpBruteForce`, and
+  `RepeatedHttpSessions` GraphQL types to `firstEventStartTime` /
+  `lastEventStartTime`. These fields are the session start times of the first
+  and last raw events used for detection. This is a breaking schema change;
+  clients must migrate to the new field names.
+- Renamed `startTime` / `endTime` on `UnusualDestinationPattern` to
+  `samplingWindowStartTime` / `samplingWindowEndTime`, the boundaries of the
+  anomaly sampling window used for detection. This is a breaking schema
+  change; clients must migrate to the new field names.
 
 ### Added
 
