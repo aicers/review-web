@@ -370,6 +370,10 @@ impl Config {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .map_err(|_| anyhow!("a rustls crypto provider is already installed"))?;
+
     let config = Config::load_config(parse().as_deref())?;
     let _guard = init_tracing(config.log_dir());
 

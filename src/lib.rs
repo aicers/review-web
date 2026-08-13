@@ -111,8 +111,6 @@ where
     use axum_server::{Handle, tls_rustls::RustlsConfig};
     use tracing::info;
 
-    let _ = rustls::crypto::ring::default_provider().install_default();
-
     let schema = graphql::schema(
         store.clone(),
         agent_manager,
