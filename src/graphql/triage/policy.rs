@@ -33,8 +33,7 @@ impl TriagePolicyTotalCount {
             map.iter(Direction::Forward, None)
                 .filter(|res| {
                     res.as_ref()
-                        .map(|policy| matches_customer(policy, self.customer_id))
-                        .unwrap_or(false)
+                        .is_ok_and(|policy| matches_customer(policy, self.customer_id))
                 })
                 .count(),
         ))
