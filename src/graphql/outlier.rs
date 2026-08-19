@@ -884,7 +884,7 @@ mod tests {
 
         let res = schema.execute_as_system_admin(&format!(
                 "query {{rankedOutliers(modelId: 3, time: \"{}\", first: 1) {{ nodes {{ id }} }} }}",
-                &t2_str
+                t2_str
             ))
             .await;
         assert_eq!(
@@ -899,7 +899,7 @@ mod tests {
                 startCursor,
                 endCursor
             }} }} }}",
-                &t2_str
+                t2_str
             ))
             .await;
         let Value::Object(retval) = res.data else {
@@ -921,7 +921,7 @@ mod tests {
 
         let res = schema.execute_as_system_admin(&format!(
                 "query {{rankedOutliers(modelId: 3, time: \"{}\", after: \"{cursor}\", first: 1) {{ nodes {{ id }} }} }}",
-                &t2_str
+                t2_str
             ))
             .await;
         assert_eq!(
@@ -932,7 +932,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(&format!(
                 "query {{rankedOutliers(modelId: 3, time: \"{}\", last: 2) {{ nodes {{ id }} }} }}",
-                &t2_str
+                t2_str
             ))
             .await;
         assert_eq!(
@@ -951,7 +951,7 @@ mod tests {
             startCursor,
             endCursor
         }} }} }}",
-                &t2_str
+                t2_str
             ))
             .await;
         let Value::Object(retval) = res.data else {
@@ -973,7 +973,7 @@ mod tests {
 
         let res = schema.execute_as_system_admin(&format!(
             "query {{rankedOutliers(modelId: 3, time: \"{}\", before: \"{cursor}\", last: 1) {{ nodes {{ id }} }} }}",
-            &t2_str
+            t2_str
         ))
         .await;
         assert_eq!(
@@ -1008,7 +1008,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(&format!(
                 "query {{savedOutliers(modelId: {model}, time: \"{}\") {{ totalCount }} }}",
-                &t_str
+                t_str
             ))
             .await;
         assert_eq!(
@@ -1039,7 +1039,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(&format!(
                 "query {{savedOutliers(modelId: {model}, time: \"{}\") {{ totalCount }} }}",
-                &t_str
+                t_str
             ))
             .await;
         assert_eq!(

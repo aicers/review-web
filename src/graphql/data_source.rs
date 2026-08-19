@@ -70,7 +70,7 @@ impl TryFrom<DataSourceInsertInput> for database::DataSource {
                 s.as_str()
             })
             .parse::<std::net::SocketAddr>()
-            .map_err(|e| format!("Invalid giganto address ({:?}): {e}", &input.address))?;
+            .map_err(|e| format!("Invalid giganto address ({:?}): {e}", input.address))?;
         if data_type != database::DataType::TimeSeries && input.kind.is_none() {
             return Err(format!("For {data_type:?} data, `kind` is required."));
         }
