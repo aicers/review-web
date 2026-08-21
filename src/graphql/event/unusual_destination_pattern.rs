@@ -31,14 +31,14 @@ impl UnusualDestinationPattern {
         &self.inner.sensor
     }
 
-    /// Detection Start Time
-    async fn start_time(&self) -> DateTime<Utc> {
-        self.inner.start_time
+    /// Start boundary of the anomaly sampling window used for detection.
+    async fn sampling_window_start_time(&self) -> DateTime<Utc> {
+        self.inner.sampling_window_start_time
     }
 
-    /// Detection End Time
-    async fn end_time(&self) -> DateTime<Utc> {
-        self.inner.end_time
+    /// End boundary of the anomaly sampling window used for detection.
+    async fn sampling_window_end_time(&self) -> DateTime<Utc> {
+        self.inner.sampling_window_end_time
     }
 
     /// Responder IP (Address) List

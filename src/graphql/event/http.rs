@@ -376,14 +376,14 @@ impl RepeatedHttpSessions {
         self.inner.proto
     }
 
-    /// Detection Start Time
-    async fn start_time(&self) -> DateTime<Utc> {
-        self.inner.start_time
+    /// Session start time of the first raw event used for detection.
+    async fn first_event_start_time(&self) -> DateTime<Utc> {
+        self.inner.first_event_start_time
     }
 
-    /// Detection End Time
-    async fn end_time(&self) -> DateTime<Utc> {
-        self.inner.end_time
+    /// Session start time of the last raw event used for detection.
+    async fn last_event_start_time(&self) -> DateTime<Utc> {
+        self.inner.last_event_start_time
     }
 
     /// Responder Country
