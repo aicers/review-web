@@ -181,7 +181,10 @@ where
     ArchiveState: FromRef<S>,
 {
     type Rejection = (StatusCode, &'static str);
-    async fn from_request_parts(_parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        Ok(ArchiveState::from_ref(state))
+    fn from_request_parts(
+        _parts: &mut Parts,
+        state: &S,
+    ) -> impl std::future::Future<Output = Result<Self, Self::Rejection>> {
+        std::future::ready(Ok(ArchiveState::from_ref(state)))
     }
 }
