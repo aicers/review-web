@@ -1,6 +1,7 @@
 //! The GraphQL API schema and implementation.
-// async-graphql requires the API functions to be `async`.
-#![allow(clippy::unused_async)]
+// async-graphql generates async resolvers and enum trait implementations without awaits.
+// Remove `unused_async_trait_impl` after async-graphql issue #1832 is fixed and released.
+#![allow(clippy::unused_async, clippy::unused_async_trait_impl)]
 
 #[cfg(not(feature = "auth-mtls"))]
 pub mod account;
