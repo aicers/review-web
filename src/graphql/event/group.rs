@@ -141,7 +141,7 @@ impl EventGroupQuery {
         #[graphql(validator(minimum = 1))] first: i32,
     ) -> Result<EventCounts<String>> {
         let (values, counts) =
-            count_events(ctx, &filter, Event::count_src_ip_address, first).await?;
+            count_events(ctx, &filter, Event::count_originator_ip_address, first).await?;
         let values = values.into_iter().map(|v| v.to_string()).collect();
         Ok(EventCounts { values, counts })
     }
@@ -159,7 +159,7 @@ impl EventGroupQuery {
         #[graphql(validator(minimum = 1))] first: i32,
     ) -> Result<EventCounts<String>> {
         let (values, counts) =
-            count_events(ctx, &filter, Event::count_dst_ip_address, first).await?;
+            count_events(ctx, &filter, Event::count_responder_ip_address, first).await?;
         let values = values.into_iter().map(|v| v.to_string()).collect();
         Ok(EventCounts { values, counts })
     }
@@ -505,6 +505,50 @@ mod tests {
             r#"{eventCountsByNetwork: {values: ["0"], counts: [1]}}"#
         );
     }
+
+    #[tokio::test]
+    async fn event_counts_by_endpoint_ip_address_use_matching_direction() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(
+            ts,
+            u32::from(Ipv4Addr::new(1, 0, 0, 1)),
+            u32::from(Ipv4Addr::new(2, 0, 0, 1)),
+        ))
+        .unwrap();
+        drop(store);
+
+        // Distinct originator and responder addresses pin each aggregation to
+        // its own endpoint, so swapping the two helpers fails here.
+        let res = schema
+            .execute_as_system_admin(
+                r"{
+                    originator: eventCountsByOriginatorIpAddress(filter: {}, first: 10) {
+                        values
+                        counts
+                    }
+                    responder: eventCountsByResponderIpAddress(filter: {}, first: 10) {
+                        values
+                        counts
+                    }
+                }",
+            )
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{originator: {values: ["1.0.0.1"], counts: [1]}, responder: {values: ["2.0.0.1"], counts: [1]}}"#
+        );
+    }
+
     #[tokio::test]
     async fn event_counts_by_country_uses_stored_codes_without_locator() {
         let (_locator_dir, locator) = event_country_locator();
