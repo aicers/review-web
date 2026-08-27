@@ -1128,15 +1128,6 @@ impl EventTotalCount {
     async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
         let events = store.events();
-        let locator = if self.filter.has_country() {
-            Some(
-                ctx.data::<Arc<ip2location::DB>>()
-                    .map_err(|_| "unable to locate IP address")?
-                    .as_ref(),
-            )
-        } else {
-            None
-        };
         let iter = self.start.map_or_else(
             || events.iter_forward(),
             |start| {
@@ -1168,7 +1159,7 @@ impl EventTotalCount {
             if key > last {
                 break;
             }
-            if !event.matches(locator, &self.filter)?.0 {
+            if !event.matches(&self.filter)?.0 {
                 continue;
             }
             if !self.exclusions.is_empty() && event.matches_exclusion(&self.exclusions) {
@@ -1537,18 +1528,7 @@ async fn load_event(ctx: &Context<'_>, id: &ID) -> Result<Option<Event>> {
         return Ok(None);
     }
 
-    let locator = if filter.has_country() {
-        Some(
-            ctx.data::<Arc<ip2location::DB>>()
-                .map_err(|_| "unable to locate IP address")?
-                .as_ref(),
-        )
-    } else {
-        None
-    };
-    let (matched, triage_score) = event
-        .matches(locator, &filter)
-        .map_err(|e| format!("{e}"))?;
+    let (matched, triage_score) = event.matches(&filter).map_err(|e| format!("{e}"))?;
     if !matched {
         return Ok(None);
     }
@@ -1649,16 +1629,6 @@ async fn load_triage_list(
     let db = store.events();
 
     let iter = db.iter_from(start_key, Direction::Forward);
-    let locator = if filter.has_country() {
-        Some(
-            ctx.data::<Arc<ip2location::DB>>()
-                .map_err(|_| "unable to locate IP address")?
-                .as_ref(),
-        )
-    } else {
-        None
-    };
-
     // Use a binary heap to efficiently maintain only the top `count` events
     // This prevents OOM issues with large datasets
     let mut heap = BinaryHeap::new();
@@ -1677,7 +1647,7 @@ async fn load_triage_list(
         }
 
         let triage_score = {
-            let matches = event.matches(locator, &filter)?;
+            let matches = event.matches(&filter)?;
             if !matches.0 {
                 continue;
             }
@@ -1850,16 +1820,6 @@ fn iter_to_events(
 ) -> anyhow::Result<(Vec<(i128, Event)>, bool)> {
     let mut events = Vec::new();
     let mut exceeded = false;
-    let locator = if filter.has_country() {
-        Some(
-            ctx.data::<Arc<ip2location::DB>>()
-                .map_err(|_| anyhow!("unable to locate IP address"))?
-                .as_ref(),
-        )
-    } else {
-        None
-    };
-
     for item in iter {
         let (key, mut event) = match item {
             Ok(kv) => kv,
@@ -1872,7 +1832,7 @@ fn iter_to_events(
             break;
         }
         let triage_score = {
-            let matches = event.matches(locator, filter)?;
+            let matches = event.matches(filter)?;
             if !matches.0 {
                 continue;
             }
@@ -2074,16 +2034,6 @@ fn iter_to_events_with_triage(
 ) -> anyhow::Result<(Vec<(i128, Event)>, bool)> {
     let mut events = Vec::new();
     let mut exceeded = false;
-    let locator = if filter.has_country() {
-        Some(
-            ctx.data::<Arc<ip2location::DB>>()
-                .map_err(|_| anyhow!("unable to locate IP address"))?
-                .as_ref(),
-        )
-    } else {
-        None
-    };
-
     for item in iter {
         let (key, mut event) = match item {
             Ok(kv) => kv,
@@ -2095,7 +2045,7 @@ fn iter_to_events_with_triage(
         if !(cond)(key.cmp(&to)) {
             break;
         }
-        if !event.matches(locator, filter)?.0 {
+        if !event.matches(filter)?.0 {
             continue;
         }
         if !exclusions.is_empty() && event.matches_exclusion(exclusions) {
@@ -2122,7 +2072,7 @@ fn iter_to_events_with_triage(
 #[cfg(test)]
 #[allow(clippy::await_holding_lock)]
 mod tests {
-    use std::net::Ipv4Addr;
+    use std::{net::Ipv4Addr, sync::Arc};
 
     use chrono::{DateTime, NaiveDate, Utc};
     use futures_util::StreamExt;
@@ -2191,6 +2141,93 @@ mod tests {
             kind: EventKind::DnsCovertChannel,
             fields: bincode::serialize(&fields).expect("serializable"),
         }
+    }
+
+    const IP2LOCATION_HEADER_LEN: usize = 35;
+    const IP2LOCATION_ROW_LEN: usize = 8;
+
+    fn write_fixture_u32(bytes: &mut [u8], offset: usize, value: u32) {
+        let end = offset
+            .checked_add(size_of::<u32>())
+            .expect("fixture offset must fit in usize");
+        bytes
+            .get_mut(offset..end)
+            .expect("fixture offset must be within the buffer")
+            .copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn append_fixture_country(bytes: &mut Vec<u8>, code: [u8; 2], name: &str) -> u32 {
+        let pointer = u32::try_from(bytes.len()).expect("test fixture must fit in u32");
+        bytes.push(u8::try_from(code.len()).expect("country code length must fit in u8"));
+        bytes.extend_from_slice(&code);
+        bytes.push(u8::try_from(name.len()).expect("country name length must fit in u8"));
+        bytes.extend_from_slice(name.as_bytes());
+        pointer
+    }
+
+    fn write_fixture_row(bytes: &mut [u8], row: usize, ip_from: Ipv4Addr, country_pointer: u32) {
+        let offset = IP2LOCATION_HEADER_LEN + row * IP2LOCATION_ROW_LEN;
+        write_fixture_u32(bytes, offset, u32::from(ip_from));
+        write_fixture_u32(bytes, offset + size_of::<u32>(), country_pointer);
+    }
+
+    /// Creates a minimal DB1 file mapping `1.0.0.0/8` to US and
+    /// `2.0.0.0/8` to KR for deterministic ingestion-time country resolution.
+    pub(super) fn event_country_locator() -> (tempfile::TempDir, Arc<ip2location::DB>) {
+        let locator_dir = tempfile::tempdir().unwrap();
+        let locator_path = locator_dir.path().join("event-countries.bin");
+
+        // DB1 has a 35-byte header, two 8-byte data rows, and one boundary row.
+        let mut bytes = vec![
+            1, 2, 26, 8, 27, // DB type, columns, and creation date.
+            1, 0, 0, 0, // Last searchable IPv4 row index.
+            36, 0, 0, 0, // One-based IPv4 row address.
+            0, 0, 0, 0, // IPv6 row count.
+            0, 0, 0, 0, // IPv6 row address.
+            0, 0, 0, 0, // IPv4 index address.
+            0, 0, 0, 0, // IPv6 index address.
+            1, 0, // Product and license codes.
+            0, 0, 0, 0, // Database size, populated below.
+        ];
+        bytes.resize(IP2LOCATION_HEADER_LEN + 3 * IP2LOCATION_ROW_LEN, 0);
+
+        let us_pointer = append_fixture_country(&mut bytes, *b"US", "United States");
+        let kr_pointer = append_fixture_country(&mut bytes, *b"KR", "South Korea");
+        write_fixture_row(&mut bytes, 0, Ipv4Addr::new(1, 0, 0, 0), us_pointer);
+        write_fixture_row(&mut bytes, 1, Ipv4Addr::new(2, 0, 0, 0), kr_pointer);
+        write_fixture_row(&mut bytes, 2, Ipv4Addr::new(3, 0, 0, 0), 0);
+        let database_size = u32::try_from(bytes.len()).expect("test fixture must fit in u32");
+        write_fixture_u32(&mut bytes, 31, database_size);
+
+        std::fs::write(&locator_path, bytes).unwrap();
+        let locator = ip2location::DB::from_file(locator_path).unwrap();
+        (locator_dir, Arc::new(locator))
+    }
+
+    /// Creates a schema with one US-to-KR event and one KR-only event while
+    /// keeping the ingestion-time country locator out of the GraphQL context.
+    pub(super) async fn schema_with_country_filter_events(
+        us_event_time: DateTime<Utc>,
+        kr_event_time: DateTime<Utc>,
+    ) -> (tempfile::TempDir, TestSchema) {
+        let (locator_dir, locator) = event_country_locator();
+        let schema = TestSchema::new_with_event_country_locator(locator).await;
+        let store = schema.store();
+        let db = store.events();
+        db.put(&event_message_at(
+            us_event_time,
+            u32::from(Ipv4Addr::new(1, 0, 0, 1)),
+            u32::from(Ipv4Addr::new(2, 0, 0, 1)),
+        ))
+        .unwrap();
+        db.put(&event_message_at(
+            kr_event_time,
+            u32::from(Ipv4Addr::new(2, 0, 0, 2)),
+            u32::from(Ipv4Addr::new(2, 0, 0, 3)),
+        ))
+        .unwrap();
+        drop(store);
+        (locator_dir, schema)
     }
 
     #[test]
@@ -2321,6 +2358,183 @@ mod tests {
         assert!(
             data.contains(r#"respCountries: ["ZZ", "ZZ"]"#),
             "data: {data}"
+        );
+    }
+
+    #[tokio::test]
+    async fn event_country_filter_uses_stored_endpoint_codes_without_locator() {
+        let (_locator_dir, locator) = event_country_locator();
+        let schema = TestSchema::new_with_event_country_locator(locator).await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(
+            ts,
+            u32::from(Ipv4Addr::new(1, 0, 0, 1)),
+            u32::from(Ipv4Addr::new(2, 0, 0, 1)),
+        ))
+        .unwrap();
+        drop(store);
+
+        // The schema has no IP2Location value in its request context. Both
+        // endpoint filters therefore depend exclusively on the stored codes.
+        let res = schema
+            .execute_as_system_admin(
+                r#"{
+                    byOrigin: eventList(filter: { countries: ["US"] }) {
+                        edges { node { ... on DnsCovertChannel { origCountry respCountry } } }
+                        totalCount
+                    }
+                    byResponder: eventList(filter: { countries: ["KR"] }) {
+                        edges { node { ... on DnsCovertChannel { origCountry respCountry } } }
+                        totalCount
+                    }
+                    noMatch: eventList(filter: { countries: ["JP"] }) {
+                        edges { node { ... on DnsCovertChannel { origCountry respCountry } } }
+                        totalCount
+                    }
+                }"#,
+            )
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{byOrigin: {edges: [{node: {origCountry: "US", respCountry: "KR"}}], totalCount: "1"}, byResponder: {edges: [{node: {origCountry: "US", respCountry: "KR"}}], totalCount: "1"}, noMatch: {edges: [], totalCount: "0"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn country_filter_without_locator_matches_no_events() {
+        // The store is created without a locator, so the event is written with
+        // the pending country code and no endpoint code is ever resolved.
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(
+            ts,
+            u32::from(Ipv4Addr::new(1, 0, 0, 1)),
+            u32::from(Ipv4Addr::new(2, 0, 0, 1)),
+        ))
+        .unwrap();
+        drop(store);
+
+        // A country filter no longer errors when no IP location database is
+        // configured; it simply matches nothing, including the placeholders.
+        let res = schema
+            .execute_as_system_admin(
+                r#"{
+                    unfiltered: eventList(filter: {}) { totalCount }
+                    byCountry: eventList(filter: { countries: ["US"] }) { totalCount }
+                    byPending: eventList(filter: { countries: ["ZZ"] }) { totalCount }
+                    byInvalid: eventList(filter: { countries: ["XX"] }) { totalCount }
+                }"#,
+            )
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{unfiltered: {totalCount: "1"}, byCountry: {totalCount: "0"}, byPending: {totalCount: "0"}, byInvalid: {totalCount: "0"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn event_triage_list_country_filter_uses_stored_codes_without_locator() {
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let (_locator_dir, schema) =
+            schema_with_country_filter_events(ts, ts + chrono::Duration::seconds(1)).await;
+
+        // Both events match the triage policy, but only the first contains a
+        // stored US endpoint code.
+        let store = schema.store();
+        let policy_id = store
+            .triage_policy_map()
+            .put(database::TriagePolicy {
+                id: 0,
+                name: "Country filter test policy".to_string(),
+                triage_exclusion_id: Vec::new(),
+                packet_attr: Vec::new(),
+                confidence: vec![database::Confidence {
+                    threat_category: Some(database::EventCategory::CommandAndControl),
+                    threat_kind: "dns covert channel".to_string(),
+                    confidence: 0.0,
+                    weight: Some(1.0),
+                }],
+                response: vec![database::Response {
+                    minimum_score: 0.5,
+                    kind: database::ResponseKind::Manual,
+                }],
+                creation_time: ts,
+                customer_id: None,
+            })
+            .unwrap();
+        drop(store);
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"{{
+                    eventTriageList(
+                        filter: {{ countries: ["US"], triagePolicies: ["{policy_id}"] }}
+                        count: 10
+                    ) {{
+                        ... on DnsCovertChannel {{ origAddr }}
+                    }}
+                }}"#
+            ))
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventTriageList: [{origAddr: "1.0.0.1"}]}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn event_list_with_triage_country_filter_uses_stored_codes_without_locator() {
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let (_locator_dir, schema) =
+            schema_with_country_filter_events(ts, ts + chrono::Duration::seconds(1)).await;
+
+        // Omitting inline triage still exercises the dedicated
+        // eventListWithTriage matching and pagination path.
+        let res = schema
+            .execute_as_system_admin(
+                r#"{
+                    eventListWithTriage(filter: { countries: ["US"] }, first: 10) {
+                        edges { node { ... on DnsCovertChannel { origAddr } } }
+                        totalCount
+                    }
+                }"#,
+            )
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventListWithTriage: {edges: [{node: {origAddr: "1.0.0.1"}}], totalCount: "1"}}"#
         );
     }
 

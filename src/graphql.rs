@@ -1135,14 +1135,35 @@ impl TestSchema {
         Self::new_with_params(agent_manager, None, "testuser").await
     }
 
+    async fn new_with_event_country_locator(locator: Arc<ip2location::DB>) -> Self {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        Self::new_with_params_and_event_country_locator(
+            agent_manager,
+            None,
+            "testuser",
+            Some(locator),
+        )
+        .await
+    }
+
     async fn new_with_params(
         agent_manager: BoxedAgentManager,
         test_addr: Option<SocketAddr>,
         username: &str,
     ) -> Self {
+        Self::new_with_params_and_event_country_locator(agent_manager, test_addr, username, None)
+            .await
+    }
+
+    async fn new_with_params_and_event_country_locator(
+        agent_manager: BoxedAgentManager,
+        test_addr: Option<SocketAddr>,
+        username: &str,
+        event_country_locator: Option<Arc<ip2location::DB>>,
+    ) -> Self {
         let db_dir = tempfile::tempdir().unwrap();
         let backup_dir = tempfile::tempdir().unwrap();
-        let store = Store::new(db_dir.path(), backup_dir.path(), None).unwrap();
+        let store = Store::new(db_dir.path(), backup_dir.path(), event_country_locator).unwrap();
         let store = Arc::new(RwLock::new(store));
 
         #[cfg(feature = "auth-jwt")]
