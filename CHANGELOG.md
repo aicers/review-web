@@ -16,6 +16,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Event GraphQL `country` fields now return the country codes stored with the
   event record instead of resolving them at query time through the IP location
   database.
+- Event country filters and country-based aggregations now use the country codes
+  stored with each event, so they no longer require an IP location database at
+  query time.
 - Changed the public `serve` function to accept
   `Option<Arc<ip2location::DB>>` instead of `Option<ip2location::DB>`. This is a
   breaking API change for callers that initialize the server.
@@ -49,6 +52,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- Triage exclusions whose IP address group mixes IPv4 and IPv6 entries no
+  longer drop one address family when matching events.
 - Stopped the library's `serve` function from selecting ring as the process-wide
   rustls crypto provider, allowing applications embedding `review-web` to choose
   their own provider. The `minireview` executable now selects ring during

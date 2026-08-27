@@ -95,6 +95,12 @@ pub struct ServerConfig {
 
 /// Runs a web server.
 ///
+/// `ip_locator` is used only by the IP location queries (`ipLocation` and
+/// `ipLocationList`). Country codes on events come from the locator passed to
+/// `Store::new` when the store was created, so supplying one here while
+/// opening the store without one leaves event country filters matching
+/// nothing.
+///
 /// # Panics
 ///
 /// Panics if binding to the address fails.

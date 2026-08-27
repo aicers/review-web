@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use async_graphql::{Context, Object, OutputType, Result, SimpleObject};
 use num_traits::ToPrimitive;
@@ -240,16 +240,6 @@ impl EventGroupQuery {
         let mut filter = from_filter_input(ctx, &store, &filter)?;
         filter.moderate_kinds();
         let db = store.events();
-        let locator = if filter.has_country() {
-            Some(
-                ctx.data::<Arc<ip2location::DB>>()
-                    .map_err(|_| "IP location database unavailable")?
-                    .as_ref(),
-            )
-        } else {
-            None
-        };
-
         let period = i128::from(period * 1_000_000_000) << 64;
         let mut series = Vec::new();
         let mut cur_end = start + period - 1;
@@ -270,7 +260,7 @@ impl EventGroupQuery {
                 freq = 0;
                 cur_end += period;
             }
-            if event.matches(locator, &filter)?.0 {
+            if event.matches(&filter)?.0 {
                 freq += 1;
             }
         }
@@ -292,12 +282,7 @@ struct EventCounts<T: OutputType> {
     counts: Vec<usize>,
 }
 
-type EventCountFn<T> = fn(
-    &Event,
-    &mut HashMap<T, usize>,
-    Option<&ip2location::DB>,
-    &EventFilter,
-) -> anyhow::Result<()>;
+type EventCountFn<T> = fn(&Event, &mut HashMap<T, usize>, &EventFilter) -> anyhow::Result<()>;
 
 async fn count_events<T>(
     ctx: &Context<'_>,
@@ -320,8 +305,6 @@ async fn count_events<T>(
     let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
     let db = store.events();
-    let locator = ctx.data::<Arc<ip2location::DB>>().ok().map(AsRef::as_ref);
-
     let mut counter = HashMap::new();
     for item in db.iter_from(start, Direction::Forward) {
         let (key, event) = match item {
@@ -334,7 +317,7 @@ async fn count_events<T>(
         if key > end {
             break;
         }
-        count(&event, &mut counter, locator, &filter)?;
+        count(&event, &mut counter, &filter)?;
     }
 
     let mut counter = counter.into_iter().collect::<Vec<_>>();
@@ -373,8 +356,6 @@ async fn count_events_by_network(
     let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
     let db = store.events();
-    let locator = ctx.data::<Arc<ip2location::DB>>().ok().map(AsRef::as_ref);
-
     let mut counter = HashMap::new();
     for item in db.iter_from(start, Direction::Forward) {
         let (key, event) = match item {
@@ -387,7 +368,7 @@ async fn count_events_by_network(
         if key > end {
             break;
         }
-        event.count_network(&mut counter, &networks, locator, &filter)?;
+        event.count_network(&mut counter, &networks, &filter)?;
     }
 
     let mut counter = counter.into_iter().collect::<Vec<_>>();
@@ -423,6 +404,7 @@ mod tests {
     use chrono::{DateTime, NaiveDate, Utc};
     use review_database::{EventCategory, EventKind, EventMessage, event::DnsEventFields};
 
+    use super::super::tests::{event_country_locator, schema_with_country_filter_events};
     use crate::graphql::TestSchema;
 
     /// Creates an event message at `timestamp` with the given source and
@@ -521,6 +503,154 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             r#"{eventCountsByNetwork: {values: ["0"], counts: [1]}}"#
+        );
+    }
+    #[tokio::test]
+    async fn event_counts_by_country_uses_stored_codes_without_locator() {
+        let (_locator_dir, locator) = event_country_locator();
+        let schema = TestSchema::new_with_event_country_locator(locator).await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+
+        // The first event contributes US and KR. The second contributes US
+        // once because its originator and responder have the same code.
+        db.put(&event_message_at(
+            ts,
+            u32::from(Ipv4Addr::new(1, 0, 0, 1)),
+            u32::from(Ipv4Addr::new(2, 0, 0, 1)),
+        ))
+        .unwrap();
+        db.put(&event_message_at(
+            ts + chrono::Duration::seconds(1),
+            u32::from(Ipv4Addr::new(1, 0, 0, 2)),
+            u32::from(Ipv4Addr::new(1, 0, 0, 3)),
+        ))
+        .unwrap();
+        drop(store);
+
+        let res = schema
+            .execute_as_system_admin(
+                r"{
+                    eventCountsByCountry(filter: {}, first: 10) {
+                        values
+                        counts
+                    }
+                }",
+            )
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{eventCountsByCountry: {values: ["US", "KR"], counts: [2, 1]}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn event_frequency_series_country_filter_uses_stored_codes_without_locator() {
+        let start = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let end = start + chrono::Duration::minutes(2);
+        let (_locator_dir, schema) = schema_with_country_filter_events(
+            start + chrono::Duration::seconds(10),
+            start + chrono::Duration::seconds(20),
+        )
+        .await;
+
+        // The first bucket contains one US event and one KR-only event. The
+        // second bucket contains only a KR-only event.
+        let store = schema.store();
+        let db = store.events();
+        db.put(&event_message_at(
+            start + chrono::Duration::seconds(70),
+            u32::from(Ipv4Addr::new(2, 0, 0, 4)),
+            u32::from(Ipv4Addr::new(2, 0, 0, 5)),
+        ))
+        .unwrap();
+        drop(store);
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"{{
+                    eventFrequencySeries(
+                        filter: {{ start: "{start}", end: "{end}", countries: ["US"] }}
+                        period: 60
+                    )
+                }}"#
+            ))
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(res.data.to_string(), r"{eventFrequencySeries: [1, 0]}");
+    }
+
+    #[tokio::test]
+    async fn event_counts_by_network_country_filter_uses_stored_codes_without_locator() {
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let (_locator_dir, schema) =
+            schema_with_country_filter_events(ts, ts + chrono::Duration::seconds(1)).await;
+
+        // Both events belong to the same configured network, but only the
+        // first contains a stored US endpoint code.
+        let insert_res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNetwork(
+                        name: "country-filter-network"
+                        description: ""
+                        networks: {
+                            hosts: ["2.0.0.1", "2.0.0.3"]
+                            networks: []
+                            ranges: []
+                        }
+                        tagIds: []
+                    )
+                }"#,
+            )
+            .await;
+        assert!(
+            insert_res.errors.is_empty(),
+            "unexpected errors: {:?}",
+            insert_res.errors
+        );
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"{
+                    withoutCountryFilter: eventCountsByNetwork(filter: {}, first: 10) {
+                        values
+                        counts
+                    }
+                    withCountryFilter: eventCountsByNetwork(
+                        filter: { countries: ["US"] }
+                        first: 10
+                    ) {
+                        values
+                        counts
+                    }
+                }"#,
+            )
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{withoutCountryFilter: {values: ["0"], counts: [2]}, withCountryFilter: {values: ["0"], counts: [1]}}"#
         );
     }
 }
