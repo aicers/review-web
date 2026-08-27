@@ -41,6 +41,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- Added DCE/RPC as a supported raw event kind for packet-attribute triage
+  policies.
 - Added the `schema_sdl` example for generating `schema.graphql` SDL with the
   `auth-mtls` feature enabled. The example writes the schema to stdout so it
   can be redirected to a file.
