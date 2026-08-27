@@ -2272,14 +2272,15 @@ mod tests {
             .unwrap()
             .and_local_timezone(Utc)
             .unwrap();
+        let first_event_start_time = ts - chrono::Duration::minutes(5);
         let fields = MultiHostPortScanFields {
             sensor: "sensor1".to_string(),
             orig_addr: Ipv4Addr::from(1).into(),
             resp_port: 443,
             resp_addrs: vec![Ipv4Addr::from(2).into(), Ipv4Addr::from(3).into()],
             proto: 6,
-            start_time: ts.timestamp_nanos_opt().unwrap(),
-            end_time: ts.timestamp_nanos_opt().unwrap(),
+            first_event_start_time: first_event_start_time.timestamp_nanos_opt().unwrap(),
+            last_event_start_time: ts.timestamp_nanos_opt().unwrap(),
             confidence: 0.8,
             category: Some(EventCategory::CommandAndControl),
         };
@@ -2294,15 +2295,116 @@ mod tests {
 
         let query = format!(
             "{{ event(id: \"{key}\") {{ \
-                ... on MultiHostPortScan {{ origCountry respCountries }} \
+                ... on MultiHostPortScan {{ \
+                    origCountry \
+                    respCountries \
+                    firstEventStartTime \
+                    lastEventStartTime \
+                }} \
             }} }}"
         );
         let res = schema.execute_as_system_admin(&query).await;
 
-        assert_eq!(
-            res.data.to_string(),
-            r#"{event: {origCountry: "ZZ", respCountries: ["ZZ", "ZZ"]}}"#
+        let data = res.data.to_string();
+        assert!(
+            data.contains(&format!(
+                "firstEventStartTime: \"{}\"",
+                first_event_start_time.to_rfc3339()
+            )),
+            "data: {data}"
         );
+        assert!(
+            data.contains(&format!("lastEventStartTime: \"{}\"", ts.to_rfc3339())),
+            "data: {data}"
+        );
+        assert!(data.contains(r#"origCountry: "ZZ""#), "data: {data}");
+        assert!(
+            data.contains(r#"respCountries: ["ZZ", "ZZ"]"#),
+            "data: {data}"
+        );
+    }
+
+    #[tokio::test]
+    async fn multi_raw_event_types_expose_precise_time_fields() {
+        let schema = TestSchema::new().await;
+        let type_names = [
+            "PortScan",
+            "MultiHostPortScan",
+            "ExternalDdos",
+            "FtpBruteForce",
+            "LdapBruteForce",
+            "RdpBruteForce",
+            "RepeatedHttpSessions",
+        ];
+        let selections = type_names
+            .iter()
+            .enumerate()
+            .map(|(index, type_name)| {
+                format!(
+                    "eventType{index}: __type(name: \"{type_name}\") {{ fields {{ name description }} }}"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let res = schema
+            .execute_as_system_admin(&format!("{{ {selections} }}"))
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+
+        for (index, type_name) in type_names.iter().enumerate() {
+            let fields = data[format!("eventType{index}")]["fields"]
+                .as_array()
+                .expect("fields array");
+            let field = |name| fields.iter().find(|field| field["name"] == name);
+            assert_eq!(
+                field("firstEventStartTime").map(|value| &value["description"]),
+                Some(&serde_json::json!(
+                    "Session start time of the first raw event used for detection."
+                )),
+                "type: {type_name}"
+            );
+            assert_eq!(
+                field("lastEventStartTime").map(|value| &value["description"]),
+                Some(&serde_json::json!(
+                    "Session start time of the last raw event used for detection."
+                )),
+                "type: {type_name}"
+            );
+            assert!(field("startTime").is_none(), "type: {type_name}");
+            assert!(field("endTime").is_none(), "type: {type_name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn unusual_destination_pattern_exposes_sampling_window_times() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin(
+                r#"{ __type(name: "UnusualDestinationPattern") {
+                    fields { name description }
+                } }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        let fields = data["__type"]["fields"].as_array().expect("fields array");
+        let field = |name| fields.iter().find(|field| field["name"] == name);
+
+        assert_eq!(
+            field("samplingWindowStartTime").map(|value| &value["description"]),
+            Some(&serde_json::json!(
+                "Start boundary of the anomaly sampling window used for detection."
+            ))
+        );
+        assert_eq!(
+            field("samplingWindowEndTime").map(|value| &value["description"]),
+            Some(&serde_json::json!(
+                "End boundary of the anomaly sampling window used for detection."
+            ))
+        );
+        assert!(field("startTime").is_none());
+        assert!(field("endTime").is_none());
     }
 
     #[tokio::test]
@@ -4469,13 +4571,13 @@ mod tests {
             .unwrap()
             .and_local_timezone(Utc)
             .unwrap();
-        let start_time = NaiveDate::from_ymd_opt(2018, 1, 26)
+        let sampling_window_start_time = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()
             .and_hms_micro_opt(18, 0, 0, 0)
             .unwrap()
             .and_local_timezone(Utc)
             .unwrap();
-        let end_time = NaiveDate::from_ymd_opt(2018, 1, 26)
+        let sampling_window_end_time = NaiveDate::from_ymd_opt(2018, 1, 26)
             .unwrap()
             .and_hms_micro_opt(18, 30, 0, 0)
             .unwrap()
@@ -4484,8 +4586,8 @@ mod tests {
 
         let fields = UnusualDestinationPatternFields {
             sensor: "sensor1".to_string(),
-            start_time: start_time.timestamp_nanos_opt().unwrap(),
-            end_time: end_time.timestamp_nanos_opt().unwrap(),
+            sampling_window_start_time: sampling_window_start_time.timestamp_nanos_opt().unwrap(),
+            sampling_window_end_time: sampling_window_end_time.timestamp_nanos_opt().unwrap(),
             destination_ips: vec![
                 Ipv4Addr::new(192, 168, 1, 1).into(),
                 Ipv4Addr::new(192, 168, 1, 2).into(),
@@ -4513,6 +4615,8 @@ mod tests {
                         node {{ \
                             ... on UnusualDestinationPattern {{ \
                                 sensor \
+                                samplingWindowStartTime \
+                                samplingWindowEndTime \
                                 respAddrs \
                                 count \
                                 expectedMean \
@@ -4531,6 +4635,20 @@ mod tests {
         let res = schema.execute_as_system_admin(&query).await;
         let data = res.data.to_string();
         assert!(data.contains("sensor1"));
+        assert!(
+            data.contains(&format!(
+                "samplingWindowStartTime: \"{}\"",
+                sampling_window_start_time.to_rfc3339()
+            )),
+            "data: {data}"
+        );
+        assert!(
+            data.contains(&format!(
+                "samplingWindowEndTime: \"{}\"",
+                sampling_window_end_time.to_rfc3339()
+            )),
+            "data: {data}"
+        );
         assert!(data.contains("192.168.1.1"));
         assert!(data.contains("192.168.1.2"));
         assert!(data.contains("192.168.1.3"));
