@@ -96,6 +96,7 @@ pub enum RawEventKind {
     Ssh,
     Tls,
     Window,
+    DceRpc,
 }
 
 #[derive(Clone, Copy, Enum, Eq, PartialEq, Deserialize)]
@@ -347,6 +348,57 @@ impl From<&PacketAttrInput> for database::PacketAttr {
 #[cfg(test)]
 mod tests {
     use crate::graphql::TestSchema;
+
+    #[tokio::test]
+    async fn dce_rpc_raw_event_kind_round_trips_through_graphql() {
+        let schema = TestSchema::new().await;
+
+        // Persisting and reading the policy exercises both remote enum
+        // conversions used by PacketAttrInput and PacketAttr.
+        let res = schema
+            .execute_as_system_admin(
+                r#"
+                mutation {
+                    insertTriagePolicy(
+                        name: "DCE/RPC policy"
+                        triageExclusionId: []
+                        packetAttr: [{
+                            rawEventKind: DCE_RPC
+                            attrName: "Presentation Context ID"
+                            valueKind: U_INTEGER
+                            cmpKind: EQUAL
+                            firstValue: [1]
+                            weight: 1.0
+                        }]
+                        confidence: []
+                        response: []
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r"{
+                    triagePolicyList(first: 10) {
+                        nodes {
+                            packetAttr {
+                                rawEventKind
+                                attrName
+                            }
+                        }
+                    }
+                }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{triagePolicyList: {nodes: [{packetAttr: [{rawEventKind: DCE_RPC, attrName: "Presentation Context ID"}]}]}}"#
+        );
+    }
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
