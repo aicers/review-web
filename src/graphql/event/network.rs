@@ -1,5 +1,5 @@
 use async_graphql::{Context, ID, Object, Result, StringNumber};
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
@@ -21,7 +21,7 @@ impl NetworkThreat {
     }
 
     /// Event Generation Time
-    pub async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> Timestamp {
         self.inner.time
     }
 
@@ -105,7 +105,7 @@ impl NetworkThreat {
     }
 
     /// Start Time
-    async fn start_time(&self) -> DateTime<Utc> {
+    async fn start_time(&self) -> Timestamp {
         self.inner.start_time
     }
 

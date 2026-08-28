@@ -1,5 +1,5 @@
 use async_graphql::{Context, ID, Object, Result, StringNumber};
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
@@ -21,7 +21,7 @@ impl HttpThreat {
     }
 
     /// Event Generation Time
-    pub async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> Timestamp {
         self.inner.time
     }
 
@@ -100,7 +100,7 @@ impl HttpThreat {
     }
 
     /// Start Time
-    async fn start_time(&self) -> DateTime<Utc> {
+    async fn start_time(&self) -> Timestamp {
         self.inner.start_time
     }
 
@@ -320,7 +320,7 @@ impl RepeatedHttpSessions {
     }
 
     /// Event Generation Time
-    pub async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> Timestamp {
         self.inner.time
     }
 
@@ -377,12 +377,12 @@ impl RepeatedHttpSessions {
     }
 
     /// Session start time of the first raw event used for detection.
-    async fn first_event_start_time(&self) -> DateTime<Utc> {
+    async fn first_event_start_time(&self) -> Timestamp {
         self.inner.first_event_start_time
     }
 
     /// Session start time of the last raw event used for detection.
-    async fn last_event_start_time(&self) -> DateTime<Utc> {
+    async fn last_event_start_time(&self) -> Timestamp {
         self.inner.last_event_start_time
     }
 
@@ -456,7 +456,7 @@ impl TorConnection {
     }
 
     /// Event Generation Time
-    pub async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> Timestamp {
         self.inner.time
     }
 
@@ -535,7 +535,7 @@ impl TorConnection {
     }
 
     /// Start Time
-    async fn start_time(&self) -> DateTime<Utc> {
+    async fn start_time(&self) -> Timestamp {
         self.inner.start_time
     }
 
@@ -714,7 +714,7 @@ impl DomainGenerationAlgorithm {
     }
 
     /// Event Generation Time
-    pub async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> Timestamp {
         self.inner.time
     }
 
@@ -793,7 +793,7 @@ impl DomainGenerationAlgorithm {
     }
 
     /// Start Time
-    async fn start_time(&self) -> DateTime<Utc> {
+    async fn start_time(&self) -> Timestamp {
         self.inner.start_time
     }
 
@@ -972,7 +972,7 @@ impl NonBrowser {
     }
 
     /// Event Generation Time
-    pub async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> Timestamp {
         self.inner.time
     }
 
@@ -1051,7 +1051,7 @@ impl NonBrowser {
     }
 
     /// Start Time
-    async fn start_time(&self) -> DateTime<Utc> {
+    async fn start_time(&self) -> Timestamp {
         self.inner.start_time
     }
 
@@ -1230,7 +1230,7 @@ impl BlocklistHttp {
     }
 
     /// Event Generation Time
-    pub async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> Timestamp {
         self.inner.time
     }
 
@@ -1309,7 +1309,7 @@ impl BlocklistHttp {
     }
 
     /// Start Time
-    async fn start_time(&self) -> DateTime<Utc> {
+    async fn start_time(&self) -> Timestamp {
         self.inner.start_time
     }
 

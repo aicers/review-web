@@ -30,10 +30,11 @@ use async_graphql::{
     Context, Enum, ID, InputObject, Interface, Object, Result, StringNumber, Subscription,
     connection::{Connection, Edge, EmptyFields},
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use database::ThreatLevel as DatabaseThreatLevel;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
+use jiff::Timestamp;
 use num_traits::FromPrimitive;
 use review_database::{
     self as database, AgentKind, EventKind, ExclusionReason, IndexedTable, Iterable, Store,
@@ -87,6 +88,8 @@ const DEFAULT_EVENT_FETCH_TIME: u64 = 20;
 const ADD_TIME_FOR_NEXT_COMPARE: i64 = 1;
 const DEFAULT_TRIAGE_LIST_COUNT: usize = 100;
 
+type DateTime = Timestamp;
+
 /// Threat level.
 #[derive(Clone, Copy, Enum, Eq, PartialEq)]
 #[graphql(remote = "DatabaseThreatLevel")]
@@ -114,11 +117,12 @@ impl EventStream {
     async fn event_stream(
         &self,
         ctx: &Context<'_>,
-        start: DateTime<Utc>,
+        start: Timestamp,
         fetch_interval: Option<u64>,
         event_stuck_check_interval: Option<u64>,
     ) -> Result<impl Stream<Item = Event> + use<>> {
         use std::sync::RwLock;
+        let start = timestamp_nanos(start)?;
         let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
         let fetch_time = if let Some(fetch_time) = fetch_interval {
             fetch_time
@@ -131,14 +135,8 @@ impl EventStream {
             .unwrap_or("<unknown user>".to_string());
         let (tx, rx) = unbounded();
         tokio::spawn(async move {
-            let fetch = fetch_events(
-                store,
-                start.timestamp_nanos_opt().unwrap_or_default(),
-                tx,
-                fetch_time,
-                event_stuck_check_interval,
-            )
-            .await;
+            let fetch =
+                fetch_events(store, start, tx, fetch_time, event_stuck_check_interval).await;
             if let Err(e) = fetch {
                 error_with_username!(username: username, "Failed to fetch events: {e:?}");
             }
@@ -794,7 +792,7 @@ fn parse_event_id(id: &ID) -> Result<i128> {
 #[derive(Interface)]
 #[graphql(
     field(name = "id", ty = "ID"),
-    field(name = "time", ty = "DateTime<Utc>"),
+    field(name = "time", ty = "DateTime"),
     field(name = "sensor", ty = "&str"),
     field(name = "confidence", ty = "f32"),
     field(name = "category", ty = "Option<ThreatCategory>"),
@@ -975,8 +973,8 @@ impl From<(i128, database::Event)> for Event {
 
 #[derive(Default, InputObject)]
 struct EventListFilterInput {
-    start: Option<DateTime<Utc>>,
-    end: Option<DateTime<Utc>>,
+    start: Option<Timestamp>,
+    end: Option<Timestamp>,
     customers: Option<Vec<ID>>,
     endpoints: Option<Vec<EndpointInput>>,
     directions: Option<Vec<FlowKind>>,
@@ -1006,8 +1004,8 @@ struct EventListFilterInput {
 /// exclusively via the separate `triage` argument as inline data.
 #[derive(Clone, InputObject)]
 struct EventStandardFilterInput {
-    start: Option<DateTime<Utc>>,
-    end: Option<DateTime<Utc>>,
+    start: Option<Timestamp>,
+    end: Option<Timestamp>,
     customers: Option<Vec<ID>>,
     endpoints: Option<Vec<EndpointInput>>,
     directions: Option<Vec<FlowKind>>,
@@ -1116,8 +1114,8 @@ fn find_ip_network(map: &IndexedTable<database::Network>, addr: IpAddr) -> Resul
 }
 
 struct EventTotalCount {
-    start: Option<DateTime<Utc>>,
-    end: Option<DateTime<Utc>>,
+    start: Option<Timestamp>,
+    end: Option<Timestamp>,
     filter: EventFilter,
     exclusions: Vec<TriageExclusion>,
 }
@@ -1128,24 +1126,12 @@ impl EventTotalCount {
     async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
         let events = store.events();
-        let iter = self.start.map_or_else(
-            || events.iter_forward(),
-            |start| {
-                let start = i128::from(start.timestamp_nanos_opt().unwrap_or_default()) << 64;
-                events.iter_from(start, Direction::Forward)
-            },
-        );
-        let last = if let Some(end) = self.end {
-            let end = end
-                .timestamp_nanos_opt()
-                .map_or(i128::MAX, |e| i128::from(e) << 64);
-            if end == 0 {
-                return Ok(StringNumber(0));
-            }
-            end - 1
+        let iter = if let Some(start) = self.start {
+            events.iter_from(event_key(start)?, Direction::Forward)
         } else {
-            i128::MAX
+            events.iter_forward()
         };
+        let last = latest(self.end, None)?;
 
         let mut count = 0;
         for item in iter {
@@ -1614,16 +1600,8 @@ async fn load_triage_list(
     let store = crate::graphql::get_store(ctx)?;
     let count = count.unwrap_or(DEFAULT_TRIAGE_LIST_COUNT);
 
-    let start_key = filter
-        .start
-        .map(|t| i128::from(t.timestamp_nanos_opt().unwrap_or_default()) << 64)
-        .unwrap_or_default();
-    let end_key = filter.end.map_or(i128::MAX, |t| {
-        let end = t
-            .timestamp_nanos_opt()
-            .map_or(i128::MAX, |t| i128::from(t) << 64);
-        if end > 0 { end - 1 } else { 0 }
-    });
+    let start_key = earliest(filter.start, None)?;
+    let end_key = latest(filter.end, None)?;
     let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
     let db = store.events();
@@ -1752,9 +1730,9 @@ fn event_priority(event: &database::Event) -> u8 {
     }
 }
 
-fn earliest(start: Option<DateTime<Utc>>, after: Option<String>) -> Result<i128> {
+fn earliest(start: Option<Timestamp>, after: Option<String>) -> Result<i128> {
     let earliest = if let Some(start) = start {
-        let start = i128::from(start.timestamp_nanos_opt().unwrap_or_default()) << 64;
+        let start = event_key(start)?;
         if let Some(after) = after {
             cmp::max(start, earliest_after(&after)?)
         } else {
@@ -1768,15 +1746,15 @@ fn earliest(start: Option<DateTime<Utc>>, after: Option<String>) -> Result<i128>
     Ok(earliest)
 }
 
-fn latest(end: Option<DateTime<Utc>>, before: Option<String>) -> Result<i128> {
+fn latest(end: Option<Timestamp>, before: Option<String>) -> Result<i128> {
     let latest = if let Some(end) = end {
-        let end = end
-            .timestamp_nanos_opt()
-            .map_or(i128::MAX, |s| i128::from(s) << 64);
+        let end = event_key(end)?;
         if end == 0 {
             return Err("invalid time `end`".into());
         }
-        let end = end - 1;
+        let end = end
+            .checked_sub(1)
+            .ok_or("invalid time `end`: no earlier event key exists")?;
         if let Some(before) = before {
             cmp::min(end, latest_before(&before)?)
         } else {
@@ -1788,6 +1766,15 @@ fn latest(end: Option<DateTime<Utc>>, before: Option<String>) -> Result<i128> {
         i128::MAX
     };
     Ok(latest)
+}
+
+fn timestamp_nanos(timestamp: Timestamp) -> Result<i64> {
+    i64::try_from(timestamp.as_nanosecond())
+        .map_err(|_| "event timestamp is outside the supported nanosecond range".into())
+}
+
+fn event_key(timestamp: Timestamp) -> Result<i128> {
+    Ok(i128::from(timestamp_nanos(timestamp)?) << 64)
 }
 
 fn earliest_after(after: &str) -> Result<i128> {
@@ -2076,6 +2063,7 @@ mod tests {
 
     use chrono::{DateTime, NaiveDate, Utc};
     use futures_util::StreamExt;
+    use jiff::Timestamp;
     use review_database::{
         self as database, EventCategory, EventKind, EventMessage,
         event::{
@@ -2092,8 +2080,8 @@ mod tests {
     /// Creates an event message at `timestamp` with the given sensor and
     /// destination `IPv4` addresses.
     fn event_message_at(timestamp: DateTime<Utc>, src: u32, dst: u32) -> EventMessage {
-        event_message_with_category(
-            timestamp,
+        event_message_at_timestamp(
+            jiff_timestamp(timestamp),
             src,
             dst,
             Some(EventCategory::CommandAndControl),
@@ -2108,9 +2096,20 @@ mod tests {
         category: Option<EventCategory>,
         sensor: &str,
     ) -> EventMessage {
+        event_message_at_timestamp(jiff_timestamp(timestamp), src, dst, category, sensor)
+    }
+
+    fn event_message_at_timestamp(
+        timestamp: Timestamp,
+        src: u32,
+        dst: u32,
+        category: Option<EventCategory>,
+        sensor: &str,
+    ) -> EventMessage {
         let fields = DnsEventFields {
             sensor: sensor.to_string(),
-            start_time: timestamp.timestamp_nanos_opt().unwrap(),
+            start_time: i64::try_from(timestamp.as_nanosecond())
+                .expect("test timestamp must fit in the event key range"),
             duration: 0,
             orig_addr: Ipv4Addr::from(src).into(),
             orig_port: 10000,
@@ -2141,6 +2140,80 @@ mod tests {
             kind: EventKind::DnsCovertChannel,
             fields: bincode::serialize(&fields).expect("serializable"),
         }
+    }
+
+    pub(super) fn jiff_timestamp(timestamp: DateTime<Utc>) -> Timestamp {
+        Timestamp::from_nanosecond(i128::from(
+            timestamp
+                .timestamp_nanos_opt()
+                .expect("test timestamp must fit in i64 nanoseconds"),
+        ))
+        .expect("chrono's timestamp range must fit in jiff")
+    }
+
+    #[tokio::test]
+    async fn event_timestamps_preserve_rfc3339_io_and_datetime_schema() {
+        let schema = TestSchema::new().await;
+        let cases = [
+            (-1, "1969-12-31T23:59:59.999999999Z"),
+            (0, "1970-01-01T00:00:00Z"),
+            (1_123_456_789, "1970-01-01T00:00:01.123456789Z"),
+            (i64::MIN, "1677-09-21T00:12:43.145224192Z"),
+            (i64::MAX, "2262-04-11T23:47:16.854775807Z"),
+        ];
+
+        for (nanos, expected) in cases {
+            let timestamp = Timestamp::from_nanosecond(i128::from(nanos))
+                .expect("i64 nanoseconds must fit in jiff");
+            assert_eq!(timestamp.to_string(), expected);
+
+            let key = {
+                let store = schema.store();
+                store
+                    .events()
+                    .put(&event_message_at_timestamp(
+                        timestamp,
+                        1,
+                        2,
+                        Some(EventCategory::CommandAndControl),
+                        "sensor1",
+                    ))
+                    .expect("event timestamp must be stored")
+            };
+            let output = schema
+                .execute_as_system_admin(&format!(
+                    "{{ event(id: \"{key}\") {{ ... on DnsCovertChannel {{ time }} }} }}"
+                ))
+                .await;
+            assert!(output.errors.is_empty(), "{:?}", output.errors);
+            assert_eq!(
+                output.data.to_string(),
+                format!(r#"{{event: {{time: "{expected}"}}}}"#)
+            );
+
+            let input = schema
+                .execute_as_system_admin(&format!(
+                    "{{ eventList(filter: {{ start: \"{expected}\" }}, first: 1) {{ totalCount }} }}"
+                ))
+                .await;
+            assert!(input.errors.is_empty(), "{:?}", input.errors);
+        }
+
+        let introspection = schema
+            .execute_as_system_admin(
+                r#"{ __type(name: "EventListFilterInput") {
+                    inputFields { name type { kind name ofType { kind name } } }
+                } }"#,
+            )
+            .await;
+        assert!(
+            introspection.errors.is_empty(),
+            "{:?}",
+            introspection.errors
+        );
+        let data = introspection.data.to_string();
+        assert!(data.contains(r#"name: "start""#));
+        assert!(data.contains(r#"kind: SCALAR, name: "DateTime""#));
     }
 
     const IP2LOCATION_HEADER_LEN: usize = 35;
@@ -2266,7 +2339,7 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             format!(
-                r#"{{event: {{id: "{key}", time: "2018-01-26T18:30:09.453829+00:00", query: "domain"}}}}"#
+                r#"{{event: {{id: "{key}", time: "2018-01-26T18:30:09.453829Z", query: "domain"}}}}"#
             )
         );
     }
@@ -2323,7 +2396,7 @@ mod tests {
         };
         let key = db
             .put(&EventMessage {
-                time: ts,
+                time: jiff_timestamp(ts),
                 kind: EventKind::MultiHostPortScan,
                 fields: bincode::serialize(&fields).expect("serializable"),
             })
@@ -2346,12 +2419,12 @@ mod tests {
         assert!(
             data.contains(&format!(
                 "firstEventStartTime: \"{}\"",
-                first_event_start_time.to_rfc3339()
+                jiff_timestamp(first_event_start_time)
             )),
             "data: {data}"
         );
         assert!(
-            data.contains(&format!("lastEventStartTime: \"{}\"", ts.to_rfc3339())),
+            data.contains(&format!("lastEventStartTime: \"{}\"", jiff_timestamp(ts))),
             "data: {data}"
         );
         assert!(data.contains(r#"origCountry: "ZZ""#), "data: {data}");
@@ -2762,7 +2835,7 @@ mod tests {
         let conn_ts = base;
         let conn_key = db
             .put(&EventMessage {
-                time: conn_ts,
+                time: jiff_timestamp(conn_ts),
                 kind: EventKind::BlocklistConn,
                 fields: bincode::serialize(&BlocklistConnFields {
                     sensor: "sensor1".to_string(),
@@ -2796,7 +2869,7 @@ mod tests {
             .unwrap();
         let dns_key = db
             .put(&EventMessage {
-                time: dns_ts,
+                time: jiff_timestamp(dns_ts),
                 kind: EventKind::BlocklistDns,
                 fields: bincode::serialize(&BlocklistDnsFields {
                     sensor: "sensor1".to_string(),
@@ -2838,7 +2911,7 @@ mod tests {
             .unwrap();
         let dcerpc_key = db
             .put(&EventMessage {
-                time: dcerpc_ts,
+                time: jiff_timestamp(dcerpc_ts),
                 kind: EventKind::BlocklistDceRpc,
                 fields: bincode::serialize(&BlocklistDceRpcFields {
                     sensor: "sensor1".to_string(),
@@ -2870,7 +2943,7 @@ mod tests {
             .unwrap();
         let kerberos_key = db
             .put(&EventMessage {
-                time: kerberos_ts,
+                time: jiff_timestamp(kerberos_ts),
                 kind: EventKind::BlocklistKerberos,
                 fields: bincode::serialize(&BlocklistKerberosFields {
                     sensor: "sensor1".to_string(),
@@ -2909,7 +2982,7 @@ mod tests {
             .unwrap();
         let mqtt_key = db
             .put(&EventMessage {
-                time: mqtt_ts,
+                time: jiff_timestamp(mqtt_ts),
                 kind: EventKind::BlocklistMqtt,
                 fields: bincode::serialize(&BlocklistMqttFields {
                     sensor: "sensor1".to_string(),
@@ -2945,7 +3018,7 @@ mod tests {
             .unwrap();
         let nfs_key = db
             .put(&EventMessage {
-                time: nfs_ts,
+                time: jiff_timestamp(nfs_ts),
                 kind: EventKind::BlocklistNfs,
                 fields: bincode::serialize(&BlocklistNfsFields {
                     sensor: "sensor1".to_string(),
@@ -2977,7 +3050,7 @@ mod tests {
             .unwrap();
         let ntlm_key = db
             .put(&EventMessage {
-                time: ntlm_ts,
+                time: jiff_timestamp(ntlm_ts),
                 kind: EventKind::BlocklistNtlm,
                 fields: bincode::serialize(&BlocklistNtlmFields {
                     sensor: "sensor1".to_string(),
@@ -3012,7 +3085,7 @@ mod tests {
             .unwrap();
         let rdp_key = db
             .put(&EventMessage {
-                time: rdp_ts,
+                time: jiff_timestamp(rdp_ts),
                 kind: EventKind::BlocklistRdp,
                 fields: bincode::serialize(&BlocklistRdpFields {
                     sensor: "sensor1".to_string(),
@@ -3043,7 +3116,7 @@ mod tests {
             .unwrap();
         let smb_key = db
             .put(&EventMessage {
-                time: smb_ts,
+                time: jiff_timestamp(smb_ts),
                 kind: EventKind::BlocklistSmb,
                 fields: bincode::serialize(&BlocklistSmbFields {
                     sensor: "sensor1".to_string(),
@@ -3084,7 +3157,7 @@ mod tests {
             .unwrap();
         let smtp_key = db
             .put(&EventMessage {
-                time: smtp_ts,
+                time: jiff_timestamp(smtp_ts),
                 kind: EventKind::BlocklistSmtp,
                 fields: bincode::serialize(&BlocklistSmtpFields {
                     sensor: "sensor1".to_string(),
@@ -3121,7 +3194,7 @@ mod tests {
             .unwrap();
         let ssh_key = db
             .put(&EventMessage {
-                time: ssh_ts,
+                time: jiff_timestamp(ssh_ts),
                 kind: EventKind::BlocklistSsh,
                 fields: bincode::serialize(&BlocklistSshFields {
                     sensor: "sensor1".to_string(),
@@ -3194,6 +3267,7 @@ mod tests {
             .unwrap();
         db.put(&event_message_at(ts, 1, 2)).unwrap();
 
+        let ts = jiff_timestamp(ts);
         let query = format!(
             "{{ \
                 eventList(filter: {{start:\"{ts}\"}}) {{ \
@@ -3244,6 +3318,8 @@ mod tests {
             .and_local_timezone(Utc)
             .unwrap();
         db.put(&event_message_at(ts3, 5, 6)).unwrap();
+        let ts2 = jiff_timestamp(ts2);
+        let ts3 = jiff_timestamp(ts3);
         let query = format!(
             "{{ \
                 eventList(filter: {{ start:\"{ts2}\", end:\"{ts3}\" }}) {{ \
@@ -3255,7 +3331,7 @@ mod tests {
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00"}}], totalCount: "1"}}"#
+            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829Z"}}], totalCount: "1"}}"#
         );
     }
 
@@ -3343,6 +3419,8 @@ mod tests {
             .unwrap();
         db.put(&event_message_at(ts3, 5, 6)).unwrap();
 
+        let ts2 = jiff_timestamp(ts2);
+        let ts3 = jiff_timestamp(ts3);
         let query = format!(
             "{{ \
                 eventList( \
@@ -3360,7 +3438,7 @@ mod tests {
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00", sensor: "sensor1"}}], totalCount: "1"}}"#
+            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829Z", sensor: "sensor1"}}], totalCount: "1"}}"#
         );
     }
 
@@ -3498,12 +3576,13 @@ mod tests {
                             totalCount \
                         }} \
                     }}",
-            timestamps[0], timestamps[2]
+            jiff_timestamp(timestamps[0]),
+            jiff_timestamp(timestamps[2])
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {time: "2018-01-26T18:30:09.453829+00:00"}}, {node: {time: "2018-01-27T18:30:09.453829+00:00"}}], totalCount: "2"}}"#
+            r#"{eventList: {edges: [{node: {time: "2018-01-26T18:30:09.453829Z"}}, {node: {time: "2018-01-27T18:30:09.453829Z"}}], totalCount: "2"}}"#
         );
         let query = format!(
             "{{ \
@@ -3512,12 +3591,13 @@ mod tests {
                         totalCount \
                     }} \
                 }}",
-            timestamps[1], timestamps[2]
+            jiff_timestamp(timestamps[1]),
+            jiff_timestamp(timestamps[2])
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829+00:00"}}], totalCount: "1"}}"#
+            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829Z"}}], totalCount: "1"}}"#
         );
     }
 
@@ -3569,6 +3649,8 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+        let ts1 = jiff_timestamp(ts1);
+        let ts3 = jiff_timestamp(ts3);
         let query = format!(
             "{{ \
                 eventList(filter: {{ start:\"{ts1}\", end:\"{ts3}\", customers: [0] }}) {{ \
@@ -3631,6 +3713,8 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+        let ts1 = jiff_timestamp(ts1);
+        let ts3 = jiff_timestamp(ts3);
         let query = format!(
             "{{ \
                 eventList(filter: {{
@@ -3692,6 +3776,8 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
+        let ts1 = jiff_timestamp(ts1);
+        let ts3 = jiff_timestamp(ts3);
         let query = format!(
             "{{ \
                 eventList(filter: {{
@@ -3857,12 +3943,13 @@ mod tests {
         };
 
         let message = EventMessage {
-            time: timestamp,
+            time: jiff_timestamp(timestamp),
             kind: EventKind::BlocklistDhcp,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
         let key = db.put(&message).unwrap();
 
+        let timestamp = jiff_timestamp(timestamp);
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
@@ -3954,12 +4041,13 @@ mod tests {
         };
 
         let message = EventMessage {
-            time: timestamp,
+            time: jiff_timestamp(timestamp),
             kind: EventKind::BlocklistBootp,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
         let key = db.put(&message).unwrap();
 
+        let timestamp = jiff_timestamp(timestamp);
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
@@ -4051,11 +4139,12 @@ mod tests {
             category: Some(EventCategory::CommandAndControl),
         };
         let message = EventMessage {
-            time: timestamp,
+            time: jiff_timestamp(timestamp),
             kind: EventKind::LockyRansomware,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
         let key = db.put(&message).unwrap();
+        let timestamp = jiff_timestamp(timestamp);
         let query = format!(
             "{{ \
                 eventList(filter: {{
@@ -4132,11 +4221,12 @@ mod tests {
         };
 
         let message = EventMessage {
-            time: timestamp,
+            time: jiff_timestamp(timestamp),
             kind: EventKind::SuspiciousTlsTraffic,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
         let key = db.put(&message).unwrap();
+        let timestamp = jiff_timestamp(timestamp);
         let query = format!(
             "{{ \
                 eventList(filter: {{
@@ -4209,12 +4299,13 @@ mod tests {
         };
 
         let message = EventMessage {
-            time: timestamp,
+            time: jiff_timestamp(timestamp),
             kind: EventKind::BlocklistRadius,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
         let key = db.put(&message).unwrap();
 
+        let timestamp = jiff_timestamp(timestamp);
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
@@ -4309,12 +4400,13 @@ mod tests {
         };
 
         let message = EventMessage {
-            time: timestamp,
+            time: jiff_timestamp(timestamp),
             kind: EventKind::BlocklistMalformedDns,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
         let key = db.put(&message).unwrap();
 
+        let timestamp = jiff_timestamp(timestamp);
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
@@ -4398,7 +4490,7 @@ mod tests {
         // 1. Insert multiple detection events
         // Event 1: Unlabeled Outlier(cluster_id = None) - Score 0.9
         let unlabeled_outlier = HttpThreatFields {
-            time: base_ts,
+            time: jiff_timestamp(base_ts),
             start_time: base_ts.timestamp_nanos_opt().unwrap(),
             duration: 0,
             orig_pkts: 0,
@@ -4440,7 +4532,7 @@ mod tests {
             category: Some(EventCategory::CommandAndControl),
         };
         db.put(&EventMessage {
-            time: base_ts,
+            time: jiff_timestamp(base_ts),
             kind: EventKind::HttpThreat,
             fields: bincode::serialize(&unlabeled_outlier).unwrap(),
         })
@@ -4448,7 +4540,7 @@ mod tests {
 
         // Event 2: HttpThreat(cluster_id = Some) - Score 0.9
         let http_threat_fields = HttpThreatFields {
-            time: base_ts,
+            time: jiff_timestamp(base_ts),
             start_time: base_ts.timestamp_nanos_opt().unwrap(),
             duration: 0,
             orig_pkts: 0,
@@ -4490,7 +4582,7 @@ mod tests {
             category: Some(EventCategory::CommandAndControl),
         };
         db.put(&EventMessage {
-            time: base_ts,
+            time: jiff_timestamp(base_ts),
             kind: EventKind::HttpThreat,
             fields: bincode::serialize(&http_threat_fields).unwrap(),
         })
@@ -4528,7 +4620,7 @@ mod tests {
             category: Some(EventCategory::CommandAndControl),
         };
         db.put(&EventMessage {
-            time: base_ts,
+            time: jiff_timestamp(base_ts),
             kind: EventKind::DnsCovertChannel,
             fields: bincode::serialize(&dns_fields).unwrap(),
         })
@@ -4572,7 +4664,7 @@ mod tests {
             category: Some(EventCategory::InitialAccess),
         };
         db.put(&EventMessage {
-            time: base_ts,
+            time: jiff_timestamp(base_ts),
             kind: EventKind::DomainGenerationAlgorithm,
             fields: bincode::serialize(&dga_fields).unwrap(),
         })
@@ -4610,7 +4702,7 @@ mod tests {
             category: Some(EventCategory::InitialAccess),
         };
         db.put(&EventMessage {
-            time: base_ts,
+            time: jiff_timestamp(base_ts),
             kind: EventKind::LockyRansomware,
             fields: bincode::serialize(&locky_fields).unwrap(),
         })
@@ -4654,7 +4746,7 @@ mod tests {
             category: Some(EventCategory::Discovery),
         };
         db.put(&EventMessage {
-            time: base_ts,
+            time: jiff_timestamp(base_ts),
             kind: EventKind::NonBrowser,
             fields: bincode::serialize(&non_browser_fields).unwrap(),
         })
@@ -4816,12 +4908,13 @@ mod tests {
         };
 
         let message = EventMessage {
-            time: timestamp,
+            time: jiff_timestamp(timestamp),
             kind: EventKind::UnusualDestinationPattern,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
         db.put(&message).unwrap();
 
+        let timestamp = jiff_timestamp(timestamp);
         let query = format!(
             "{{ \
                 eventList(filter: {{ start:\"{timestamp}\" }}) {{ \
@@ -4852,14 +4945,14 @@ mod tests {
         assert!(
             data.contains(&format!(
                 "samplingWindowStartTime: \"{}\"",
-                sampling_window_start_time.to_rfc3339()
+                jiff_timestamp(sampling_window_start_time)
             )),
             "data: {data}"
         );
         assert!(
             data.contains(&format!(
                 "samplingWindowEndTime: \"{}\"",
-                sampling_window_end_time.to_rfc3339()
+                jiff_timestamp(sampling_window_end_time)
             )),
             "data: {data}"
         );
@@ -4896,6 +4989,7 @@ mod tests {
             db.put(&event_message_at(*ts, src, src + 100)).unwrap();
         }
         let start_ts = timestamps[0];
+        let start_ts = jiff_timestamp(start_ts);
 
         let event_list_query = format!(
             "{{ eventList(filter: {{ start:\"{start_ts}\" }}, first: 3) {{ \
@@ -4932,6 +5026,7 @@ mod tests {
             .unwrap();
         db.put(&event_message_at(ts, 1, 2)).unwrap();
 
+        let ts = jiff_timestamp(ts);
         let query = format!(
             "{{ eventListWithTriage( \
                 filter: {{ start:\"{ts}\" }}, \
@@ -4973,6 +5068,7 @@ mod tests {
         db.put(&event_message_at(ts, 1, 2)).unwrap();
 
         // Policy with very high minimum_score so the event scores nothing.
+        let ts = jiff_timestamp(ts);
         let query = format!(
             "{{ eventListWithTriage( \
                 filter: {{ start:\"{ts}\" }}, \
@@ -5011,6 +5107,7 @@ mod tests {
         // which `TriageExclusion::Domain(["domain"])` matches via its regex.
         db.put(&event_message_at(ts, 1, 2)).unwrap();
 
+        let ts = jiff_timestamp(ts);
         let query = format!(
             "{{ eventListWithTriage( \
                 filter: {{ start:\"{ts}\" }}, \
@@ -5080,7 +5177,7 @@ mod tests {
                 category: Some(EventCategory::CommandAndControl),
             };
             db.put(&EventMessage {
-                time: ts(idx),
+                time: jiff_timestamp(ts(idx)),
                 kind: EventKind::DnsCovertChannel,
                 fields: bincode::serialize(&fields).expect("serializable"),
             })
@@ -5088,6 +5185,7 @@ mod tests {
             idx += 1;
         }
         let start_ts = ts(0);
+        let start_ts = jiff_timestamp(start_ts);
 
         // Request first=1 with exclusion that cuts the first 4. The resolver
         // must keep scanning and return the 5th event with hasNextPage=true.
@@ -5134,6 +5232,7 @@ mod tests {
         db.put(&event_message_at(ts, 1, 2)).unwrap();
 
         // Single multi-field exclusion: ipAddress (no match) + domain (matches).
+        let ts = jiff_timestamp(ts);
         let query_combined = format!(
             "{{ eventListWithTriage( \
                 filter: {{ start:\"{ts}\" }}, \
@@ -5245,7 +5344,7 @@ mod tests {
                 category: Some(EventCategory::CommandAndControl),
             };
             db.put(&EventMessage {
-                time: ts(idx),
+                time: jiff_timestamp(ts(idx)),
                 kind: EventKind::DnsCovertChannel,
                 fields: bincode::serialize(&fields).expect("serializable"),
             })
@@ -5253,6 +5352,7 @@ mod tests {
             idx += 1;
         }
         let start_ts = ts(0);
+        let start_ts = jiff_timestamp(start_ts);
 
         let query = format!(
             "{{ eventListWithTriage( \

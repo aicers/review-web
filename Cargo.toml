@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
-async-graphql = { version = "7", features = ["chrono", "string_number"] }
+async-graphql = { version = "7", features = ["chrono", "jiff", "string_number"] }
 async-graphql-axum = "7"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["macros", "tokio", "ws"] }
@@ -22,12 +22,13 @@ http = "1"
 ip2location = "0.6.0"
 ipnet = { version = "2", features = ["serde"] }
 itertools = "0.14"
+jiff = "0.2"
 jsonwebtoken = "9"
 num-traits = "0.2"
 reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls-native-roots",
 ] }
-review-database = { git = "https://github.com/aicers/review-database.git", rev = "dd7bfd2" }
+review-database = { git = "https://github.com/aicers/review-database.git", rev = "1285590" }
 roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.6.0" }
 rustls = { version = "0.23", default-features = false, features = [
   "ring",
