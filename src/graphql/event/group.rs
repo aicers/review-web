@@ -6,7 +6,10 @@ use review_database::event::{Direction, EventFilter};
 use review_database::{Event, IndexedTable, Iterable};
 use tracing::warn;
 
-use super::{EventListFilterInput, ThreatLevel, earliest, from_filter_input, latest};
+use super::{
+    EventListFilterInput, ThreatLevel, earliest, empty_time_range, from_filter_input,
+    is_before_end, latest, legacy_latest,
+};
 use crate::{
     graphql::{Role, RoleGuard},
     warn_with_username,
@@ -225,10 +228,15 @@ impl EventGroupQuery {
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] period: i64,
     ) -> Result<Vec<usize>> {
+        if empty_time_range(filter.start, filter.end)? {
+            return Ok(Vec::new());
+        }
         let store = crate::graphql::get_store(ctx)?;
 
         let start = earliest(filter.start, None)?;
-        let end = latest(filter.end, None)?;
+        let end_timestamp = filter.end;
+        let scan_end = legacy_latest(end_timestamp)?;
+        let end = latest(end_timestamp, None)?;
         let mut filter = from_filter_input(ctx, &store, &filter)?;
         filter.moderate_kinds();
         let db = store.events();
@@ -244,6 +252,9 @@ impl EventGroupQuery {
                     continue;
                 }
             };
+            if key > scan_end {
+                break;
+            }
             while key > cur_end || key > end {
                 if key > end {
                     break;
@@ -282,10 +293,14 @@ async fn count_events<T>(
     count: EventCountFn<T>,
     first: i32,
 ) -> Result<(Vec<T>, Vec<usize>)> {
+    if empty_time_range(filter.start, filter.end)? {
+        return Ok((Vec::new(), Vec::new()));
+    }
     let store = crate::graphql::get_store(ctx)?;
 
     let start = earliest(filter.start, None)?;
-    let end = latest(filter.end, None)?;
+    let end_timestamp = filter.end;
+    let end = legacy_latest(end_timestamp)?;
     let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
     let db = store.events();
@@ -300,6 +315,9 @@ async fn count_events<T>(
         };
         if key > end {
             break;
+        }
+        if !is_before_end(key, end_timestamp)? {
+            continue;
         }
         count(&event, &mut counter, &filter)?;
     }
@@ -323,12 +341,16 @@ async fn count_events_by_network(
     filter: &EventListFilterInput,
     first: i32,
 ) -> Result<(Vec<String>, Vec<usize>)> {
+    if empty_time_range(filter.start, filter.end)? {
+        return Ok((Vec::new(), Vec::new()));
+    }
     let store = crate::graphql::get_store(ctx)?;
     let network_map = store.network_map();
     let networks = load_networks(&network_map)?;
 
     let start = earliest(filter.start, None)?;
-    let end = latest(filter.end, None)?;
+    let end_timestamp = filter.end;
+    let end = legacy_latest(end_timestamp)?;
     let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
     let db = store.events();
@@ -343,6 +365,9 @@ async fn count_events_by_network(
         };
         if key > end {
             break;
+        }
+        if !is_before_end(key, end_timestamp)? {
+            continue;
         }
         event.count_network(&mut counter, &networks, &filter)?;
     }

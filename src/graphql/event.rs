@@ -1124,6 +1124,9 @@ struct EventTotalCount {
 impl EventTotalCount {
     /// The total number of events.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
+        if empty_time_range(self.start, self.end)? {
+            return Ok(StringNumber(0));
+        }
         let store = crate::graphql::get_store(ctx)?;
         let events = store.events();
         let iter = if let Some(start) = self.start {
@@ -1539,7 +1542,9 @@ async fn load(
     let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
     let db = store.events();
-    let (events, has_previous, has_next) = if let Some(last) = last {
+    let (events, has_previous, has_next) = if empty_time_range(start, end)? {
+        (Vec::new(), false, false)
+    } else if let Some(last) = last {
         let iter = db.iter_from(latest(end, before)?, Direction::Reverse);
         let to = earliest(start, after)?;
         let (events, has_more) = iter_to_events(ctx, iter, to, cmp::Ordering::is_ge, last, &filter)
@@ -1597,11 +1602,15 @@ async fn load_triage_list(
     filter: &EventListFilterInput,
     count: Option<usize>,
 ) -> Result<Vec<Event>> {
+    if empty_time_range(filter.start, filter.end)? {
+        return Ok(Vec::new());
+    }
     let store = crate::graphql::get_store(ctx)?;
     let count = count.unwrap_or(DEFAULT_TRIAGE_LIST_COUNT);
 
     let start_key = earliest(filter.start, None)?;
-    let end_key = latest(filter.end, None)?;
+    let end = filter.end;
+    let end_key = legacy_latest(end)?;
     let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
     let db = store.events();
@@ -1622,6 +1631,9 @@ async fn load_triage_list(
 
         if key > end_key {
             break;
+        }
+        if !is_before_end(key, end)? {
+            continue;
         }
 
         let triage_score = {
@@ -1749,12 +1761,7 @@ fn earliest(start: Option<Timestamp>, after: Option<String>) -> Result<i128> {
 fn latest(end: Option<Timestamp>, before: Option<String>) -> Result<i128> {
     let latest = if let Some(end) = end {
         let end = event_key(end)?;
-        if end == 0 {
-            return Err("invalid time `end`".into());
-        }
-        let end = end
-            .checked_sub(1)
-            .ok_or("invalid time `end`: no earlier event key exists")?;
+        let end = end.saturating_sub(1);
         if let Some(before) = before {
             cmp::min(end, latest_before(&before)?)
         } else {
@@ -1766,6 +1773,26 @@ fn latest(end: Option<Timestamp>, before: Option<String>) -> Result<i128> {
         i128::MAX
     };
     Ok(latest)
+}
+
+fn legacy_latest(end: Option<Timestamp>) -> Result<i128> {
+    end.map_or(Ok(i128::MAX), |end| {
+        let end = event_key(end)?;
+        Ok(if end > 0 { end - 1 } else { 0 })
+    })
+}
+
+fn empty_time_range(start: Option<Timestamp>, end: Option<Timestamp>) -> Result<bool> {
+    let Some(end) = end else {
+        return Ok(false);
+    };
+    Ok(earliest(start, None)? >= event_key(end)?)
+}
+
+fn is_before_end(key: i128, end: Option<Timestamp>) -> Result<bool> {
+    end.map_or(Ok(true), |end| {
+        Ok((key >> 64) < i128::from(timestamp_nanos(end)?))
+    })
 }
 
 fn timestamp_nanos(timestamp: Timestamp) -> Result<i64> {
@@ -1957,7 +1984,9 @@ async fn load_with_triage(
     let mut event_filter = from_filter_input(ctx, &store, &list_filter)?;
     event_filter.moderate_kinds();
     let db = store.events();
-    let (events, has_previous, has_next) = if let Some(last) = last {
+    let (events, has_previous, has_next) = if empty_time_range(start, end)? {
+        (Vec::new(), false, false)
+    } else if let Some(last) = last {
         let iter = db.iter_from(latest(end, before)?, Direction::Reverse);
         let to = earliest(start, after)?;
         let (events, has_more) = iter_to_events_with_triage(
@@ -2199,6 +2228,29 @@ mod tests {
             assert!(input.errors.is_empty(), "{:?}", input.errors);
         }
 
+        let compatible_offset = schema
+            .execute_as_system_admin(
+                r#"{ eventList(filter: { start: "1970-01-01T00:00:00+00:00" }, first: 1) { totalCount } }"#,
+            )
+            .await;
+        assert!(
+            compatible_offset.errors.is_empty(),
+            "{:?}",
+            compatible_offset.errors
+        );
+
+        let out_of_range = schema
+            .execute_as_system_admin(
+                r#"{ eventList(filter: { start: "2262-04-11T23:47:16.854775808Z" }, first: 1) { totalCount } }"#,
+            )
+            .await;
+        assert_eq!(out_of_range.errors.len(), 1);
+        assert!(
+            out_of_range.errors[0]
+                .message
+                .contains("outside the supported nanosecond range")
+        );
+
         let introspection = schema
             .execute_as_system_admin(
                 r#"{ __type(name: "EventListFilterInput") {
@@ -2214,6 +2266,83 @@ mod tests {
         let data = introspection.data.to_string();
         assert!(data.contains(r#"name: "start""#));
         assert!(data.contains(r#"kind: SCALAR, name: "DateTime""#));
+    }
+
+    #[test]
+    fn event_end_boundaries_preserve_legacy_and_exclusive_semantics() {
+        let epoch = Timestamp::UNIX_EPOCH;
+        let negative = Timestamp::from_nanosecond(-1).expect("valid timestamp");
+        let positive = Timestamp::from_nanosecond(1).expect("valid timestamp");
+        let minimum = Timestamp::from_nanosecond(i128::from(i64::MIN))
+            .expect("i64 nanoseconds must fit in jiff");
+
+        assert_eq!(super::latest(Some(epoch), None).unwrap(), -1);
+        assert_eq!(super::latest(Some(minimum), None).unwrap(), i128::MIN);
+        assert_eq!(super::legacy_latest(None).unwrap(), i128::MAX);
+        assert_eq!(super::legacy_latest(Some(epoch)).unwrap(), 0);
+        assert_eq!(super::legacy_latest(Some(negative)).unwrap(), 0);
+        assert_eq!(
+            super::legacy_latest(Some(positive)).unwrap(),
+            (1_i128 << 64) - 1
+        );
+    }
+
+    #[tokio::test]
+    async fn minimum_end_is_an_empty_event_range() {
+        let schema = TestSchema::new().await;
+        let minimum = Timestamp::from_nanosecond(i128::from(i64::MIN))
+            .expect("i64 nanoseconds must fit in jiff");
+        let before_epoch = Timestamp::from_nanosecond(-1).expect("valid timestamp");
+        let store = schema.store();
+        let events = store.events();
+        events
+            .put(&event_message_at_timestamp(
+                minimum,
+                1,
+                2,
+                Some(EventCategory::CommandAndControl),
+                "sensor1",
+            ))
+            .expect("event timestamp must be stored");
+        events
+            .put(&event_message_at_timestamp(
+                before_epoch,
+                1,
+                2,
+                Some(EventCategory::CommandAndControl),
+                "sensor1",
+            ))
+            .expect("event timestamp must be stored");
+        drop(store);
+
+        let output = schema
+            .execute_as_system_admin(&format!(
+                r#"{{
+                    eventList(filter: {{ end: "{minimum}" }}) {{ edges {{ cursor }} totalCount }}
+                    eventTriageList(filter: {{ end: "{minimum}" }}) {{
+                        ... on DnsCovertChannel {{ time }}
+                    }}
+                    eventCountsByCategory(filter: {{ end: "{minimum}" }}, first: 10) {{ counts }}
+                    eventFrequencySeries(filter: {{ end: "{minimum}" }}, period: 1)
+                }}"#
+            ))
+            .await;
+        assert!(output.errors.is_empty(), "{:?}", output.errors);
+        assert_eq!(
+            output.data.to_string(),
+            r#"{eventList: {edges: [], totalCount: "0"}, eventTriageList: [], eventCountsByCategory: {counts: []}, eventFrequencySeries: []}"#
+        );
+
+        let epoch_output = schema
+            .execute_as_system_admin(&format!(
+                r#"{{ eventList(filter: {{ start: "{before_epoch}", end: "1970-01-01T00:00:00Z" }}) {{ edges {{ cursor }} totalCount }} }}"#
+            ))
+            .await;
+        assert!(epoch_output.errors.is_empty(), "{:?}", epoch_output.errors);
+        assert_eq!(
+            epoch_output.data.to_string(),
+            r#"{eventList: {edges: [{cursor: "-18446744073709551616"}], totalCount: "1"}}"#
+        );
     }
 
     const IP2LOCATION_HEADER_LEN: usize = 35;
