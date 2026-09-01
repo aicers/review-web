@@ -7,8 +7,7 @@ use review_database::{Event, IndexedTable, Iterable};
 use tracing::warn;
 
 use super::{
-    EventListFilterInput, ThreatLevel, earliest, empty_time_range, from_filter_input,
-    is_before_end, latest, legacy_latest,
+    EventListFilterInput, ThreatLevel, earliest, empty_time_range, from_filter_input, latest,
 };
 use crate::{
     graphql::{Role, RoleGuard},
@@ -234,9 +233,7 @@ impl EventGroupQuery {
         let store = crate::graphql::get_store(ctx)?;
 
         let start = earliest(filter.start, None)?;
-        let end_timestamp = filter.end;
-        let scan_end = legacy_latest(end_timestamp)?;
-        let end = latest(end_timestamp, None)?;
+        let end = latest(filter.end, None)?;
         let mut filter = from_filter_input(ctx, &store, &filter)?;
         filter.moderate_kinds();
         let db = store.events();
@@ -252,13 +249,10 @@ impl EventGroupQuery {
                     continue;
                 }
             };
-            if key > scan_end {
+            if key > end {
                 break;
             }
-            while key > cur_end || key > end {
-                if key > end {
-                    break;
-                }
+            while key > cur_end {
                 series.push(freq);
                 freq = 0;
                 cur_end += period;
@@ -299,8 +293,7 @@ async fn count_events<T>(
     let store = crate::graphql::get_store(ctx)?;
 
     let start = earliest(filter.start, None)?;
-    let end_timestamp = filter.end;
-    let end = legacy_latest(end_timestamp)?;
+    let end = latest(filter.end, None)?;
     let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
     let db = store.events();
@@ -315,9 +308,6 @@ async fn count_events<T>(
         };
         if key > end {
             break;
-        }
-        if !is_before_end(key, end_timestamp)? {
-            continue;
         }
         count(&event, &mut counter, &filter)?;
     }
@@ -349,8 +339,7 @@ async fn count_events_by_network(
     let networks = load_networks(&network_map)?;
 
     let start = earliest(filter.start, None)?;
-    let end_timestamp = filter.end;
-    let end = legacy_latest(end_timestamp)?;
+    let end = latest(filter.end, None)?;
     let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
     let db = store.events();
@@ -365,9 +354,6 @@ async fn count_events_by_network(
         };
         if key > end {
             break;
-        }
-        if !is_before_end(key, end_timestamp)? {
-            continue;
         }
         event.count_network(&mut counter, &networks, &filter)?;
     }

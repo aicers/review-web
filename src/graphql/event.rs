@@ -1609,8 +1609,7 @@ async fn load_triage_list(
     let count = count.unwrap_or(DEFAULT_TRIAGE_LIST_COUNT);
 
     let start_key = earliest(filter.start, None)?;
-    let end = filter.end;
-    let end_key = legacy_latest(end)?;
+    let end_key = latest(filter.end, None)?;
     let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
     let db = store.events();
@@ -1632,10 +1631,6 @@ async fn load_triage_list(
         if key > end_key {
             break;
         }
-        if !is_before_end(key, end)? {
-            continue;
-        }
-
         let triage_score = {
             let matches = event.matches(&filter)?;
             if !matches.0 {
@@ -1775,24 +1770,11 @@ fn latest(end: Option<Timestamp>, before: Option<String>) -> Result<i128> {
     Ok(latest)
 }
 
-fn legacy_latest(end: Option<Timestamp>) -> Result<i128> {
-    end.map_or(Ok(i128::MAX), |end| {
-        let end = event_key(end)?;
-        Ok(if end > 0 { end - 1 } else { 0 })
-    })
-}
-
 fn empty_time_range(start: Option<Timestamp>, end: Option<Timestamp>) -> Result<bool> {
     let Some(end) = end else {
         return Ok(false);
     };
     Ok(earliest(start, None)? >= event_key(end)?)
-}
-
-fn is_before_end(key: i128, end: Option<Timestamp>) -> Result<bool> {
-    end.map_or(Ok(true), |end| {
-        Ok((key >> 64) < i128::from(timestamp_nanos(end)?))
-    })
 }
 
 fn timestamp_nanos(timestamp: Timestamp) -> Result<i64> {
@@ -2269,7 +2251,7 @@ mod tests {
     }
 
     #[test]
-    fn event_end_boundaries_preserve_legacy_and_exclusive_semantics() {
+    fn event_end_boundaries_are_exclusive() {
         let epoch = Timestamp::UNIX_EPOCH;
         let negative = Timestamp::from_nanosecond(-1).expect("valid timestamp");
         let positive = Timestamp::from_nanosecond(1).expect("valid timestamp");
@@ -2278,11 +2260,13 @@ mod tests {
 
         assert_eq!(super::latest(Some(epoch), None).unwrap(), -1);
         assert_eq!(super::latest(Some(minimum), None).unwrap(), i128::MIN);
-        assert_eq!(super::legacy_latest(None).unwrap(), i128::MAX);
-        assert_eq!(super::legacy_latest(Some(epoch)).unwrap(), 0);
-        assert_eq!(super::legacy_latest(Some(negative)).unwrap(), 0);
+        assert_eq!(super::latest(None, None).unwrap(), i128::MAX);
         assert_eq!(
-            super::legacy_latest(Some(positive)).unwrap(),
+            super::latest(Some(negative), None).unwrap(),
+            -((1_i128 << 64) + 1)
+        );
+        assert_eq!(
+            super::latest(Some(positive), None).unwrap(),
             (1_i128 << 64) - 1
         );
     }
@@ -2342,6 +2326,98 @@ mod tests {
         assert_eq!(
             epoch_output.data.to_string(),
             r#"{eventList: {edges: [{cursor: "-18446744073709551616"}], totalCount: "1"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn negative_end_is_exclusive_across_event_queries() {
+        let schema = TestSchema::new().await;
+        let start = Timestamp::from_nanosecond(-2).expect("valid timestamp");
+        let end = Timestamp::from_nanosecond(-1).expect("valid timestamp");
+        let store = schema.store();
+        let events = store.events();
+        events
+            .put(&event_message_at_timestamp(
+                start,
+                1,
+                2,
+                Some(EventCategory::CommandAndControl),
+                "sensor1",
+            ))
+            .expect("event at start must be stored");
+        events
+            .put(&event_message_at_timestamp(
+                end,
+                1,
+                2,
+                Some(EventCategory::CommandAndControl),
+                "sensor1",
+            ))
+            .expect("event at end must be stored");
+        let policy_id = store
+            .triage_policy_map()
+            .put(database::TriagePolicy {
+                id: 0,
+                name: "Negative time range test policy".to_string(),
+                triage_exclusion_id: Vec::new(),
+                packet_attr: Vec::new(),
+                confidence: vec![database::Confidence {
+                    threat_category: Some(database::EventCategory::CommandAndControl),
+                    threat_kind: "dns covert channel".to_string(),
+                    confidence: 0.0,
+                    weight: Some(1.0),
+                }],
+                response: vec![database::Response {
+                    minimum_score: 0.5,
+                    kind: database::ResponseKind::Manual,
+                }],
+                creation_time: DateTime::from_timestamp(0, 0)
+                    .expect("the Unix epoch is a valid chrono timestamp"),
+                customer_id: None,
+            })
+            .expect("triage policy must be stored");
+        drop(store);
+
+        let network = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNetwork(
+                        name: "negative-time-range"
+                        description: ""
+                        networks: { hosts: ["0.0.0.2"], networks: [], ranges: [] }
+                        tagIds: []
+                    )
+                }"#,
+            )
+            .await;
+        assert!(network.errors.is_empty(), "{:?}", network.errors);
+
+        let output = schema
+            .execute_as_system_admin(&format!(
+                r#"{{
+                    eventTriageList(
+                        filter: {{ start: "{start}", end: "{end}", triagePolicies: ["{policy_id}"] }}
+                        count: 10
+                    ) {{ ... on DnsCovertChannel {{ time }} }}
+                    eventCountsByCategory(
+                        filter: {{ start: "{start}", end: "{end}" }}
+                        first: 10
+                    ) {{ counts }}
+                    eventCountsByNetwork(
+                        filter: {{ start: "{start}", end: "{end}" }}
+                        first: 10
+                    ) {{ values counts }}
+                    eventFrequencySeries(
+                        filter: {{ start: "{start}", end: "{end}" }}
+                        period: 1
+                    )
+                }}"#
+            ))
+            .await;
+        assert!(output.errors.is_empty(), "{:?}", output.errors);
+        assert_eq!(
+            output.data.to_string(),
+            r#"{eventTriageList: [{time: "1969-12-31T23:59:59.999999998Z"}], eventCountsByCategory: {counts: [1]}, eventCountsByNetwork: {values: ["0"], counts: [1]}, eventFrequencySeries: [1]}"#
         );
     }
 

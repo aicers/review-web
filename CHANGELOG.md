@@ -8,8 +8,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
-- Migrated Event GraphQL timestamps internally from `chrono::DateTime` to
-  `jiff::Timestamp` while preserving RFC 3339 GraphQL input and output.
+- Event GraphQL timestamps are now serialized with the RFC 3339 UTC `Z`
+  suffix; equivalent inputs using the `+00:00` offset remain accepted.
 - Bumped `review-database` dependency to commit `bd30664`, which renames
   several fields used internally by this crate: `Agent.node` and
   `ExternalService.node` are now `node_id`, `TrafficFilter.agent` is now
