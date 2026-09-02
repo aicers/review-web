@@ -84,7 +84,7 @@ use super::{
 use crate::{error_with_username, graphql::query, warn_with_username};
 
 const DEFAULT_CONNECTION_SIZE: usize = 100;
-const DEFAULT_EVENT_FETCH_TIME: u64 = 20;
+const DEFAULT_EVENT_FETCH_INTERVAL_SECS: u64 = 20;
 const ADD_TIME_FOR_NEXT_COMPARE: i64 = 1;
 const DEFAULT_TRIAGE_LIST_COUNT: usize = 100;
 
@@ -124,10 +124,10 @@ impl EventStream {
         use std::sync::RwLock;
         let start = timestamp_nanos(start)?;
         let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
-        let fetch_time = if let Some(fetch_time) = fetch_interval {
-            fetch_time
+        let fetch_interval_secs = if let Some(fetch_interval_secs) = fetch_interval {
+            fetch_interval_secs
         } else {
-            DEFAULT_EVENT_FETCH_TIME
+            DEFAULT_EVENT_FETCH_INTERVAL_SECS
         };
         let username = ctx
             .data::<String>()
@@ -135,8 +135,14 @@ impl EventStream {
             .unwrap_or("<unknown user>".to_string());
         let (tx, rx) = unbounded();
         tokio::spawn(async move {
-            let fetch =
-                fetch_events(store, start, tx, fetch_time, event_stuck_check_interval).await;
+            let fetch = fetch_events(
+                store,
+                start,
+                tx,
+                fetch_interval_secs,
+                event_stuck_check_interval,
+            )
+            .await;
             if let Err(e) = fetch {
                 error_with_username!(username: username, "Failed to fetch events: {e:?}");
             }
@@ -150,10 +156,10 @@ async fn fetch_events(
     store: Arc<std::sync::RwLock<Store>>,
     start_time: i64,
     tx: UnboundedSender<Event>,
-    fecth_time: u64,
+    fetch_interval_secs: u64,
     event_stuck_check_interval: Option<u64>,
 ) -> Result<()> {
-    let mut itv = time::interval(time::Duration::from_secs(fecth_time));
+    let mut itv = time::interval(time::Duration::from_secs(fetch_interval_secs));
     let mut iter_time_key = start_time;
     let stuck_check_interval = event_stuck_check_interval.unwrap_or(300); // Default 5 minutes in seconds
     let mut last_stuck_check = std::time::Instant::now();
