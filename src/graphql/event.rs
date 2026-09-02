@@ -1136,7 +1136,7 @@ impl EventTotalCount {
         let store = crate::graphql::get_store(ctx)?;
         let events = store.events();
         let iter = if let Some(start) = self.start {
-            events.iter_from(event_key(start)?, Direction::Forward)
+            events.iter_from(event_key_prefix(start)?, Direction::Forward)
         } else {
             events.iter_forward()
         };
@@ -1745,7 +1745,7 @@ fn event_priority(event: &database::Event) -> u8 {
 
 fn earliest(start: Option<Timestamp>, after: Option<String>) -> Result<i128> {
     let earliest = if let Some(start) = start {
-        let start = event_key(start)?;
+        let start = event_key_prefix(start)?;
         if let Some(after) = after {
             cmp::max(start, earliest_after(&after)?)
         } else {
@@ -1761,7 +1761,7 @@ fn earliest(start: Option<Timestamp>, after: Option<String>) -> Result<i128> {
 
 fn latest(end: Option<Timestamp>, before: Option<String>) -> Result<i128> {
     let latest = if let Some(end) = end {
-        let end = event_key(end)?;
+        let end = event_key_prefix(end)?;
         let end = end.saturating_sub(1);
         if let Some(before) = before {
             cmp::min(end, latest_before(&before)?)
@@ -1780,7 +1780,7 @@ fn empty_time_range(start: Option<Timestamp>, end: Option<Timestamp>) -> Result<
     let Some(end) = end else {
         return Ok(false);
     };
-    Ok(earliest(start, None)? >= event_key(end)?)
+    Ok(earliest(start, None)? >= event_key_prefix(end)?)
 }
 
 fn timestamp_nanos(timestamp: Timestamp) -> Result<i64> {
@@ -1788,7 +1788,7 @@ fn timestamp_nanos(timestamp: Timestamp) -> Result<i64> {
         .map_err(|_| "event timestamp is outside the supported nanosecond range".into())
 }
 
-fn event_key(timestamp: Timestamp) -> Result<i128> {
+fn event_key_prefix(timestamp: Timestamp) -> Result<i128> {
     Ok(i128::from(timestamp_nanos(timestamp)?) << 64)
 }
 
