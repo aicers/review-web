@@ -2212,21 +2212,26 @@ mod tests {
 
             let input = schema
                 .execute_as_system_admin(&format!(
-                    "{{ eventList(filter: {{ start: \"{expected}\" }}, first: 1) {{ totalCount }} }}"
+                    "{{ eventList(filter: {{ start: \"{expected}\", end: \"{expected}\" }}, first: 1) {{ totalCount }} }}"
                 ))
                 .await;
             assert!(input.errors.is_empty(), "{:?}", input.errors);
+            assert_eq!(input.data.to_string(), r#"{eventList: {totalCount: "0"}}"#);
         }
 
         let compatible_offset = schema
             .execute_as_system_admin(
-                r#"{ eventList(filter: { start: "1970-01-01T00:00:00+00:00" }, first: 1) { totalCount } }"#,
+                r#"{ eventList(filter: { start: "1970-01-01T00:00:00+00:00", end: "1970-01-01T00:00:00+00:00" }, first: 1) { totalCount } }"#,
             )
             .await;
         assert!(
             compatible_offset.errors.is_empty(),
             "{:?}",
             compatible_offset.errors
+        );
+        assert_eq!(
+            compatible_offset.data.to_string(),
+            r#"{eventList: {totalCount: "0"}}"#
         );
 
         let out_of_range = schema
