@@ -227,15 +227,17 @@ impl EventGroupQuery {
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] period: i64,
     ) -> Result<Vec<usize>> {
-        if empty_time_range(filter.start, filter.end)? {
-            return Ok(Vec::new());
-        }
+        let start = filter.start;
+        let end = filter.end;
         let store = crate::graphql::get_store(ctx)?;
-
-        let start = earliest(filter.start, None)?;
-        let end = latest(filter.end, None)?;
         let mut filter = from_filter_input(ctx, &store, &filter)?;
         filter.moderate_kinds();
+        if empty_time_range(start, end)? {
+            return Ok(Vec::new());
+        }
+
+        let start = earliest(start, None)?;
+        let end = latest(end, None)?;
         let db = store.events();
         let period = i128::from(period * 1_000_000_000) << 64;
         let mut series = Vec::new();
@@ -287,15 +289,17 @@ async fn count_events<T>(
     count: EventCountFn<T>,
     first: i32,
 ) -> Result<(Vec<T>, Vec<usize>)> {
-    if empty_time_range(filter.start, filter.end)? {
-        return Ok((Vec::new(), Vec::new()));
-    }
+    let start = filter.start;
+    let end = filter.end;
     let store = crate::graphql::get_store(ctx)?;
-
-    let start = earliest(filter.start, None)?;
-    let end = latest(filter.end, None)?;
     let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
+    if empty_time_range(start, end)? {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let start = earliest(start, None)?;
+    let end = latest(end, None)?;
     let db = store.events();
     let mut counter = HashMap::new();
     for item in db.iter_from(start, Direction::Forward) {
@@ -331,17 +335,19 @@ async fn count_events_by_network(
     filter: &EventListFilterInput,
     first: i32,
 ) -> Result<(Vec<String>, Vec<usize>)> {
-    if empty_time_range(filter.start, filter.end)? {
+    let start = filter.start;
+    let end = filter.end;
+    let store = crate::graphql::get_store(ctx)?;
+    let mut filter = from_filter_input(ctx, &store, filter)?;
+    filter.moderate_kinds();
+    if empty_time_range(start, end)? {
         return Ok((Vec::new(), Vec::new()));
     }
-    let store = crate::graphql::get_store(ctx)?;
     let network_map = store.network_map();
     let networks = load_networks(&network_map)?;
 
-    let start = earliest(filter.start, None)?;
-    let end = latest(filter.end, None)?;
-    let mut filter = from_filter_input(ctx, &store, filter)?;
-    filter.moderate_kinds();
+    let start = earliest(start, None)?;
+    let end = latest(end, None)?;
     let db = store.events();
     let mut counter = HashMap::new();
     for item in db.iter_from(start, Direction::Forward) {

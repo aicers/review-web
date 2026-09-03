@@ -1608,16 +1608,18 @@ async fn load_triage_list(
     filter: &EventListFilterInput,
     count: Option<usize>,
 ) -> Result<Vec<Event>> {
-    if empty_time_range(filter.start, filter.end)? {
-        return Ok(Vec::new());
-    }
+    let start = filter.start;
+    let end = filter.end;
     let store = crate::graphql::get_store(ctx)?;
-    let count = count.unwrap_or(DEFAULT_TRIAGE_LIST_COUNT);
-
-    let start_key = earliest(filter.start, None)?;
-    let end_key = latest(filter.end, None)?;
     let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
+    if empty_time_range(start, end)? {
+        return Ok(Vec::new());
+    }
+    let count = count.unwrap_or(DEFAULT_TRIAGE_LIST_COUNT);
+
+    let start_key = earliest(start, None)?;
+    let end_key = latest(end, None)?;
     let db = store.events();
 
     let iter = db.iter_from(start_key, Direction::Forward);
@@ -2254,6 +2256,76 @@ mod tests {
         let data = introspection.data.to_string();
         assert!(data.contains(r#"name: "start""#));
         assert!(data.contains(r#"kind: SCALAR, name: "DateTime""#));
+    }
+
+    #[tokio::test]
+    async fn empty_time_range_does_not_skip_filter_validation() {
+        let schema = TestSchema::new().await;
+        let queries = [
+            r#"{
+                eventList(
+                    filter: {
+                        start: "2026-01-01T00:00:00Z"
+                        end: "2026-01-01T00:00:00Z"
+                        source: "invalid"
+                    }
+                    first: 1
+                ) { edges { cursor } }
+            }"#,
+            r#"{
+                eventListWithTriage(
+                    filter: {
+                        start: "2026-01-01T00:00:00Z"
+                        end: "2026-01-01T00:00:00Z"
+                        source: "invalid"
+                    }
+                    first: 1
+                ) { edges { cursor } }
+            }"#,
+            r#"{
+                eventTriageList(filter: {
+                    start: "2026-01-01T00:00:00Z"
+                    end: "2026-01-01T00:00:00Z"
+                    source: "invalid"
+                }) { id }
+            }"#,
+            r#"{
+                eventCountsByCategory(
+                    filter: {
+                        start: "2026-01-01T00:00:00Z"
+                        end: "2026-01-01T00:00:00Z"
+                        source: "invalid"
+                    }
+                    first: 1
+                ) { counts }
+            }"#,
+            r#"{
+                eventCountsByNetwork(
+                    filter: {
+                        start: "2026-01-01T00:00:00Z"
+                        end: "2026-01-01T00:00:00Z"
+                        source: "invalid"
+                    }
+                    first: 1
+                ) { counts }
+            }"#,
+            r#"{
+                eventFrequencySeries(
+                    filter: {
+                        start: "2026-01-01T00:00:00Z"
+                        end: "2026-01-01T00:00:00Z"
+                        source: "invalid"
+                    }
+                    period: 1
+                )
+            }"#,
+        ];
+
+        for query in queries {
+            let output = schema.execute_as_system_admin(query).await;
+            assert_eq!(output.errors.len(), 1, "query: {query}");
+            assert_eq!(output.errors[0].message, "invalid source IP address");
+        }
     }
 
     #[test]
