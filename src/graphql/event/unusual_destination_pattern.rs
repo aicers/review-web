@@ -1,5 +1,5 @@
 use async_graphql::{Context, ID, Object, Result};
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore, country_codes, find_ip_customer, find_ip_network};
@@ -22,7 +22,7 @@ impl UnusualDestinationPattern {
     }
 
     /// Event Generation Time
-    pub async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> Timestamp {
         self.inner.time
     }
 
@@ -32,12 +32,12 @@ impl UnusualDestinationPattern {
     }
 
     /// Start boundary of the anomaly sampling window used for detection.
-    async fn sampling_window_start_time(&self) -> DateTime<Utc> {
+    async fn sampling_window_start_time(&self) -> Timestamp {
         self.inner.sampling_window_start_time
     }
 
     /// End boundary of the anomaly sampling window used for detection.
-    async fn sampling_window_end_time(&self) -> DateTime<Utc> {
+    async fn sampling_window_end_time(&self) -> Timestamp {
         self.inner.sampling_window_end_time
     }
 

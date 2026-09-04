@@ -6,7 +6,9 @@ use review_database::event::{Direction, EventFilter};
 use review_database::{Event, IndexedTable, Iterable};
 use tracing::warn;
 
-use super::{EventListFilterInput, ThreatLevel, from_filter_input};
+use super::{
+    EventListFilterInput, ThreatLevel, earliest, empty_time_range, from_filter_input, latest,
+};
 use crate::{
     graphql::{Role, RoleGuard},
     warn_with_username,
@@ -225,20 +227,17 @@ impl EventGroupQuery {
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] period: i64,
     ) -> Result<Vec<usize>> {
+        let start = filter.start;
+        let end = filter.end;
         let store = crate::graphql::get_store(ctx)?;
-
-        let start = filter
-            .start
-            .map(|t| i128::from(t.timestamp_nanos_opt().unwrap_or_default()) << 64)
-            .unwrap_or_default();
-        let end = filter.end.map_or(i128::MAX, |t| {
-            let end = t
-                .timestamp_nanos_opt()
-                .map_or(i128::MAX, |t| i128::from(t) << 64);
-            if end > 0 { end - 1 } else { 0 }
-        });
         let mut filter = from_filter_input(ctx, &store, &filter)?;
         filter.moderate_kinds();
+        if empty_time_range(start, end)? {
+            return Ok(Vec::new());
+        }
+
+        let start = earliest(start, None)?;
+        let end = latest(end, None)?;
         let db = store.events();
         let period = i128::from(period * 1_000_000_000) << 64;
         let mut series = Vec::new();
@@ -252,10 +251,10 @@ impl EventGroupQuery {
                     continue;
                 }
             };
-            while key > cur_end || key > end {
-                if key > end {
-                    break;
-                }
+            if key > end {
+                break;
+            }
+            while key > cur_end {
                 series.push(freq);
                 freq = 0;
                 cur_end += period;
@@ -290,20 +289,17 @@ async fn count_events<T>(
     count: EventCountFn<T>,
     first: i32,
 ) -> Result<(Vec<T>, Vec<usize>)> {
+    let start = filter.start;
+    let end = filter.end;
     let store = crate::graphql::get_store(ctx)?;
-
-    let start = filter
-        .start
-        .map(|t| i128::from(t.timestamp_nanos_opt().unwrap_or_default()) << 64)
-        .unwrap_or_default();
-    let end = filter.end.map_or(i128::MAX, |t| {
-        let end = t
-            .timestamp_nanos_opt()
-            .map_or(i128::MAX, |t| i128::from(t) << 64);
-        if end > 0 { end - 1 } else { 0 }
-    });
     let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
+    if empty_time_range(start, end)? {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let start = earliest(start, None)?;
+    let end = latest(end, None)?;
     let db = store.events();
     let mut counter = HashMap::new();
     for item in db.iter_from(start, Direction::Forward) {
@@ -339,22 +335,19 @@ async fn count_events_by_network(
     filter: &EventListFilterInput,
     first: i32,
 ) -> Result<(Vec<String>, Vec<usize>)> {
+    let start = filter.start;
+    let end = filter.end;
     let store = crate::graphql::get_store(ctx)?;
+    let mut filter = from_filter_input(ctx, &store, filter)?;
+    filter.moderate_kinds();
+    if empty_time_range(start, end)? {
+        return Ok((Vec::new(), Vec::new()));
+    }
     let network_map = store.network_map();
     let networks = load_networks(&network_map)?;
 
-    let start = filter
-        .start
-        .map(|t| i128::from(t.timestamp_nanos_opt().unwrap_or_default()) << 64)
-        .unwrap_or_default();
-    let end = filter.end.map_or(i128::MAX, |t| {
-        let end = t
-            .timestamp_nanos_opt()
-            .map_or(i128::MAX, |t| i128::from(t) << 64);
-        if end > 0 { end - 1 } else { 0 }
-    });
-    let mut filter = from_filter_input(ctx, &store, filter)?;
-    filter.moderate_kinds();
+    let start = earliest(start, None)?;
+    let end = latest(end, None)?;
     let db = store.events();
     let mut counter = HashMap::new();
     for item in db.iter_from(start, Direction::Forward) {
@@ -404,7 +397,9 @@ mod tests {
     use chrono::{DateTime, NaiveDate, Utc};
     use review_database::{EventCategory, EventKind, EventMessage, event::DnsEventFields};
 
-    use super::super::tests::{event_country_locator, schema_with_country_filter_events};
+    use super::super::tests::{
+        event_country_locator, jiff_timestamp, schema_with_country_filter_events,
+    };
     use crate::graphql::TestSchema;
 
     /// Creates an event message at `timestamp` with the given source and
@@ -439,7 +434,7 @@ mod tests {
             category: Some(EventCategory::CommandAndControl),
         };
         EventMessage {
-            time: timestamp,
+            time: jiff_timestamp(timestamp),
             kind: EventKind::DnsCovertChannel,
             fields: bincode::serialize(&fields).expect("serializable"),
         }
@@ -488,6 +483,8 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
+        let ts1 = jiff_timestamp(ts1);
+        let ts3 = jiff_timestamp(ts3);
         let query = format!(
             "{{ \
                 eventCountsByNetwork(
@@ -622,6 +619,8 @@ mod tests {
         ))
         .unwrap();
         drop(store);
+        let start = jiff_timestamp(start);
+        let end = jiff_timestamp(end);
 
         let res = schema
             .execute_as_system_admin(&format!(

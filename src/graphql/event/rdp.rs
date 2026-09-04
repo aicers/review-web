@@ -1,5 +1,5 @@
 use async_graphql::{Context, ID, Object, Result, StringNumber};
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use review_database::event as database;
 
 use super::{
@@ -21,7 +21,7 @@ impl RdpBruteForce {
     }
 
     /// Event Generation Time
-    pub async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> Timestamp {
         self.inner.time
     }
 
@@ -91,12 +91,12 @@ impl RdpBruteForce {
     }
 
     /// Session start time of the first raw event used for detection.
-    async fn first_event_start_time(&self) -> DateTime<Utc> {
+    async fn first_event_start_time(&self) -> Timestamp {
         self.inner.first_event_start_time
     }
 
     /// Session start time of the last raw event used for detection.
-    async fn last_event_start_time(&self) -> DateTime<Utc> {
+    async fn last_event_start_time(&self) -> Timestamp {
         self.inner.last_event_start_time
     }
 
@@ -143,7 +143,7 @@ impl BlocklistRdp {
     }
 
     /// Event Generation Time
-    pub async fn time(&self) -> DateTime<Utc> {
+    pub async fn time(&self) -> Timestamp {
         self.inner.time
     }
 
@@ -222,7 +222,7 @@ impl BlocklistRdp {
     }
 
     /// Start Time
-    async fn start_time(&self) -> DateTime<Utc> {
+    async fn start_time(&self) -> Timestamp {
         self.inner.start_time
     }
 

@@ -8,6 +8,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- Event GraphQL timestamps are now serialized with the RFC 3339 UTC `Z`
+  suffix; equivalent inputs using the `+00:00` offset remain accepted.
 - Bumped `review-database` dependency to commit `bd30664`, which renames
   several fields used internally by this crate: `Agent.node` and
   `ExternalService.node` are now `node_id`, `TrafficFilter.agent` is now
@@ -52,6 +54,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- Event GraphQL queries now accept the Unix epoch as an exclusive `end`
+  boundary and return an empty range for the lower `i64` nanosecond boundary.
 - Triage exclusions whose IP address group mixes IPv4 and IPv6 entries no
   longer drop one address family when matching events.
 - Stopped the library's `serve` function from selecting ring as the process-wide
