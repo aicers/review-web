@@ -125,12 +125,82 @@ model (**no `desiredVersion`**):
       // (Option<u32>: None = a single-instance core component, Some(n) = one
       // of a module's instances). A host may run 001.piglet and 002.piglet
       // at once (RFC-D1 §2), so (host, target) alone is ambiguous.
-      async fn deploy(
+      // INSTALL AND UPDATE ARE SEPARATE METHODS, because only one of them
+      // allocates. `install` takes no `instance` — that is what it produces —
+      // and it is the only one carrying `bind_addrs` and `request_key`.
+      // NO `bootstrap_material` PARAMETER. `install` mints the identity
+      // itself (RFC-D2 §4f): the mint needs the instance number this call
+      // allocates, and the owed teardown must be armed before it, so no
+      // caller can produce the material in advance. What reaches
+      // `node.package` is what this method minted.
+      async fn install(
+          &self, host: &str, target: &str,
+          selector: BuildSelector,
+          on_failure: FailurePolicy,
+          // The listening addresses this instance must bind (RFC-D2 §4f,
+          // RFC-C §4). None for every component the listener catalog does
+          // not list, which is every module except Giganto.
+          //
+          // A Vec, NOT a map, and that is load-bearing: review refuses a
+          // duplicate listener key at its mutation boundary, and it can only
+          // refuse what reaches it. Folding the GraphQL list into a map here
+          // would silently drop the duplicate and turn a refusal into a
+          // last-wins merge. review validates the list against the catalog
+          // and folds it to a map itself.
+          //
+          // review-web PASSES THIS THROUGH UNCHANGED: it selects nothing and
+          // validates nothing beyond shape, because the knowledge that
+          // decides a conflict — the catalog, the host's occupancy, the
+          // allocation rows — is review's.
+          bind_addrs: Option<Vec<BindAddrInput>>,
+          // Dedupes the operator's INTENT. review persists it as the
+          // `operation_attempt.idempotency_key` (RFC-D1 §4d) and looks it up
+          // before allocating, so a resubmit after a restart finds the
+          // earlier attempt rather than allocating a second instance. This
+          // is why it is one durable value and not a second key beside the
+          // idempotency key.
+          request_key: &str,
+      ) -> Result<DeployOutcome, anyhow::Error>;
+      async fn update(
           &self, host: &str, target: &str, instance: Option<u32>,
           selector: BuildSelector,
-          bootstrap_material: Option<BootstrapMaterial>,
           on_failure: FailurePolicy,
       ) -> Result<DeployOutcome, anyhow::Error>;
+      // One submitted address, as it arrives from the GraphQL input list.
+      // `listener_key` is not validated here; `addr` is a SocketAddr so a
+      // syntactically invalid address fails at parse rather than reaching
+      // review as a string. Transport is absent by design — it is never
+      // operator input and comes from review's catalog (RFC-D2 §4f).
+      struct BindAddrInput { listener_key: String, addr: SocketAddr }
+      // The addresses review WOULD choose for the NEXT instance of `target`
+      // on `host`. It takes no `instance`, because the instance being
+      // recommended for does not exist yet — asking for one would be asking
+      // the caller for the number this call's own install will allocate.
+      // THE QUERY HOLDS NOTHING: it is a proposal, and a hold at read time
+      // would strand addresses behind abandoned screens. A stale proposal is
+      // caught at the mutation, not prevented here.
+      async fn recommend_bind_addrs(
+          &self, host: &str, target: &str,
+      ) -> Result<Vec<BindAddrProposal>, anyhow::Error>;
+      // One proposed address. `transport` is carried so the UI can label a
+      // field without inferring it; it comes from the catalog and is not
+      // accepted back on the mutation.
+      //
+      // There is NO `editable` flag. An earlier revision carried one "so the
+      // form knows which values the operator may change", and it could never
+      // be false: the catalog holds a listener key, its transport and its
+      // default address and nothing else (RFC-D2 §4f), so review has no
+      // source to derive it from, and RFC-D2 §4f's decision is flatly that
+      // the operator may change what review proposes. The fields that are
+      // NOT editable — the post-install config form's (RFC-E §4) — are read
+      // from the allocation row, not from a proposal, so they never see this
+      // type. A field with no false case is a value review would have to
+      // invent and every consumer would have to carry.
+      struct BindAddrProposal {
+          listener_key: String,
+          transport: Transport,   // Tcp | Udp, from RFC-C §4
+          addr: SocketAddr,
+      }
       async fn remove(
           &self, host: &str, target: &str, instance: Option<u32>,
       ) -> Result<(), anyhow::Error>;
@@ -140,9 +210,9 @@ model (**no `desiredVersion`**):
       async fn read_version(
           &self, host: &str, target: &str, instance: Option<u32>,
       ) -> Result<BuildId, anyhow::Error>;
-      // register mints a bootroot identity for ONE instance. v1 pins the
-      // instance to Some(1) for a module and None for a core component
-      // (RFC-A §4) -- nothing here allocates. The registrar derives the
+      // register mints a bootroot identity for ONE instance. The instance is
+      // the number review allocated for a module, None for a core component
+      // (RFC-D1 §4g). The registrar derives the
       // registration_id and the SAN from the parts (service_name, host,
       // instance); `service_name` is the component's PLAIN keyword, never a
       // composed name. The `spec` (RFC-A §4 registration template) and
@@ -191,32 +261,54 @@ on a host outside their customer. Specifically:
 
 New mutations:
 
-- **[DECISION] v1 installs ONE instance per `(component, host)`; the
-  mutations still name it.** RFC-A §4 pins the instance to `1` for v1 and
-  defers allocation, so `installService` for a `(component, host)` that
-  already has a service row is **rejected** with a typed error rather than
-  adding a second one. The mutations nevertheless **carry an `instance`**
-  (`Some(1)` for a module, `None` for a core component) so that v2 changes
-  which values are accepted and not the surface: `updateService` and
-  `removeService` take it and reject a value that does not exist. The
+- **[DECISION] `installService` ALLOCATES; the other two name an existing
+  instance.** review picks the next free number for a module (RFC-D2 §4f), so
+  `installService` carries **no** `instance` — asking the caller for it would
+  be asking for the value the call produces — while `updateService` and
+  `removeService` **carry it** and reject a value that does not exist. A core
+  component takes `None` throughout, and a second install of one is still
+  **rejected** with a typed error, because it has no instance dimension. The
   instance is a **number the operator never types** (RFC-A §4): the UI
   passes back what it read from the row it acted on (RFC-E §4). Core
   components take **no** instance and
   a request that supplies one for them is rejected — only the five modules
   are multi-instance.
-- **`installService(host, target, buildSelector, onFailure)`** — installs
-  the module on a host that does not have it. Because v1 does not allocate,
-  the triple `(host, target, instance)` is fully determined by the request,
-  so **single-flight dedupes a double-click on its own** — no
-  client-supplied key is needed. (This is the direct benefit of pinning the
-  number: an allocating mutation would form a fresh triple on every click
-  and single-flight could not tell a double-submit from a deliberate second
-  add.)
-  **[DECISION] Single-flight per
-  `(host, target, instance)`:** like
-  `onboardHost` is idempotent-per-hostname (D2 §4d), `installService` /
-  `updateService` / **`removeService`** must be **single-flight per
-  `(host, target, instance)`** — a second call
+- **`installService(host, target, buildSelector, onFailure, bindAddrs,
+  requestKey)`** — installs the module on a host. It **allocates**: review
+  picks the next free instance number and this instance's addresses (RFC-D2
+  §4f, RFC-D1 §4g).
+  **[DECISION] Because it allocates, it carries a client-supplied
+  `requestKey`, single-flight is keyed on that rather than on the triple, and
+  review PERSISTS it as the attempt's `idempotency_key`.** An earlier revision
+  keyed it on `(host, target, instance)` and
+  said no client key was needed, because with the number pinned the triple
+  was fully determined by the request. That reasoning is sound and its
+  premise is gone: an allocating mutation forms a **fresh** triple on every
+  click, so a triple-keyed single-flight cannot tell a double-submit from a
+  deliberate second add — it would either allocate twice for one click or
+  refuse a legitimate second instance.
+  The `requestKey` is generated by the client **once per install the operator
+  initiated**, not once per attempt, so a double-click carries the same value
+  and is coalesced while a deliberate "add another instance" carries a new one
+  and proceeds.
+  **It becomes the `operation_attempt.idempotency_key` rather than sitting
+  beside it** (RFC-D1 §4d). In-memory single-flight only dedupes within one
+  process lifetime, and this mutation allocates — so a resubmit after a review
+  restart would otherwise find no in-flight entry and allocate a **second
+  instance** for one operator action. Persisting it means review looks the key
+  up **before** allocating and returns the existing attempt. Keeping it as a
+  separate durable field would need its own unique index for exactly the same
+  lookup, which is the field `operation_attempt` already has.
+  A malformed or missing `requestKey` is refused rather than defaulted,
+  because a default would silently restore the collision it exists to
+  prevent.
+  **[DECISION] Single-flight per `(host, target, instance)` for the
+  non-allocating mutations, and per `requestKey` for `installService`:** like
+  `onboardHost` is idempotent-per-hostname (D2 §4d), `updateService` /
+  **`removeService`** must be **single-flight per
+  `(host, target, instance)`** — they name an instance that already exists,
+  so the triple is determined — while `installService` uses the
+  `requestKey` above for the reason given there. In both cases a second call
   while one is in flight is coalesced/rejected, not started, so a double-click
   does not spawn two `operation_attempt`s (with distinct `idempotency_key`s) and
   two concurrent applies (which roxyd's per-target apply lock, RFC-B §4, would
@@ -225,7 +317,7 @@ New mutations:
   first one's install is still running, which is a legitimate concurrent
   operation rather than a repeated click (RFC-D2 §4b). Instance *allocation*
   is serialized separately and more coarsely, per `(component, host)`
-  (RFC-D2 §4d). **`removeService` is in the rule, not just the
+  (RFC-D2 §4f). **`removeService` is in the rule, not just the
   two install mutations**: a `remove` and an `update` dispatched close together
   otherwise reach roxyd concurrently and interleave into a half-removed,
   half-updated module with an owed `Deregister` against an identity the update
@@ -234,29 +326,42 @@ New mutations:
   process-memory guard would not survive a REView restart — review rejects or
   joins an existing non-terminal attempt for the pair before writing a new one
   (RFC-D1 §4d provides the index), and the resolver surfaces that as a typed
-  rejection. **Explicit two-step, in this order:** the
-  resolver
-  (1) calls **`register(service_name = "<target>", host, mode)`** — the
-  component's **plain keyword**, never a composed `<target>-<host>` string:
-  the registrar derives `registration_id` + SAN from the parts
-  `(service_name, host, instance)` (RFC-C §5, RFC-F §5.5), so review sends no
-  composed name and there is no caller value to disagree with. The
-  module-enrollment `DeliveryMode` is the **`RemoteBootstrap`** variant (RFC-C
-  §5; bootroot-remote enrollment via the on-host agent, RFC-B §5). `register`
-  takes the **`instance`** — `Some(1)` for a module in v1, `None` for a
-  core component or for `onboardHost`'s `roxyd` (RFC-A §4) — and mints the
-  bootroot identity, returning the `BootstrapMaterial` (review derives the
-  `spec` + `idempotency_key` internally, D2 §4d). The registrar refuses a
-  `Register` whose `instance` presence contradicts the component's
-  multiplicity (`ServiceInstanceMismatch`, RFC-C §5). Then (2) calls
-  **`deploy(host, target, instance, selector, Some(material), onFailure)`** —
-  with the same `instance` — to stream +
-  apply. A first install is **never** `deploy(..., None, ...)`; if a `None`
-  first-install ever reaches roxyd, roxyd **fail-closes with
-  `MissingBootstrapMaterial`** (RFC-C §4), so a resolver that skipped `register`
-  cannot silently install a module without a bootroot identity. **Failure
-  compensation:** because `register` mints an identity **before** `deploy`
-  applies, a first install is **not terminal until `deploy` completes** —
+  rejection.
+  **[DECISION] A first install is ONE call, not a resolver-sequenced pair.**
+  An earlier revision had the resolver call `register(..., instance)` and then
+  `deploy(..., instance, ...)`. That **cannot be implemented once review
+  allocates**: `register` needs the instance to derive the identity, and the
+  `cleanup_state` must be armed before the mint (D2 §4d) — but the number is
+  produced by the very call that was supposed to come second. The sequence is
+  circular, and no ordering of two resolver calls fixes it.
+  So **`PackageDeployer::install` owns the whole first-install
+  orchestration**, and the resolver makes a single call. Inside it, review:
+  1. computes the **install-intent digest** over the submitted request
+     (RFC-D1 §4d) and looks the **`requestKey`** up: a row whose digest
+     matches **returns that attempt** and allocates nothing, while one whose
+     digest differs is refused with **`RequestKeyReused`**, non-retryable;
+  2. allocates the **instance, the ports and the `operation_attempt`** in
+     **one transaction** (RFC-D1 §4g, §4g-bis);
+  3. **arms the owed teardown** in that attempt's `cleanup_state` — before
+     the mint, so a mint that succeeds and an apply that dies still leave a
+     discharged obligation (D2 §4d);
+  4. **mints** — the registrar derives `registration_id` + SAN from the parts
+     `(service_name, host, instance)` (RFC-C §5, RFC-F §5.5), so review sends
+     the component's **plain keyword** and never a composed `<target>-<host>`
+     string; the module `DeliveryMode` is **`RemoteBootstrap`**; and the
+     registrar refuses a `Register` whose `instance` presence contradicts the
+     component's multiplicity (`ServiceInstanceMismatch`, RFC-C §5);
+  5. **streams and applies** the package with the minted material.
+  Keeping the mint inside `install` is what lets steps 2 and 3 precede it
+  without the resolver holding a half-allocated state it cannot clean up. The
+  resolver's job shrinks to authorization, shape validation and passing the
+  `requestKey` through. A first install is **never** an `update`; if a
+  first-install request ever reaches roxyd carrying no material, roxyd
+  **fail-closes with `MissingBootstrapMaterial`** (RFC-C §4), so an `install`
+  whose internal mint was skipped cannot silently place a module without a
+  bootroot identity. **Failure
+  compensation:** because the mint happens **before** the apply, a first
+  install is **not terminal until the apply completes** —
   review arms the `operation_attempt` `cleanup_state` with an owed `Deregister`
   of the same parts `(service_name, host, instance)` — from which the
   registrar re-derives the identity to tear down — **before** the mint (D2
@@ -284,7 +389,7 @@ New mutations:
 - **`updateService(host, target, instance, buildSelector, onFailure)`** —
   update the named instance to a
   selected build (install=update); the identity already exists, so it calls
-  **`deploy(host, target, instance, selector, None, onFailure)`** — **no**
+  **`update(host, target, instance, selector, onFailure)`** — **no**
   `register` (a stray `Some` on an existing identity is ignored, RFC-C §4).
   The `instance` is the number the UI read from the row it acted on (RFC-E §4),
   not typed by the operator; the resolver rejects one that does not exist.
@@ -397,11 +502,20 @@ New mutations:
   record** the source of truth for exactly that question, RFC-E §6 shows a
   pending onboarding's expiry, and RFC-E §10 polls phase transitions — none of
   which is reachable today. So add:
-  - **`operationAttempt(id)`** — `action`, `phase`, `outcome`,
+  - **`operationAttempt(id)`** — **`id` is the `operation_attempt`'s
+    `idempotencyKey`, which for an install is the client's own `requestKey`**
+    (D1 §4d), so a client whose install response was **lost** can still ask
+    what became of it with the key it minted. That is the point of accepting
+    an id rather than a server-issued handle: the caller need not have
+    received a reply. It returns
+    `action`, `phase`, `outcome`,
     `resolvedVersion`, `resolvedCommit`, `startedAt`, `expiresAt`, and
     **`cleanupOwed`** with a human-readable reason when compensation is still
-    owed (D2 §4d). `cleanupOwed` is what makes a blocked re-install or
-    re-onboard legible instead of a mysterious rejection.
+    owed (D2 §4d). `cleanupOwed` is what makes a blocked **update, remove or
+    re-onboard** legible instead of a mysterious rejection. An **install** is
+    never among them — it allocates a fresh number and so a different triple
+    (D2 §4d) — and writing "re-install" here would restate a component-wide
+    block that no longer exists.
   - the **latest attempt per `(host, target, instance)` inline** on the same
     read path as
     the fields above — **not** a separate history query. Keying on
@@ -410,6 +524,19 @@ New mutations:
     matches the
     inline-fields decision (RFC-E §8) and keeps a future fleet view
     frontend-only; a full attempt history is post-v1.
+  - **`inFlightInstalls(host, target)`** — the **non-terminal `Install`
+    attempts** for that pair, each with its `id`, `instance` and `startedAt`.
+    An install still in flight has **no** service row yet (D2 §4d), so there
+    is nothing for the inline field above to hang off, and
+    `operationAttempt(id)` answers only for an id the caller already holds.
+    Without this query the only handle on a running install is the one the
+    submitting **tab** kept, so a second browser — or the same one once its
+    `sessionStorage` is gone — renders a bare `NotInstalled` card and invites
+    an install the `requestKey` **cannot** dedupe, because that second click
+    would carry a different one (RFC-E §4). It is keyed on the **pair, not
+    the triple**, because no caller knows the instance number before the
+    install succeeds, and it returns a **list**: two installs of one module
+    on one host may legitimately run at once (D2 §4b).
   - **the five mutations return the operation id** (`idempotencyKey`), so the
     UI can poll a specific operation rather than guessing which one it started.
   (An operator-facing **force-discharge** of an owed compensation is
@@ -511,7 +638,52 @@ New mutations:
   not interpret the generation. The action is audited (RFC-E §9).
 - **Regenerate the SDL** after the type/mutation changes.
 
+### 5d. Bind addresses on the install surface
+
+- **[DECISION] A recommendation query.** For a `(host, target)` — **no
+  `instance`**, because the instance it recommends for is the one the
+  following install will allocate — it returns the addresses review would
+  choose for the next instance, each with its key, transport and value, plus
+  which the operator may edit. **It holds nothing.**
+- **[DECISION] The install mutation carries the addresses** as an optional
+  list of `{ listenerKey, addr }`. Absent means "no listening addresses to
+  set", which is every component the catalog does not list. A **list**, not a
+  map, **all the way to the trait boundary**: the GraphQL input is ordered and
+  a duplicate key must stay visible to review's validator rather than being
+  silently collapsed. review refuses a duplicate (RFC-D2 §4f) and can only
+  refuse what reaches it, so `PackageDeployer::install` takes
+  `Vec<BindAddrInput>` and review folds it to a map after validating.
+- **[DECISION] A stale recommendation is a typed conflict, never a silent
+  re-pick — and WHICH conflict depends on who took the port.** If another
+  instance of this product took it, `PortAllocationConflict` names the key and
+  the **holder**. If anything else on the host took it, `HostPortOccupied`
+  names the key, transport and port and **no holder**, because there is none
+  to name: occupancy is identity-free by design (RFC-D2 §4f). The surface
+  carries **both shapes** rather than one with an optional holder, so a screen
+  cannot be written that expects a holder it will not get.
+- **[DECISION] `HostOccupancyUnavailable` travels this surface too**, so the
+  UI can name the host it could not reach and offer a retry rather than
+  rendering an empty form.
+- **[DECISION] review-web selects nothing and validates nothing beyond
+  shape.** It checks that the list is well-formed and passes it through. Every
+  decision that needs the catalog, the host's occupancy or the allocation rows
+  is review's, and duplicating any of it here would put two answers in the
+  product for one question.
+
 ## 6. Acceptance criteria
+
+**Bind addresses (§5d).** The recommendation query is **pass-through** — a
+test asserts the resolver calls `recommend_bind_addrs` once and returns what
+came back, unchanged. **That it holds nothing is review's assertion, not
+this repository's**: an allocation row is review-database's and no test here
+can look at one. A stale recommendation surfaces as a typed
+conflict in **both** shapes, with a holder and without, and the schema exposes
+them as distinct types. `HostOccupancyUnavailable` names the host. The install
+mutation passes `bind_addrs` through **unchanged** — a test asserts the value
+reaching `PackageDeployer::install` is byte-for-byte what the resolver received,
+since any normalisation here would be a second answer to a question review owns.
+A duplicate key in the input list **reaches** review rather than being collapsed
+by the resolver.
 
 - **`ROLLBACK` is refused where it cannot be honored.** A test asserts a
   mutation carrying `onFailure = ROLLBACK` against a host whose capability set
@@ -535,28 +707,48 @@ New mutations:
   `updateService(target="roxyd"|"review"|"aice-web-next")` is **rejected**
   (cannot reach a core package-id through the weaker module guard); `bootroot`
   is rejected everywhere.
-- **First-install failure leaves no orphan identity:** on a first install where
-  `register` **succeeds** but `deploy` **errors** (fails / times out / is
-  cancelled), the compensation armed before the mint is discharged
-  (D2 §4d), so the minted identity — derived by the registrar from the parts,
-  not a review-composed name — is torn down — a
-  test drives `register ok + deploy error` and asserts the identity is
-  deregistered, not left orphaned. **The compensation runs `remove` before
-  `deregister`:** a second test drives `register ok + deploy TIMES OUT while
-  the install actually succeeded on the host` and asserts the module is torn
-  down (unit stopped, artifacts removed) **and then** deregistered — never a
-  running module stripped of its identity.
-- **Instances are addressed, not allocated:** every mutation carries the
-  `instance` (`Some(1)` for a module, `None` for a core component);
-  `updateService` / `removeService` reject a value that does not exist; a
-  core component rejects any `instance`; and single-flight is keyed
-  `(host, target, instance)`, which — because v1 does not allocate — is
-  fully determined by the request, so a test asserts a **double-submitted**
-  `installService` is coalesced without any client-supplied key. A test
-  asserts a second `installService` for a `(component, host)` that already
-  has a row is **rejected** with a typed error. Read types return **one
-  entry per instance**, each carrying its number, so the shape does not
-  change when v2 allows more than one.
+- **The resolver calls `install` exactly once, and propagates what comes
+  back.** With the mint, the allocation and the compensation all inside
+  `install` (§5a), this repository can no longer observe a mint-then-apply
+  ordering, so it no longer asserts one: **those tests move to review's own
+  RFC**, which owns the orchestration. What is testable here is the boundary —
+  a test asserts `installService` invokes `install` **once**, passes the
+  `bindAddrs` list and the `requestKey` through unchanged, and surfaces the
+  returned operation id on success and the typed error on failure, including
+  `RequestKeyReused`, without reinterpreting either.
+- **Instances are allocated on install and addressed on update/remove:**
+  `installService` carries **no** `instance` and a **`requestKey`**;
+  `updateService` / `removeService` carry the number and reject one that does
+  not exist; a core component rejects any `instance`. Single-flight is keyed
+  on the `requestKey` for `installService` and on `(host, target, instance)`
+  for the other two. **What this repository asserts is the GraphQL shape and
+  pass-through, nothing behind it**: a test asserts `installService` accepts no
+  `instance` and requires a `requestKey`; that `updateService` /
+  `removeService` require an `instance` and a core component's schema admits
+  none; and that both the arguments and any typed error come back through
+  unchanged. **Whether a given `instance` exists, how single-flight derives its
+  key, coalescing, distinct numbers for distinct keys, and the
+  next-number-versus-refusal outcomes are review's ledger and allocator,
+  asserted in RFC-D2** — this layer passes the key through and
+  never sees a number, since `install` returns an operation id. Read types
+  return **one
+  entry per instance**, each carrying its number — the shape that made
+  allowing several instances an extension rather than a rewrite.
+- **`operationAttempt` answers for a `requestKey` no response ever carried.**
+  A test calls it with the key an `installService` was given, without using
+  any value the mutation returned, and asserts the attempt comes back — the
+  assertion that fails if the resolver keys on a server-issued handle instead.
+  A key with no row yet comes back **not found**, which RFC-E §4 treats as
+  *indeterminate* rather than as "never started"; that reading is the
+  client's, asserted there.
+- **An in-flight install is visible to a client that did not start it.**
+  A test seeds a non-terminal `Install` attempt for a `(host, target)` with
+  **no** service row and asserts `inFlightInstalls` returns it; that several
+  concurrent ones all come back; and that each drops out as it reaches a
+  terminal outcome. It is asserted **here** rather than in RFC-D2 because
+  read resolvers hold the store directly (`src/graphql.rs:410`), so this
+  repository can seed the rows and call the resolver. What it still cannot
+  observe is review writing that row before the apply, which stays RFC-D2's.
 - Each mutation is an immediate action returning success/failure (no draft
   state); `buildSelector` accepts `version` **xor** `commit` (both/neither
   rejected) and is passed through the trait as `BuildSelector`, with **review
@@ -588,6 +780,17 @@ New mutations:
 
 ## 7. Issue decomposition (AgentCoop — aicers/review-web)
 
+- **Bind addresses on the install surface** (§5d) — `install` carries
+  `bind_addrs: Option<Vec<BindAddrInput>>` passed through unchanged;
+  `recommend_bind_addrs` and `BindAddrProposal` (`listener_key`, `transport`,
+  `addr` — and **no** `editable` flag, §4); the SDL for both; and the
+  two distinct conflict types surfaced separately so a screen cannot expect a
+  holder it will not get.
+- **`installService` becomes an allocating mutation** (§5a) — it carries a
+  client-supplied `requestKey`, single-flight keys on that rather than on
+  `(host, target, instance)`, and a missing or malformed key is refused
+  rather than defaulted. The other two mutations keep the triple.
+
 Self-contained issues; dependency order within this repo:
 
 1. **`PackageDeployer` trait definition** (§4) — the trait + associated
@@ -596,10 +799,30 @@ Self-contained issues; dependency order within this repo:
    **`DeployOutcome` [`Applied` | `Accepted`]**) in
    `backend.rs`. **Land first** — it is the compile precedent for review
    D2 §4c.
-2. **Read-type extension** (§5b) — inline `installedVersion` /
-   `installedCommit` / `lifecycle` / `updateAvailable` + agent version on the
-   node/agent/external-service + core-component read path; SDL regen. Depends
-   on D1's types.
+2. **Read-type extension AND the operation read surface** (§5b) — inline
+   `installedVersion` / `installedCommit` / `lifecycle` / `updateAvailable` +
+   agent version on the node/agent/external-service + core-component read
+   path; **and the operation surface the install flow depends on**:
+   `operationAttempt(id)` for polling a submitted install — **answerable by
+   the client's own `requestKey`**, since that is the install's
+   `idempotencyKey`, so a lost response stays recoverable — the **inline latest
+   attempt per instance** that each card renders, and **`cleanupOwed`** so a
+   card can show that teardown is still owed on an attempt that has already
+   terminated, **and `inFlightInstalls(host, target)`** — the query that makes
+   a running install visible to a client that did not start it, which nothing
+   else reaches because it has no service row yet.
+   (**`CleanupPending` is a mutation error, not a read field**,
+   and belongs to issue 3.)
+   **The inline latest attempt uses RFC-D1 §4d's three-step lookup and does
+   not reimplement it** — non-terminal, then the single cleanup-owed row, then
+   the latest pointer. Deriving "latest" from any key ordering is the
+   specific mistake this item must not make, because it is right until two
+   attempts share a nanosecond.
+   SDL regen for all of it, and acceptance in **all three** branches: a triple
+   whose newest work is a running attempt reports that one; a triple with no
+   running attempt but an undischarged teardown reports **that** attempt, with
+   `cleanupOwed` set; and a triple whose rows are all fully discharged reports
+   the pointed-at one. Depends on D1's types and on its lookup.
 2b. **`rollback-supervisor` capability gate** (§5a) — reject
    `onFailure = ROLLBACK` at the mutation boundary when the target host's
    capability set lacks the tag, with a typed error rather than coercion to
@@ -609,7 +832,15 @@ Self-contained issues; dependency order within this repo:
 3. **Immediate-action mutations** (§5a) — the five mutations + `buildSelector`
    / `onFailure` inputs, wired to `PackageDeployer`, **each with the full
    `control.rs` auth chain** (RoleGuard + `check_hostname_access` for module
-   mutations; `SystemAdministrator` for `updateCoreComponent`/`onboardHost`)
+   mutations; `SystemAdministrator` for `updateCoreComponent`/`onboardHost`).
+   **This item owns `CleanupPending { host, target, instance, operation_id }`
+   on the mutation surface** — the error-union entry, its SDL, and a
+   pass-through test asserting `updateService` / `removeService` surface it
+   unchanged when review refuses a triple whose teardown is outstanding
+   (RFC-D2 §4d). It is a **mutation error, not a read field**: a client that
+   read `cleanupOwed` a moment earlier can still lose the race, so the mutation
+   must carry it too, and the `operation_id` is what lets the UI point at the
+   cleanup rather than say "try again later".
    **and the target→package-class binding** (module mutations reject non-module
    targets; `updateCoreComponent` rejects non-core), so the guard tier cannot
    be bypassed by target choice; SDL regen. Depends on 1.
