@@ -499,8 +499,11 @@ async fn update_db(
         .external_services
         .retain(|service| service.draft.is_some());
 
-    let old = node.clone().try_into()?;
-    let new = update.try_into()?;
+    let mut old = node.clone().try_into()?;
+    let mut new = update.try_into()?;
+    let (stored, _, _) = map.get_by_id(i)?.ok_or("no such node")?;
+    super::crud::merge_installation_state(&stored, &mut old);
+    super::crud::merge_installation_state(&stored, &mut new);
     Ok(map.update(i, &old, &new)?)
 }
 
@@ -3426,6 +3429,10 @@ mod tests {
             status: AgentStatus::Enabled,
             config: config.map(|c| c.to_string().try_into().expect("valid toml")),
             draft: config.map(|c| c.to_string().try_into().expect("valid toml")),
+            installed_version: None,
+            installed_commit: None,
+            lifecycle: review_database::Lifecycle::NotInstalled,
+            bound_addrs: vec![],
         }
     }
 

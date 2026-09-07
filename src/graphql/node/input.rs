@@ -63,6 +63,10 @@ impl From<AgentInput> for review_database::Agent {
             // cannot introduce malformed stored configuration.
             config: input.config.and_then(|config| config.try_into().ok()),
             draft: input.draft.and_then(|draft| draft.try_into().ok()),
+            installed_version: None,
+            installed_commit: None,
+            lifecycle: review_database::Lifecycle::NotInstalled,
+            bound_addrs: vec![],
         }
     }
 }
@@ -101,6 +105,10 @@ impl From<ExternalServiceInput> for review_database::ExternalService {
             // validated at insert/update write boundaries, so a parse failure here
             // cannot introduce malformed stored configuration.
             draft: input.draft.and_then(|draft| draft.try_into().ok()),
+            installed_version: None,
+            installed_commit: None,
+            lifecycle: review_database::Lifecycle::NotInstalled,
+            bound_addrs: vec![],
         }
     }
 }
@@ -200,6 +208,10 @@ pub(super) fn create_draft_update(
                         status: new_agent.status.into(),
                         config,
                         draft,
+                        installed_version: None,
+                        installed_commit: None,
+                        lifecycle: review_database::Lifecycle::NotInstalled,
+                        bound_addrs: vec![],
                     })
                 })
                 .collect::<Result<Vec<_>, Error>>()
@@ -229,6 +241,10 @@ pub(super) fn create_draft_update(
                         kind: new_external_service.kind.into(),
                         status: new_external_service.status.into(),
                         draft,
+                        installed_version: None,
+                        installed_commit: None,
+                        lifecycle: review_database::Lifecycle::NotInstalled,
+                        bound_addrs: vec![],
                     })
                 })
                 .collect::<Result<Vec<_>, async_graphql::Error>>()
