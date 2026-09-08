@@ -133,6 +133,10 @@ impl NodeMutation {
                     status: new_agent.status.into(),
                     config: None,
                     draft,
+                    installed_version: None,
+                    installed_commit: None,
+                    lifecycle: review_database::Lifecycle::NotInstalled,
+                    bound_addrs: vec![],
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -156,6 +160,10 @@ impl NodeMutation {
                     kind: new_external_service.kind.into(),
                     status: new_external_service.status.into(),
                     draft,
+                    installed_version: None,
+                    installed_commit: None,
+                    lifecycle: review_database::Lifecycle::NotInstalled,
+                    bound_addrs: vec![],
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -239,11 +247,51 @@ impl NodeMutation {
         let store = crate::graphql::get_store(ctx)?;
         let mut map = store.node_map();
 
-        let new = super::input::create_draft_update(&old, new)?;
-        let old = old.try_into()?;
+        let mut new = super::input::create_draft_update(&old, new)?;
+        let mut old = old.try_into()?;
+        let (stored, _, _) = map.get_by_id(i)?.ok_or("no such node")?;
+        merge_installation_state(&stored, &mut old);
+        merge_installation_state(&stored, &mut new);
         map.update(i, &old, &new)?;
         info_with_username!(ctx, "Node {:?} has been modified", old.name);
         Ok(id)
+    }
+}
+
+pub(super) fn merge_installation_state(
+    stored: &review_database::Node,
+    update: &mut review_database::NodeUpdate,
+) {
+    for agent in &mut update.agents {
+        if let Some(stored_agent) = stored.agents.iter().find(|stored| stored.key == agent.key) {
+            agent.installed_version = stored_agent.installed_version.clone();
+            agent.installed_commit = stored_agent.installed_commit.clone();
+            agent.lifecycle = stored_agent.lifecycle;
+            agent.bound_addrs.clone_from(&stored_agent.bound_addrs);
+        } else {
+            agent.installed_version = None;
+            agent.installed_commit = None;
+            agent.lifecycle = review_database::Lifecycle::NotInstalled;
+            agent.bound_addrs.clear();
+        }
+    }
+
+    for service in &mut update.external_services {
+        if let Some(stored_service) = stored
+            .external_services
+            .iter()
+            .find(|stored| stored.key == service.key)
+        {
+            service.installed_version = stored_service.installed_version.clone();
+            service.installed_commit = stored_service.installed_commit.clone();
+            service.lifecycle = stored_service.lifecycle;
+            service.bound_addrs.clone_from(&stored_service.bound_addrs);
+        } else {
+            service.installed_version = None;
+            service.installed_commit = None;
+            service.lifecycle = review_database::Lifecycle::NotInstalled;
+            service.bound_addrs.clear();
+        }
     }
 }
 
@@ -342,6 +390,10 @@ mod tests {
                     status: database::AgentStatus::Enabled,
                     config: None,
                     draft: None,
+                    installed_version: None,
+                    installed_commit: None,
+                    lifecycle: database::Lifecycle::NotInstalled,
+                    bound_addrs: vec![],
                 },
                 database::Agent {
                     node_id: u32::MAX,
@@ -350,6 +402,10 @@ mod tests {
                     status: database::AgentStatus::Enabled,
                     config: None,
                     draft: None,
+                    installed_version: None,
+                    installed_commit: None,
+                    lifecycle: database::Lifecycle::NotInstalled,
+                    bound_addrs: vec![],
                 },
                 database::Agent {
                     node_id: u32::MAX,
@@ -358,6 +414,10 @@ mod tests {
                     status: database::AgentStatus::Enabled,
                     config: None,
                     draft: None,
+                    installed_version: None,
+                    installed_commit: None,
+                    lifecycle: database::Lifecycle::NotInstalled,
+                    bound_addrs: vec![],
                 },
             ],
             external_services: vec![],
@@ -689,6 +749,415 @@ mod tests {
             .execute_as_system_admin(r"{nodeList{totalCount}}")
             .await;
         assert_eq!(res.data.to_string(), r#"{nodeList: {totalCount: "0"}}"#);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn node_installation_state_defaults_and_is_preserved_by_draft_updates() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node"
+                        customerId: 0
+                        description: "description"
+                        hostname: "node.example.com"
+                        agents: [{ key: "agent", kind: SENSOR, status: ENABLED, draft: "value = 'old'" }]
+                        externalServices: [{
+                            key: "service", kind: DATA_STORE, status: ENABLED, draft: "value = 'old'"
+                        }]
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        let (installed_agent, installed_service) = {
+            let store = schema.store();
+            let (node, _, _) = store
+                .node_map()
+                .get_by_id(0)
+                .expect("read inserted node")
+                .expect("inserted node exists");
+            let agent = node.agents.first().expect("one agent was inserted");
+            assert_eq!(agent.installed_version, None);
+            assert_eq!(agent.installed_commit, None);
+            assert_eq!(agent.lifecycle, review_database::Lifecycle::NotInstalled);
+            assert!(agent.bound_addrs.is_empty());
+            let service = node
+                .external_services
+                .first()
+                .expect("one external service was inserted");
+            assert_eq!(service.installed_version, None);
+            assert_eq!(service.installed_commit, None);
+            assert_eq!(service.lifecycle, review_database::Lifecycle::NotInstalled);
+            assert!(service.bound_addrs.is_empty());
+
+            let mut installed_agent = agent.clone();
+            installed_agent.installed_version = Some("v1".to_string());
+            installed_agent.installed_commit = Some("abcdef".to_string());
+            installed_agent.lifecycle = review_database::Lifecycle::Running;
+            installed_agent.bound_addrs = vec![("api".to_string(), "127.0.0.1:1000".to_string())];
+            store
+                .agents_map()
+                .update(agent, &installed_agent)
+                .expect("set agent installation state");
+
+            let mut installed_service = service.clone();
+            installed_service.installed_version = Some("v2".to_string());
+            installed_service.installed_commit = Some("fedcba".to_string());
+            installed_service.lifecycle = review_database::Lifecycle::Stopped;
+            installed_service.bound_addrs = vec![("rpc".to_string(), "127.0.0.1:2000".to_string())];
+            store
+                .external_service_map()
+                .update(service, &installed_service)
+                .expect("set external service installation state");
+            (installed_agent, installed_service)
+        };
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateNodeDraft(
+                        id: "0"
+                        old: {
+                            name: "node"
+                            nameDraft: "node"
+                            profile: null
+                            profileDraft: {
+                                customerId: 0, description: "description", hostname: "node.example.com"
+                            }
+                            agents: [{
+                                key: "agent", kind: SENSOR, status: ENABLED,
+                                config: null, draft: "value = 'old'"
+                            }]
+                            externalServices: [{
+                                key: "service", kind: DATA_STORE, status: ENABLED, draft: "value = 'old'"
+                            }]
+                        }
+                        new: {
+                            nameDraft: "node"
+                            profileDraft: {
+                                customerId: 0, description: "description", hostname: "node.example.com"
+                            }
+                            agents: [{
+                                key: "agent", kind: SENSOR, status: ENABLED, draft: "value = 'new'"
+                            }]
+                            externalServices: [{
+                                key: "service", kind: DATA_STORE, status: ENABLED, draft: "value = 'new'"
+                            }]
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
+
+        {
+            let store = schema.store();
+            let (updated, _, _) = store
+                .node_map()
+                .get_by_id(0)
+                .expect("read updated node")
+                .expect("updated node exists");
+            let updated_agent = updated.agents.first().expect("agent remains installed");
+            assert_eq!(
+                updated_agent.installed_version,
+                installed_agent.installed_version
+            );
+            assert_eq!(
+                updated_agent.installed_commit,
+                installed_agent.installed_commit
+            );
+            assert_eq!(updated_agent.lifecycle, installed_agent.lifecycle);
+            assert_eq!(updated_agent.bound_addrs, installed_agent.bound_addrs);
+            let updated_service = updated
+                .external_services
+                .first()
+                .expect("external service remains installed");
+            assert_eq!(
+                updated_service.installed_version,
+                installed_service.installed_version
+            );
+            assert_eq!(
+                updated_service.installed_commit,
+                installed_service.installed_commit
+            );
+            assert_eq!(updated_service.lifecycle, installed_service.lifecycle);
+            assert_eq!(updated_service.bound_addrs, installed_service.bound_addrs);
+        }
+
+        // An entry added alongside stored ones takes the defaults while the
+        // stored entries keep what the host reported. The added entry is
+        // listed FIRST on purpose: matching stored state by position rather
+        // than by key would then hand the stored agent's installed build to
+        // the entry that was just added, which is what these assertions catch.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateNodeDraft(
+                        id: "0"
+                        old: {
+                            name: "node"
+                            nameDraft: "node"
+                            profile: null
+                            profileDraft: {
+                                customerId: 0, description: "description", hostname: "node.example.com"
+                            }
+                            agents: [{
+                                key: "agent", kind: SENSOR, status: ENABLED,
+                                config: null, draft: "value = 'new'"
+                            }]
+                            externalServices: [{
+                                key: "service", kind: DATA_STORE, status: ENABLED, draft: "value = 'new'"
+                            }]
+                        }
+                        new: {
+                            nameDraft: "node"
+                            profileDraft: {
+                                customerId: 0, description: "description", hostname: "node.example.com"
+                            }
+                            agents: [
+                                { key: "added", kind: SENSOR, status: ENABLED, draft: "value = 'added'" },
+                                { key: "agent", kind: SENSOR, status: ENABLED, draft: "value = 'new'" }
+                            ]
+                            externalServices: [
+                                {
+                                    key: "added", kind: DATA_STORE, status: ENABLED,
+                                    draft: "value = 'added'"
+                                },
+                                {
+                                    key: "service", kind: DATA_STORE, status: ENABLED,
+                                    draft: "value = 'new'"
+                                }
+                            ]
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
+
+        {
+            let store = schema.store();
+            let (mixed, _, _) = store
+                .node_map()
+                .get_by_id(0)
+                .expect("read node carrying both a stored and an added entry")
+                .expect("node exists");
+
+            let kept_agent = mixed
+                .agents
+                .iter()
+                .find(|agent| agent.key == "agent")
+                .expect("the installed agent survives the addition");
+            assert_eq!(
+                kept_agent.installed_version,
+                installed_agent.installed_version
+            );
+            assert_eq!(
+                kept_agent.installed_commit,
+                installed_agent.installed_commit
+            );
+            assert_eq!(kept_agent.lifecycle, installed_agent.lifecycle);
+            assert_eq!(kept_agent.bound_addrs, installed_agent.bound_addrs);
+
+            let added_agent = mixed
+                .agents
+                .iter()
+                .find(|agent| agent.key == "added")
+                .expect("the added agent is stored");
+            assert_eq!(added_agent.installed_version, None);
+            assert_eq!(added_agent.installed_commit, None);
+            assert_eq!(
+                added_agent.lifecycle,
+                review_database::Lifecycle::NotInstalled
+            );
+            assert!(added_agent.bound_addrs.is_empty());
+
+            let kept_service = mixed
+                .external_services
+                .iter()
+                .find(|service| service.key == "service")
+                .expect("the installed external service survives the addition");
+            assert_eq!(
+                kept_service.installed_version,
+                installed_service.installed_version
+            );
+            assert_eq!(
+                kept_service.installed_commit,
+                installed_service.installed_commit
+            );
+            assert_eq!(kept_service.lifecycle, installed_service.lifecycle);
+            assert_eq!(kept_service.bound_addrs, installed_service.bound_addrs);
+
+            let added_service = mixed
+                .external_services
+                .iter()
+                .find(|service| service.key == "added")
+                .expect("the added external service is stored");
+            assert_eq!(added_service.installed_version, None);
+            assert_eq!(added_service.installed_commit, None);
+            assert_eq!(
+                added_service.lifecycle,
+                review_database::Lifecycle::NotInstalled
+            );
+            assert!(added_service.bound_addrs.is_empty());
+        }
+
+        // Removing an entry leaves the installation state of the entries that
+        // remain untouched.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateNodeDraft(
+                        id: "0"
+                        old: {
+                            name: "node"
+                            nameDraft: "node"
+                            profile: null
+                            profileDraft: {
+                                customerId: 0, description: "description", hostname: "node.example.com"
+                            }
+                            agents: [
+                                {
+                                    key: "added", kind: SENSOR, status: ENABLED,
+                                    config: null, draft: "value = 'added'"
+                                },
+                                {
+                                    key: "agent", kind: SENSOR, status: ENABLED,
+                                    config: null, draft: "value = 'new'"
+                                }
+                            ]
+                            externalServices: [
+                                {
+                                    key: "added", kind: DATA_STORE, status: ENABLED,
+                                    draft: "value = 'added'"
+                                },
+                                {
+                                    key: "service", kind: DATA_STORE, status: ENABLED,
+                                    draft: "value = 'new'"
+                                }
+                            ]
+                        }
+                        new: {
+                            nameDraft: "node"
+                            profileDraft: {
+                                customerId: 0, description: "description", hostname: "node.example.com"
+                            }
+                            agents: [{
+                                key: "agent", kind: SENSOR, status: ENABLED, draft: "value = 'new'"
+                            }]
+                            externalServices: [{
+                                key: "service", kind: DATA_STORE, status: ENABLED, draft: "value = 'new'"
+                            }]
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
+
+        {
+            let store = schema.store();
+            let (reduced, _, _) = store
+                .node_map()
+                .get_by_id(0)
+                .expect("read node after the removal")
+                .expect("node exists");
+
+            assert_eq!(reduced.agents.len(), 1);
+            assert_eq!(reduced.external_services.len(), 1);
+
+            let remaining_agent = reduced.agents.first().expect("one agent remains");
+            assert_eq!(remaining_agent.key, "agent");
+            assert_eq!(
+                remaining_agent.installed_version,
+                installed_agent.installed_version
+            );
+            assert_eq!(
+                remaining_agent.installed_commit,
+                installed_agent.installed_commit
+            );
+            assert_eq!(remaining_agent.lifecycle, installed_agent.lifecycle);
+            assert_eq!(remaining_agent.bound_addrs, installed_agent.bound_addrs);
+
+            let remaining_service = reduced
+                .external_services
+                .first()
+                .expect("one external service remains");
+            assert_eq!(remaining_service.key, "service");
+            assert_eq!(
+                remaining_service.installed_version,
+                installed_service.installed_version
+            );
+            assert_eq!(
+                remaining_service.installed_commit,
+                installed_service.installed_commit
+            );
+            assert_eq!(remaining_service.lifecycle, installed_service.lifecycle);
+            assert_eq!(remaining_service.bound_addrs, installed_service.bound_addrs);
+        }
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNodeDraft(
+                        id: "0"
+                        node: {
+                            name: "node"
+                            nameDraft: "node"
+                            profile: null
+                            profileDraft: {
+                                customerId: 0, description: "description", hostname: "node.example.com"
+                            }
+                            agents: [{
+                                key: "agent", kind: SENSOR, status: ENABLED,
+                                config: null, draft: "value = 'new'"
+                            }]
+                            externalServices: [{
+                                key: "service", kind: DATA_STORE, status: ENABLED, draft: "value = 'new'"
+                            }]
+                        }
+                    ) { id }
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+
+        let store = schema.store();
+        let (applied, _, _) = store
+            .node_map()
+            .get_by_id(0)
+            .expect("read applied node")
+            .expect("applied node exists");
+        let applied_agent = applied.agents.first().expect("agent remains installed");
+        assert_eq!(
+            applied_agent.installed_version,
+            installed_agent.installed_version
+        );
+        assert_eq!(
+            applied_agent.installed_commit,
+            installed_agent.installed_commit
+        );
+        assert_eq!(applied_agent.lifecycle, installed_agent.lifecycle);
+        assert_eq!(applied_agent.bound_addrs, installed_agent.bound_addrs);
+        let applied_service = applied
+            .external_services
+            .first()
+            .expect("external service remains installed");
+        assert_eq!(
+            applied_service.installed_version,
+            installed_service.installed_version
+        );
+        assert_eq!(
+            applied_service.installed_commit,
+            installed_service.installed_commit
+        );
+        assert_eq!(applied_service.lifecycle, installed_service.lifecycle);
+        assert_eq!(applied_service.bound_addrs, installed_service.bound_addrs);
     }
 
     #[tokio::test]

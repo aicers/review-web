@@ -206,6 +206,10 @@ mod tests {
             status: AgentStatus::Enabled,
             config: config.and_then(|c| c.to_string().try_into().ok()),
             draft: draft.and_then(|d| d.to_string().try_into().ok()),
+            installed_version: None,
+            installed_commit: None,
+            lifecycle: review_database::Lifecycle::NotInstalled,
+            bound_addrs: vec![],
         }
     }
 
