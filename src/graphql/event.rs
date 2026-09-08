@@ -995,6 +995,10 @@ struct EventListFilterInput {
     user_ids: Option<Vec<String>>,
     user_names: Option<Vec<String>>,
     user_departments: Option<Vec<String>>,
+    /// Filters by two-letter country codes as stored in the database. `"ZZ"`
+    /// selects events whose lookup was attempted but returned no valid country;
+    /// `"XX"` selects events stored without a locator, when no lookup was
+    /// performed. Both placeholders are ordinary aggregation and filter values.
     countries: Option<Vec<String>>,
     categories: Option<Vec<Option<u8>>>,
     levels: Option<Vec<ThreatLevel>>,
@@ -1026,6 +1030,10 @@ struct EventStandardFilterInput {
     user_ids: Option<Vec<String>>,
     user_names: Option<Vec<String>>,
     user_departments: Option<Vec<String>>,
+    /// Filters by two-letter country codes as stored in the database. `"ZZ"`
+    /// selects events whose lookup was attempted but returned no valid country;
+    /// `"XX"` selects events stored without a locator, when no lookup was
+    /// performed. Both placeholders are ordinary aggregation and filter values.
     countries: Option<Vec<String>>,
     categories: Option<Vec<Option<u8>>>,
     levels: Option<Vec<ThreatLevel>>,
@@ -1089,7 +1097,7 @@ impl<'a> From<&'a database::event::TriageScore> for TriageScore<'a> {
 }
 
 fn country_code(code: &[u8; 2]) -> &str {
-    std::str::from_utf8(code).unwrap_or("XX")
+    std::str::from_utf8(code).unwrap_or("ZZ")
 }
 
 fn country_codes(codes: &[[u8; 2]]) -> Vec<&str> {
@@ -2596,14 +2604,14 @@ mod tests {
         assert_eq!(super::country_code(b"KR"), "KR");
         assert_eq!(super::country_code(b"ZZ"), "ZZ");
         assert_eq!(super::country_code(b"XX"), "XX");
-        assert_eq!(super::country_code(&[0xff, b'X']), "XX");
+        assert_eq!(super::country_code(&[0xff, b'X']), "ZZ");
     }
 
     #[test]
     fn country_codes_preserves_order_and_cardinality() {
         let codes = [*b"US", *b"ZZ", [0xff, 0xfe], *b"JP"];
 
-        assert_eq!(super::country_codes(&codes), vec!["US", "ZZ", "XX", "JP"]);
+        assert_eq!(super::country_codes(&codes), vec!["US", "ZZ", "ZZ", "JP"]);
     }
 
     #[tokio::test]
@@ -2655,7 +2663,7 @@ mod tests {
 
         assert_eq!(
             res.data.to_string(),
-            r#"{event: {origCountry: "ZZ", respCountry: "ZZ"}}"#
+            r#"{event: {origCountry: "XX", respCountry: "XX"}}"#
         );
     }
 
@@ -2715,9 +2723,9 @@ mod tests {
             data.contains(&format!("lastEventStartTime: \"{}\"", jiff_timestamp(ts))),
             "data: {data}"
         );
-        assert!(data.contains(r#"origCountry: "ZZ""#), "data: {data}");
+        assert!(data.contains(r#"origCountry: "XX""#), "data: {data}");
         assert!(
-            data.contains(r#"respCountries: ["ZZ", "ZZ"]"#),
+            data.contains(r#"respCountries: ["XX", "XX"]"#),
             "data: {data}"
         );
     }
@@ -2771,9 +2779,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn country_filter_without_locator_matches_no_events() {
+    async fn country_filter_with_no_locator_selects_xx() {
         // The store is created without a locator, so the event is written with
-        // the pending country code and no endpoint code is ever resolved.
+        // the unresolved country code.
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
@@ -2791,15 +2799,13 @@ mod tests {
         .unwrap();
         drop(store);
 
-        // A country filter no longer errors when no IP location database is
-        // configured; it simply matches nothing, including the placeholders.
         let res = schema
             .execute_as_system_admin(
                 r#"{
                     unfiltered: eventList(filter: {}) { totalCount }
+                    byUnresolved: eventList(filter: { countries: ["XX"] }) { totalCount }
+                    byUnknown: eventList(filter: { countries: ["ZZ"] }) { totalCount }
                     byCountry: eventList(filter: { countries: ["US"] }) { totalCount }
-                    byPending: eventList(filter: { countries: ["ZZ"] }) { totalCount }
-                    byInvalid: eventList(filter: { countries: ["XX"] }) { totalCount }
                 }"#,
             )
             .await;
@@ -2807,8 +2813,139 @@ mod tests {
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
         assert_eq!(
             res.data.to_string(),
-            r#"{unfiltered: {totalCount: "1"}, byCountry: {totalCount: "0"}, byPending: {totalCount: "0"}, byInvalid: {totalCount: "0"}}"#
+            r#"{unfiltered: {totalCount: "1"}, byUnresolved: {totalCount: "1"}, byUnknown: {totalCount: "0"}, byCountry: {totalCount: "0"}}"#
         );
+    }
+
+    #[tokio::test]
+    async fn failed_country_lookup_stores_zz_and_filter_selects_it() {
+        let (_locator_dir, locator) = event_country_locator();
+        let schema = TestSchema::new_with_event_country_locator(locator).await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let key = db
+            .put(&event_message_at(
+                ts,
+                u32::from(Ipv4Addr::new(4, 0, 0, 1)),
+                u32::from(Ipv4Addr::new(5, 0, 0, 1)),
+            ))
+            .unwrap();
+        drop(store);
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"{{
+                    event(id: "{key}") {{
+                        ... on DnsCovertChannel {{ origCountry respCountry }}
+                    }}
+                    byUnknown: eventList(filter: {{ countries: ["ZZ"] }}) {{ totalCount }}
+                    byUnresolved: eventList(filter: {{ countries: ["XX"] }}) {{ totalCount }}
+                    byCountry: eventList(filter: {{ countries: ["US"] }}) {{ totalCount }}
+                }}"#
+            ))
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{event: {origCountry: "ZZ", respCountry: "ZZ"}, byUnknown: {totalCount: "1"}, byUnresolved: {totalCount: "0"}, byCountry: {totalCount: "0"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn country_aggregation_placeholder_buckets_round_trip_to_filters() {
+        let unresolved_schema = TestSchema::new().await;
+        let (_locator_dir, locator) = event_country_locator();
+        let unknown_schema = TestSchema::new_with_event_country_locator(locator).await;
+
+        for (schema, code, address) in [
+            (unresolved_schema, "XX", Ipv4Addr::new(1, 0, 0, 1)),
+            (unknown_schema, "ZZ", Ipv4Addr::new(4, 0, 0, 1)),
+        ] {
+            let store = schema.store();
+            let db = store.events();
+            let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_local_timezone(Utc)
+                .unwrap();
+            for offset in 0..2 {
+                db.put(&event_message_at(
+                    ts + chrono::Duration::seconds(offset),
+                    u32::from(address),
+                    u32::from(address),
+                ))
+                .unwrap();
+            }
+            drop(store);
+
+            let aggregation = schema
+                .execute_as_system_admin(
+                    r"{
+                        eventCountsByCountry(filter: {}, first: 100) {
+                            values
+                            counts
+                        }
+                    }",
+                )
+                .await;
+            assert!(
+                aggregation.errors.is_empty(),
+                "unexpected errors for {code}: {:?}",
+                aggregation.errors
+            );
+            let aggregation = aggregation.data.into_json().unwrap();
+            let buckets = aggregation
+                .get("eventCountsByCountry")
+                .expect("country aggregation must be present");
+            let values = buckets
+                .get("values")
+                .and_then(serde_json::Value::as_array)
+                .expect("country aggregation values must be an array");
+            let counts = buckets
+                .get("counts")
+                .and_then(serde_json::Value::as_array)
+                .expect("country aggregation counts must be an array");
+            let index = values
+                .iter()
+                .position(|value| value.as_str() == Some(code))
+                .expect("placeholder aggregation bucket must be present");
+            let bucket_code = values
+                .get(index)
+                .and_then(serde_json::Value::as_str)
+                .expect("placeholder aggregation bucket must be a string");
+            let count = counts
+                .get(index)
+                .and_then(serde_json::Value::as_u64)
+                .expect("placeholder aggregation count must be an integer");
+
+            let filtered = schema
+                .execute_as_system_admin(&format!(
+                    r#"{{ eventList(filter: {{ countries: ["{bucket_code}"] }}) {{ totalCount }} }}"#
+                ))
+                .await;
+            assert!(
+                filtered.errors.is_empty(),
+                "unexpected errors for {code}: {:?}",
+                filtered.errors
+            );
+            let filtered = filtered.data.into_json().unwrap();
+            let expected_count = count.to_string();
+            assert_eq!(
+                filtered
+                    .get("eventList")
+                    .and_then(|event_list| event_list.get("totalCount"))
+                    .and_then(serde_json::Value::as_str),
+                Some(expected_count.as_str())
+            );
+        }
     }
 
     #[tokio::test]

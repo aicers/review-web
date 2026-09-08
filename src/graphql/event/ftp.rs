@@ -98,9 +98,11 @@ impl FtpBruteForce {
     }
 
     /// Originator Country
-    /// The stored two-letter country code of the originator IP address. `"XX"` if the
-    /// country is unknown or invalid, and `"ZZ"` if country-code
-    /// resolution was not performed or is pending.
+    /// The stored two-letter country code of the originator IP address.
+    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
+    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
+    /// performed because the store was opened without an IP location database.
+    /// Both placeholders are ordinary aggregation and filter values.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -125,9 +127,11 @@ impl FtpBruteForce {
     }
 
     /// Responder Country
-    /// The stored two-letter country code of the responder IP address. `"XX"` if the
-    /// country is unknown or invalid, and `"ZZ"` if country-code
-    /// resolution was not performed or is pending.
+    /// The stored two-letter country code of the responder IP address.
+    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
+    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
+    /// performed because the store was opened without an IP location database.
+    /// Both placeholders are ordinary aggregation and filter values.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }
@@ -235,9 +239,11 @@ impl FtpPlainText {
     }
 
     /// Originator Country
-    /// The stored two-letter country code of the originator IP address. `"XX"` if the
-    /// country is unknown or invalid, and `"ZZ"` if country-code
-    /// resolution was not performed or is pending.
+    /// The stored two-letter country code of the originator IP address.
+    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
+    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
+    /// performed because the store was opened without an IP location database.
+    /// Both placeholders are ordinary aggregation and filter values.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -267,9 +273,11 @@ impl FtpPlainText {
     }
 
     /// Responder Country
-    /// The stored two-letter country code of the responder IP address. `"XX"` if the
-    /// country is unknown or invalid, and `"ZZ"` if country-code
-    /// resolution was not performed or is pending.
+    /// The stored two-letter country code of the responder IP address.
+    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
+    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
+    /// performed because the store was opened without an IP location database.
+    /// Both placeholders are ordinary aggregation and filter values.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }
@@ -409,9 +417,11 @@ impl BlocklistFtp {
     }
 
     /// Originator Country
-    /// The stored two-letter country code of the originator IP address. `"XX"` if the
-    /// country is unknown or invalid, and `"ZZ"` if country-code
-    /// resolution was not performed or is pending.
+    /// The stored two-letter country code of the originator IP address.
+    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
+    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
+    /// performed because the store was opened without an IP location database.
+    /// Both placeholders are ordinary aggregation and filter values.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -441,9 +451,11 @@ impl BlocklistFtp {
     }
 
     /// Responder Country
-    /// The stored two-letter country code of the responder IP address. `"XX"` if the
-    /// country is unknown or invalid, and `"ZZ"` if country-code
-    /// resolution was not performed or is pending.
+    /// The stored two-letter country code of the responder IP address.
+    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
+    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
+    /// performed because the store was opened without an IP location database.
+    /// Both placeholders are ordinary aggregation and filter values.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }

@@ -36,8 +36,11 @@ impl EventGroupQuery {
         Ok(EventCounts { values, counts })
     }
 
-    /// The number of events for each country, with timestamp on or after
-    /// `start` and before `end`.
+    /// The number of events for each stored country code, with timestamp on or
+    /// after `start` and before `end`. The `"ZZ"` bucket contains events whose
+    /// lookup was attempted but returned no valid country; the `"XX"` bucket
+    /// contains events stored without a locator, when no lookup was performed.
+    /// Both placeholders are ordinary aggregation and filter values.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))

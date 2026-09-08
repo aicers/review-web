@@ -98,8 +98,9 @@ pub struct ServerConfig {
 /// `ip_locator` is used only by the IP location queries (`ipLocation` and
 /// `ipLocationList`). Country codes on events come from the locator passed to
 /// `Store::new` when the store was created, so supplying one here while
-/// opening the store without one leaves event country filters matching
-/// nothing.
+/// opening the store without one does not resolve event country codes during
+/// ingestion. Such events are stored with the `"XX"` placeholder and are
+/// reachable through a `countries: ["XX"]` filter.
 ///
 /// # Panics
 ///
