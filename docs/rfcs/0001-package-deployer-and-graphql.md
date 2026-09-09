@@ -257,9 +257,19 @@ model (**no `desiredVersion`**):
       async fn package_status(
           &self, host: &str, target: &str, instance: Option<u32>,
       ) -> Result<PackageState, anyhow::Error>;
+      // `None` is "the host reports no installed build for this instance",
+      // and it is the only way to say so: `PackageState` (RFC-C §5) carries
+      // `version` and `commit` NON-optionally beside a `Lifecycle` that
+      // includes `NotInstalled`, so the wire cannot express the absence in
+      // those two fields. Without the `Option` the impl must either invent
+      // an identity out of whatever the agent sent or fail a read that did
+      // not fail. An absent build is NEVER an empty or placeholder
+      // `version`/`commit` — RFC-D2 §4a rejects an empty store-key segment
+      // as `UnsafeBuildIdentifier`, so a placeholder is a value the rest of
+      // the system is required to refuse.
       async fn read_version(
           &self, host: &str, target: &str, instance: Option<u32>,
-      ) -> Result<BuildId, anyhow::Error>;
+      ) -> Result<Option<BuildId>, anyhow::Error>;
       // register mints a bootroot identity for ONE instance. The instance is
       // the number review allocated for a module, None for a core component
       // (RFC-D1 §4g). The registrar derives the
@@ -270,11 +280,12 @@ model (**no `desiredVersion`**):
       // parameters: the caller holds neither the signed package nor the
       // ledger -- review's impl resolves both and puts them, with the
       // instance, on the node.enroll Register wire (RFC-C §5).
-      // `DeliveryMode` MIRRORS RFC-C §5's FULL DELIVERY-MODE SET. This
-      // document fixes only that the module install path passes
-      // `RemoteBootstrap` (§4, step 4); the rest of the set is RFC-C's and
-      // is reproduced from it rather than invented here, so a mode this
-      // repository cannot name is a mode the wire can still carry.
+      // `DeliveryMode` IS `review-protocol`'s TYPE, not a copy of it, and
+      // it has exactly two variants (§9). This repository takes a direct
+      // `review-protocol` dependency at the revision `review-database`
+      // already pins, so the graph holds one copy and there is nothing to
+      // drift. This document fixes only that the module install path passes
+      // `RemoteBootstrap` (§4, step 4); the rest of the set is RFC-C's.
       async fn register(
           &self, service_name: &str, host: &str, instance: Option<u32>,
           mode: DeliveryMode,
@@ -641,7 +652,7 @@ New mutations:
 
 ### 5c. Signed-package upload — streaming axum route
 
-- Add a **streaming binary axum route** (e.g. `POST /api/module/upload`),
+- Add a **streaming binary axum route**, `POST /api/package/upload` (§9),
   reusing the `src/archive.rs` Router/route + auth wiring (`:172`) but **not**
   its buffering. It **must consume the request body as a stream** — take
   `axum::body::Body` and drive `Body::into_data_stream()` /
@@ -1013,12 +1024,16 @@ contradictions the same way.
 
 ## 9. Resolved decisions
 
-Thirteen questions this document left open were put to the operator during
-the RFC → Issues run over it and answered. They are recorded here so a later
-run reads them rather than asking again, and so a reader who wants to change
-one knows what they would be contradicting. Where a decision corrected the
-text, the correction is in the section it belongs to and this entry says
-where.
+Questions this document left open were put to the operator during the
+RFC → Issues runs over it and answered. They are recorded here so a later run
+reads them rather than asking again, and so a reader who wants to change one
+knows what they would be contradicting. Where a decision corrected the text,
+the correction is in the section it belongs to and this entry says where.
+
+Entries 1–13 come from the first run. Entries 14–19 come from the run that
+filed the current issue tree, which re-asked what this section did not yet
+answer; where the two disagree, the later entry says so and names what it
+supersedes.
 
 1. **Every operation returns the operation id.** §5b requires "the five
    mutations return the operation id (`idempotencyKey`)" and §5a says this
@@ -1075,9 +1090,13 @@ where.
    that constant rather than write the string so the two cannot drift. It is
    read **at mutation time, not cached**: the set is live state that stops
    being true when the supervisor stops answering. Corrected in §4.
-8. **`DeliveryMode` mirrors RFC-C §5's full delivery-mode set.** This
-   document fixes only that the module install path passes
-   `RemoteBootstrap`. Corrected in §4.
+8. **`DeliveryMode` is `review-protocol`'s type and has exactly two
+   variants**, `LocalFile` and `RemoteBootstrap`. An earlier revision called
+   it a mirror of RFC-C §5's set, on the premise that this repository has no
+   `review-protocol` dependency and needs none; decision 14 falsifies that
+   premise, so this is a reuse rather than a reproduction. This document
+   fixes only that the module install path passes `RemoteBootstrap`.
+   Corrected in §4.
 9. **`operationAttempt(id)` and `inFlightInstalls(host, target)` authorize
    differently, because one names its host and the other does not.**
    `inFlightInstalls` takes the pair, so §6's rule applies literally:
@@ -1115,6 +1134,21 @@ where.
     container image, the trust route a key and a revocation document. Their
     failure modes differ too: unbounded upload bytes fill `pending/` on
     REView's data volume, while the trust route reaches no directory at all.
+    **Each default is chosen BY MEASUREMENT, and the measurement and its date
+    go in the issue that sets it** — a number with recorded provenance can be
+    revisited by whoever finds it too small, one with none gets doubled by the
+    first person it inconveniences. The upload route's is the largest artifact
+    the release pipeline actually produces, a core component's container image
+    included; the trust route's is the largest generation the trust manager
+    legitimately accepts, and its cap bounds work and memory rather than a
+    directory that fills. **Enforcement is while streaming**, counting bytes as
+    chunks are forwarded and aborting the moment the limit is crossed, before
+    those bytes reach the receiver or the trust manager — a cap checked at the
+    end is a cap already exceeded. **The refusal is a typed error** the route
+    maps to a response, never a connection reset, which a client cannot
+    distinguish from a network failure and will retry. So the acceptance
+    criterion is that each default is a measured value with its provenance
+    recorded, not that it equals any particular figure.
 13. **The package-store receiver and the trust manager are two traits
     declared here and implemented by review** — the construction this
     repository uses for `AgentManager` and §4 uses for `PackageDeployer`.
@@ -1125,3 +1159,73 @@ where.
     trust generation goes to the trust manager, never the store. Each
     route's issue declares the trait that route needs, so §7's dependency
     lines stand unchanged.
+
+14. **The wire types and the capability constant come from
+    `review-protocol`, by a direct dependency.** `FailurePolicy`,
+    `DeliveryMode`, `PackageState` and `BootstrapMaterial` — and
+    `types::capability::ROLLBACK_SUPERVISOR` — are that crate's, reused
+    rather than redefined here. This supersedes the premise decision 8 and
+    decision 7 rested on, that this repository has no `review-protocol`
+    dependency and reaches only a revision predating the constant. Verified
+    instead: `review-database@8a29d66` pins `review-protocol@32ed9b0`, and
+    that revision carries all five symbols. A direct dependency **at the
+    revision `review-database` already pins** therefore unifies to one copy
+    in the graph — so the objection that two copies of a type are not
+    interchangeable does not arise, and neither does the drift a local
+    mirror would invite. Corrected in §4.
+15. **The read path distinguishes two absences, and `lifecycle` is the
+    discriminator.** An entry that is package-managed with nothing installed
+    reports `lifecycle = NOT_INSTALLED` and both identity fields null. An
+    entry whose kind maps to **no package-id at all** —
+    `ExternalServiceKind::TiContainer`, the case decision 5 made the accessor
+    optional for — reports `lifecycle` **null**, both identity fields null,
+    and `updateAvailable` false. Collapsing the two would offer an install
+    action for something no package can install, and would compare against a
+    `latest_build` for a package-id that does not exist. **No eighth
+    `Lifecycle` variant**: §5b requires the GraphQL enum to mirror RFC-D1's
+    stored enum one-for-one, and an extra variant would have no stored
+    counterpart. Neither absence is ever a placeholder `version`/`commit`.
+16. **A failed `latest_build` lookup reports `updateAvailable: false` beside
+    a companion `updateCheckFailed: Boolean!`.** `Err` is what an unreachable
+    review or a failed store-index read looks like from the read path, and
+    `updateAvailable` is non-null, so the third state needs somewhere to go.
+    Not a GraphQL error: `Node::agents` renders as `[Agent!]!`, so non-null
+    propagation would turn one unreachable package index into a blanked
+    listing, taking every row that read correctly with it. Not an
+    `updateStatus` enum beside the boolean either — that would give one
+    question two answers on the same type and let clients branch on either.
+    The companion is keyed per package-id and follows the existing
+    per-request memoisation, `updateAvailable` stays exactly as settled, and
+    a test pins that `updateCheckFailed = true` implies `updateAvailable =
+    false` so the UI cannot render it as "up to date".
+17. **Typed failures are result-payload unions per operation on the GraphQL
+    surface, and a `thiserror` enum where the trait must be matched on.**
+    §5d requires the two bind-address conflicts to be distinct types "so a
+    screen cannot be written that expects a holder it will not get", and §7's
+    issue 3 already calls `CleanupPending` an error-union entry; an error
+    extension carries no type a screen can be checked against. Because the
+    resolver picks the union member by matching on the error kind, the trait
+    cannot hand it an opaque `anyhow::Error` for those methods: a
+    `DeployError` enum covers the failures the UI renders as a state of the
+    form in front of the operator, and `anyhow::Error` stays everywhere else.
+    Matching on a message string is not a substitute — an upstream rewording
+    would silently reclassify a failure.
+18. **The upload route is `POST /api/package/upload`.** The path names the
+    thing it carries: a **package**, core package-ids included. §5c's own
+    tier rule is about exactly that, and RFC-E §7 requires the display-name
+    map to cover core package-ids **because** a core `.pkg` traverses this
+    route. `module` in the path would mislead at the boundary the design
+    guards. Nothing downstream had pinned the earlier example string —
+    RFC-E names only its own BFF handler and refers to this route by
+    reference. Corrected in §5c.
+19. **The trust-set generation's `epoch` is `u64` on the trust-manager
+    seam.** Read off the format's own document rather than chosen: bootler
+    RFC 0004 §5 calls it a "monotonic `epoch` counter inside the signed
+    material", allocated by release-ops from "a single monotonic sequence per
+    signing trust-set", and "never `0`". So it is a counter, not an instant —
+    a timestamp type would print a date where the operator expects a
+    generation number — and unsigned, since the allocator produces no
+    negative value and a signed type would be wider than the invariant. An
+    opaque string would discard an ordering the format defines and the
+    strictly-greater check depends on. This fixes only what crosses the
+    seam; §5c stands, and the route still does not interpret the generation.
