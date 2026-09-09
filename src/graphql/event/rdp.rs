@@ -36,11 +36,10 @@ impl RdpBruteForce {
     }
 
     /// Originator Country
-    /// The stored two-letter country code of the originator IP address.
-    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
-    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
-    /// performed because the store was opened without an IP location database.
-    /// Both placeholders are ordinary aggregation and filter values.
+    ///
+    /// The two-letter country code recorded for the originator IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -69,11 +68,11 @@ impl RdpBruteForce {
     }
 
     /// Responder Country List
-    /// The stored two-letter country codes of the responder IP addresses.
-    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
-    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
-    /// performed because the store was opened without an IP location database.
-    /// Both placeholders are ordinary aggregation and filter values.
+    ///
+    /// The two-letter country codes recorded for the responder IP addresses,
+    /// one per address in the same order. Each code is `"ZZ"` if the country
+    /// could not be determined for that address, or `"XX"` if no country
+    /// information was recorded for this event.
     async fn resp_countries(&self) -> Vec<&str> {
         country_codes(&self.inner.resp_country_codes)
     }
@@ -162,11 +161,10 @@ impl BlocklistRdp {
     }
 
     /// Originator Country
-    /// The stored two-letter country code of the originator IP address.
-    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
-    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
-    /// performed because the store was opened without an IP location database.
-    /// Both placeholders are ordinary aggregation and filter values.
+    ///
+    /// The two-letter country code recorded for the originator IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -196,11 +194,10 @@ impl BlocklistRdp {
     }
 
     /// Responder Country
-    /// The stored two-letter country code of the responder IP address.
-    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
-    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
-    /// performed because the store was opened without an IP location database.
-    /// Both placeholders are ordinary aggregation and filter values.
+    ///
+    /// The two-letter country code recorded for the responder IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }

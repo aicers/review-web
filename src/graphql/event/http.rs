@@ -36,11 +36,10 @@ impl HttpThreat {
     }
 
     /// Originator Country
-    /// The stored two-letter country code of the originator IP address.
-    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
-    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
-    /// performed because the store was opened without an IP location database.
-    /// Both placeholders are ordinary aggregation and filter values.
+    ///
+    /// The two-letter country code recorded for the originator IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -70,11 +69,10 @@ impl HttpThreat {
     }
 
     /// Responder Country
-    /// The stored two-letter country code of the responder IP address.
-    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
-    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
-    /// performed because the store was opened without an IP location database.
-    /// Both placeholders are ordinary aggregation and filter values.
+    ///
+    /// The two-letter country code recorded for the responder IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }
@@ -344,11 +342,10 @@ impl RepeatedHttpSessions {
     }
 
     /// Originator Country
-    /// The stored two-letter country code of the originator IP address.
-    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
-    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
-    /// performed because the store was opened without an IP location database.
-    /// Both placeholders are ordinary aggregation and filter values.
+    ///
+    /// The two-letter country code recorded for the originator IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -393,11 +390,10 @@ impl RepeatedHttpSessions {
     }
 
     /// Responder Country
-    /// The stored two-letter country code of the responder IP address.
-    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
-    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
-    /// performed because the store was opened without an IP location database.
-    /// Both placeholders are ordinary aggregation and filter values.
+    ///
+    /// The two-letter country code recorded for the responder IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }
@@ -479,11 +475,10 @@ impl TorConnection {
     }
 
     /// Originator Country
-    /// The stored two-letter country code of the originator IP address.
-    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
-    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
-    /// performed because the store was opened without an IP location database.
-    /// Both placeholders are ordinary aggregation and filter values.
+    ///
+    /// The two-letter country code recorded for the originator IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -513,11 +508,10 @@ impl TorConnection {
     }
 
     /// Responder Country
-    /// The stored two-letter country code of the responder IP address.
-    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
-    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
-    /// performed because the store was opened without an IP location database.
-    /// Both placeholders are ordinary aggregation and filter values.
+    ///
+    /// The two-letter country code recorded for the responder IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }
@@ -741,11 +735,10 @@ impl DomainGenerationAlgorithm {
     }
 
     /// Originator Country
-    /// The stored two-letter country code of the originator IP address.
-    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
-    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
-    /// performed because the store was opened without an IP location database.
-    /// Both placeholders are ordinary aggregation and filter values.
+    ///
+    /// The two-letter country code recorded for the originator IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -775,11 +768,10 @@ impl DomainGenerationAlgorithm {
     }
 
     /// Responder Country
-    /// The stored two-letter country code of the responder IP address.
-    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
-    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
-    /// performed because the store was opened without an IP location database.
-    /// Both placeholders are ordinary aggregation and filter values.
+    ///
+    /// The two-letter country code recorded for the responder IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }
@@ -1003,11 +995,10 @@ impl NonBrowser {
     }
 
     /// Originator Country
-    /// The stored two-letter country code of the originator IP address.
-    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
-    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
-    /// performed because the store was opened without an IP location database.
-    /// Both placeholders are ordinary aggregation and filter values.
+    ///
+    /// The two-letter country code recorded for the originator IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -1037,11 +1028,10 @@ impl NonBrowser {
     }
 
     /// Responder Country
-    /// The stored two-letter country code of the responder IP address.
-    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
-    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
-    /// performed because the store was opened without an IP location database.
-    /// Both placeholders are ordinary aggregation and filter values.
+    ///
+    /// The two-letter country code recorded for the responder IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }
@@ -1265,11 +1255,10 @@ impl BlocklistHttp {
     }
 
     /// Originator Country
-    /// The stored two-letter country code of the originator IP address.
-    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
-    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
-    /// performed because the store was opened without an IP location database.
-    /// Both placeholders are ordinary aggregation and filter values.
+    ///
+    /// The two-letter country code recorded for the originator IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -1299,11 +1288,10 @@ impl BlocklistHttp {
     }
 
     /// Responder Country
-    /// The stored two-letter country code of the responder IP address.
-    /// `"ZZ"` indicates a lookup was attempted but no valid country code was
-    /// returned (Unknown or Invalid Territory). `"XX"` indicates no lookup was
-    /// performed because the store was opened without an IP location database.
-    /// Both placeholders are ordinary aggregation and filter values.
+    ///
+    /// The two-letter country code recorded for the responder IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }

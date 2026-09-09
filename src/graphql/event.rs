@@ -995,10 +995,9 @@ struct EventListFilterInput {
     user_ids: Option<Vec<String>>,
     user_names: Option<Vec<String>>,
     user_departments: Option<Vec<String>>,
-    /// Filters by two-letter country codes as stored in the database. `"ZZ"`
-    /// selects events whose lookup was attempted but returned no valid country;
-    /// `"XX"` selects events stored without a locator, when no lookup was
-    /// performed. Both placeholders are ordinary aggregation and filter values.
+    /// Filters by the two-letter country codes recorded on events. `"ZZ"`
+    /// selects events whose country could not be determined, and `"XX"`
+    /// selects events recorded without country information.
     countries: Option<Vec<String>>,
     categories: Option<Vec<Option<u8>>>,
     levels: Option<Vec<ThreatLevel>>,
@@ -1030,10 +1029,9 @@ struct EventStandardFilterInput {
     user_ids: Option<Vec<String>>,
     user_names: Option<Vec<String>>,
     user_departments: Option<Vec<String>>,
-    /// Filters by two-letter country codes as stored in the database. `"ZZ"`
-    /// selects events whose lookup was attempted but returned no valid country;
-    /// `"XX"` selects events stored without a locator, when no lookup was
-    /// performed. Both placeholders are ordinary aggregation and filter values.
+    /// Filters by the two-letter country codes recorded on events. `"ZZ"`
+    /// selects events whose country could not be determined, and `"XX"`
+    /// selects events recorded without country information.
     countries: Option<Vec<String>>,
     categories: Option<Vec<Option<u8>>>,
     levels: Option<Vec<ThreatLevel>>,
