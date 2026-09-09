@@ -160,12 +160,33 @@ model (**no `desiredVersion`**):
           // is why it is one durable value and not a second key beside the
           // idempotency key.
           request_key: &str,
-      ) -> Result<DeployOutcome, anyhow::Error>;
+      ) -> Result<(DeployOutcome, OperationId), anyhow::Error>;
+      // EVERY OPERATION THE FIVE MUTATIONS INVOKE RETURNS THE OPERATION ID
+      // alongside whatever else it returns. §5b requires it — "the five
+      // mutations return the operation id (`idempotencyKey`)" — and §5a
+      // states this layer "passes the key through and never sees a number,
+      // since `install` returns an operation id". The id is PAIRED with the
+      // disposition, never folded into `DeployOutcome`: that enum answers
+      // "did it finish, or was it accepted for later", which is a
+      // disposition, and an identity is not one. Folding it in would make
+      // every disposition this trait ever grows carry an id.
+      //
+      // THE RESOLVER DOES NOT READ THE ID BACK FROM THE LEDGER after the
+      // call. `inFlightInstalls` returns a LIST because two installs of one
+      // module on one host may legitimately run at once (§5b), so a
+      // read-back cannot identify the operation this resolver just started,
+      // and it would make the mutation path inspect state §5a keeps behind
+      // the boundary.
+      //
+      // For `install` the value is one the caller already holds — the
+      // `request_key` it minted (§5b) — so the pairing is trivially
+      // satisfiable there, and a test asserts that key ROUND-TRIPS
+      // UNCHANGED rather than merely that some id came back.
       async fn update(
           &self, host: &str, target: &str, instance: Option<u32>,
           selector: BuildSelector,
           on_failure: FailurePolicy,
-      ) -> Result<DeployOutcome, anyhow::Error>;
+      ) -> Result<(DeployOutcome, OperationId), anyhow::Error>;
       // One submitted address, as it arrives from the GraphQL input list.
       // `listener_key` is not validated here; `addr` is a SocketAddr so a
       // syntactically invalid address fails at parse rather than reaching
@@ -201,9 +222,38 @@ model (**no `desiredVersion`**):
           transport: Transport,   // Tcp | Udp, from RFC-C §4
           addr: SocketAddr,
       }
+      // `remove` returns the id INSTEAD OF `()` — there is no disposition
+      // to pair it with, and a bare `Result<()>` is what left this operation
+      // with nothing for `operationAttempt(id)` to be asked about.
       async fn remove(
           &self, host: &str, target: &str, instance: Option<u32>,
-      ) -> Result<(), anyhow::Error>;
+      ) -> Result<OperationId, anyhow::Error>;
+      // The store's newest accepted build for one package, or None when the
+      // store holds none. `updateAvailable` (§3, §5b, §6) has no other
+      // source: `review-database` does not carry it, and a copy there would
+      // be correct only until the next upload and wrong precisely on the
+      // event the field exists to report — the upload route commits by
+      // updating `index.json`/`latest_build` (§5c).
+      //
+      // KEYED ON THE PACKAGE-ID ALONE. Package identity is host-agnostic
+      // (§3) and the store index is per component, so a method taking a host
+      // or an instance would have the list resolver asking the same question
+      // once per row for one answer. Ask once per package-id and reuse it
+      // across that package's entries.
+      //
+      // THE COMPARISON IS INEQUALITY OF IDENTITY, NOT ORDERING: installed
+      // `(version, commit)` != store `latest_build` (§3). §6's
+      // "same-version hotfix shows true" is only reachable that way — the
+      // version is equal there and the commit is not — and it is the only
+      // sound rule available, since `installed_version` is documented
+      // upstream as "an opaque display label, not required to be semver".
+      //
+      // NOTHING INSTALLED IS NOT AN AVAILABLE UPDATE: an entry at
+      // `NOT_INSTALLED` has no installed identity to compare, and its
+      // `updateAvailable` is false rather than true-because-different.
+      async fn latest_build(
+          &self, target: &str,
+      ) -> Result<Option<BuildId>, anyhow::Error>;
       async fn package_status(
           &self, host: &str, target: &str, instance: Option<u32>,
       ) -> Result<PackageState, anyhow::Error>;
@@ -220,6 +270,11 @@ model (**no `desiredVersion`**):
       // parameters: the caller holds neither the signed package nor the
       // ledger -- review's impl resolves both and puts them, with the
       // instance, on the node.enroll Register wire (RFC-C §5).
+      // `DeliveryMode` MIRRORS RFC-C §5's FULL DELIVERY-MODE SET. This
+      // document fixes only that the module install path passes
+      // `RemoteBootstrap` (§4, step 4); the rest of the set is RFC-C's and
+      // is reproduced from it rather than invented here, so a mode this
+      // repository cannot name is a mode the wire can still carry.
       async fn register(
           &self, service_name: &str, host: &str, instance: Option<u32>,
           mode: DeliveryMode,
@@ -231,6 +286,23 @@ model (**no `desiredVersion`**):
   ```
   Resolvers hold a `dyn PackageDeployer` the same way they hold the
   `dyn AgentManager` in the GraphQL context.
+- **Onboarding needs an operation, and it is not a package operation.**
+  `onboardHost` is one of the five mutations §5b says return an operation
+  id, but onboarding installs nothing, which is why no `PackageDeployer`
+  method represents it. Declare it on this repository's backend surface —
+  the construction this file already uses for `PackageDeployer` and
+  `AgentManager`, declared here and implemented by review — and have it
+  return an id the same way. A new host's onboarding is exactly the
+  long-running, host-scoped thing an operator starts and then has to watch,
+  and `operationAttempt(id)` is the surface that would otherwise have
+  nothing to say about it.
+- **The `rollback-supervisor` capability is read through `AgentManager`,
+  not through `PackageDeployer`.** §6 requires the three mutations to refuse
+  `onFailure = ROLLBACK` when the host does not advertise the capability,
+  and nothing exposes a host's capability set today. It belongs on
+  `AgentManager`: a capability set is a property of the agent's live
+  connection to review, which is what that trait already describes, and not
+  a property of a package being deployed.
 
 ## 5. GraphQL surface + upload route
 
@@ -468,6 +540,28 @@ New mutations:
   lookup free of entries no peer will ever match. A
   resolver that collapses to one entry per `AgentKind` would hide every
   instance after the first.
+- **Two `review-database` preconditions, named here as §7's issue 2 names
+  D1's types.** Neither exists at the revision this repository pins, and
+  this repository's half is surfacing them, not adding them.
+  - **The `instance` number goes on the record** — a field on `Agent` and
+    `ExternalService` (`aicers/review-database` #885), `Option<u32>` to
+    match `operation_attempt.instance`, written by review when it creates
+    the row on terminal success. **Not parsed out of `key`**: `key` is a
+    `String` with no documented format, so recovering a number from it
+    would make a contract out of a value that has none, and the failure is
+    silent — the day review mints keys differently every card shows a wrong
+    number rather than an error.
+  - **The kind-to-package-id accessor goes beside the enum** —
+    `AgentKind::package_id()` and `ExternalServiceKind::package_id()`
+    returning an optional package-id (`aicers/review-database` #886). The
+    mapping is **partial** (`ExternalServiceKind::TiContainer` deploys from
+    no package), and it lives upstream because a `match` in the crate that
+    owns the enum is checked by the compiler: a table here, keyed on a
+    foreign enum, would compile cleanly when a variant is added and fall
+    through to the same `None` the legitimate case uses.
+    `AgentKind::TimeSeriesGenerator` deploys from **`crusher`** — the
+    pairing `aicers/bootler` `core/src/product.rs` records when it names
+    that package `module (time-series)`.
 - Extend the agent / external-service / node GraphQL types **and** add a
   core-component listing type with: `installedVersion`, `installedCommit`,
   `lifecycle` (enum mirroring D1: `NOT_INSTALLED` / `INSTALLING` / `RUNNING` /
@@ -795,8 +889,10 @@ Self-contained issues; dependency order within this repo:
 
 1. **`PackageDeployer` trait definition** (§4) — the trait + associated
    types (`BuildSelector` [version XOR commit], `BootstrapMaterial`,
-   `FailurePolicy`, `PackageState`, `BuildId`, `DeliveryMode`,
-   **`DeployOutcome` [`Applied` | `Accepted`]**) in
+   `FailurePolicy`, `PackageState`, `BuildId`, `DeliveryMode` [RFC-C §5's
+   full set], **`DeployOutcome` [`Applied` | `Accepted`]**, and
+   **`OperationId`**, the id every operation returns paired with its
+   disposition) in
    `backend.rs`. **Land first** — it is the compile precedent for review
    D2 §4c.
 2. **Read-type extension AND the operation read surface** (§5b) — inline
@@ -914,3 +1010,118 @@ contradictions the same way.
   into review.
 - **No schema/type persistence** — that is review-database (D1).
 - **bootroot update** — rejected at the mutation boundary (installer-managed).
+
+## 9. Resolved decisions
+
+Thirteen questions this document left open were put to the operator during
+the RFC → Issues run over it and answered. They are recorded here so a later
+run reads them rather than asking again, and so a reader who wants to change
+one knows what they would be contradicting. Where a decision corrected the
+text, the correction is in the section it belongs to and this entry says
+where.
+
+1. **Every operation returns the operation id.** §5b requires "the five
+   mutations return the operation id (`idempotencyKey`)" and §5a says this
+   layer "passes the key through and never sees a number, since `install`
+   returns an operation id", but §4's trait returned `DeployOutcome` from
+   `install` and `update` and `()` from `remove`, so no operation returned
+   one. Resolved toward the requirement: the id is returned **paired** with
+   the existing return, never folded into `DeployOutcome` — that enum
+   answers "finished or accepted for later", which is a disposition, and an
+   identity is not one. The resolver does **not** read the id back from the
+   ledger: `inFlightInstalls` returns a list because two installs of one
+   module on one host may run at once, so a read-back cannot identify the
+   operation just started. Corrected in §4.
+2. **Onboarding gets an operation of its own.** `onboardHost` installs
+   nothing, so no `PackageDeployer` method represents it, yet §5b counts it
+   among the five. Declared on this repository's backend surface, returning
+   an id the same way — a new host's onboarding is exactly the long-running,
+   host-scoped thing `operationAttempt(id)` exists to report on. The
+   alternative, exempting it, would have required §5b to say four.
+   Corrected in §4.
+3. **`updateAvailable` reads a `latest_build` method on `PackageDeployer`.**
+   Only review owns the store index, and §5c shows the upload route
+   committing by updating `index.json`/`latest_build`, so a copy in
+   `review-database` would be wrong precisely on the event the field exists
+   to report. Keyed on the package-id alone, compared by identity
+   inequality rather than version ordering — §6's "same-version hotfix shows
+   true" is only reachable that way, and `installed_version` is documented
+   upstream as an opaque label not required to be semver. Corrected in §4.
+4. **The instance number goes on the record**, as a field on `Agent` and
+   `ExternalService` in `review-database` (#885), `Option<u32>` to match
+   `operation_attempt.instance`. Not parsed out of `key`, which has no
+   documented format: that would make a contract out of a value that has
+   none, and it fails silently. Not collapsed either — §5b forbids one entry
+   per kind in as many words. Recorded in §5b.
+5. **The kind-to-package-id accessor goes beside the enum**, in
+   `review-database`, returning an optional package-id (#886). The mapping
+   is partial — `ExternalServiceKind::TiContainer` deploys from no package —
+   and exhaustiveness is only available where the enum is: a `match` there
+   fails the build when a variant is added, while a table here, keyed on a
+   foreign enum, compiles and falls through to the same `None` the
+   legitimate case uses. Recorded in §5b.
+6. **`AgentKind::TimeSeriesGenerator` deploys from `crusher`.** Four
+   pairings are evidenced by code that predates this work; this one was not
+   evidenced anywhere. `aicers/bootler` `core/src/product.rs` carries the
+   package table that exists so "the strings do not drift across the
+   ecosystem", and its rows name each package's module role —
+   `piglet` sensor, `giganto` data-store, `hog` semi-supervised,
+   `reconverge` unsupervised, `crusher` time-series. Recorded in §5b.
+7. **The `rollback-supervisor` capability is read through `AgentManager`.**
+   A capability set is a property of the agent's live connection, which is
+   what that trait already abstracts; `PackageDeployer` is about deploying.
+   The tag needs no invention — `review-protocol` defines
+   `types::capability::ROLLBACK_SUPERVISOR`, and this repository should name
+   that constant rather than write the string so the two cannot drift. It is
+   read **at mutation time, not cached**: the set is live state that stops
+   being true when the supervisor stops answering. Corrected in §4.
+8. **`DeliveryMode` mirrors RFC-C §5's full delivery-mode set.** This
+   document fixes only that the module install path passes
+   `RemoteBootstrap`. Corrected in §4.
+9. **`operationAttempt(id)` and `inFlightInstalls(host, target)` authorize
+   differently, because one names its host and the other does not.**
+   `inFlightInstalls` takes the pair, so §6's rule applies literally:
+   `RoleGuard` and `customer_access::check_hostname_access` before any
+   backend call, and the target-class binding carried across so a
+   `SecurityAdministrator` cannot reach a core package-id by observation
+   where §6 stops them from reaching it by action. `operationAttempt(id)`
+   cannot authorize first — the id is a client-minted `requestKey` and the
+   host is discovered by reading the row — so the ledger read is the **only**
+   thing permitted before the check, it reads the attempt and nothing else,
+   and the check runs against what the row names rather than what the caller
+   said.
+10. **The core-component listing is a top-level query of its own**, guarded
+    `SystemAdministrator`, keyed `(component, host)` as `updateCoreComponent`
+    is and as `Store::core_component_map()` keys the registry. Not nested
+    under `node`: a core component is host-fixed infrastructure, not a child
+    of a node record, and hanging it there would inherit
+    `customer_access::load_accessible_node` — the wrong guard for a class §6
+    gives no customer scoping precisely because it is control-plane.
+11. **A `requestKey`'s validity is not defined here.** `review-database`
+    defines and enforces it in `src/tables/operation_attempt.rs`, and this
+    repository refuses exactly what the ledger would refuse, citing that
+    rule rather than restating it where the two can drift: a UUIDv4 in
+    canonical hyphenated form, 36 characters, hyphens at 8/13/18/23, version
+    nibble `4` and variant nibble `8`/`9`/`a`/`b`, **lowercase**. Lowercase
+    is part of the rule and not a nicety — the key is compared as the byte
+    string it is keyed by, so accepting uppercase would let one UUID arrive
+    as two request keys, each finding no row under the other and each
+    starting its own install.
+12. **Each ingress route carries its own body-size cap**, a setting on
+    `ServerConfig` with a shipped default, enforced while streaming. Not one
+    shared cap: §5c asks for a number "sized for the largest legitimate
+    package, not a guessed number", and the two routes differ by orders of
+    magnitude — the upload route carries a signed package that may be a
+    container image, the trust route a key and a revocation document. Their
+    failure modes differ too: unbounded upload bytes fill `pending/` on
+    REView's data volume, while the trust route reaches no directory at all.
+13. **The package-store receiver and the trust manager are two traits
+    declared here and implemented by review** — the construction this
+    repository uses for `AgentManager` and §4 uses for `PackageDeployer`.
+    `aicers/review` depends on `aicers/review-web`, so this repository can
+    never name review's types, and §7 already presumes the seam when it says
+    the upload route can be tested "against a stub receiver". **Two traits,
+    not one with two methods**: §5c makes the separation load-bearing — the
+    trust generation goes to the trust manager, never the store. Each
+    route's issue declares the trait that route needs, so §7's dependency
+    lines stand unchanged.
