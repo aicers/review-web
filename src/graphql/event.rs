@@ -1762,7 +1762,7 @@ fn earliest(start: Option<Timestamp>, after: Option<String>) -> Result<i128> {
     } else if let Some(after) = after {
         earliest_after(&after)?
     } else {
-        0
+        i128::MIN
     };
     Ok(earliest)
 }
@@ -1805,7 +1805,7 @@ fn earliest_after(after: &str) -> Result<i128> {
         .parse::<i128>()
         .map_err(|_| "invalid cursor `after`")?;
     if after == i128::MAX {
-        return Err("invalid cursor `after`".into());
+        return Ok(i128::MAX);
     }
     Ok(after + 1)
 }
@@ -1814,8 +1814,8 @@ fn latest_before(before: &str) -> Result<i128> {
     let before = before
         .parse::<i128>()
         .map_err(|_| "invalid cursor `before`")?;
-    if before == 0 {
-        return Err("invalid cursor `before`".into());
+    if before == i128::MIN {
+        return Ok(i128::MIN);
     }
     Ok(before - 1)
 }
@@ -2357,6 +2357,76 @@ mod tests {
         assert_eq!(
             super::latest(Some(positive), None).unwrap(),
             (1_i128 << 64) - 1
+        );
+    }
+
+    #[test]
+    fn event_cursor_bounds_cover_the_signed_key_range() {
+        assert_eq!(super::earliest(None, None).unwrap(), i128::MIN);
+        assert_eq!(super::earliest_after("-1").unwrap(), 0);
+        assert_eq!(
+            super::earliest_after(&i128::MAX.to_string()).unwrap(),
+            i128::MAX
+        );
+        assert_eq!(super::latest_before("1").unwrap(), 0);
+        assert_eq!(super::latest_before("0").unwrap(), -1);
+        assert_eq!(
+            super::latest_before(&i128::MIN.to_string()).unwrap(),
+            i128::MIN
+        );
+    }
+
+    #[tokio::test]
+    async fn unbounded_event_list_paginates_across_the_unix_epoch() {
+        let schema = TestSchema::new().await;
+        let before_epoch = Timestamp::from_nanosecond(-1).expect("valid timestamp");
+        let epoch = Timestamp::UNIX_EPOCH;
+        let after_epoch = Timestamp::from_nanosecond(1).expect("valid timestamp");
+        let store = schema.store();
+        let events = store.events();
+        for (timestamp, source, destination) in
+            [(before_epoch, 1, 2), (epoch, 3, 4), (after_epoch, 5, 6)]
+        {
+            events
+                .put(&event_message_at_timestamp(
+                    timestamp,
+                    source,
+                    destination,
+                    Some(EventCategory::CommandAndControl),
+                    "sensor1",
+                ))
+                .expect("event timestamp must be stored");
+        }
+        drop(store);
+
+        let output = schema
+            .execute_as_system_admin(&format!(
+                r#"{{
+                    all: eventList(filter: {{}}, first: 10) {{
+                        edges {{ cursor node {{ ... on DnsCovertChannel {{ time }} }} }}
+                    }}
+                    beforeEpoch: eventList(filter: {{}}, before: "0", first: 10) {{
+                        edges {{ cursor }}
+                    }}
+                    afterMaximum: eventList(
+                        filter: {{}}
+                        after: "{}"
+                        first: 10
+                    ) {{ edges {{ cursor }} }}
+                    beforeMinimum: eventList(
+                        filter: {{}}
+                        before: "{}"
+                        last: 10
+                    ) {{ edges {{ cursor }} }}
+                }}"#,
+                i128::MAX,
+                i128::MIN
+            ))
+            .await;
+        assert!(output.errors.is_empty(), "{:?}", output.errors);
+        assert_eq!(
+            output.data.to_string(),
+            r#"{all: {edges: [{cursor: "-18446744073709551616", node: {time: "1969-12-31T23:59:59.999999999Z"}}, {cursor: "0", node: {time: "1970-01-01T00:00:00Z"}}, {cursor: "18446744073709551616", node: {time: "1970-01-01T00:00:00.000000001Z"}}]}, beforeEpoch: {edges: [{cursor: "-18446744073709551616"}]}, afterMaximum: {edges: []}, beforeMinimum: {edges: []}}"#
         );
     }
 
