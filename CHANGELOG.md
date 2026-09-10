@@ -10,17 +10,20 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - Event GraphQL timestamps are now serialized with the RFC 3339 UTC `Z`
   suffix; equivalent inputs using the `+00:00` offset remain accepted.
-- Bumped `review-database` dependency to commit `bd30664`, which renames
+- Bumped `review-database` dependency. The new revision renames
   several fields used internally by this crate: `Agent.node` and
   `ExternalService.node` are now `node_id`, `TrafficFilter.agent` is now
   `host_fqdn`, and `BlocklistKerberos.client_name` / `service_name` are
   now `cname` / `sname`.
 - Event GraphQL `country` fields now return the country codes stored with the
   event record instead of resolving them at query time through the IP location
-  database.
+  database. `ZZ` means a lookup was attempted but returned no valid country,
+  while `XX` means no lookup was performed because the store was opened without
+  an IP location database.
 - Event country filters and country-based aggregations now use the country codes
   stored with each event, so they no longer require an IP location database at
-  query time.
+  query time. The `ZZ` and `XX` placeholders are ordinary filter values and
+  aggregation buckets.
 - Changed the public `serve` function to accept
   `Option<Arc<ip2location::DB>>` instead of `Option<ip2location::DB>`. This is a
   breaking API change for callers that initialize the server.

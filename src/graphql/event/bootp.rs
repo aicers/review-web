@@ -34,9 +34,10 @@ impl BlocklistBootp {
     }
 
     /// Originator Country
-    /// The stored two-letter country code of the originator IP address. `"XX"` if the
-    /// country is unknown or invalid, and `"ZZ"` if country-code
-    /// resolution was not performed or is pending.
+    ///
+    /// The two-letter country code recorded for the originator IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn orig_country(&self) -> &str {
         country_code(&self.inner.orig_country_code)
     }
@@ -66,9 +67,10 @@ impl BlocklistBootp {
     }
 
     /// Responder Country
-    /// The stored two-letter country code of the responder IP address. `"XX"` if the
-    /// country is unknown or invalid, and `"ZZ"` if country-code
-    /// resolution was not performed or is pending.
+    ///
+    /// The two-letter country code recorded for the responder IP address.
+    /// `"ZZ"` if the country could not be determined for the address, and
+    /// `"XX"` if no country information was recorded for this event.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
     }
