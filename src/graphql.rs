@@ -10,6 +10,7 @@ mod block_network;
 mod category;
 mod cert;
 mod cluster;
+mod core_component;
 pub mod customer;
 pub mod customer_access;
 mod data_source;
@@ -17,6 +18,7 @@ mod db_management;
 mod event;
 mod filter;
 pub(crate) mod indicator;
+mod install_state;
 mod ip_location;
 pub(crate) mod label_db;
 mod model;
@@ -125,7 +127,8 @@ where
     .data(package_deployer)
     .data(host_onboarder)
     .data(cert_manager)
-    .data(tls_reload_handle);
+    .data(tls_reload_handle)
+    .extension(install_state::LatestBuildMemoExtension);
     #[cfg(feature = "auth-jwt")]
     {
         builder = builder.data(Arc::new(ProductionTokenSigner) as Arc<dyn TokenSigner>);
@@ -209,6 +212,7 @@ struct SubQueryTwoA(
 
 #[derive(MergedObject, Default)]
 struct SubQueryTwoB(
+    core_component::CoreComponentQuery,
     triage::TriagePolicyQuery,
     triage::TriageExclusionReasonQuery,
     triage::TriageResponseQuery,
@@ -1082,16 +1086,95 @@ fn arbitrary_deploy_failure() -> Result<(), anyhow::Error> {
     ))
 }
 
+/// The `latest_build` answers a [`MockPackageDeployer`] gives, and the record
+/// of what it was asked.
+///
+/// A test holds an `Arc` of the same stub it hands the schema, so it can read
+/// the call log back afterwards: the read path promises one lookup per
+/// package-id per query however many rows carry that package, and only a
+/// counting stub can hold it to that.
+#[cfg(test)]
+#[derive(Default)]
+struct LatestBuildStub {
+    /// The newest accepted build of each package-id. A package-id absent from
+    /// the map and from `failing` answers `Ok(None)`.
+    answers: std::collections::HashMap<String, BuildId>,
+    /// The package-ids whose lookup fails.
+    failing: std::collections::HashSet<String>,
+    /// Every package-id asked about, in the order it was asked.
+    calls: std::sync::Mutex<Vec<String>>,
+}
+
+#[cfg(test)]
+impl LatestBuildStub {
+    fn with_answer(mut self, package_id: &str, version: &str, commit: &str) -> Self {
+        self.answers.insert(
+            package_id.to_string(),
+            BuildId {
+                version: version.to_string(),
+                commit: commit.to_string(),
+            },
+        );
+        self
+    }
+
+    fn with_failure(mut self, package_id: &str) -> Self {
+        self.failing.insert(package_id.to_string());
+        self
+    }
+
+    fn latest_build(&self, package_id: &str) -> Result<Option<BuildId>, anyhow::Error> {
+        self.calls
+            .lock()
+            .unwrap_or_else(|e| panic!("Mutex poisoned: {e}"))
+            .push(package_id.to_string());
+        if self.failing.contains(package_id) {
+            anyhow::bail!("the build store could not be read");
+        }
+        Ok(self.answers.get(package_id).cloned())
+    }
+
+    /// Returns how many times `package_id` was asked about.
+    fn calls(&self, package_id: &str) -> usize {
+        self.calls
+            .lock()
+            .unwrap_or_else(|e| panic!("Mutex poisoned: {e}"))
+            .iter()
+            .filter(|asked| asked.as_str() == package_id)
+            .count()
+    }
+
+    /// Returns how many lookups were made in total.
+    fn total_calls(&self) -> usize {
+        self.calls
+            .lock()
+            .unwrap_or_else(|e| panic!("Mutex poisoned: {e}"))
+            .len()
+    }
+}
+
 #[cfg(test)]
 #[derive(Default)]
 struct MockPackageDeployer {
     failure: MockDeployFailure,
+    builds: Arc<LatestBuildStub>,
 }
 
 #[cfg(test)]
 impl MockPackageDeployer {
     fn failing(failure: MockDeployFailure) -> Self {
-        Self { failure }
+        Self {
+            failure,
+            builds: Arc::default(),
+        }
+    }
+
+    /// Builds a deployer answering `latest_build` from the given stub.
+    fn with_builds(builds: Arc<LatestBuildStub>) -> Self {
+        Self {
+            failure: MockDeployFailure::None,
+            builds,
+        }
     }
 
     fn check(&self) -> Result<(), DeployError> {
@@ -1192,11 +1275,10 @@ impl PackageDeployer for MockPackageDeployer {
         }])
     }
 
-    // Reports a host with nothing installed, which is what a resolver in this
-    // tree needs to exercise. The present-build case belongs to an out-of-crate
-    // implementer and is covered in `tests/backend_surface.rs`.
-    async fn latest_build(&self, _target: &str) -> Result<Option<BuildId>, anyhow::Error> {
-        Ok(None)
+    // Answers from the stub the deployer was built with, which holds no build
+    // at all unless a test put one there.
+    async fn latest_build(&self, target: &str) -> Result<Option<BuildId>, anyhow::Error> {
+        self.builds.latest_build(target)
     }
 
     async fn package_status(
@@ -1392,8 +1474,35 @@ impl TestSchema {
             .await
     }
 
+    /// Builds a schema whose package deployer is the given one.
+    ///
+    /// The install-state read path drives `latest_build` through the deployer,
+    /// so a test that exercises it substitutes a stub here rather than taking
+    /// the default one's answers.
+    async fn new_with_package_deployer(package_deployer: BoxedPackageDeployer) -> Self {
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        Self::new_with_all(agent_manager, package_deployer, None, "testuser", None).await
+    }
+
     async fn new_with_params_and_event_country_locator(
         agent_manager: BoxedAgentManager,
+        test_addr: Option<SocketAddr>,
+        username: &str,
+        event_country_locator: Option<Arc<ip2location::DB>>,
+    ) -> Self {
+        Self::new_with_all(
+            agent_manager,
+            Box::new(MockPackageDeployer::default()),
+            test_addr,
+            username,
+            event_country_locator,
+        )
+        .await
+    }
+
+    async fn new_with_all(
+        agent_manager: BoxedAgentManager,
+        package_deployer: BoxedPackageDeployer,
         test_addr: Option<SocketAddr>,
         username: &str,
         event_country_locator: Option<Arc<ip2location::DB>>,
@@ -1414,10 +1523,11 @@ impl TestSchema {
             Subscription::default(),
         )
         .data(agent_manager)
-        .data(Box::new(MockPackageDeployer::default()) as Box<dyn PackageDeployer>)
+        .data(package_deployer)
         .data(Box::new(MockHostOnboarder {}) as Box<dyn HostOnboarder>)
         .data(store.clone())
-        .data(username.to_string());
+        .data(username.to_string())
+        .extension(install_state::LatestBuildMemoExtension);
         #[cfg(feature = "auth-jwt")]
         let builder = builder.data(Arc::new(ProductionTokenSigner) as Arc<dyn TokenSigner>);
         let schema = builder.finish();

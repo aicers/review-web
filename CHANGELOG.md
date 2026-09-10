@@ -59,6 +59,23 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   can be redirected to a file, and the generated schema is committed as
   `schema.graphql` at the repository root so that a schema change shows up as a
   reviewable diff.
+- Added the installed build state a host reports to the GraphQL read path.
+  `Agent` and `ExternalService` now carry `instance`, `installedVersion`,
+  `installedCommit`, `lifecycle`, `updateAvailable` and `updateCheckFailed`,
+  and `ExternalService` also carries `boundAddrs`, the `(key, host:port)` pairs
+  the instance is bound to. `updateAvailable` is inequality of build identity
+  against the store's newest accepted build for the entry's package, so a
+  hotfix carrying the same version and a different commit reports `true`;
+  `updateCheckFailed` says that comparison could not be made, which a bare
+  `false` would have been indistinguishable from being up to date. `lifecycle`
+  is null for an entry whose kind no package deploys, which is what
+  distinguishes it from a package-managed entry with nothing installed.
+- Added the `coreComponentList` query, which returns the core-component
+  registry — one entry per `(component, host)` for `review`, `aice-web-next`,
+  `roxyd` and `bootroot` — with the same install state and update check as the
+  entries above. A row flagged `installerManaged`, which `bootroot` is, reports
+  no available update because it is not updatable through this product. The
+  query is open to system administrators only.
 - Added the `PackageDeployer` and `HostOnboarder` traits to the `backend`
   module, alongside the existing `AgentManager`. `PackageDeployer` installs,
   updates, removes and reads packages on a host by package-id, covering agents,

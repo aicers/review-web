@@ -5,6 +5,75 @@ type Agent {
 	status: AgentStatus!
 	config: String
 	draft: String
+	"""
+	The version of the build installed on the host, as the host reports it.
+	
+	An opaque display label that is not required to be semver. It is null
+	together with `installedCommit` or not at all: the two are one build
+	identity, and half of one names no build. Null does not by itself mean
+	nothing is installed — a row written before the field existed, or one
+	whose host has not reported yet, carries null under any lifecycle.
+	"""
+	installedVersion: String
+	"""
+	The commit of the build installed on the host, as the host reports it.
+	
+	Null together with `installedVersion` or not at all.
+	"""
+	installedCommit: String
+	"""
+	The install and run state of the build on the host, or null if the
+	entry's kind maps to no package-id.
+	
+	That null is the discriminator between the two absences: a
+	package-managed entry with nothing installed reports `NOT_INSTALLED`,
+	which asserts that something *could* be installed here, while null says
+	no package deploys this kind at all.
+	"""
+	lifecycle: Lifecycle
+	"""
+	The instance number this entry is, rendered as a decimal string.
+	
+	It is a `StringNumber` rather than an `Int` because the stored number
+	is a `u32`, whose upper half has no valid `Int` representation. Null
+	means the entry has no instance dimension or was written before any
+	number was recorded.
+	"""
+	instance: StringNumber
+	"""
+	Whether the store holds a build newer than the installed one for this
+	entry's package.
+	
+	It is inequality of build identity, not an ordering comparison, so a
+	hotfix carrying the same version and a different commit is `true`. An
+	entry with nothing installed, one whose kind maps to no package-id and
+	one whose package has no accepted build are all `false`.
+	
+	A `false` here is only "up to date" when `updateCheckFailed` is
+	`false`; the two must be read together.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context. A failed lookup is not an error: it is reported through
+	`updateCheckFailed`.
+	"""
+	updateAvailable: Boolean!
+	"""
+	Whether this response's lookup of the newest build for this entry's
+	package failed.
+	
+	When it is `true`, `updateAvailable` is `false` because nothing was
+	answered to compare against, and a client must not render that pair as
+	"up to date". It is `false` for an entry that consulted no store at
+	all: nothing was asked, so nothing failed.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context.
+	"""
+	updateCheckFailed: Boolean!
 }
 
 input AgentDraftInput {
@@ -3044,6 +3113,26 @@ type BlocklistTls implements Event {
 	level: ThreatLevel!
 }
 
+"""
+An address a running instance reports it is bound to.
+
+This is observed state, refreshed on every status report, so it stays
+correct after an operator moves a port through the configuration plane. It
+is deliberately not the shape a bind-address *proposal* takes: a proposal
+is what `REview` would choose for an install that has not happened, and
+nothing may assume the two key spaces coincide.
+"""
+type BoundAddr {
+	"""
+	The configuration key of the listener.
+	"""
+	key: String!
+	"""
+	The `host:port` the listener is bound to.
+	"""
+	addr: String!
+}
+
 type Category {
 	id: ID!
 	name: String!
@@ -3189,6 +3278,91 @@ input ConfidenceInput {
 	threatKind: String!
 	confidence: Float!
 	weight: Float
+}
+
+"""
+A core component installed, or due to be installed, on a host.
+"""
+type CoreComponent {
+	"""
+	The canonical package-id: `review`, `aice-web-next`, `roxyd` or
+	`bootroot`.
+	
+	It is itself the package-id the row's build comes from; no
+	kind-to-package-id mapping is involved on this type.
+	"""
+	component: String!
+	"""
+	The host the component is installed on.
+	"""
+	host: String!
+	"""
+	The version of the build installed on the host, as the host reports it.
+	
+	An opaque display label that is not required to be semver. It is null
+	together with `installedCommit` or not at all: the two are one build
+	identity, and half of one names no build.
+	"""
+	installedVersion: String
+	"""
+	The commit of the build installed on the host, as the host reports it.
+	
+	Null together with `installedVersion` or not at all.
+	"""
+	installedCommit: String
+	"""
+	The install and run state of the build on the host.
+	
+	It is non-null here, unlike on an agent or an external service: every
+	core component is package-managed by construction, since `component`
+	*is* a package-id, so the null that discriminates a kind with no
+	package has no counterpart on this type.
+	"""
+	lifecycle: Lifecycle!
+	"""
+	Whether the row is excluded from update through this product.
+	
+	`true` for `bootroot`, the installer-managed trust anchor. Such a row
+	reports `updateAvailable` `false` whatever it has installed, and the
+	flag is what lets a client render it as excluded rather than as merely
+	up to date.
+	"""
+	installerManaged: Boolean!
+	"""
+	Whether the store holds a build newer than the installed one for this
+	row's component.
+	
+	It is inequality of build identity against `latest_build(component)`,
+	not an ordering comparison, so a hotfix carrying the same version and a
+	different commit is `true`. A row with nothing installed, one whose
+	component has no accepted build, and an `installerManaged` row are all
+	`false`.
+	
+	A `false` here is only "up to date" when `updateCheckFailed` is
+	`false`; the two must be read together.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context. A failed lookup is not an error: it is reported through
+	`updateCheckFailed`.
+	"""
+	updateAvailable: Boolean!
+	"""
+	Whether this response's lookup of the newest build for this row's
+	component failed.
+	
+	When it is `true`, `updateAvailable` is `false` because nothing was
+	answered to compare against, and a client must not render that pair as
+	"up to date". It is `false` for an `installerManaged` row, which
+	consults no store at all.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context.
+	"""
+	updateCheckFailed: Boolean!
 }
 
 type CryptocurrencyMiningPool implements Event {
@@ -4197,6 +4371,78 @@ type ExternalService {
 	kind: ExternalServiceKind!
 	status: ExternalServiceStatus!
 	draft: String
+	"""
+	The version of the build installed on the host, as the host reports it.
+	
+	An opaque display label that is not required to be semver. It is null
+	together with `installedCommit` or not at all.
+	"""
+	installedVersion: String
+	"""
+	The commit of the build installed on the host, as the host reports it.
+	
+	Null together with `installedVersion` or not at all.
+	"""
+	installedCommit: String
+	"""
+	The install and run state of the build on the host, or null if the
+	entry's kind maps to no package-id.
+	
+	`TI_CONTAINER` deploys from no package, so it reports null here rather
+	than `NOT_INSTALLED`.
+	"""
+	lifecycle: Lifecycle
+	"""
+	The addresses this instance is currently bound to.
+	
+	An instance that has bound nothing yields the empty list, never null:
+	the record stores a plain list, so "bound nowhere" and "we do not know
+	where it is bound" are not distinguished.
+	"""
+	boundAddrs: [BoundAddr!]!
+	"""
+	The instance number this entry is, rendered as a decimal string.
+	
+	It is a `StringNumber` rather than an `Int` because the stored number
+	is a `u32`, whose upper half has no valid `Int` representation. Null
+	means the entry has no instance dimension or was written before any
+	number was recorded.
+	"""
+	instance: StringNumber
+	"""
+	Whether the store holds a build newer than the installed one for this
+	entry's package.
+	
+	It is inequality of build identity, not an ordering comparison, so a
+	hotfix carrying the same version and a different commit is `true`. An
+	entry with nothing installed, one whose kind maps to no package-id and
+	one whose package has no accepted build are all `false`.
+	
+	A `false` here is only "up to date" when `updateCheckFailed` is
+	`false`; the two must be read together.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context. A failed lookup is not an error: it is reported through
+	`updateCheckFailed`.
+	"""
+	updateAvailable: Boolean!
+	"""
+	Whether this response's lookup of the newest build for this entry's
+	package failed.
+	
+	When it is `true`, `updateAvailable` is `false` because nothing was
+	answered to compare against, and a client must not render that pair as
+	"up to date". It is `false` for an entry that consulted no store at
+	all: nothing was asked, so nothing failed.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context.
+	"""
+	updateCheckFailed: Boolean!
 }
 
 input ExternalServiceInput {
@@ -5148,6 +5394,27 @@ Learning method.
 enum LearningMethod {
 	UNSUPERVISED
 	SEMI_SUPERVISED
+}
+
+"""
+The install and run state of a build on a host, as the host reports it.
+
+It mirrors `review_database::Lifecycle` one-for-one, `UNKNOWN` included:
+the database stores that variant for a state the build reading it does not
+recognize, and a mirror that dropped it would leave a stored value with no
+representation.
+
+It is never intent. A component may be `RUNNING` while the last
+configuration reload failed, which is what `AgentStatus` records.
+"""
+enum Lifecycle {
+	NOT_INSTALLED
+	INSTALLING
+	RUNNING
+	STOPPED
+	FAILED
+	REMOVING
+	UNKNOWN
 }
 
 type LineSegment {
@@ -6960,6 +7227,20 @@ type Query {
 	Detail information of a rule in a label database.
 	"""
 	labelDbRule(name: String!, ruleId: String!): LabelDbRule
+	"""
+	The core-component registry: one entry per `(component, host)`.
+	
+	The registry is one row per pair — two singletons plus one `roxyd` and
+	one `bootroot` per host — so it is a plain list rather than a paginated
+	connection. The order is the registry's own key order, which is a
+	deterministic function of `(component, host)`; nothing here re-sorts
+	it.
+	
+	# Errors
+	
+	Returns an error if the registry cannot be read.
+	"""
+	coreComponentList: [CoreComponent!]!
 	"""
 	A list of triage policies.
 	"""

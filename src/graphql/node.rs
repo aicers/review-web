@@ -22,6 +22,8 @@ use review_database as database;
 use roxy::Process as RoxyProcess;
 use serde::{Deserialize, Serialize};
 
+use super::install_state::{self, Lifecycle, UpdateState};
+
 pub(super) const SEMI_SUPERVISED_AGENT: &str = "hog";
 
 #[derive(Default)]
@@ -73,7 +75,32 @@ pub enum ExternalServiceStatus {
     Unknown,
 }
 
+/// An address a running instance reports it is bound to.
+///
+/// This is observed state, refreshed on every status report, so it stays
+/// correct after an operator moves a port through the configuration plane. It
+/// is deliberately not the shape a bind-address *proposal* takes: a proposal
+/// is what `REview` would choose for an install that has not happened, and
+/// nothing may assume the two key spaces coincide.
 #[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
+pub struct BoundAddr {
+    /// The configuration key of the listener.
+    pub key: String,
+    /// The `host:port` the listener is bound to.
+    pub addr: String,
+}
+
+impl From<&(String, String)> for BoundAddr {
+    fn from((key, addr): &(String, String)) -> Self {
+        Self {
+            key: key.clone(),
+            addr: addr.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
+#[graphql(complex)]
 pub struct Agent {
     pub node_id: u32,
     pub key: String,
@@ -81,6 +108,99 @@ pub struct Agent {
     pub status: AgentStatus,
     pub config: Option<String>,
     pub draft: Option<String>,
+
+    /// The instance number this entry is, or null for an entry with no
+    /// instance dimension and for one written before any number was recorded.
+    #[graphql(skip)]
+    pub instance: Option<u32>,
+
+    /// The version of the build installed on the host, as the host reports it.
+    ///
+    /// An opaque display label that is not required to be semver. It is null
+    /// together with `installedCommit` or not at all: the two are one build
+    /// identity, and half of one names no build. Null does not by itself mean
+    /// nothing is installed — a row written before the field existed, or one
+    /// whose host has not reported yet, carries null under any lifecycle.
+    pub installed_version: Option<String>,
+
+    /// The commit of the build installed on the host, as the host reports it.
+    ///
+    /// Null together with `installedVersion` or not at all.
+    pub installed_commit: Option<String>,
+
+    /// The install and run state of the build on the host, or null if the
+    /// entry's kind maps to no package-id.
+    ///
+    /// That null is the discriminator between the two absences: a
+    /// package-managed entry with nothing installed reports `NOT_INSTALLED`,
+    /// which asserts that something *could* be installed here, while null says
+    /// no package deploys this kind at all.
+    pub lifecycle: Option<Lifecycle>,
+}
+
+#[ComplexObject]
+impl Agent {
+    /// The instance number this entry is, rendered as a decimal string.
+    ///
+    /// It is a `StringNumber` rather than an `Int` because the stored number
+    /// is a `u32`, whose upper half has no valid `Int` representation. Null
+    /// means the entry has no instance dimension or was written before any
+    /// number was recorded.
+    async fn instance(&self) -> Option<StringNumber<u32>> {
+        self.instance.map(StringNumber)
+    }
+
+    /// Whether the store holds a build newer than the installed one for this
+    /// entry's package.
+    ///
+    /// It is inequality of build identity, not an ordering comparison, so a
+    /// hotfix carrying the same version and a different commit is `true`. An
+    /// entry with nothing installed, one whose kind maps to no package-id and
+    /// one whose package has no accepted build are all `false`.
+    ///
+    /// A `false` here is only "up to date" when `updateCheckFailed` is
+    /// `false`; the two must be read together.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context. A failed lookup is not an error: it is reported through
+    /// `updateCheckFailed`.
+    async fn update_available(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.update_state(ctx).await?.available)
+    }
+
+    /// Whether this response's lookup of the newest build for this entry's
+    /// package failed.
+    ///
+    /// When it is `true`, `updateAvailable` is `false` because nothing was
+    /// answered to compare against, and a client must not render that pair as
+    /// "up to date". It is `false` for an entry that consulted no store at
+    /// all: nothing was asked, so nothing failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context.
+    async fn update_check_failed(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.update_state(ctx).await?.check_failed)
+    }
+}
+
+impl Agent {
+    async fn update_state(&self, ctx: &Context<'_>) -> Result<UpdateState> {
+        let kind = database::AgentKind::from(self.kind);
+        install_state::update_state(
+            ctx,
+            kind.package_id(),
+            install_state::installed_identity(
+                self.installed_version.as_deref(),
+                self.installed_commit.as_deref(),
+                self.lifecycle,
+            ),
+        )
+        .await
+    }
 }
 
 impl From<&database::Agent> for Agent {
@@ -92,17 +212,117 @@ impl From<&database::Agent> for Agent {
             status: input.status.into(),
             config: input.config.as_ref().map(std::string::ToString::to_string),
             draft: input.draft.as_ref().map(std::string::ToString::to_string),
+            instance: input.instance,
+            installed_version: input.installed_version.clone(),
+            installed_commit: input.installed_commit.clone(),
+            lifecycle: lifecycle_of(input.kind.package_id(), input.lifecycle),
         }
     }
 }
 
 #[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
+#[graphql(complex)]
 pub struct ExternalService {
     pub node_id: u32,
     pub key: String,
     pub kind: ExternalServiceKind,
     pub status: ExternalServiceStatus,
     pub draft: Option<String>,
+
+    /// The instance number this entry is, or null for an entry with no
+    /// instance dimension and for one written before any number was recorded.
+    #[graphql(skip)]
+    pub instance: Option<u32>,
+
+    /// The version of the build installed on the host, as the host reports it.
+    ///
+    /// An opaque display label that is not required to be semver. It is null
+    /// together with `installedCommit` or not at all.
+    pub installed_version: Option<String>,
+
+    /// The commit of the build installed on the host, as the host reports it.
+    ///
+    /// Null together with `installedVersion` or not at all.
+    pub installed_commit: Option<String>,
+
+    /// The install and run state of the build on the host, or null if the
+    /// entry's kind maps to no package-id.
+    ///
+    /// `TI_CONTAINER` deploys from no package, so it reports null here rather
+    /// than `NOT_INSTALLED`.
+    pub lifecycle: Option<Lifecycle>,
+
+    /// The addresses this instance is currently bound to.
+    ///
+    /// An instance that has bound nothing yields the empty list, never null:
+    /// the record stores a plain list, so "bound nowhere" and "we do not know
+    /// where it is bound" are not distinguished.
+    pub bound_addrs: Vec<BoundAddr>,
+}
+
+#[ComplexObject]
+impl ExternalService {
+    /// The instance number this entry is, rendered as a decimal string.
+    ///
+    /// It is a `StringNumber` rather than an `Int` because the stored number
+    /// is a `u32`, whose upper half has no valid `Int` representation. Null
+    /// means the entry has no instance dimension or was written before any
+    /// number was recorded.
+    async fn instance(&self) -> Option<StringNumber<u32>> {
+        self.instance.map(StringNumber)
+    }
+
+    /// Whether the store holds a build newer than the installed one for this
+    /// entry's package.
+    ///
+    /// It is inequality of build identity, not an ordering comparison, so a
+    /// hotfix carrying the same version and a different commit is `true`. An
+    /// entry with nothing installed, one whose kind maps to no package-id and
+    /// one whose package has no accepted build are all `false`.
+    ///
+    /// A `false` here is only "up to date" when `updateCheckFailed` is
+    /// `false`; the two must be read together.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context. A failed lookup is not an error: it is reported through
+    /// `updateCheckFailed`.
+    async fn update_available(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.update_state(ctx).await?.available)
+    }
+
+    /// Whether this response's lookup of the newest build for this entry's
+    /// package failed.
+    ///
+    /// When it is `true`, `updateAvailable` is `false` because nothing was
+    /// answered to compare against, and a client must not render that pair as
+    /// "up to date". It is `false` for an entry that consulted no store at
+    /// all: nothing was asked, so nothing failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context.
+    async fn update_check_failed(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.update_state(ctx).await?.check_failed)
+    }
+}
+
+impl ExternalService {
+    async fn update_state(&self, ctx: &Context<'_>) -> Result<UpdateState> {
+        let kind = database::ExternalServiceKind::from(self.kind);
+        install_state::update_state(
+            ctx,
+            kind.package_id(),
+            install_state::installed_identity(
+                self.installed_version.as_deref(),
+                self.installed_commit.as_deref(),
+                self.lifecycle,
+            ),
+        )
+        .await
+    }
 }
 
 impl From<&database::ExternalService> for ExternalService {
@@ -113,8 +333,24 @@ impl From<&database::ExternalService> for ExternalService {
             kind: input.kind.into(),
             status: input.status.into(),
             draft: input.draft.as_ref().map(std::string::ToString::to_string),
+            instance: input.instance,
+            installed_version: input.installed_version.clone(),
+            installed_commit: input.installed_commit.clone(),
+            lifecycle: lifecycle_of(input.kind.package_id(), input.lifecycle),
+            bound_addrs: input.bound_addrs.iter().map(Into::into).collect(),
         }
     }
+}
+
+/// Returns the lifecycle to report for an entry whose kind maps to
+/// `package_id`.
+///
+/// A kind that maps to no package-id reports null instead of the stored
+/// lifecycle. `NOT_INSTALLED` asserts that this is a package-managed thing
+/// with nothing installed right now, which would have a client offer an
+/// install action for something no package can install.
+fn lifecycle_of(package_id: Option<&str>, lifecycle: database::Lifecycle) -> Option<Lifecycle> {
+    package_id.map(|_| lifecycle.into())
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Default)]
