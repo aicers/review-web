@@ -847,6 +847,67 @@ mod tests {
         assert_eq!(entry["updateCheckFailed"], json!(false));
     }
 
+    /// A stored half-identity is reported as it is and compared against
+    /// nothing.
+    ///
+    /// The two identity fields are one build identity and the record is
+    /// supposed to carry them together, but nothing in the store enforces
+    /// that. A row that carries one half names no build, so it cannot be
+    /// compared against the latest one — and the half it does carry is still
+    /// reported rather than blanked, because the read path shows what is
+    /// stored and never substitutes a placeholder for what is not.
+    #[tokio::test]
+    async fn a_half_identity_names_no_build_to_compare() {
+        let builds = Arc::new(LatestBuildStub::default().with_answer("hog", "1.2.0", "abcabc"));
+        let schema = schema_with(&builds).await;
+        let mut half = agent(
+            "001.hog",
+            AgentKind::SemiSupervised,
+            Some(1),
+            Some(("1.0.0", "aaaaaa")),
+            Lifecycle::Running,
+        );
+        half.installed_commit = None;
+        let mut other_half = agent(
+            "002.hog",
+            AgentKind::SemiSupervised,
+            Some(2),
+            Some(("1.0.0", "aaaaaa")),
+            Lifecycle::Running,
+        );
+        other_half.installed_version = None;
+        let id = insert_node(&schema.store(), "node1", vec![half, other_half], vec![]);
+
+        let res = schema.execute_as_system_admin(&agents_query(id)).await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        let agents = res.data.into_json().unwrap()["node"]["agents"].clone();
+        assert_json_eq!(
+            agents[0].clone(),
+            json!({
+                "key": "001.hog",
+                "instance": "1",
+                "installedVersion": "1.0.0",
+                "installedCommit": null,
+                "lifecycle": "RUNNING",
+                "updateAvailable": false,
+                "updateCheckFailed": false,
+            })
+        );
+        assert_json_eq!(
+            agents[1].clone(),
+            json!({
+                "key": "002.hog",
+                "instance": "2",
+                "installedVersion": null,
+                "installedCommit": "aaaaaa",
+                "lifecycle": "RUNNING",
+                "updateAvailable": false,
+                "updateCheckFailed": false,
+            })
+        );
+    }
+
     #[tokio::test]
     async fn bound_addrs_are_a_list_in_the_stored_order() {
         let builds = Arc::new(LatestBuildStub::default());
