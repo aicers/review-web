@@ -177,6 +177,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- Event GraphQL queries and pagination now preserve their range and pagination
+  contracts across the Unix epoch by using chronological signed event key
+  iteration.
 - Event GraphQL queries now accept the Unix epoch as an exclusive `end`
   boundary and return an empty range for the lower `i64` nanosecond boundary.
 - Triage exclusions whose IP address group mixes IPv4 and IPv6 entries no
