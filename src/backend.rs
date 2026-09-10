@@ -192,7 +192,13 @@ pub(crate) const CORE_PACKAGE_IDS: [&str; 3] = ["review", "aice-web-next", "roxy
 //   `RolledBack`, `Cancelled`). This enum answers a different question —
 //   whether the call returned a terminal outcome at all, or only an
 //   acknowledgement that a self-disrupting apply owes a later reconciliation
-//   — so it is not that type under another name.
+//   — so it is not that type under another name. On the protocol side
+//   `review_protocol::server::node::InstallOutcome` is the closest name, and
+//   it answers a third question: which branch of one install exchange
+//   terminated, a preflight refusal or a streamed apply. Its `Applied` says
+//   the agent returned a `NodePackageResponse` rather than refusing before
+//   the bytes moved, which is not the terminal-versus-acknowledged
+//   distinction this enum draws.
 // - `JoinToken` and `HostOnboardingTicket` — the nearest upstream surface is
 //   `review_protocol::types::node::BootstrapMaterial`, which this crate
 //   imports. `NodeEnrollRequest::Register` does cover new-host onboarding as
