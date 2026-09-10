@@ -1,3 +1,4 @@
+mod bind_addr;
 mod control;
 mod crud;
 mod customer_sensor_list;
@@ -38,6 +39,10 @@ pub(super) struct NodeControlMutation;
 
 #[derive(Default)]
 pub(super) struct ProcessListQuery;
+
+/// The root of the bind-address recommendation query.
+#[derive(Default)]
+pub(super) struct BindAddrQuery;
 
 #[derive(Clone, Deserialize, PartialEq, Serialize, Copy, Eq, Enum)]
 #[graphql(remote = "database::AgentKind")]

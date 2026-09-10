@@ -65,6 +65,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   external services and core components alike; `HostOnboarder` brings a new
   host under management. An application embedding this crate implements both
   and passes them to `serve`.
+- Added the `recommendBindAddrs(host, target)` GraphQL query, which returns the
+  addresses to offer on an install form for the next instance of a module
+  package on a host. It answers with `BindAddrProposals`, carrying one
+  `BindAddrProposal` per listener with its listener key, transport and address,
+  or with `HostOccupancyUnavailable` naming the host whose occupancy could not
+  be read. A component with no listeners answers with an empty proposal list.
 
 ### Fixed
 
