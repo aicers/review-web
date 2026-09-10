@@ -153,9 +153,10 @@ pub(crate) const CORE_PACKAGE_IDS: [&str; 3] = ["review", "aice-web-next", "roxy
 // revisions this crate pins in `Cargo.toml`:
 //
 // - `review-database` at `698254e` — the `pub use` surface of its `lib.rs`,
-//   which is every name this crate can import from it, and behind it the
-//   `tables::operation_attempt` and `tables::port_allocation` modules that
-//   hold the deployment types.
+//   its three public modules `types`, `event` and `backup`, which together
+//   are every name this crate can import from it, and behind the re-exports
+//   the private `tables::operation_attempt` and `tables::port_allocation`
+//   modules that hold the deployment types.
 // - `review-protocol` at `32ed9b0` — the `types::node` module, which carries
 //   the package (`NodePackageRequest`/`NodePackageResponse`/
 //   `NodePackageError`) and enrollment (`NodeEnrollRequest`/
