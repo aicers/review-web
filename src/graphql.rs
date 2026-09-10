@@ -1058,7 +1058,7 @@ impl AgentManager for MockAgentManager {
 /// What a [`MockPackageDeployer`] does with the four operations that fail with
 /// [`DeployError`].
 #[cfg(test)]
-#[derive(Clone, Copy, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum MockDeployFailure {
     /// Every operation succeeds.
     #[default]
@@ -1083,31 +1083,15 @@ fn arbitrary_deploy_failure() -> Result<(), anyhow::Error> {
 }
 
 #[cfg(test)]
+#[derive(Default)]
 struct MockPackageDeployer {
     failure: MockDeployFailure,
-    /// What [`PackageDeployer::read_version`] and
-    /// [`PackageDeployer::latest_build`] report, `None` for a host with
-    /// nothing installed.
-    installed_build: Option<BuildId>,
-}
-
-#[cfg(test)]
-impl Default for MockPackageDeployer {
-    fn default() -> Self {
-        Self {
-            failure: MockDeployFailure::None,
-            installed_build: None,
-        }
-    }
 }
 
 #[cfg(test)]
 impl MockPackageDeployer {
     fn failing(failure: MockDeployFailure) -> Self {
-        Self {
-            failure,
-            installed_build: None,
-        }
+        Self { failure }
     }
 
     fn check(&self) -> Result<(), DeployError> {
@@ -1208,8 +1192,11 @@ impl PackageDeployer for MockPackageDeployer {
         }])
     }
 
+    // Reports a host with nothing installed, which is what a resolver in this
+    // tree needs to exercise. The present-build case belongs to an out-of-crate
+    // implementer and is covered in `tests/backend_surface.rs`.
     async fn latest_build(&self, _target: &str) -> Result<Option<BuildId>, anyhow::Error> {
-        Ok(self.installed_build.clone())
+        Ok(None)
     }
 
     async fn package_status(
@@ -1232,7 +1219,7 @@ impl PackageDeployer for MockPackageDeployer {
         _target: &str,
         _instance: Option<u32>,
     ) -> Result<Option<BuildId>, anyhow::Error> {
-        Ok(self.installed_build.clone())
+        Ok(None)
     }
 
     async fn register(
@@ -2065,7 +2052,7 @@ mod tests {
                     }
                     DeployError::Other(_) => MockDeployFailure::Arbitrary,
                 };
-                assert!(selected == failure);
+                assert_eq!(selected, failure);
             }
         }
     }
