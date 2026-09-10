@@ -70,6 +70,14 @@ cargo run --example schema_sdl --no-default-features --features auth-mtls > sche
 The example writes the schema to stdout, so redirect it to the desired output
 file.
 
+`schema.graphql` at the repository root is tracked, and `tests/schema_sdl.rs`
+compares the rendered schema against it, so a change to the GraphQL surface
+fails the test until the artifact is regenerated with the command above and the
+regenerated file is committed alongside the change. That is what turns a schema
+change into a reviewable diff. The artifact is the `auth-mtls` schema and the
+test is gated on that feature, so regenerate it with those flags and not with
+the default ones.
+
 ## License
 
 Copyright 2018-2023 Petabi, Inc.  

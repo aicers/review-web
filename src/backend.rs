@@ -241,7 +241,12 @@ pub struct BindAddrInput {
 /// `Display`, `as_str`, `Deref` or `AsRef<str>`: each would make interpolating
 /// a live credential into a log line or an error message the path of least
 /// resistance. The only reader is the crate-private consuming `expose`.
-#[derive(Clone, Eq, PartialEq)]
+///
+/// It derives neither `Clone` nor `PartialEq`. A derived `PartialEq` on a
+/// secret-bearing type is a timing oracle — a token is compared, if at all, in
+/// constant time by whoever holds the other copy — and a `Clone` would make
+/// the consuming `expose` below a formality, since a call site could leave a
+/// copy behind before disclosing.
 pub struct JoinToken(String);
 
 impl JoinToken {
@@ -273,7 +278,10 @@ impl fmt::Debug for JoinToken {
 }
 
 /// What an operator pastes on a host being onboarded.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// It carries a [`JoinToken`], so it derives neither `Clone` nor `PartialEq`
+/// either; `Debug` is derived and redacts the token through the token's own.
+#[derive(Debug)]
 pub struct HostOnboardingTicket {
     token: JoinToken,
     command: String,
