@@ -203,9 +203,11 @@ fn deployer(installed: Option<BuildId>) -> Box<dyn PackageDeployer> {
 #[test]
 fn the_data_carriers_are_constructible_field_by_field() {
     let build = BuildId {
+        package_id: "giganto".to_string(),
         version: "0.1.0".to_string(),
         commit: "0123456789abcdef".to_string(),
     };
+    assert_eq!(build.package_id, "giganto");
     assert_eq!(build.version, "0.1.0");
     assert_eq!(build.commit, "0123456789abcdef");
 
@@ -228,6 +230,7 @@ fn both_traits_are_boxable_from_another_crate() {
 #[tokio::test]
 async fn an_outside_implementation_reports_an_installed_build() {
     let installed = BuildId {
+        package_id: "giganto".to_string(),
         version: "0.1.0".to_string(),
         commit: "0123456789abcdef".to_string(),
     };

@@ -3,6 +3,7 @@ pub mod archive;
 pub mod auth;
 pub mod backend;
 pub mod graphql;
+pub mod ingress;
 
 #[cfg(all(feature = "auth-mtls", feature = "auth-jwt"))]
 compile_error!("features \"auth-mtls\" and \"auth-jwt\" are mutually exclusive");
@@ -67,7 +68,10 @@ use crate::auth::MtlsAuthenticator;
 use crate::auth::validate_context_jwt;
 #[cfg(feature = "auth-jwt")]
 use crate::auth::validate_token;
-use crate::backend::{AgentManager, CertManager, HostOnboarder, PackageDeployer};
+use crate::backend::{
+    AgentManager, CertManager, HostOnboarder, PackageDeployer, PackageStoreReceiver,
+};
+use crate::ingress::PackageUploadLimit;
 
 #[cfg(feature = "auth-mtls")]
 const ERR_MTLS_REQUIRED: &str = "mTLS is required";
@@ -91,6 +95,19 @@ pub struct ServerConfig {
     pub client_key_path: Option<PathBuf>,
     #[cfg(feature = "auth-mtls")]
     pub authenticator: Arc<dyn MtlsAuthenticator>,
+    /// Takes a signed package streamed to the package-upload route into the
+    /// build store.
+    ///
+    /// It is not feature-gated: the route it serves is reachable under both
+    /// authentication configurations.
+    pub package_store: Arc<dyn PackageStoreReceiver>,
+    /// The maximum request-body size, in bytes, the package-upload route
+    /// accepts.
+    ///
+    /// The field carries the effective value an operator configured. A body of
+    /// exactly this many bytes is accepted and one byte more is refused
+    /// mid-stream with `413`.
+    pub package_upload_max_bytes: u64,
 }
 
 /// Runs a web server.
@@ -160,9 +177,14 @@ where
                     "/graphql/playground",
                     get(graphql_playground).post(graphql_handler),
                 )
+                .merge(ingress::router())
                 .fallback_service(static_files.layer(TraceLayer::new_for_http()))
                 .layer(Extension(schema.clone()))
-                .layer(Extension(store.clone()));
+                .layer(Extension(store.clone()))
+                .layer(Extension(config.package_store.clone()))
+                .layer(Extension(PackageUploadLimit(
+                    config.package_upload_max_bytes,
+                )));
             #[cfg(feature = "auth-mtls")]
             let router = router.layer(Extension(config.authenticator.clone()));
             #[cfg(feature = "auth-jwt")]
@@ -560,6 +582,10 @@ pub enum Error {
     TimeOut(String),
     #[error("Authentication Error: {0}")]
     Unauthorized(String),
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+    #[error("Payload Too Large: {0}")]
+    PayloadTooLarge(String),
     #[error("Not found: {0}")]
     NotFound(String),
     #[error("InternalServerError: {0}")]
@@ -578,6 +604,8 @@ impl IntoResponse for Error {
             Self::WithStatus(s) => (s, format!("Oops, {s}")),
             Self::TimeOut(msg) => (StatusCode::REQUEST_TIMEOUT, msg),
             Self::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
+            Self::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
+            Self::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg),
             Self::InternalServerError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             Self::NotFound(msg) | Self::Other(msg) => (StatusCode::NOT_FOUND, msg),
         };

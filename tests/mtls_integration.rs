@@ -27,7 +27,8 @@ mod mtls_integration {
         auth::{MtlsAuthError, MtlsAuthenticator, MtlsIdentity},
         backend::{
             AgentManager, BindAddrInput, BuildId, CertManager, DeployError, DeployOutcome,
-            HostOnboarder, HostOnboardingTicket, OperationId, PackageDeployer,
+            HostOnboarder, HostOnboardingTicket, IngressStream, OperationId, PackageDeployer,
+            PackageIngestError, PackageStoreReceiver,
         },
     };
     use serde::Serialize;
@@ -41,6 +42,9 @@ mod mtls_integration {
     const LOCALHOST_IP: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
     const NON_ADMIN_ROLE: &str = "Security Administrator";
     const EXPECTED_SERVICE: &str = "web-app";
+    // This suite's own configuration value for the package-upload route, which
+    // it never exercises: the stub receiver above takes no package.
+    const PACKAGE_UPLOAD_MAX_BYTES: u64 = 1024;
     const ERR_MISSING_SAN: &str = "Missing SAN";
     const ERR_NO_DNS_SAN: &str = "No DNS SAN";
     const ERR_MISSING_INSTANCE: &str = "Missing instance";
@@ -280,6 +284,19 @@ xvcNsYaYqk6sRk/INvcaN2E=
         }
     }
 
+    struct StubPackageStore;
+
+    #[async_trait]
+    impl PackageStoreReceiver for StubPackageStore {
+        async fn accept_package(
+            &self,
+            _permitted_package_ids: &[&str],
+            _body: IngressStream,
+        ) -> Result<BuildId, PackageIngestError> {
+            Err(PackageIngestError::Unavailable)
+        }
+    }
+
     struct StubAuthenticator;
 
     impl MtlsAuthenticator for StubAuthenticator {
@@ -479,6 +496,8 @@ xvcNsYaYqk6sRk/INvcaN2E=
             client_cert_path: None,
             client_key_path: None,
             authenticator: Arc::new(StubAuthenticator),
+            package_store: Arc::new(StubPackageStore),
+            package_upload_max_bytes: PACKAGE_UPLOAD_MAX_BYTES,
         };
 
         let shutdown = review_web::serve(

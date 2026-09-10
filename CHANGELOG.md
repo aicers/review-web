@@ -30,6 +30,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Changed the public `serve` function to take a `PackageDeployer` and a
   `HostOnboarder` after the `AgentManager`. This is a breaking API change for
   callers that initialize the server.
+- Added the required `package_store` and `package_upload_max_bytes` fields to
+  `ServerConfig`, which carry the receiver the package-upload route streams
+  into and the maximum body size it accepts. This is a breaking API change for
+  callers that build a `ServerConfig`.
+- Added the `Forbidden` and `PayloadTooLarge` variants to the public `Error`
+  enum, rendered as `403` and `413`. This is a breaking API change for callers
+  that match on it exhaustively.
 - Renamed the corresponding GraphQL schema fields and arguments to match the
   upstream `review-database` field names:
   - `Agent.node` and `ExternalService.node` are now `nodeId`.
@@ -92,6 +99,19 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `BindAddrProposal` per listener with its listener key, transport and address,
   or with `HostOccupancyUnavailable` naming the host whose occupancy could not
   be read. A component with no listeners answers with an empty proposal list.
+- Added a streaming upload route for signed packages at
+  `POST /api/package/upload`, together with the `PackageStoreReceiver` trait in
+  the `backend` module that an embedding application implements to take the
+  package into its build store. The route authenticates the caller through the
+  same path as the GraphQL handler for the enabled feature, expands the
+  caller's role into the package-ids it may write — a `SystemAdministrator` may
+  write core and module packages, a `SecurityAdministrator` module packages
+  only, and any other role is refused with `403` before a byte of the body is
+  read — and forwards the body to the receiver chunk by chunk without ever
+  holding it whole. A body that reaches `ServerConfig`'s
+  `package_upload_max_bytes` is cut off where the limit is crossed and answered
+  `413`. A successful upload answers `200` with the accepted build as
+  `{"packageId", "version", "commit"}`.
 
 ### Fixed
 

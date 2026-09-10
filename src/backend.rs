@@ -1,7 +1,9 @@
-use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, pin::Pin, time::Duration};
 
 use anyhow::anyhow;
 use async_trait::async_trait;
+use axum::body::Bytes;
+use futures::Stream;
 use ipnet::IpNet;
 // `review_database::Lifecycle` and `review_protocol::types::node::Lifecycle` are
 // two distinct types with the same name, so nothing here glob-imports either
@@ -140,7 +142,6 @@ pub(crate) const MODULE_PACKAGE_IDS: [&str; 5] =
 /// so leaving `bootroot` out gives it the right answer by the stricter route
 /// rather than by a listing that invites someone to offer it an action.
 // Declared here for the same reason as `MODULE_PACKAGE_IDS`.
-#[allow(dead_code)]
 pub(crate) const CORE_PACKAGE_IDS: [&str; 3] = ["review", "aice-web-next", "roxyd"];
 
 // Upstream type-surface check for the six local types declared below.
@@ -232,16 +233,25 @@ pub(crate) const CORE_PACKAGE_IDS: [&str; 3] = ["review", "aice-web-next", "roxy
 // Re-run this check whenever either pin moves: an upstream that grows one of
 // these types makes the local declaration a duplicate rather than a gap.
 
-/// A full build identity: the version and the commit that together name one
-/// build.
+/// A full build identity: the package-id, the version and the commit that
+/// together name one build.
 ///
-/// Both parts are always present. An absent installed build is expressed by
-/// `Option<BuildId>` at the call site, never by an empty or placeholder
+/// All three parts are always present. An absent installed build is expressed
+/// by `Option<BuildId>` at the call site, never by an empty or placeholder
 /// `version` or `commit` — the rest of the system is required to refuse an
 /// empty build identity, and a placeholder is that value arriving somewhere
 /// nothing will refuse it.
+///
+/// `package_id` is what names the build to a reader who did not ask for it by
+/// package-id: [`PackageStoreReceiver::accept_package`] reads it out of a
+/// manifest its caller never sees, and the upload route renders it straight
+/// back to the uploader. On a method that is already keyed on a package-id —
+/// [`PackageDeployer::latest_build`], [`PackageDeployer::read_version`] — it
+/// simply repeats the key the caller passed in.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BuildId {
+    /// The canonical package-id of the package this build is of.
+    pub package_id: String,
     /// The version the host reports, an opaque display label that is not
     /// required to be semver.
     pub version: String,
@@ -680,6 +690,129 @@ pub trait PackageDeployer: Send + Sync {
         host: &str,
         instance: Option<u32>,
     ) -> Result<(), anyhow::Error>;
+}
+
+/// A request body on its way to a store receiver, chunk by chunk.
+///
+/// It is boxed and pinned rather than generic because it crosses a trait
+/// boundary into [`aicers/review`], which implements the receiver and cannot
+/// name this crate's adapter type.
+///
+/// The stream is the whole cancellation protocol. It yields at most one
+/// [`Err`] item and then ends, and that item is the only signal a receiver
+/// gets that the upload must be thrown away — there is deliberately no
+/// `cancel`, `abort` or `discard` method to forget on the one path where bytes
+/// are already on disk.
+///
+/// [`aicers/review`]: https://github.com/aicers/review
+pub type IngressStream = Pin<Box<dyn Stream<Item = Result<Bytes, IngressStreamError>> + Send>>;
+
+/// Why an [`IngressStream`] ended early.
+///
+/// Both variants mean the same thing to a receiver — discard what has been
+/// written and commit nothing — and differ only in what the caller reports to
+/// the client.
+#[derive(Debug, thiserror::Error)]
+pub enum IngressStreamError {
+    /// The body reached the route's configured maximum and was cut off there.
+    ///
+    /// The cap is inclusive: a body of exactly `limit` bytes streams through
+    /// intact, and the first byte past it produces this.
+    #[error("body exceeded the configured maximum of {limit} bytes")]
+    TooLarge {
+        /// The maximum, in bytes, that the body exceeded.
+        limit: u64,
+    },
+    /// The body could not be read to its end — most often a client that
+    /// disappeared mid-upload.
+    #[error("reading the request body failed: {0}")]
+    Transport(String),
+}
+
+/// Why a signed package could not be taken into the store.
+///
+/// No variant carries a free-form `String`, and that is deliberate. The body
+/// of a rejected upload is attacker-supplied, and a message payload would be a
+/// channel through which an implementation — which lives in [`aicers/review`],
+/// outside this crate's reach — could put parser context, a key id or an
+/// excerpt of the submitted bytes into a message the upload route renders
+/// straight into an HTTP response. A variant with nowhere to put the text is
+/// enforceable by the compiler where a rule saying "do not do that" is not.
+///
+/// [`PackageNotPermitted`](PackageIngestError::PackageNotPermitted) is the one
+/// structured payload, and its `String` is **not** trusted on arrival: the
+/// route looks it up in this crate's own package-id lists and renders the
+/// `&'static str` it found there, never the value it received.
+///
+/// [`aicers/review`]: https://github.com/aicers/review
+#[derive(Debug, thiserror::Error)]
+pub enum PackageIngestError {
+    /// The package's signature did not verify.
+    #[error("package signature is invalid")]
+    SignatureInvalid,
+    /// The manifest is incomplete, or does not describe the payload that came
+    /// with it.
+    #[error("package manifest is incomplete or does not match the payload")]
+    ManifestIncomplete,
+    /// The verified package-id was not among the ones the caller permitted.
+    #[error("uploading {package_id} is not permitted for this role")]
+    PackageNotPermitted {
+        /// The package-id the verified manifest declared.
+        ///
+        /// It is read from a manifest the caller never sees, so a caller
+        /// treats it as untrusted right up to the point it is rendered.
+        package_id: String,
+    },
+    /// The stream ended with [`IngressStreamError::TooLarge`].
+    #[error("upload exceeded the configured maximum")]
+    TooLarge,
+    /// The stream ended with [`IngressStreamError::Transport`].
+    #[error("reading the upload failed")]
+    Transport,
+    /// The store could not be written.
+    #[error("the package store is unavailable")]
+    Unavailable,
+}
+
+/// Takes signed packages into the build store.
+///
+/// It is a separate trait from the trust-plane manager rather than another
+/// method on one: the separation is what makes "a trust generation never
+/// reaches the package store" checkable rather than conventional.
+#[async_trait]
+pub trait PackageStoreReceiver: Send + Sync {
+    /// Streams a signed package into the store and returns the accepted build.
+    ///
+    /// The implementation verifies the signature, the hashes and the manifest,
+    /// reads the package-id out of the manifest it verified, and commits only
+    /// if that id is in `permitted_package_ids`. The permitted set travels
+    /// **with** the upload precisely so that the check gates the commit: the
+    /// class is known only once the signature verifies, and by the time this
+    /// call returns the store has already been written or left alone, so a
+    /// caller checking afterwards would be deciding after the fact.
+    ///
+    /// `body` yields at most one [`Err`] item and then ends, and that item is
+    /// the only discard signal there is. On seeing one the implementation
+    /// **must** discard whatever it has written under `pending/`, must not
+    /// rename anything into `accepted/`, must not touch `index.json` or
+    /// `latest_build`, and must return
+    /// [`PackageIngestError::TooLarge`] for [`IngressStreamError::TooLarge`]
+    /// or [`PackageIngestError::Transport`] for
+    /// [`IngressStreamError::Transport`]. That mapping is not decoration: the
+    /// upload route turns `TooLarge` into `413` and `Transport` into `400`, so
+    /// a cap-truncated stream reported as `Transport` tells the client its
+    /// package was malformed when it was merely too big.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature or manifest does not verify, if the
+    /// verified package-id is not in `permitted_package_ids`, if the stream
+    /// yields an error item, or if the store cannot be written.
+    async fn accept_package(
+        &self,
+        permitted_package_ids: &[&str],
+        body: IngressStream,
+    ) -> Result<BuildId, PackageIngestError>;
 }
 
 /// Brings a new host under management.
