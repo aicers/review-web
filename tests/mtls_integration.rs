@@ -16,11 +16,19 @@ mod mtls_integration {
         PKCS_ECDSA_P256_SHA256, SanType,
     };
     use reqwest::Certificate as ReqwestCertificate;
-    use review_database::Store;
+    use review_database::{BuildSelector, ListenerBinding, Store};
+    // `review_database::Lifecycle` and `review_protocol::types::node::Lifecycle`
+    // share a name, so nothing here glob-imports either module.
+    use review_protocol::types::node::{
+        BootstrapMaterial, DeliveryMode, FailurePolicy, PackageState,
+    };
     use review_web::{
         ServerConfig,
         auth::{MtlsAuthError, MtlsAuthenticator, MtlsIdentity},
-        backend::{AgentManager, CertManager},
+        backend::{
+            AgentManager, BindAddrInput, BuildId, CertManager, DeployError, DeployOutcome,
+            HostOnboarder, HostOnboardingTicket, OperationId, PackageDeployer,
+        },
     };
     use serde::Serialize;
     use serde_json::json;
@@ -165,6 +173,110 @@ xvcNsYaYqk6sRk/INvcaN2E=
 
         async fn update_config(&self, _agent_lookup_key: &str) -> Result<(), anyhow::Error> {
             Ok(())
+        }
+    }
+
+    struct StubPackageDeployer;
+
+    #[async_trait]
+    impl PackageDeployer for StubPackageDeployer {
+        async fn install(
+            &self,
+            _host: &str,
+            _target: &str,
+            _selector: BuildSelector,
+            _on_failure: FailurePolicy,
+            _bind_addrs: Option<Vec<BindAddrInput>>,
+            _request_key: &str,
+        ) -> Result<(DeployOutcome, OperationId), DeployError> {
+            Err(DeployError::Other(anyhow::anyhow!(
+                "Not supported in mTLS integration test"
+            )))
+        }
+
+        async fn update(
+            &self,
+            _host: &str,
+            _target: &str,
+            _instance: Option<u32>,
+            _selector: BuildSelector,
+            _on_failure: FailurePolicy,
+        ) -> Result<(DeployOutcome, OperationId), DeployError> {
+            Err(DeployError::Other(anyhow::anyhow!(
+                "Not supported in mTLS integration test"
+            )))
+        }
+
+        async fn remove(
+            &self,
+            _host: &str,
+            _target: &str,
+            _instance: Option<u32>,
+        ) -> Result<OperationId, DeployError> {
+            Err(DeployError::Other(anyhow::anyhow!(
+                "Not supported in mTLS integration test"
+            )))
+        }
+
+        async fn recommend_bind_addrs(
+            &self,
+            _host: &str,
+            _target: &str,
+        ) -> Result<Vec<ListenerBinding>, DeployError> {
+            Ok(Vec::new())
+        }
+
+        async fn latest_build(&self, _target: &str) -> Result<Option<BuildId>, anyhow::Error> {
+            Ok(None)
+        }
+
+        async fn package_status(
+            &self,
+            _host: &str,
+            _target: &str,
+            _instance: Option<u32>,
+        ) -> Result<PackageState, anyhow::Error> {
+            Err(anyhow::anyhow!("Not supported in mTLS integration test"))
+        }
+
+        async fn read_version(
+            &self,
+            _host: &str,
+            _target: &str,
+            _instance: Option<u32>,
+        ) -> Result<Option<BuildId>, anyhow::Error> {
+            Ok(None)
+        }
+
+        async fn register(
+            &self,
+            _service_name: &str,
+            _host: &str,
+            _instance: Option<u32>,
+            _mode: DeliveryMode,
+        ) -> Result<BootstrapMaterial, anyhow::Error> {
+            Err(anyhow::anyhow!("Not supported in mTLS integration test"))
+        }
+
+        async fn deregister(
+            &self,
+            _service_name: &str,
+            _host: &str,
+            _instance: Option<u32>,
+        ) -> Result<(), anyhow::Error> {
+            Ok(())
+        }
+    }
+
+    struct StubHostOnboarder;
+
+    #[async_trait]
+    impl HostOnboarder for StubHostOnboarder {
+        async fn onboard_host(
+            &self,
+            _host: &str,
+        ) -> Result<(HostOnboardingTicket, OperationId), anyhow::Error> {
+            Err(anyhow::anyhow!("Not supported in mTLS integration test"))
         }
     }
 
@@ -369,7 +481,14 @@ xvcNsYaYqk6sRk/INvcaN2E=
             authenticator: Arc::new(StubAuthenticator),
         };
 
-        let shutdown = review_web::serve(config, store, None, StubAgentManager);
+        let shutdown = review_web::serve(
+            config,
+            store,
+            None,
+            StubAgentManager,
+            StubPackageDeployer,
+            StubHostOnboarder,
+        );
 
         Ok(TestServer {
             url: format!("https://{addr_ip}:{port}/graphql"),

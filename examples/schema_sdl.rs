@@ -10,5 +10,8 @@ fn main() {
     )
     .finish();
 
-    println!("{}", schema.sdl());
+    // `sdl()` already ends in a newline, so this prints the artifact byte for
+    // byte: `tests/schema_sdl.rs` compares the committed file against the same
+    // string, and a trailing newline added here would make that comparison fail.
+    print!("{}", schema.sdl());
 }

@@ -53,6 +53,15 @@ use async_graphql::{
 };
 use num_traits::ToPrimitive;
 use review_database::{self as database, Role, Store, event::Direction};
+#[cfg(test)]
+use review_database::{BuildSelector, ListenerBinding, ListenerTransport, PortOwner};
+// `review_database::Lifecycle` and `review_protocol::types::node::Lifecycle`
+// share a name, so the protocol one is renamed at the import rather than
+// glob-imported or shadowed.
+#[cfg(test)]
+use review_protocol::types::node::{
+    BootstrapMaterial, DeliveryMode, FailurePolicy, Lifecycle as ProtocolLifecycle, PackageState,
+};
 pub use roxy::{Process, ResourceUsage};
 use tokio::sync::Notify;
 use tracing::warn;
@@ -71,28 +80,41 @@ pub use self::sampling::{
 };
 #[cfg(feature = "auth-jwt")]
 use crate::auth::{ProductionTokenSigner, TokenSigner};
-use crate::backend::{AgentManager, CertManager};
+use crate::backend::{AgentManager, CertManager, HostOnboarder, PackageDeployer};
+#[cfg(test)]
+use crate::backend::{
+    BindAddrInput, BuildId, DeployError, DeployOutcome, HostOnboardingTicket, JoinToken,
+    OperationId,
+};
 
 /// GraphQL schema type.
 pub type Schema = async_graphql::Schema<Query, Mutation, Subscription>;
 
 type BoxedAgentManager = Box<dyn AgentManager>;
+type BoxedPackageDeployer = Box<dyn PackageDeployer>;
+type BoxedHostOnboarder = Box<dyn HostOnboarder>;
 
 /// Builds a GraphQL schema with the given database store as its context.
 ///
 /// The store is stored in `async_graphql::Context` and passed to every
 /// GraphQL API function.
-pub(super) fn schema<B>(
+pub(super) fn schema<B, D, O>(
     store: Arc<RwLock<Store>>,
     agent_manager: B,
+    package_deployer: D,
+    host_onboarder: O,
     ip_locator: Option<Arc<ip2location::DB>>,
     cert_manager: Arc<dyn CertManager>,
     tls_reload_handle: Arc<Notify>,
 ) -> Schema
 where
     B: AgentManager + 'static,
+    D: PackageDeployer + 'static,
+    O: HostOnboarder + 'static,
 {
     let agent_manager: BoxedAgentManager = Box::new(agent_manager);
+    let package_deployer: BoxedPackageDeployer = Box::new(package_deployer);
+    let host_onboarder: BoxedHostOnboarder = Box::new(host_onboarder);
     let mut builder = Schema::build(
         Query::default(),
         Mutation::default(),
@@ -100,6 +122,8 @@ where
     )
     .data(store)
     .data(agent_manager)
+    .data(package_deployer)
+    .data(host_onboarder)
     .data(cert_manager)
     .data(tls_reload_handle);
     #[cfg(feature = "auth-jwt")]
@@ -1031,6 +1055,232 @@ impl AgentManager for MockAgentManager {
     }
 }
 
+/// What a [`MockPackageDeployer`] does with the four operations that fail with
+/// [`DeployError`].
+#[cfg(test)]
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+enum MockDeployFailure {
+    /// Every operation succeeds.
+    #[default]
+    None,
+    PortAllocationConflict,
+    HostPortOccupied,
+    HostOccupancyUnavailable,
+    RequestKey,
+    CleanupPending,
+    /// An arbitrary `anyhow::Error`, which reaches the caller as
+    /// [`DeployError::Other`] through `?` rather than by being named.
+    Arbitrary,
+}
+
+/// Fails with an arbitrary `anyhow::Error`, so that a caller's `?` is what
+/// turns it into [`DeployError::Other`].
+#[cfg(test)]
+fn arbitrary_deploy_failure() -> Result<(), anyhow::Error> {
+    Err(anyhow::anyhow!(
+        "the host answered something this stub does not model"
+    ))
+}
+
+#[cfg(test)]
+struct MockPackageDeployer {
+    failure: MockDeployFailure,
+    /// What [`PackageDeployer::read_version`] and
+    /// [`PackageDeployer::latest_build`] report, `None` for a host with
+    /// nothing installed.
+    installed_build: Option<BuildId>,
+}
+
+#[cfg(test)]
+impl Default for MockPackageDeployer {
+    fn default() -> Self {
+        Self {
+            failure: MockDeployFailure::None,
+            installed_build: None,
+        }
+    }
+}
+
+#[cfg(test)]
+impl MockPackageDeployer {
+    fn failing(failure: MockDeployFailure) -> Self {
+        Self {
+            failure,
+            installed_build: None,
+        }
+    }
+
+    fn check(&self) -> Result<(), DeployError> {
+        match self.failure {
+            MockDeployFailure::None => Ok(()),
+            MockDeployFailure::PortAllocationConflict => Err(DeployError::PortAllocationConflict {
+                host: "host1".to_string(),
+                transport: ListenerTransport::Tcp,
+                port: 38_370,
+                owner: PortOwner {
+                    component: "giganto".to_string(),
+                    instance: 1,
+                    listener_key: "ingest".to_string(),
+                },
+            }),
+            MockDeployFailure::HostPortOccupied => Err(DeployError::HostPortOccupied {
+                listener_key: "ingest".to_string(),
+                transport: ListenerTransport::Udp,
+                port: 38_371,
+            }),
+            MockDeployFailure::HostOccupancyUnavailable => {
+                Err(DeployError::HostOccupancyUnavailable {
+                    host: "host1".to_string(),
+                    reason: "the host did not answer".to_string(),
+                })
+            }
+            MockDeployFailure::RequestKey => Err(DeployError::RequestKey(
+                review_database::RequestKeyError::MalformedRequestKey {
+                    request_key: "not-a-uuid".to_string(),
+                },
+            )),
+            MockDeployFailure::CleanupPending => Err(DeployError::CleanupPending {
+                host: "host1".to_string(),
+                target: "giganto".to_string(),
+                instance: Some(1),
+                operation_id: OperationId::new("b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e".to_string()),
+            }),
+            MockDeployFailure::Arbitrary => {
+                arbitrary_deploy_failure()?;
+                Ok(())
+            }
+        }
+    }
+
+    fn operation_id() -> OperationId {
+        OperationId::new("11111111-2222-4333-8444-555555555555".to_string())
+    }
+}
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl PackageDeployer for MockPackageDeployer {
+    async fn install(
+        &self,
+        _host: &str,
+        _target: &str,
+        _selector: BuildSelector,
+        _on_failure: FailurePolicy,
+        _bind_addrs: Option<Vec<BindAddrInput>>,
+        _request_key: &str,
+    ) -> Result<(DeployOutcome, OperationId), DeployError> {
+        self.check()?;
+        Ok((DeployOutcome::Applied, Self::operation_id()))
+    }
+
+    async fn update(
+        &self,
+        _host: &str,
+        _target: &str,
+        _instance: Option<u32>,
+        _selector: BuildSelector,
+        _on_failure: FailurePolicy,
+    ) -> Result<(DeployOutcome, OperationId), DeployError> {
+        self.check()?;
+        Ok((DeployOutcome::Accepted, Self::operation_id()))
+    }
+
+    async fn remove(
+        &self,
+        _host: &str,
+        _target: &str,
+        _instance: Option<u32>,
+    ) -> Result<OperationId, DeployError> {
+        self.check()?;
+        Ok(Self::operation_id())
+    }
+
+    async fn recommend_bind_addrs(
+        &self,
+        _host: &str,
+        _target: &str,
+    ) -> Result<Vec<ListenerBinding>, DeployError> {
+        self.check()?;
+        Ok(vec![ListenerBinding {
+            listener_key: "ingest".to_string(),
+            transport: ListenerTransport::Tcp,
+            addr: SocketAddr::from(([127, 0, 0, 1], 38_370)),
+        }])
+    }
+
+    async fn latest_build(&self, _target: &str) -> Result<Option<BuildId>, anyhow::Error> {
+        Ok(self.installed_build.clone())
+    }
+
+    async fn package_status(
+        &self,
+        _host: &str,
+        _target: &str,
+        _instance: Option<u32>,
+    ) -> Result<PackageState, anyhow::Error> {
+        Ok(PackageState {
+            version: "0.1.0".to_string(),
+            commit: "0123456789abcdef".to_string(),
+            lifecycle: ProtocolLifecycle::Running,
+            bound_addrs: vec![],
+        })
+    }
+
+    async fn read_version(
+        &self,
+        _host: &str,
+        _target: &str,
+        _instance: Option<u32>,
+    ) -> Result<Option<BuildId>, anyhow::Error> {
+        Ok(self.installed_build.clone())
+    }
+
+    async fn register(
+        &self,
+        _service_name: &str,
+        _host: &str,
+        _instance: Option<u32>,
+        _mode: DeliveryMode,
+    ) -> Result<BootstrapMaterial, anyhow::Error> {
+        Ok(BootstrapMaterial {
+            role_id: "giganto".to_string(),
+            wrapped_secret_id: "wrapped".to_string(),
+            ca_anchor: vec![0x30, 0x82],
+            expires_at: jiff::Timestamp::from_second(1_700_000_000)?,
+        })
+    }
+
+    async fn deregister(
+        &self,
+        _service_name: &str,
+        _host: &str,
+        _instance: Option<u32>,
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+struct MockHostOnboarder {}
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl HostOnboarder for MockHostOnboarder {
+    async fn onboard_host(
+        &self,
+        _host: &str,
+    ) -> Result<(HostOnboardingTicket, OperationId), anyhow::Error> {
+        Ok((
+            HostOnboardingTicket::new(
+                JoinToken::new("s3cret-join-token".to_string()),
+                "roxyd join --token <token>".to_string(),
+                jiff::Timestamp::from_second(1_700_000_000)?,
+            ),
+            OperationId::new("99999999-8888-4777-8666-555555555555".to_string()),
+        ))
+    }
+}
+
 #[cfg(test)]
 struct TestSchema {
     _dir: tempfile::TempDir,        // to delete the data directory when dropped
@@ -1177,6 +1427,8 @@ impl TestSchema {
             Subscription::default(),
         )
         .data(agent_manager)
+        .data(Box::new(MockPackageDeployer::default()) as Box<dyn PackageDeployer>)
+        .data(Box::new(MockHostOnboarder {}) as Box<dyn HostOnboarder>)
         .data(store.clone())
         .data(username.to_string());
         #[cfg(feature = "auth-jwt")]
@@ -1397,7 +1649,7 @@ impl TestSchema {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentManager, Direction, OpaqueCursor, database};
+    use super::{AgentManager, Direction, MockPackageDeployer, OpaqueCursor, TestSchema, database};
 
     #[derive(Clone, Debug)]
     struct MockRow {
@@ -1633,6 +1885,248 @@ mod tests {
             assert_eq!(has_previous, case.expected_has_previous, "{case}");
             assert_eq!(has_next, case.expected_has_next, "{case}");
         }
+    }
+
+    /// A resolver reaches both traits through the GraphQL context exactly as it
+    /// reaches [`super::AgentManager`].
+    ///
+    /// The query type lives here rather than in the crate's own
+    /// [`super::Query`]: this issue adds no GraphQL field, and a test-only one
+    /// on the real schema would show up in the committed SDL.
+    mod context {
+        use async_graphql::{Context, EmptyMutation, EmptySubscription, Object, Result, Schema};
+
+        use crate::graphql::{
+            BoxedHostOnboarder, BoxedPackageDeployer, MockHostOnboarder, MockPackageDeployer,
+        };
+
+        #[derive(Default)]
+        pub(super) struct DeployQuery;
+
+        #[Object]
+        impl DeployQuery {
+            /// Returns the operation id `install` reported, read through the
+            /// deployer in the context.
+            async fn installed_operation_id(&self, ctx: &Context<'_>) -> Result<String> {
+                let deployer = ctx.data::<BoxedPackageDeployer>()?;
+                let (_outcome, operation_id) = deployer
+                    .install(
+                        "host1",
+                        "giganto",
+                        review_database::BuildSelector::Version("0.1.0".to_string()),
+                        review_protocol::types::node::FailurePolicy::Rollback,
+                        None,
+                        "b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e",
+                    )
+                    .await?;
+                Ok(operation_id.into_inner())
+            }
+
+            /// Returns the command `onboard_host` reported, read through the
+            /// onboarder in the context.
+            async fn onboarding_command(&self, ctx: &Context<'_>) -> Result<String> {
+                let onboarder = ctx.data::<BoxedHostOnboarder>()?;
+                let (ticket, _operation_id) = onboarder.onboard_host("host1").await?;
+                let (_token, command, _expires_at) = ticket.into_parts();
+                Ok(command)
+            }
+        }
+
+        pub(super) fn schema() -> Schema<DeployQuery, EmptyMutation, EmptySubscription> {
+            Schema::build(DeployQuery, EmptyMutation, EmptySubscription)
+                .data(Box::new(MockPackageDeployer::default()) as BoxedPackageDeployer)
+                .data(Box::new(MockHostOnboarder {}) as BoxedHostOnboarder)
+                .finish()
+        }
+    }
+
+    /// Proves object safety: both traits are usable behind a `Box<dyn _>`.
+    #[test]
+    fn both_traits_are_object_safe() {
+        let _deployer: Box<dyn super::PackageDeployer> = Box::new(MockPackageDeployer::default());
+        let _onboarder: Box<dyn super::HostOnboarder> = Box::new(super::MockHostOnboarder {});
+    }
+
+    #[tokio::test]
+    async fn a_resolver_reads_the_deployer_from_the_context() {
+        let response = context::schema()
+            .execute("{ installedOperationId }")
+            .await
+            .into_result()
+            .unwrap();
+        assert_eq!(
+            response.data.to_string(),
+            r#"{installedOperationId: "11111111-2222-4333-8444-555555555555"}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn a_resolver_reads_the_onboarder_from_the_context() {
+        let response = context::schema()
+            .execute("{ onboardingCommand }")
+            .await
+            .into_result()
+            .unwrap();
+        assert_eq!(
+            response.data.to_string(),
+            r#"{onboardingCommand: "roxyd join --token <token>"}"#
+        );
+    }
+
+    /// The stubs in the schema context must not disturb the current surface.
+    #[tokio::test]
+    async fn the_wiring_leaves_an_existing_query_working() {
+        let schema = TestSchema::new().await;
+        let response = schema.execute_as_system_admin("{ __typename }").await;
+        assert_eq!(response.data.to_string(), r#"{__typename: "Query"}"#);
+    }
+
+    /// Each named `DeployError` variant reaches the caller through
+    /// `Box<dyn PackageDeployer>` and is selected on by kind, never by message.
+    ///
+    /// The `Arbitrary` case is the one that matters for `Other`: the stub fails
+    /// with a bare `anyhow::Error` and its own `?` is what converts it, so
+    /// nothing here downcasts and nothing names `DeployError::Other` on the
+    /// producing side.
+    #[tokio::test]
+    async fn each_named_deploy_error_variant_reaches_the_caller() {
+        use super::{BuildSelector, DeployError, FailurePolicy, MockDeployFailure};
+
+        let selector = BuildSelector::Version("0.1.0".to_string());
+        for failure in [
+            MockDeployFailure::PortAllocationConflict,
+            MockDeployFailure::HostPortOccupied,
+            MockDeployFailure::HostOccupancyUnavailable,
+            MockDeployFailure::RequestKey,
+            MockDeployFailure::CleanupPending,
+            MockDeployFailure::Arbitrary,
+        ] {
+            let deployer: Box<dyn super::PackageDeployer> =
+                Box::new(MockPackageDeployer::failing(failure));
+
+            let errors = [
+                deployer
+                    .install(
+                        "host1",
+                        "giganto",
+                        selector.clone(),
+                        FailurePolicy::Rollback,
+                        None,
+                        "b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e",
+                    )
+                    .await
+                    .map(|_| ())
+                    .expect_err("the stub is configured to fail"),
+                deployer
+                    .update(
+                        "host1",
+                        "giganto",
+                        Some(1),
+                        selector.clone(),
+                        FailurePolicy::Hold,
+                    )
+                    .await
+                    .map(|_| ())
+                    .expect_err("the stub is configured to fail"),
+                deployer
+                    .remove("host1", "giganto", Some(1))
+                    .await
+                    .map(|_| ())
+                    .expect_err("the stub is configured to fail"),
+                deployer
+                    .recommend_bind_addrs("host1", "giganto")
+                    .await
+                    .map(|_| ())
+                    .expect_err("the stub is configured to fail"),
+            ];
+
+            for error in errors {
+                let selected = match error {
+                    DeployError::PortAllocationConflict { owner, port, .. } => {
+                        assert_eq!(port, 38_370);
+                        assert_eq!(owner.component, "giganto");
+                        MockDeployFailure::PortAllocationConflict
+                    }
+                    DeployError::HostPortOccupied { listener_key, .. } => {
+                        assert_eq!(listener_key, "ingest");
+                        MockDeployFailure::HostPortOccupied
+                    }
+                    DeployError::HostOccupancyUnavailable { host, .. } => {
+                        assert_eq!(host, "host1");
+                        MockDeployFailure::HostOccupancyUnavailable
+                    }
+                    DeployError::RequestKey(_) => MockDeployFailure::RequestKey,
+                    DeployError::CleanupPending { operation_id, .. } => {
+                        assert_eq!(
+                            operation_id.as_str(),
+                            "b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e"
+                        );
+                        MockDeployFailure::CleanupPending
+                    }
+                    DeployError::Other(_) => MockDeployFailure::Arbitrary,
+                };
+                assert!(selected == failure);
+            }
+        }
+    }
+
+    /// A host with nothing installed is `Ok(None)`, expressible without a
+    /// placeholder version or commit.
+    #[tokio::test]
+    async fn read_version_expresses_an_absent_build_as_none() {
+        let deployer: Box<dyn super::PackageDeployer> = Box::new(MockPackageDeployer::default());
+        assert_eq!(
+            deployer
+                .read_version("host1", "giganto", Some(1))
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(deployer.latest_build("giganto").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_successful_operation_pairs_its_outcome_with_an_id() {
+        use super::{BuildSelector, DeployOutcome, FailurePolicy};
+
+        let deployer: Box<dyn super::PackageDeployer> = Box::new(MockPackageDeployer::default());
+        let (outcome, operation_id) = deployer
+            .install(
+                "host1",
+                "giganto",
+                BuildSelector::Version("0.1.0".to_string()),
+                FailurePolicy::Rollback,
+                Some(vec![super::BindAddrInput {
+                    listener_key: "ingest".to_string(),
+                    addr: std::net::SocketAddr::from(([127, 0, 0, 1], 38_370)),
+                }]),
+                "b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e",
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, DeployOutcome::Applied);
+        assert_eq!(
+            operation_id.as_str(),
+            "11111111-2222-4333-8444-555555555555"
+        );
+
+        let (outcome, _) = deployer
+            .update(
+                "host1",
+                "giganto",
+                Some(1),
+                BuildSelector::Commit("0123456789abcdef".to_string()),
+                FailurePolicy::Hold,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, DeployOutcome::Accepted);
+
+        let operation_id = deployer.remove("host1", "giganto", Some(1)).await.unwrap();
+        assert_eq!(
+            operation_id.as_str(),
+            "11111111-2222-4333-8444-555555555555"
+        );
     }
 
     #[tokio::test]

@@ -67,6 +67,7 @@ impl From<AgentInput> for review_database::Agent {
             installed_commit: None,
             lifecycle: review_database::Lifecycle::NotInstalled,
             bound_addrs: vec![],
+            instance: None,
         }
     }
 }
@@ -109,6 +110,7 @@ impl From<ExternalServiceInput> for review_database::ExternalService {
             installed_commit: None,
             lifecycle: review_database::Lifecycle::NotInstalled,
             bound_addrs: vec![],
+            instance: None,
         }
     }
 }
@@ -212,6 +214,7 @@ pub(super) fn create_draft_update(
                         installed_commit: None,
                         lifecycle: review_database::Lifecycle::NotInstalled,
                         bound_addrs: vec![],
+                        instance: None,
                     })
                 })
                 .collect::<Result<Vec<_>, Error>>()
@@ -245,6 +248,7 @@ pub(super) fn create_draft_update(
                         installed_commit: None,
                         lifecycle: review_database::Lifecycle::NotInstalled,
                         bound_addrs: vec![],
+                        instance: None,
                     })
                 })
                 .collect::<Result<Vec<_>, async_graphql::Error>>()

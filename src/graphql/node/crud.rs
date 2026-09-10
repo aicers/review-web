@@ -137,6 +137,7 @@ impl NodeMutation {
                     installed_commit: None,
                     lifecycle: review_database::Lifecycle::NotInstalled,
                     bound_addrs: vec![],
+                    instance: None,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -164,6 +165,7 @@ impl NodeMutation {
                     installed_commit: None,
                     lifecycle: review_database::Lifecycle::NotInstalled,
                     bound_addrs: vec![],
+                    instance: None,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -268,11 +270,13 @@ pub(super) fn merge_installation_state(
             agent.installed_commit = stored_agent.installed_commit.clone();
             agent.lifecycle = stored_agent.lifecycle;
             agent.bound_addrs.clone_from(&stored_agent.bound_addrs);
+            agent.instance = stored_agent.instance;
         } else {
             agent.installed_version = None;
             agent.installed_commit = None;
             agent.lifecycle = review_database::Lifecycle::NotInstalled;
             agent.bound_addrs.clear();
+            agent.instance = None;
         }
     }
 
@@ -286,11 +290,13 @@ pub(super) fn merge_installation_state(
             service.installed_commit = stored_service.installed_commit.clone();
             service.lifecycle = stored_service.lifecycle;
             service.bound_addrs.clone_from(&stored_service.bound_addrs);
+            service.instance = stored_service.instance;
         } else {
             service.installed_version = None;
             service.installed_commit = None;
             service.lifecycle = review_database::Lifecycle::NotInstalled;
             service.bound_addrs.clear();
+            service.instance = None;
         }
     }
 }
@@ -394,6 +400,7 @@ mod tests {
                     installed_commit: None,
                     lifecycle: database::Lifecycle::NotInstalled,
                     bound_addrs: vec![],
+                    instance: None,
                 },
                 database::Agent {
                     node_id: u32::MAX,
@@ -406,6 +413,7 @@ mod tests {
                     installed_commit: None,
                     lifecycle: database::Lifecycle::NotInstalled,
                     bound_addrs: vec![],
+                    instance: None,
                 },
                 database::Agent {
                     node_id: u32::MAX,
@@ -418,6 +426,7 @@ mod tests {
                     installed_commit: None,
                     lifecycle: database::Lifecycle::NotInstalled,
                     bound_addrs: vec![],
+                    instance: None,
                 },
             ],
             external_services: vec![],
@@ -786,6 +795,7 @@ mod tests {
             assert_eq!(agent.installed_commit, None);
             assert_eq!(agent.lifecycle, review_database::Lifecycle::NotInstalled);
             assert!(agent.bound_addrs.is_empty());
+            assert_eq!(agent.instance, None);
             let service = node
                 .external_services
                 .first()
@@ -794,12 +804,14 @@ mod tests {
             assert_eq!(service.installed_commit, None);
             assert_eq!(service.lifecycle, review_database::Lifecycle::NotInstalled);
             assert!(service.bound_addrs.is_empty());
+            assert_eq!(service.instance, None);
 
             let mut installed_agent = agent.clone();
             installed_agent.installed_version = Some("v1".to_string());
             installed_agent.installed_commit = Some("abcdef".to_string());
             installed_agent.lifecycle = review_database::Lifecycle::Running;
             installed_agent.bound_addrs = vec![("api".to_string(), "127.0.0.1:1000".to_string())];
+            installed_agent.instance = Some(1);
             store
                 .agents_map()
                 .update(agent, &installed_agent)
@@ -810,6 +822,7 @@ mod tests {
             installed_service.installed_commit = Some("fedcba".to_string());
             installed_service.lifecycle = review_database::Lifecycle::Stopped;
             installed_service.bound_addrs = vec![("rpc".to_string(), "127.0.0.1:2000".to_string())];
+            installed_service.instance = Some(2);
             store
                 .external_service_map()
                 .update(service, &installed_service)
@@ -873,6 +886,7 @@ mod tests {
             );
             assert_eq!(updated_agent.lifecycle, installed_agent.lifecycle);
             assert_eq!(updated_agent.bound_addrs, installed_agent.bound_addrs);
+            assert_eq!(updated_agent.instance, installed_agent.instance);
             let updated_service = updated
                 .external_services
                 .first()
@@ -887,6 +901,7 @@ mod tests {
             );
             assert_eq!(updated_service.lifecycle, installed_service.lifecycle);
             assert_eq!(updated_service.bound_addrs, installed_service.bound_addrs);
+            assert_eq!(updated_service.instance, installed_service.instance);
         }
 
         // An entry added alongside stored ones takes the defaults while the
@@ -963,6 +978,7 @@ mod tests {
             );
             assert_eq!(kept_agent.lifecycle, installed_agent.lifecycle);
             assert_eq!(kept_agent.bound_addrs, installed_agent.bound_addrs);
+            assert_eq!(kept_agent.instance, installed_agent.instance);
 
             let added_agent = mixed
                 .agents
@@ -976,6 +992,7 @@ mod tests {
                 review_database::Lifecycle::NotInstalled
             );
             assert!(added_agent.bound_addrs.is_empty());
+            assert_eq!(added_agent.instance, None);
 
             let kept_service = mixed
                 .external_services
@@ -992,6 +1009,7 @@ mod tests {
             );
             assert_eq!(kept_service.lifecycle, installed_service.lifecycle);
             assert_eq!(kept_service.bound_addrs, installed_service.bound_addrs);
+            assert_eq!(kept_service.instance, installed_service.instance);
 
             let added_service = mixed
                 .external_services
@@ -1005,6 +1023,7 @@ mod tests {
                 review_database::Lifecycle::NotInstalled
             );
             assert!(added_service.bound_addrs.is_empty());
+            assert_eq!(added_service.instance, None);
         }
 
         // Removing an entry leaves the installation state of the entries that
@@ -1083,6 +1102,7 @@ mod tests {
             );
             assert_eq!(remaining_agent.lifecycle, installed_agent.lifecycle);
             assert_eq!(remaining_agent.bound_addrs, installed_agent.bound_addrs);
+            assert_eq!(remaining_agent.instance, installed_agent.instance);
 
             let remaining_service = reduced
                 .external_services
@@ -1099,6 +1119,7 @@ mod tests {
             );
             assert_eq!(remaining_service.lifecycle, installed_service.lifecycle);
             assert_eq!(remaining_service.bound_addrs, installed_service.bound_addrs);
+            assert_eq!(remaining_service.instance, installed_service.instance);
         }
 
         let res = schema
@@ -1144,6 +1165,7 @@ mod tests {
         );
         assert_eq!(applied_agent.lifecycle, installed_agent.lifecycle);
         assert_eq!(applied_agent.bound_addrs, installed_agent.bound_addrs);
+        assert_eq!(applied_agent.instance, installed_agent.instance);
         let applied_service = applied
             .external_services
             .first()
@@ -1158,6 +1180,7 @@ mod tests {
         );
         assert_eq!(applied_service.lifecycle, installed_service.lifecycle);
         assert_eq!(applied_service.bound_addrs, installed_service.bound_addrs);
+        assert_eq!(applied_service.instance, installed_service.instance);
     }
 
     #[tokio::test]

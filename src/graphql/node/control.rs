@@ -3433,6 +3433,7 @@ mod tests {
             installed_commit: None,
             lifecycle: review_database::Lifecycle::NotInstalled,
             bound_addrs: vec![],
+            instance: None,
         }
     }
 
