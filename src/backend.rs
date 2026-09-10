@@ -160,8 +160,13 @@ pub(crate) const CORE_PACKAGE_IDS: [&str; 3] = ["review", "aice-web-next", "roxy
 // - `review-protocol` at `32ed9b0` — the `types::node` module, which carries
 //   the package (`NodePackageRequest`/`NodePackageResponse`/
 //   `NodePackageError`) and enrollment (`NodeEnrollRequest`/
-//   `NodeEnrollResponse`/`NodeEnrollError`) surfaces, plus the crate's
-//   `lib.rs` re-exports.
+//   `NodeEnrollResponse`/`NodeEnrollError`) surfaces, and the rest of its
+//   public surface: the `lib.rs` re-exports and the `auth`, `client`,
+//   `frame`, `protocol_error`, `request`, `server`, `service_id` and `test`
+//   modules, of which `server::node` is the one that also carries node
+//   deployment types. Several are feature-gated, so the check read the tree
+//   rather than a built rustdoc, which would show only the features that
+//   happened to be on.
 //
 // None of the six names exists anywhere in either tree. What is there instead,
 // and why it is not the same type:
