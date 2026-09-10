@@ -17,14 +17,20 @@ use futures::{
     pin_mut,
 };
 use ipnet::IpNet;
-use review_database::{Store, migrate_data_dir};
+use review_database::{BuildSelector, ListenerBinding, Store, migrate_data_dir};
+// `review_database::Lifecycle` and `review_protocol::types::node::Lifecycle`
+// share a name, so nothing here glob-imports either module.
+use review_protocol::types::node::{BootstrapMaterial, DeliveryMode, FailurePolicy, PackageState};
 #[cfg(feature = "auth-mtls")]
 use review_web::auth::{MtlsAuthError, MtlsAuthenticator, MtlsIdentity};
 #[cfg(not(feature = "auth-mtls"))]
 use review_web::graphql::account::set_initial_admin_password;
 use review_web::{
     self as web,
-    backend::{AgentManager, CertManager},
+    backend::{
+        AgentManager, BindAddrInput, BuildId, CertManager, DeployError, DeployOutcome,
+        HostOnboarder, HostOnboardingTicket, OperationId, PackageDeployer,
+    },
     graphql::{
         Process, ResourceUsage, SamplingPolicy, customer::NetworksTargetAgentLookupKeysPair,
     },
@@ -211,6 +217,104 @@ impl AgentManager for Manager {
         _rules: &[(IpNet, Option<Vec<u16>>, Option<Vec<u16>>)],
     ) -> Result<(), Error> {
         bail!("Not supported")
+    }
+}
+
+/// A deployer that reaches no roxyd, so every operation reports the host as
+/// unreachable.
+struct Deployer;
+
+#[async_trait]
+impl PackageDeployer for Deployer {
+    async fn install(
+        &self,
+        host: &str,
+        _target: &str,
+        _selector: BuildSelector,
+        _on_failure: FailurePolicy,
+        _bind_addrs: Option<Vec<BindAddrInput>>,
+        _request_key: &str,
+    ) -> Result<(DeployOutcome, OperationId), DeployError> {
+        Err(DeployError::Other(anyhow!("Host {host} is unreachable")))
+    }
+
+    async fn update(
+        &self,
+        host: &str,
+        _target: &str,
+        _instance: Option<u32>,
+        _selector: BuildSelector,
+        _on_failure: FailurePolicy,
+    ) -> Result<(DeployOutcome, OperationId), DeployError> {
+        Err(DeployError::Other(anyhow!("Host {host} is unreachable")))
+    }
+
+    async fn remove(
+        &self,
+        host: &str,
+        _target: &str,
+        _instance: Option<u32>,
+    ) -> Result<OperationId, DeployError> {
+        Err(DeployError::Other(anyhow!("Host {host} is unreachable")))
+    }
+
+    async fn recommend_bind_addrs(
+        &self,
+        host: &str,
+        _target: &str,
+    ) -> Result<Vec<ListenerBinding>, DeployError> {
+        Err(DeployError::Other(anyhow!("Host {host} is unreachable")))
+    }
+
+    async fn latest_build(&self, target: &str) -> Result<Option<BuildId>, Error> {
+        bail!("No build store holds {target}")
+    }
+
+    async fn package_status(
+        &self,
+        host: &str,
+        _target: &str,
+        _instance: Option<u32>,
+    ) -> Result<PackageState, Error> {
+        bail!("Host {host} is unreachable")
+    }
+
+    async fn read_version(
+        &self,
+        host: &str,
+        _target: &str,
+        _instance: Option<u32>,
+    ) -> Result<Option<BuildId>, Error> {
+        bail!("Host {host} is unreachable")
+    }
+
+    async fn register(
+        &self,
+        _service_name: &str,
+        _host: &str,
+        _instance: Option<u32>,
+        _mode: DeliveryMode,
+    ) -> Result<BootstrapMaterial, Error> {
+        bail!("No registrar is configured")
+    }
+
+    async fn deregister(
+        &self,
+        _service_name: &str,
+        _host: &str,
+        _instance: Option<u32>,
+    ) -> Result<(), Error> {
+        bail!("No registrar is configured")
+    }
+}
+
+/// An onboarder that mints no ticket, because no registrar is configured.
+struct Onboarder;
+
+#[async_trait]
+impl HostOnboarder for Onboarder {
+    async fn onboard_host(&self, host: &str) -> Result<(HostOnboardingTicket, OperationId), Error> {
+        bail!("Host {host} cannot be onboarded without a registrar")
     }
 }
 
@@ -447,7 +551,14 @@ fn run(config: &Config) -> Result<Arc<Notify>> {
         #[cfg(feature = "auth-mtls")]
         authenticator: Arc::new(MiniAuthenticator),
     };
-    let web_srv_shutdown_handle = web::serve(web_config, store, ip_locator, agent_manager);
+    let web_srv_shutdown_handle = web::serve(
+        web_config,
+        store,
+        ip_locator,
+        agent_manager,
+        Deployer,
+        Onboarder,
+    );
 
     Ok(web_srv_shutdown_handle)
 }

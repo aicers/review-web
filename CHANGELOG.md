@@ -27,6 +27,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Changed the public `serve` function to accept
   `Option<Arc<ip2location::DB>>` instead of `Option<ip2location::DB>`. This is a
   breaking API change for callers that initialize the server.
+- Changed the public `serve` function to take a `PackageDeployer` and a
+  `HostOnboarder` after the `AgentManager`. This is a breaking API change for
+  callers that initialize the server.
 - Renamed the corresponding GraphQL schema fields and arguments to match the
   upstream `review-database` field names:
   - `Agent.node` and `ExternalService.node` are now `nodeId`.
@@ -53,7 +56,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   policies.
 - Added the `schema_sdl` example for generating `schema.graphql` SDL with the
   `auth-mtls` feature enabled. The example writes the schema to stdout so it
-  can be redirected to a file.
+  can be redirected to a file, and the generated schema is committed as
+  `schema.graphql` at the repository root so that a schema change shows up as a
+  reviewable diff.
+- Added the `PackageDeployer` and `HostOnboarder` traits to the `backend`
+  module, alongside the existing `AgentManager`. `PackageDeployer` installs,
+  updates, removes and reads packages on a host by package-id, covering agents,
+  external services and core components alike; `HostOnboarder` brings a new
+  host under management. An application embedding this crate implements both
+  and passes them to `serve`.
 
 ### Fixed
 

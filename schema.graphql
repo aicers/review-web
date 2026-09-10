@@ -1,0 +1,8704 @@
+type Agent {
+	nodeId: Int!
+	key: String!
+	kind: AgentKind!
+	status: AgentStatus!
+	config: String
+	draft: String
+}
+
+input AgentDraftInput {
+	kind: AgentKind!
+	"""
+	Agent identity segment combined with the node profile hostname to form the
+	runtime agent lookup key used for routing and notifications.
+	
+	For auth-mtls builds, use `{instance}.{service}` (e.g. `001.hog`, `002.hog`)
+	matching the certificate identity prefix before the DNS SAN hostname.
+	For auth-jwt builds, use the legacy agent name (e.g. `hog`).
+	"""
+	key: String!
+	status: AgentStatus!
+	draft: String
+}
+
+input AgentInput {
+	kind: AgentKind!
+	"""
+	Agent identity segment combined with the node profile hostname to form the
+	runtime agent lookup key used for routing and notifications.
+	
+	For auth-mtls builds, use `{instance}.{service}` (e.g. `001.hog`, `002.hog`)
+	matching the certificate identity prefix before the DNS SAN hostname.
+	For auth-jwt builds, use the legacy agent name (e.g. `hog`).
+	"""
+	key: String!
+	status: AgentStatus!
+	config: String
+	draft: String
+}
+
+enum AgentKind {
+	UNSUPERVISED
+	SENSOR
+	SEMI_SUPERVISED
+	TIME_SERIES_GENERATOR
+}
+
+type AgentNotifyAttempt {
+	"""
+	The bare agent key (matching `Agent.key`).
+	"""
+	agentKey: String!
+	"""
+	`true` if the manager accepted the notify request. Does not imply that the agent has
+	already applied the new config.
+	"""
+	succeeded: Boolean!
+	"""
+	Populated only when `succeeded` is `false`.
+	"""
+	error: String
+}
+
+type AgentSnapshot {
+	kind: AgentKind!
+	storedStatus: AgentStatus!
+	"""
+	Serialized TOML string containing the configuration of the agent.
+	"""
+	config: String
+	"""
+	Serialized TOML string containing the draft configuration of the agent.
+	"""
+	draft: String
+}
+
+enum AgentStatus {
+	DISABLED
+	ENABLED
+	RELOAD_FAILED
+	UNKNOWN
+}
+
+type AllowNetwork {
+	id: ID!
+	customerId: ID!
+	name: String!
+	description: String!
+	networks: HostNetworkGroup!
+}
+
+type AllowNetworkConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [AllowNetworkEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [AllowNetwork!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type AllowNetworkEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: AllowNetwork!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input AllowNetworkInput {
+	name: String
+	customerId: ID
+	networks: HostNetworkGroupInput
+	description: String
+}
+
+type ApplyAgentConfigOutput {
+	"""
+	One entry per agent for whom a notify was attempted (current DB `config` is
+	`Some(non-empty)`).
+	"""
+	attempts: [AgentNotifyAttempt!]!
+	"""
+	One entry per agent in the target set that was not notified, with the reason.
+	"""
+	skipped: [SkippedAgent!]!
+}
+
+enum AttrCmpKind {
+	LESS
+	EQUAL
+	GREATER
+	LESS_OR_EQUAL
+	GREATER_OR_EQUAL
+	CONTAIN
+	OPEN_RANGE
+	CLOSE_RANGE
+	LEFT_OPEN_RANGE
+	RIGHT_OPEN_RANGE
+	NOT_EQUAL
+	NOT_CONTAIN
+	NOT_OPEN_RANGE
+	NOT_CLOSE_RANGE
+	NOT_LEFT_OPEN_RANGE
+	NOT_RIGHT_OPEN_RANGE
+}
+
+"""
+GraphQL output type for backup configuration settings.
+
+This type represents the current backup configuration including:
+- `backup_duration`: Interval between backups in days (minimum: 1)
+- `backup_time`: Scheduled backup execution time in HH:MM:SS UTC format
+- `num_of_backups_to_keep`: Maximum number of retained backup snapshots (minimum: 1)
+"""
+type BackupConfig {
+	"""
+	Interval between backups in days. Minimum value is 1.
+	"""
+	backupDuration: Int!
+	"""
+	Scheduled backup execution time in HH:MM:SS UTC format.
+	"""
+	backupTime: String!
+	"""
+	Maximum number of retained backup snapshots. Minimum value is 1.
+	"""
+	numOfBackupsToKeep: Int!
+}
+
+"""
+GraphQL input type for creating or updating backup configuration.
+
+All fields are required:
+- `backup_duration`: Interval between backups in days (must be >= 1)
+- `backup_time`: Scheduled backup execution time in HH:MM:SS UTC format
+- `num_of_backups_to_keep`: Maximum number of retained backup snapshots (must be >= 1)
+"""
+input BackupConfigInput {
+	"""
+	Interval between backups in days. Must be >= 1.
+	"""
+	backupDuration: Int!
+	"""
+	Scheduled backup execution time in HH:MM:SS UTC format (e.g., "23:59:59").
+	"""
+	backupTime: String!
+	"""
+	Maximum number of retained backup snapshots. Must be >= 1.
+	"""
+	numOfBackupsToKeep: Int!
+}
+
+type BackupInfo {
+	id: ID!
+	timestamp: DateTime!
+	size: StringNumber!
+}
+
+type BlockNetwork {
+	id: ID!
+	customerId: ID!
+	name: String!
+	description: String!
+	networks: HostNetworkGroup!
+}
+
+type BlockNetworkConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [BlockNetworkEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [BlockNetwork!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type BlockNetworkEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: BlockNetwork!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input BlockNetworkInput {
+	name: String
+	customerId: ID
+	networks: HostNetworkGroupInput
+	description: String
+}
+
+type BlocklistBootp implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Operation Code
+	1: BOOTREQUEST, 2 = BOOTREPLY
+	"""
+	op: Int!
+	"""
+	Hardware Type
+	"""
+	htype: Int!
+	"""
+	Hop Count
+	"""
+	hops: Int!
+	"""
+	Transaction ID
+	"""
+	xid: StringNumber!
+	"""
+	Client IP Address
+	"""
+	ciaddr: String!
+	"""
+	Your IP (Address)
+	"""
+	yiaddr: String!
+	"""
+	Server IP (Address)
+	"""
+	siaddr: String!
+	"""
+	Gateway IP (Address)
+	"""
+	giaddr: String!
+	"""
+	Client Hardware IP (Address)
+	"""
+	chaddr: String!
+	"""
+	Server Hostname
+	"""
+	sname: String!
+	"""
+	Boot Filename
+	"""
+	file: String!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistConn implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Connection State
+	"""
+	connState: String!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Service Name
+	"""
+	service: String!
+	"""
+	Bytes Sent (by Source)
+	"""
+	origBytes: StringNumber!
+	"""
+	Bytes Received (by Destination)
+	"""
+	respBytes: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistDceRpc implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	DCE/RPC Context Entries
+	"""
+	context: [DceRpcContext!]!
+	"""
+	DCE/RPC Request Strings
+	"""
+	request: [String!]!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistDhcp implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Message Type
+	"""
+	msgType: Int!
+	"""
+	Client IP (Address)
+	"""
+	ciaddr: String!
+	"""
+	Your IP (Address)
+	"""
+	yiaddr: String!
+	"""
+	Server IP (Address)
+	"""
+	siaddr: String!
+	"""
+	Gateway IP (Address)
+	"""
+	giaddr: String!
+	"""
+	Subnet Mask
+	"""
+	subnetMask: String!
+	"""
+	Routers
+	"""
+	router: String!
+	"""
+	Domain Name Servers
+	"""
+	domainNameServer: String!
+	"""
+	Request IP (Address)
+	"""
+	reqIpAddr: String!
+	"""
+	Lease Time
+	"""
+	leaseTime: StringNumber!
+	"""
+	Server ID
+	"""
+	serverId: String!
+	"""
+	Parameter Request List
+	"""
+	paramReqList: String!
+	"""
+	Message
+	"""
+	message: String!
+	"""
+	Renewal Time
+	"""
+	renewalTime: StringNumber!
+	"""
+	Rebinding Time
+	"""
+	rebindingTime: StringNumber!
+	"""
+	Class ID List
+	"""
+	classId: String!
+	"""
+	Client ID Type
+	"""
+	clientIdType: Int!
+	"""
+	Client ID List
+	"""
+	clientId: String!
+	"""
+	DHCP Options
+	"""
+	options: [DhcpOption!]!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistDns implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Query
+	"""
+	query: String!
+	"""
+	Answer
+	"""
+	answer: [String!]!
+	"""
+	Transaction ID
+	"""
+	transId: Int!
+	"""
+	Round-Trip Time
+	"""
+	rtt: StringNumber!
+	"""
+	Query Class
+	"""
+	qclass: Int!
+	"""
+	Query Type
+	"""
+	qtype: Int!
+	"""
+	Response Code
+	"""
+	rcode: Int!
+	"""
+	Authoritative Answer Flag
+	"""
+	aaFlag: Boolean!
+	"""
+	Truncated Flag
+	"""
+	tcFlag: Boolean!
+	"""
+	Recursion Desired Flag
+	"""
+	rdFlag: Boolean!
+	"""
+	Recursion Available Flag
+	"""
+	raFlag: Boolean!
+	"""
+	Time to Live
+	"""
+	ttl: [Int!]!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistFtp implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Username
+	"""
+	user: String!
+	"""
+	Password
+	"""
+	password: String!
+	"""
+	Commands
+	"""
+	commands: [FtpCommand!]!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistHttp implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	HTTP Method
+	"""
+	method: String!
+	"""
+	Host
+	"""
+	host: String!
+	"""
+	URI
+	"""
+	uri: String!
+	"""
+	Referer
+	"""
+	referer: String!
+	"""
+	HTTP Version
+	"""
+	version: String!
+	"""
+	User Agent
+	"""
+	userAgent: String!
+	"""
+	Request Length
+	"""
+	requestLen: StringNumber!
+	"""
+	Response Length
+	"""
+	responseLen: StringNumber!
+	"""
+	Status Code
+	"""
+	statusCode: Int!
+	"""
+	Status Message
+	"""
+	statusMsg: String!
+	"""
+	Username
+	"""
+	username: String!
+	"""
+	Password
+	"""
+	password: String!
+	"""
+	Cookie
+	"""
+	cookie: String!
+	"""
+	Content Encoding
+	"""
+	contentEncoding: String!
+	"""
+	Content Type
+	"""
+	contentType: String!
+	"""
+	Cache Control
+	"""
+	cacheControl: String!
+	"""
+	Filenames
+	"""
+	filenames: [String!]!
+	"""
+	MIME Types
+	"""
+	mimeTypes: [String!]!
+	"""
+	Body
+	"""
+	body: [Int!]!
+	"""
+	Last State
+	"""
+	state: String!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+	"""
+	Learning Method
+	"""
+	learningMethod: LearningMethod!
+}
+
+type BlocklistKerberos implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Client Time
+	"""
+	clientTime: StringNumber!
+	"""
+	Server Time
+	"""
+	serverTime: StringNumber!
+	"""
+	Error Code
+	"""
+	errorCode: StringNumber!
+	"""
+	Client Realm
+	"""
+	clientRealm: String!
+	"""
+	Client Name Type
+	"""
+	cnameType: Int!
+	"""
+	Client Name
+	"""
+	cname: [String!]!
+	"""
+	Realm
+	"""
+	realm: String!
+	"""
+	Service Name Type
+	"""
+	snameType: Int!
+	"""
+	Service Name
+	"""
+	sname: [String!]!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistLdap implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Message ID
+	"""
+	messageId: ID!
+	"""
+	Version
+	"""
+	version: Int!
+	"""
+	Operation Code
+	"""
+	opcode: [String!]!
+	"""
+	Result Code
+	"""
+	result: [String!]!
+	"""
+	Diagnostic Message
+	"""
+	diagnosticMessage: [String!]!
+	"""
+	Object
+	"""
+	object: [String!]!
+	"""
+	Argument
+	"""
+	argument: [String!]!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistMalformedDns implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent by Source
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received by Destination
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent by Source
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received by Destination
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Transaction ID
+	"""
+	transId: Int!
+	"""
+	Flags
+	"""
+	flags: Int!
+	"""
+	Question Count
+	"""
+	questionCount: Int!
+	"""
+	Answer Count
+	"""
+	answerCount: Int!
+	"""
+	Authority Count
+	"""
+	authorityCount: Int!
+	"""
+	Additional Count
+	"""
+	additionalCount: Int!
+	"""
+	Query Count
+	"""
+	queryCount: StringNumber!
+	"""
+	Response Count
+	"""
+	respCount: StringNumber!
+	"""
+	Query Bytes
+	"""
+	queryBytes: StringNumber!
+	"""
+	Response Bytes
+	"""
+	respBytes: StringNumber!
+	"""
+	Query Body
+	"""
+	queryBody: [String!]!
+	"""
+	Response Body
+	"""
+	respBody: [String!]!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistMqtt implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	MQTT Protocol
+	"""
+	protocol: String!
+	"""
+	Version
+	"""
+	version: Int!
+	"""
+	Client ID
+	"""
+	clientId: String!
+	"""
+	Connection Acknowledgement Response
+	"""
+	connackReason: Int!
+	"""
+	Subscription
+	"""
+	subscribe: [String!]!
+	"""
+	Subscribe Acknowledgement Response
+	"""
+	subackReason: [Int!]!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistNfs implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Read Files
+	"""
+	readFiles: [String!]!
+	"""
+	Write Files
+	"""
+	writeFiles: [String!]!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistNtlm implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Transport Protocol
+	"""
+	protocol: String!
+	"""
+	Username
+	"""
+	username: String!
+	"""
+	Hostname
+	"""
+	hostname: String!
+	"""
+	Domain Name
+	"""
+	domainname: String!
+	"""
+	Authentication Success
+	"""
+	success: String!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistRadius implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	RADIUS packet identifier.
+	"""
+	packetId: Int!
+	"""
+	Code
+	"""
+	code: Int!
+	"""
+	Response Code
+	"""
+	respCode: Int!
+	"""
+	Authenticator
+	"""
+	auth: String!
+	"""
+	Response Authenticator
+	"""
+	respAuth: String!
+	"""
+	User Name
+	"""
+	userName: String!
+	"""
+	NAS IP Address
+	"""
+	nasIp: String!
+	"""
+	NAS Port
+	"""
+	nasPort: StringNumber!
+	"""
+	State
+	"""
+	state: String!
+	"""
+	NAS Identifier
+	"""
+	nasId: String!
+	"""
+	NAS Port Type
+	"""
+	nasPortType: StringNumber!
+	"""
+	Message
+	"""
+	message: String!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistRdp implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Cookie
+	"""
+	cookie: String!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistSmb implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Command
+	"""
+	command: Int!
+	"""
+	Path
+	"""
+	path: String!
+	"""
+	Service Name
+	"""
+	service: String!
+	"""
+	Filename
+	"""
+	fileName: String!
+	"""
+	File Size
+	"""
+	fileSize: StringNumber!
+	"""
+	Resource Type
+	"""
+	resourceType: Int!
+	"""
+	File ID
+	"""
+	fid: Int!
+	"""
+	Create Time
+	"""
+	createTime: Int!
+	"""
+	Access Time
+	"""
+	accessTime: Int!
+	"""
+	Write Time
+	"""
+	writeTime: Int!
+	"""
+	Change Time
+	"""
+	changeTime: Int!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistSmtp implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Mail From
+	"""
+	mailfrom: String!
+	"""
+	Date
+	"""
+	date: String!
+	"""
+	From
+	"""
+	from: String!
+	"""
+	To
+	"""
+	to: String!
+	"""
+	Subject
+	"""
+	subject: String!
+	"""
+	Agent
+	"""
+	agent: String!
+	"""
+	State
+	"""
+	state: String!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistSsh implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Client
+	"""
+	client: String!
+	"""
+	Server
+	"""
+	server: String!
+	"""
+	Cipher Algorithm
+	"""
+	cipherAlg: String!
+	"""
+	MAC Algorithms
+	"""
+	macAlg: String!
+	"""
+	Compression Algorithm
+	"""
+	compressionAlg: String!
+	"""
+	Key Exchange Algorithm
+	"""
+	kexAlg: String!
+	"""
+	Host Key Algorithm
+	"""
+	hostKeyAlg: String!
+	"""
+	HASSH Algorithms
+	"""
+	hasshAlgorithms: String!
+	"""
+	HASSH
+	"""
+	hassh: String!
+	"""
+	HASSH Server Algorithm
+	"""
+	hasshServerAlgorithms: String!
+	"""
+	HASSH Server
+	"""
+	hasshServer: String!
+	"""
+	Client Signed Host Key Algorithm
+	"""
+	clientShka: String!
+	"""
+	Server Signed Host Key Algorithm
+	"""
+	serverShka: String!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type BlocklistTls implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Server Name
+	"""
+	serverName: String!
+	"""
+	ALPN Protocol
+	"""
+	alpnProtocol: String!
+	"""
+	JA3 Fingerprint
+	"""
+	ja3: String!
+	"""
+	TLS Version
+	"""
+	version: String!
+	"""
+	Client Cipher Suites
+	"""
+	clientCipherSuites: [Int!]!
+	"""
+	Client Extensions
+	"""
+	clientExtensions: [Int!]!
+	"""
+	Cipher
+	"""
+	cipher: Int!
+	"""
+	Extensions
+	"""
+	extensions: [Int!]!
+	"""
+	JA3S Fingerprint
+	"""
+	ja3S: String!
+	"""
+	Certificate Serial Number
+	"""
+	serial: String!
+	"""
+	(Certificate) Subject Country
+	"""
+	subjectCountry: String!
+	"""
+	(Certificate) Subject Organization Name
+	"""
+	subjectOrgName: String!
+	"""
+	(Certificate) Common Name
+	"""
+	subjectCommonName: String!
+	"""
+	(Certificate) Validity Start
+	"""
+	validityNotBefore: StringNumber!
+	"""
+	(Certificate) Validity End
+	"""
+	validityNotAfter: StringNumber!
+	"""
+	(Certificate) Subject Alternative Name
+	"""
+	subjectAltName: String!
+	"""
+	(Certificate) Issuer Country
+	"""
+	issuerCountry: String!
+	"""
+	(Certificate) Issuer Organization Name
+	"""
+	issuerOrgName: String!
+	"""
+	(Certificate) Issuer Organization Unit Name
+	"""
+	issuerOrgUnitName: String!
+	"""
+	(Certificate) Issuer Common Name
+	"""
+	issuerCommonName: String!
+	"""
+	Last Alert Message
+	"""
+	lastAlert: Int!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type Category {
+	id: ID!
+	name: String!
+}
+
+type CategoryConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [CategoryEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Category!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type CategoryEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Category!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type CertificatePayload {
+	parsedCertificate: [ParsedCertificate!]!
+}
+
+type Cluster {
+	detector: Int!
+	labels: [String!]
+	signature: String!
+	size: Int!
+	score: Float
+	lastModificationTime: NaiveDateTime
+	id: ID!
+	category: Category!
+	events: [DateTime!]!
+	model: ModelDigest!
+	qualifier: Qualifier!
+	status: Status!
+}
+
+type ClusterConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [ClusterEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Cluster!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type ClusterEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Cluster!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type ClusterTrend {
+	clusterId: ID!
+	series: [TimeCount!]!
+	"""
+	The cluster trend in a vector of string representable by a vector of
+	`usize`.
+	"""
+	trend: [StringNumber!]!
+	lines: [LineSegment!]!
+	"""
+	The number of ups of cluster trend in string represantable by a `
+	usize`.
+	"""
+	numberOfUps: StringNumber!
+	"""
+	The number of downs of cluster trend in string represantable by a
+	`usize`.
+	"""
+	numberOfDowns: StringNumber!
+	maximumSlope: Float!
+	minimumSlope: Float!
+	"""
+	The longest up span of cluster trend in string represantable by a
+	`usize`.
+	"""
+	longestUpSpan: StringNumber!
+	"""
+	The longest down span of cluster trend in string represantable by a
+	`usize`.
+	"""
+	longestDownSpan: StringNumber!
+}
+
+type ColumnTimeSeries {
+	"""
+	The column index of the time series in string within the representable
+	range of `usize`.
+	"""
+	columnIndex: StringNumber!
+	series: [TimeCount!]!
+	seriesTrend: [TimeCount!]!
+}
+
+type Confidence {
+	threatCategory: ThreatCategory
+	threatKind: String!
+	confidence: Float!
+	weight: Float
+}
+
+input ConfidenceInput {
+	threatCategory: ThreatCategory
+	threatKind: String!
+	confidence: Float!
+	weight: Float
+}
+
+type CryptocurrencyMiningPool implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Query
+	"""
+	query: String!
+	"""
+	Answer
+	"""
+	answer: [String!]!
+	"""
+	Transaction ID
+	"""
+	transId: Int!
+	"""
+	Round-Trip Time
+	"""
+	rtt: StringNumber!
+	"""
+	Query Class
+	"""
+	qclass: Int!
+	"""
+	Query Type
+	"""
+	qtype: Int!
+	"""
+	Response Code
+	"""
+	rcode: Int!
+	"""
+	Authoritative Answer Flag
+	"""
+	aaFlag: Boolean!
+	"""
+	Truncated Flag
+	"""
+	tcFlag: Boolean!
+	"""
+	Recursion Desired Flag
+	"""
+	rdFlag: Boolean!
+	"""
+	Recursion Available Flag
+	"""
+	raFlag: Boolean!
+	"""
+	Time to Live
+	"""
+	ttl: [Int!]!
+	"""
+	Coin List
+	"""
+	coins: [String!]!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type CsvColumnExtraConfig {
+	id: ID!
+	modelId: ID!
+	columnAlias: [String!]
+	columnDisplay: [Boolean!]
+	columnTopN: [Boolean!]
+	column1: [Boolean!]
+	columnN: [Boolean!]
+}
+
+type Customer {
+	"""
+	The ID of the customer.
+	"""
+	id: ID!
+	"""
+	The name of the customer.
+	"""
+	name: String!
+	"""
+	The description of the customer.
+	"""
+	description: String!
+	"""
+	The networks this customer owns.
+	"""
+	networks: [CustomerNetwork!]!
+	"""
+	The time when this customer was created.
+	"""
+	creationTime: DateTime!
+}
+
+type CustomerConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [CustomerEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Customer!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type CustomerEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Customer!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type CustomerNetwork {
+	"""
+	The name of the network.
+	"""
+	name: String!
+	"""
+	The description of the network.
+	"""
+	description: String!
+	"""
+	The type of the network.
+	"""
+	networkType: NetworkType!
+	"""
+	The network group of the network.
+	"""
+	networkGroup: HostNetworkGroup!
+}
+
+input CustomerNetworkInput {
+	name: String!
+	description: String!
+	networkType: NetworkType!
+	networkGroup: HostNetworkGroupInput!
+}
+
+input CustomerUpdateInput {
+	name: String
+	description: String
+	networks: [CustomerNetworkInput!]
+}
+
+type DataSource {
+	"""
+	The ID of the data source.
+	"""
+	id: ID!
+	"""
+	The name of the data source.
+	"""
+	name: String!
+	"""
+	The `server_name` of the data source.
+	"""
+	serverName: String!
+	"""
+	The socket address of the data source.
+	"""
+	address: String!
+	"""
+	The source for the data source in giganto.
+	"""
+	dataType: DataType!
+	"""
+	The policy of the data source.
+	"""
+	policy: ID
+	"""
+	The source for the data source in giganto.
+	"""
+	source: String!
+	"""
+	The description of the data source.
+	"""
+	description: String!
+	"""
+	The kind of the data source.
+	"""
+	kind: String
+}
+
+type DataSourceConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [DataSourceEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [DataSource!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type DataSourceEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: DataSource!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input DataSourceInsertInput {
+	name: String!
+	serverName: String
+	address: String
+	dataType: DataType!
+	source: String
+	kind: String
+	description: String!
+}
+
+input DataSourceUpdateInput {
+	name: String
+	serverName: String
+	address: String
+	dataType: DataType
+	source: String
+	kind: String
+	description: String
+}
+
+enum DataType {
+	"""
+	comma-separated values
+	"""
+	CSV
+	"""
+	line-based text data
+	"""
+	LOG
+	"""
+	time series data
+	"""
+	TIME_SERIES
+}
+
+"""
+Implement the DateTime<Utc> scalar
+
+The input/output is a string in RFC3339 format.
+"""
+scalar DateTime
+
+"""
+A single DCE/RPC context entry.
+"""
+type DceRpcContext {
+	id: Int!
+	abstractSyntax: StringNumber!
+	abstractMajor: Int!
+	abstractMinor: Int!
+	transferSyntax: StringNumber!
+	transferMajor: Int!
+	transferMinor: Int!
+	acceptance: Int!
+	reason: Int!
+}
+
+type DhcpOption {
+	code: Int!
+	value: [Int!]!
+}
+
+type DnsCovertChannel implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Query
+	"""
+	query: String!
+	"""
+	Answer
+	"""
+	answer: [String!]!
+	"""
+	Transaction ID
+	"""
+	transId: Int!
+	"""
+	Round-Trip Time
+	"""
+	rtt: StringNumber!
+	"""
+	Query Class
+	"""
+	qclass: Int!
+	"""
+	Query Type
+	"""
+	qtype: Int!
+	"""
+	Response Code
+	"""
+	rcode: Int!
+	"""
+	Authoritative Answer Flag
+	"""
+	aaFlag: Boolean!
+	"""
+	Truncated Flag
+	"""
+	tcFlag: Boolean!
+	"""
+	Recursion Desired Flag
+	"""
+	rdFlag: Boolean!
+	"""
+	Recursion Available Flag
+	"""
+	raFlag: Boolean!
+	"""
+	Time to Live
+	"""
+	ttl: [Int!]!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+	"""
+	Learning Method
+	"""
+	learningMethod: LearningMethod!
+}
+
+type DomainGenerationAlgorithm implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Host
+	"""
+	host: String!
+	"""
+	HTTP Method
+	"""
+	method: String!
+	"""
+	URI
+	"""
+	uri: String!
+	"""
+	Referer
+	"""
+	referer: String!
+	"""
+	HTTP Version
+	"""
+	version: String!
+	"""
+	User Agent
+	"""
+	userAgent: String!
+	"""
+	Request Length
+	"""
+	requestLen: StringNumber!
+	"""
+	Response Length
+	"""
+	responseLen: StringNumber!
+	"""
+	Status Code
+	"""
+	statusCode: Int!
+	"""
+	Status Message
+	"""
+	statusMsg: String!
+	"""
+	Username
+	"""
+	username: String!
+	"""
+	Password
+	"""
+	password: String!
+	"""
+	Cookie
+	"""
+	cookie: String!
+	"""
+	Content Encoding
+	"""
+	contentEncoding: String!
+	"""
+	Content Type
+	"""
+	contentType: String!
+	"""
+	Cache Control
+	"""
+	cacheControl: String!
+	"""
+	Filenames
+	"""
+	filenames: [String!]!
+	"""
+	MIME Types
+	"""
+	mimeTypes: [String!]!
+	"""
+	Body
+	"""
+	body: [Int!]!
+	"""
+	Last State
+	"""
+	state: String!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+	"""
+	Learning Method
+	"""
+	learningMethod: LearningMethod!
+}
+
+type DomainTriageExclusion {
+	domain: [String!]!
+}
+
+type ElementCount {
+	value: String!
+	"""
+	The count of element in string representable by a `i64`.
+	"""
+	count: StringNumber!
+}
+
+"""
+An endpoint of a network flow. One of `predefined`, `side`, and `custom` is
+required. Set `negate` to `true` to negate the endpoint. By default, the
+endpoint is not negated.
+"""
+input EndpointInput {
+	direction: TrafficDirection
+	predefined: ID
+	custom: HostNetworkGroupInput
+}
+
+"""
+Common interface for all event types.
+"""
+interface Event {
+	id: ID!
+	time: DateTime!
+	sensor: String!
+	confidence: Float!
+	category: ThreatCategory
+	level: ThreatLevel!
+	triageScores: [TriageScore!]
+}
+
+type EventConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [EventEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Event!]!
+	"""
+	The total number of events.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type EventEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Event!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input EventListFilterInput {
+	start: DateTime
+	end: DateTime
+	customers: [ID!]
+	endpoints: [EndpointInput!]
+	directions: [FlowKind!]
+	source: String
+	destination: String
+	keywords: [String!]
+	networkTags: [ID!]
+	sensors: [ID!]
+	os: [ID!]
+	devices: [ID!]
+	hostnames: [String!]
+	userIds: [String!]
+	userNames: [String!]
+	userDepartments: [String!]
+	"""
+	Filters by the two-letter country codes recorded on events. `"ZZ"`
+	selects events whose country could not be determined, and `"XX"`
+	selects events recorded without country information.
+	"""
+	countries: [String!]
+	categories: [Int]
+	levels: [ThreatLevel!]
+	kinds: [String!]
+	learningMethods: [LearningMethod!]
+	confidenceMin: Float
+	confidenceMax: Float
+	triagePolicies: [ID!]
+}
+
+"""
+Standard event filter for `eventListWithTriage`. Identical to
+`EventListFilterInput` minus `triagePolicies`: triage policies are passed
+exclusively via the separate `triage` argument as inline data.
+"""
+input EventStandardFilterInput {
+	start: DateTime
+	end: DateTime
+	customers: [ID!]
+	endpoints: [EndpointInput!]
+	directions: [FlowKind!]
+	source: String
+	destination: String
+	keywords: [String!]
+	networkTags: [ID!]
+	sensors: [ID!]
+	os: [ID!]
+	devices: [ID!]
+	hostnames: [String!]
+	userIds: [String!]
+	userNames: [String!]
+	userDepartments: [String!]
+	"""
+	Filters by the two-letter country codes recorded on events. `"ZZ"`
+	selects events whose country could not be determined, and `"XX"`
+	selects events recorded without country information.
+	"""
+	countries: [String!]
+	categories: [Int]
+	levels: [ThreatLevel!]
+	kinds: [String!]
+	learningMethods: [LearningMethod!]
+	confidenceMin: Float
+	confidenceMax: Float
+}
+
+"""
+Inline exclusion input for `eventListWithTriage`.
+
+All four fields are nullable at the schema level; an object with no
+populated field is rejected by the resolver. When more than one field is
+populated the object is flattened into independent `TriageExclusion`
+values that are OR-combined with the rest.
+"""
+input EventTriageExclusionInput {
+	ipAddress: HostNetworkGroupInput
+	domain: [String!]
+	hostname: [String!]
+	uri: [String!]
+}
+
+input EventTriageInput {
+	policies: [EventTriagePolicyInput!]
+	exclusions: [EventTriageExclusionInput!]
+}
+
+"""
+Inline triage policy input for `eventListWithTriage`.
+
+`id` is constrained to non-negative `i32` (`0..=i32::MAX`) and is echoed
+back unchanged as `TriageScore.policyId`.
+"""
+input EventTriagePolicyInput {
+	id: Int!
+	packetAttr: [PacketAttrInput!]!
+	confidence: [ConfidenceInput!]!
+	response: [ResponseInput!]!
+}
+
+union ExclusionReason = IpAddressTriageExclusion | DomainTriageExclusion | HostnameTriageExclusion | UriTriageExclusion
+
+type ExternalDdos implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address) List
+	"""
+	origAddrs: [String!]!
+	"""
+	Originator Country List
+	
+	The two-letter country codes recorded for the originator IP addresses,
+	one per address in the same order. Each code is `"ZZ"` if the country
+	could not be determined for that address, or `"XX"` if no country
+	information was recorded for this event.
+	"""
+	origCountries: [String!]!
+	"""
+	Originator Customer List
+	"""
+	origCustomers: [Customer]!
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Session start time of the first raw event used for detection.
+	"""
+	firstEventStartTime: DateTime!
+	"""
+	Session start time of the last raw event used for detection.
+	"""
+	lastEventStartTime: DateTime!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	level: ThreatLevel!
+}
+
+type ExternalService {
+	nodeId: Int!
+	key: String!
+	kind: ExternalServiceKind!
+	status: ExternalServiceStatus!
+	draft: String
+}
+
+input ExternalServiceInput {
+	kind: ExternalServiceKind!
+	key: String!
+	status: ExternalServiceStatus!
+	draft: String
+}
+
+enum ExternalServiceKind {
+	DATA_STORE
+	TI_CONTAINER
+}
+
+type ExternalServiceSnapshot {
+	kind: ExternalServiceKind!
+	storedStatus: ExternalServiceStatus!
+	"""
+	Serialized TOML string containing the draft configuration of the external service.
+	"""
+	draft: String
+}
+
+enum ExternalServiceStatus {
+	DISABLED
+	ENABLED
+	RELOAD_FAILED
+	UNKNOWN
+}
+
+type ExtraThreat implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Service Name
+	"""
+	service: String!
+	"""
+	Event Content
+	"""
+	content: String!
+	"""
+	Database Name
+	"""
+	dbName: String!
+	"""
+	Pattern ID
+	"""
+	ruleId: ID!
+	"""
+	Referenced Label
+	"""
+	matchedTo: String!
+	"""
+	Cluster ID
+	"""
+	clusterId: ID!
+	"""
+	Attack Kind
+	"""
+	attackKind: String!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+	"""
+	Learning Method
+	"""
+	learningMethod: LearningMethod!
+}
+
+"""
+Traffic flow direction.
+"""
+enum FlowKind {
+	INBOUND
+	OUTBOUND
+	INTERNAL
+}
+
+type FtpBruteForce implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	User List
+	"""
+	userList: [String!]!
+	"""
+	Session start time of the first raw event used for detection.
+	"""
+	firstEventStartTime: DateTime!
+	"""
+	Session start time of the last raw event used for detection.
+	"""
+	lastEventStartTime: DateTime!
+	"""
+	Is Internal
+	"""
+	isInternal: Boolean!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type FtpCommand {
+	"""
+	Command
+	"""
+	command: String!
+	"""
+	Reply Code
+	"""
+	replyCode: String!
+	"""
+	Reply Message
+	"""
+	replyMsg: String!
+	"""
+	Passive Mode Flag
+	"""
+	dataPassive: Boolean!
+	"""
+	Data Channel Source IP (Address)
+	"""
+	dataOrigAddr: String!
+	"""
+	Data Channel Destination IP (Address)
+	"""
+	dataRespAddr: String!
+	"""
+	Data Channel Destination Port (Number)
+	"""
+	dataRespPort: Int!
+	"""
+	Filename
+	"""
+	file: String!
+	"""
+	File Size
+	"""
+	fileSize: StringNumber!
+	"""
+	File ID
+	"""
+	fileId: String!
+}
+
+type FtpPlainText implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Username
+	"""
+	user: String!
+	"""
+	Password
+	"""
+	password: String!
+	"""
+	Commands
+	"""
+	commands: [FtpCommand!]!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type HostNetworkGroup {
+	hosts: [String!]!
+	networks: [String!]!
+	ranges: [IpRange!]!
+}
+
+input HostNetworkGroupInput {
+	hosts: [String!]!
+	networks: [String!]!
+	ranges: [IpRangeInput!]!
+}
+
+type HostnameTriageExclusion {
+	hostname: [String!]!
+}
+
+type HttpThreat implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	HTTP Method
+	"""
+	method: String!
+	"""
+	Host
+	"""
+	host: String!
+	"""
+	Event Content
+	"""
+	content: String!
+	"""
+	URI
+	"""
+	uri: String!
+	"""
+	Referer
+	"""
+	referer: String!
+	"""
+	HTTP Version
+	"""
+	version: String!
+	"""
+	User Agent
+	"""
+	userAgent: String!
+	"""
+	Request Length
+	"""
+	requestLen: StringNumber!
+	"""
+	Response Length
+	"""
+	responseLen: StringNumber!
+	"""
+	Status Code
+	"""
+	statusCode: Int!
+	"""
+	Status Message
+	"""
+	statusMsg: String!
+	"""
+	Username
+	"""
+	username: String!
+	"""
+	Password
+	"""
+	password: String!
+	"""
+	Cookie
+	"""
+	cookie: String!
+	"""
+	Content Encoding
+	"""
+	contentEncoding: String!
+	"""
+	Content Type
+	"""
+	contentType: String!
+	"""
+	Cache Control
+	"""
+	cacheControl: String!
+	"""
+	Filenames
+	"""
+	filenames: [String!]!
+	"""
+	MIME Types
+	"""
+	mimeTypes: [String!]!
+	"""
+	Body
+	"""
+	body: [Int!]!
+	"""
+	Last State
+	"""
+	state: String!
+	"""
+	Database Name
+	"""
+	dbName: String!
+	"""
+	Pattern ID
+	"""
+	ruleId: ID!
+	"""
+	Referenced Label
+	"""
+	matchedTo: String!
+	"""
+	Cluster ID
+	"""
+	clusterId: ID!
+	"""
+	Attack Kind
+	"""
+	attackKind: String!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+	"""
+	Learning Method
+	"""
+	learningMethod: LearningMethod!
+}
+
+enum Interval {
+	FIVE_MINUTES
+	TEN_MINUTES
+	FIFTEEN_MINUTES
+	THIRTY_MINUTES
+	ONE_HOUR
+}
+
+scalar IpAddress
+
+type IpAddressTriageExclusion {
+	ipAddress: HostNetworkGroup!
+}
+
+type IpLocation {
+	latitude: Float
+	longitude: Float
+	country: String
+	region: String
+	city: String
+	isp: String
+	domain: String
+	zipCode: String
+	timeZone: String
+	netSpeed: String
+	iddCode: String
+	areaCode: String
+	weatherStationCode: String
+	weatherStationName: String
+	mcc: String
+	mnc: String
+	mobileBrand: String
+	elevation: String
+	usageType: String
+}
+
+type IpLocationItem {
+	address: String!
+	location: IpLocation!
+}
+
+type IpRange {
+	start: String!
+	end: String!
+}
+
+input IpRangeInput {
+	start: String!
+	end: String!
+}
+
+"""
+A scalar that can represent any JSON value.
+"""
+scalar JSON
+
+enum Kind {
+	CONN
+	DNS
+	HTTP
+	RDP
+}
+
+type LabelDb {
+	"""
+	The database ID of the label database.
+	"""
+	id: ID!
+	"""
+	The name of the label database.
+	"""
+	name: String!
+	"""
+	The description of the label database.
+	"""
+	description: String
+	"""
+	The kind of the label database.
+	"""
+	kind: LabelDbKind!
+	"""
+	The MITRE category of the label database.
+	"""
+	category: ThreatCategory!
+	"""
+	The version of the label database.
+	"""
+	version: String!
+	"""
+	The patterns in the label database.
+	"""
+	patterns: String!
+}
+
+enum LabelDbKind {
+	IP
+	URL
+	TOKEN
+	REGEX
+}
+
+type LabelDbOutput {
+	name: String!
+	version: String!
+}
+
+type LabelDbRule {
+	ruleId: ID!
+	category: ThreatCategory!
+	name: String!
+	description: String
+	references: [String!]
+	samples: [String!]
+	signatures: [String!]
+	confidence: Float
+	kind: LabelDbRuleKind
+}
+
+enum LabelDbRuleKind {
+	OS
+	AGENT_SOFTWARE
+}
+
+type LdapBruteForce implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	User Password List
+	"""
+	userPwList: [String!]!
+	"""
+	Session start time of the first raw event used for detection.
+	"""
+	firstEventStartTime: DateTime!
+	"""
+	Session start time of the last raw event used for detection.
+	"""
+	lastEventStartTime: DateTime!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type LdapPlainText implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Message ID
+	"""
+	messageId: ID!
+	"""
+	Version
+	"""
+	version: Int!
+	"""
+	Operation Code
+	"""
+	opcode: [String!]!
+	"""
+	Result Code
+	"""
+	result: [String!]!
+	"""
+	Diagnostic Message
+	"""
+	diagnosticMessage: [String!]!
+	"""
+	Object
+	"""
+	object: [String!]!
+	"""
+	Argument
+	"""
+	argument: [String!]!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+"""
+Learning method.
+"""
+enum LearningMethod {
+	UNSUPERVISED
+	SEMI_SUPERVISED
+}
+
+type LineSegment {
+	firstIndex: Int!
+	lastIndex: Int!
+	regOriginal: Regression!
+	regTrend: Regression!
+}
+
+type LockyRansomware implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Query
+	"""
+	query: String!
+	"""
+	Answer
+	"""
+	answer: [String!]!
+	"""
+	Transaction ID
+	"""
+	transId: Int!
+	"""
+	Round-Trip Time
+	"""
+	rtt: StringNumber!
+	"""
+	Query Class
+	"""
+	qclass: Int!
+	"""
+	Query Type
+	"""
+	qtype: Int!
+	"""
+	Response Code
+	"""
+	rcode: Int!
+	"""
+	Authoritative Answer Flag
+	"""
+	aaFlag: Boolean!
+	"""
+	Truncated Flag
+	"""
+	tcFlag: Boolean!
+	"""
+	Recursion Desired Flag
+	"""
+	rdFlag: Boolean!
+	"""
+	Recursion Available Flag
+	"""
+	raFlag: Boolean!
+	"""
+	Time to Live
+	"""
+	ttl: [Int!]!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type ModelDigest {
+	id: ID!
+	name: String!
+	dataSource: DataSource!
+}
+
+type ModelDigestConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [ModelDigestEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [ModelDigest!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type ModelDigestEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: ModelDigest!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type ModelIndicator {
+	"""
+	The name of the model indicator.
+	"""
+	name: String!
+	"""
+	The description of the model indicator.
+	"""
+	description: String!
+	"""
+	The model ID of the model indicator.
+	"""
+	modelId: ID!
+	"""
+	The size of the model indicator in string within the representable
+	range of a `usize`
+	"""
+	size: StringNumber!
+	"""
+	The last modified time of the model indicator.
+	"""
+	lastModified: DateTime!
+}
+
+type MultiHostPortScan implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Responder IP (Address) List
+	"""
+	respAddrs: [String!]!
+	"""
+	Responder Country List
+	
+	The two-letter country codes recorded for the responder IP addresses,
+	one per address in the same order. Each code is `"ZZ"` if the country
+	could not be determined for that address, or `"XX"` if no country
+	information was recorded for this event.
+	"""
+	respCountries: [String!]!
+	"""
+	Responder Customer List
+	"""
+	respCustomers: [Customer]!
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Session start time of the first raw event used for detection.
+	"""
+	firstEventStartTime: DateTime!
+	"""
+	Session start time of the last raw event used for detection.
+	"""
+	lastEventStartTime: DateTime!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+"""
+A set of mutations defined in the schema.
+"""
+type Mutation {
+	"""
+	Inserts a new blocked network, returning the ID of the new blocked network.
+	"""
+	insertBlockNetwork(customerId: ID!, name: String!, networks: HostNetworkGroupInput!, description: String!): ID!
+	"""
+	Removes blocked networks, returning the names of successfully removed networks.
+	"""
+	removeBlockNetworks(ids: [ID!]!): [String!]!
+	"""
+	Updates the given blocked network.
+	"""
+	updateBlockNetwork(id: ID!, old: BlockNetworkInput!, new: BlockNetworkInput!): ID!
+	"""
+	Adds a new category.
+	"""
+	addCategory(name: String!): ID!
+	"""
+	Updates the given category's name.
+	"""
+	updateCategory(id: ID!, name: String!): ID!
+	"""
+	Updates the server certificate.
+	"""
+	updateCertificate(cert: String!, key: String!): CertificatePayload!
+	"""
+	Updates the given cluster.
+	"""
+	updateCluster(model: ID!, id: ID!, category: ID, qualifier: ID, status: ID): ID!
+	"""
+	Inserts a new customer, returning the ID of the new customer.
+	"""
+	insertCustomer(name: String!, description: String!, networks: [CustomerNetworkInput!]!): ID!
+	"""
+	Removes customers, returning the customer names that no longer exist.
+	
+	Returns an error if any accounts or nodes still reference the customers to be removed.
+	On error, no customers will be removed.
+	"""
+	removeCustomers(ids: [ID!]!): [String!]!
+	"""
+	Updates the given customer.
+	"""
+	updateCustomer(id: ID!, old: CustomerUpdateInput!, new: CustomerUpdateInput!): ID!
+	"""
+	Inserts a new data source, returning the ID of the new data source.
+	"""
+	insertDataSource(input: DataSourceInsertInput!): ID!
+	"""
+	Removes a data source, returning the name of the removed data source if
+	it existed.
+	"""
+	removeDataSource(id: ID!): String!
+	"""
+	Updates the given data source.
+	"""
+	updateDataSource(id: ID!, old: DataSourceUpdateInput!, new: DataSourceUpdateInput!): ID!
+	backup(numOfBackupsToKeep: Int!): Boolean!
+	restoreFromLatestBackup: Boolean!
+	"""
+	Restores the database from a specific backup by ID.
+	
+	# Errors
+	
+	This function will return an error if:
+	* The backup ID does not exist
+	* The restore operation fails (e.g., corrupted backup, I/O errors)
+	* Database is locked by another operation
+	"""
+	restoreFromBackup(id: ID!): Boolean!
+	"""
+	Sets or creates a new backup configuration.
+	
+	This mutation creates or overwrites the backup configuration with the
+	provided values. Only `SystemAdministrator` can modify the backup
+	configuration.
+	
+	# Arguments
+	
+	* `input` - The backup configuration input containing:
+	- `backup_duration`: Interval between backups in days (must be >= 1)
+	- `backup_time`: Scheduled backup time in HH:MM:SS UTC format
+	- `num_of_backups_to_keep`: Maximum retained backup snapshots (must be >= 1)
+	
+	# Errors
+	
+	Returns an error if:
+	* The user is not a `SystemAdministrator`
+	* Input validation fails (e.g., invalid time format, zero values)
+	* Database operation fails
+	"""
+	setBackupConfig(input: BackupConfigInput!): BackupConfig!
+	"""
+	Updates the existing backup configuration.
+	
+	This mutation updates the backup configuration from the old values to
+	new values. Both old and new configurations must be provided for
+	optimistic concurrency control. Only `SystemAdministrator` can modify
+	the backup configuration.
+	
+	# Arguments
+	
+	* `old` - The current backup configuration (for verification)
+	* `new` - The new backup configuration to apply
+	
+	# Errors
+	
+	Returns an error if:
+	* The user is not a `SystemAdministrator`
+	* The old configuration doesn't match the current stored configuration
+	* Input validation fails (e.g., invalid time format, zero values)
+	* Database operation fails
+	"""
+	updateBackupConfig(old: BackupConfigInput!, new: BackupConfigInput!): BackupConfig!
+	"""
+	Inserts a new Indicator, overwriting any existing Indicator if same name and version exist already.
+	Returns the inserted db's name and version.
+	"""
+	insertIndicator(name: String!, dbfile: String!): String!
+	"""
+	Removes Indicator, returning the db's name and version that no longer exist.
+	
+	On error, some Indicators may have been removed.
+	"""
+	removeIndicator(names: [String!]!): [String!]!
+	"""
+	Updates the given indicator, returning the indicator name that was updated.
+	
+	Will return error if it failed to access database
+	Will return error if it failed to delete or add indicator into database
+	"""
+	updateIndicator(name: String!, new: String!): String!
+	addCsvColumnExtra(model: ID!, columnAlias: [String!], columnDisplay: [Boolean!], columnTopN: [Boolean!], column1: [Boolean!], columnN: [Boolean!]): ID!
+	updateCsvColumnExtra(id: ID!, columnAlias: [String!], columnDisplay: [Boolean!], columnTopN: [Boolean!], column1: [Boolean!], columnN: [Boolean!]): ID!
+	"""
+	Inserts a new network, returning the ID of the network.
+	"""
+	insertNetwork(name: String!, description: String!, networks: HostNetworkGroupInput!, tagIds: [ID!]!): ID!
+	"""
+	Removes networks, returning the networks names that no longer exist.
+	
+	On error, some networks may have been removed.
+	"""
+	removeNetworks(ids: [ID!]!): [String!]!
+	"""
+	Updates the given network.
+	"""
+	updateNetwork(id: ID!, old: NetworkUpdateInput!, new: NetworkUpdateInput!): ID!
+	"""
+	Reboots the node with the given hostname as an argument.
+	"""
+	nodeReboot(hostname: String!): String!
+	nodeShutdown(hostname: String!): String!
+	"""
+	Applies the draft configuration to the node with the given ID.
+	
+	This function updates the node's `name` with `name_draft`, `profile` with `profile_draft`,
+	and `config` values of agents with their `draft` values.
+	
+	Returns success as long as the database update is successful, regardless of the outcome of
+	notifying agents or broadcasting customer ID changes.
+	"""
+	applyNode(id: ID!, node: NodeInput!): ID!
+	"""
+	Applies the draft configuration to the node with the given ID at the database layer.
+	
+	Performs the database promotions (name, profile, agent configs, external services) in a
+	single atomic update, and broadcasts customer-specific networks when the node's
+	`customer_id` changes. Does not send agent-config notifications — use `applyAgentConfig`
+	for that.
+	"""
+	applyNodeDraft(id: ID!, node: NodeInput!): Node!
+	"""
+	Notifies the agents of a node that their config has changed.
+	
+	Reads the current DB state of the node and, for each agent in the target set, attempts a
+	notify when the agent's current DB `config` is `Some(non-empty)`. Skips with reason
+	otherwise. The mutation performs no DB writes.
+	"""
+	applyAgentConfig(nodeId: ID!, agentKeys: [String!]): ApplyAgentConfigOutput!
+	"""
+	Inserts a new node, returning the ID of the new node.
+	"""
+	insertNode(name: String!, customerId: ID!, description: String!, hostname: String!, agents: [AgentDraftInput!]!, externalServices: [ExternalServiceInput!]!): ID!
+	"""
+	Removes nodes, returning the node keys that no longer exist.
+	
+	Validates all requested nodes before deleting any of them.
+	"""
+	removeNodes(ids: [ID!]!): [String!]!
+	"""
+	Updates the given node, returning the node ID that was updated.
+	"""
+	updateNodeDraft(id: ID!, old: NodeInput!, new: NodeDraftInput!): ID!
+	preserveOutliers(input: [PreserveOutliersInput!]!): [PreserveOutliersOutput!]!
+	"""
+	Adds a new qualifier.
+	"""
+	addQualifier(description: String!): ID!
+	"""
+	Updates the given qualifier's description.
+	"""
+	updateQualifier(id: ID!, description: String!): ID!
+	"""
+	Inserts a new sampling policy, returning the ID of the new node.
+	"""
+	insertSamplingPolicy(name: String!, kind: Kind!, interval: Interval!, period: Period!, offset: Int!, srcIp: IpAddress, dstIp: IpAddress, node: String, column: Int, immutable: Boolean!): ID!
+	"""
+	Removes sampling policies, returning the IDs that no longer exist.
+	
+	On error, some sampling policies may have been removed.
+	"""
+	removeSamplingPolicies(ids: [ID!]!): [String!]!
+	"""
+	Updates an existing sampling policy.
+	"""
+	updateSamplingPolicy(id: ID!, old: SamplingPolicyInput!, new: SamplingPolicyInput!): ID!
+	"""
+	Adds a new status.
+	"""
+	addStatus(description: String!): ID!
+	"""
+	Updates the given status's description.
+	"""
+	updateStatus(id: ID!, description: String!): ID!
+	"""
+	Inserts a new event tag, returning the ID of the new tag.
+	"""
+	insertEventTag(name: String!): ID!
+	"""
+	Removes an event tag for the given ID, returning the name of the removed tag.
+	"""
+	removeEventTag(id: ID!): String
+	"""
+	Updates the name of an event tag for the given ID.
+	
+	It returns `true` if the name was updated, `false` if the tag was
+	different or not found.
+	"""
+	updateEventTag(id: ID!, old: String!, new: String!): Boolean!
+	"""
+	Inserts a new network tag, returning the ID of the new tag.
+	"""
+	insertNetworkTag(customerId: ID!, name: String!): ID!
+	"""
+	Removes a network tag for the given ID, returning the name of the removed
+	tag.
+	"""
+	removeNetworkTag(customerId: ID!, id: ID!): String
+	"""
+	Updates the name of a network tag for the given ID.
+	
+	It returns `true` if the name was updated, `false` if the tag was
+	different or not found.
+	"""
+	updateNetworkTag(customerId: ID!, id: ID!, old: String!, new: String!): Boolean!
+	"""
+	Inserts a new workflow tag, returning the ID of the new tag.
+	"""
+	insertWorkflowTag(name: String!): ID!
+	"""
+	Removes a workflow tag for the given ID, returning the name of the removed
+	tag.
+	"""
+	removeWorkflowTag(id: ID!): String
+	"""
+	Updates the name of a workflow tag for the given ID.
+	
+	It returns `true` if the name was updated, `false` if the tag was
+	different or not found.
+	"""
+	updateWorkflowTag(id: ID!, old: String!, new: String!): Boolean!
+	"""
+	Inserts a new template, overwriting any existing template with the same
+	name.
+	"""
+	insertTemplate(structured: StructuredClusteringTemplateInput, unstructured: UnstructuredClusteringTemplateInput): String!
+	"""
+	Removes a template, returning the name of the removed template if it no
+	longer exists.
+	"""
+	removeTemplate(name: String!): String!
+	"""
+	Updates the given template.
+	"""
+	updateTemplate(oldStructured: StructuredClusteringTemplateInput, oldUnstructured: UnstructuredClusteringTemplateInput, newStructured: StructuredClusteringTemplateInput, newUnstructured: UnstructuredClusteringTemplateInput): Boolean!
+	"""
+	Deletes all existing entries and add new IP address(es)
+	"""
+	updateTorExitNodeList(ipAddresses: [String!]!): [String!]!
+	"""
+	Inserts a new label database, overwriting any existing database with the same name.
+	`dbfile` should be encoded string of `LabelDb` instance that is serialized
+	with `bincode::DefaultOptions::new().serialize`.
+	Returns name and version.
+	"""
+	insertLabelDb(dbfile: String!): LabelDbOutput!
+	"""
+	Removes label databases, returning the names that were removed.
+	
+	On error, some label databases may have been removed.
+	"""
+	removeLabelDb(names: [String!]!): [String!]!
+	"""
+	Updates the given label database, returning its name and version.
+	`new` should be encoded string of `LabelDb` instance that is serialized
+	with `bincode::DefaultOptions::new().serialize`.
+	
+	Will return error if old and new label database name is different.
+	"""
+	updateLabelDb(name: String!, new: String!): LabelDbOutput!
+	"""
+	Inserts a new triage policy, returning the ID of the new triage.
+	"""
+	insertTriagePolicy(name: String!, triageExclusionId: [ID!]!, packetAttr: [PacketAttrInput!]!, confidence: [ConfidenceInput!]!, response: [ResponseInput!]!, customerId: ID): ID!
+	"""
+	Removes triage policies, returning the names that no longer exist.
+	
+	On error, some triage policies may have been removed.
+	"""
+	removeTriagePolicies(ids: [ID!]!): [String!]!
+	"""
+	Updates an existing triage policy.
+	"""
+	updateTriagePolicy(id: ID!, old: TriagePolicyInput!, new: TriagePolicyInput!): ID!
+	insertTriageExclusionReason(input: TriageExclusionReasonInput!): ID!
+	updateTriageExclusionReason(id: ID!, old: TriageExclusionReasonInput!, new: TriageExclusionReasonInput!): ID!
+	removeTriageExclusionReasons(ids: [ID!]!): [ID!]!
+	"""
+	Inserts a new triage response, returning the ID of the new response.
+	"""
+	insertTriageResponse(sensor: String!, time: DateTime!, tagIds: [ID!]!, remarks: String!): ID!
+	"""
+	Removes triage responses, returning the IDs that no longer exist.
+	
+	On error, some triage responses may have been removed.
+	"""
+	removeTriageResponses(ids: [ID!]!): [String!]!
+	"""
+	Updates an existing triage response.
+	"""
+	updateTriageResponse(id: ID!, old: TriageResponseInput!, new: TriageResponseInput!): ID!
+	"""
+	Inserts a new trusted domain, returning the last remarks if it was set.
+	"""
+	insertTrustedDomain(name: String!, remarks: String!): String!
+	"""
+	Updates a trusted domain, returning the new value.
+	"""
+	updateTrustedDomain(old: TrustedDomainInput!, new: TrustedDomainInput!): String!
+	"""
+	Removes multiple trusted domains, returning the removed values.
+	
+	On error, some trusted domains may have been removed.
+	"""
+	removeTrustedDomains(names: [String!]!): [String!]!
+	"""
+	inserts traffic filtering rules
+	"""
+	insertTrafficFilterRules(hostFqdn: String!, network: String!, tcpPorts: [Int!], udpPorts: [Int!], description: String): Int!
+	"""
+	updates traffic filtering rules
+	"""
+	updateTrafficFilterRules(hostFqdn: String!, network: String!, tcpPorts: [Int!], udpPorts: [Int!], description: String): Int!
+	"""
+	clears traffic filtering rules
+	"""
+	clearTrafficFilterRules(hostFqdn: String!): Int!
+	"""
+	removes traffic filtering rules from the agent
+	"""
+	removeTrafficFilterRules(hostFqdn: String!, networks: [String!]!): Int!
+	"""
+	applies traffic filtering rules to the agents if it is connected
+	"""
+	applyTrafficFilterRules(hostFqdns: [String!]!): [String!]!
+	"""
+	Inserts a new allowed network, returning the ID of the new allowed network.
+	"""
+	insertAllowNetwork(customerId: ID!, name: String!, networks: HostNetworkGroupInput!, description: String!): ID!
+	"""
+	Removes allowed networks, returning the names of successfully removed networks.
+	"""
+	removeAllowNetworks(ids: [ID!]!): [String!]!
+	"""
+	Updates the given allowed network.
+	"""
+	updateAllowNetwork(id: ID!, old: AllowNetworkInput!, new: AllowNetworkInput!): ID!
+	"""
+	Inserts a new trusted user agents, Returns true if the insertion was successful.
+	"""
+	insertTrustedUserAgents(userAgents: [String!]!): Boolean!
+	"""
+	Removes trusted user agents, returning the list of successfully removed user agents.
+	"""
+	removeTrustedUserAgents(userAgents: [String!]!): [String!]!
+	"""
+	Updates the given trusted user agent.
+	"""
+	updateTrustedUserAgent(old: String!, new: String!): Boolean!
+}
+
+"""
+ISO 8601 combined date and time without timezone.
+
+# Examples
+
+* `2015-07-01T08:59:60.123`,
+"""
+scalar NaiveDateTime
+
+type Network {
+	id: ID!
+	name: String!
+	description: String!
+	networks: HostNetworkGroup!
+	tagIds: [ID!]!
+	creationTime: DateTime!
+}
+
+type NetworkConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [NetworkEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Network!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type NetworkEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Network!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type NetworkThreat implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Service Name
+	"""
+	service: String!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Event Content
+	"""
+	content: String!
+	"""
+	Database Name
+	"""
+	dbName: String!
+	"""
+	Pattern ID
+	"""
+	ruleId: ID!
+	"""
+	Referenced Label
+	"""
+	matchedTo: String!
+	"""
+	Cluster ID
+	"""
+	clusterId: ID!
+	"""
+	Attack Kind
+	"""
+	attackKind: String!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+	"""
+	Learning Method
+	"""
+	learningMethod: LearningMethod!
+}
+
+enum NetworkType {
+	INTRANET
+	EXTRANET
+	GATEWAY
+}
+
+input NetworkUpdateInput {
+	name: String
+	description: String
+	networks: HostNetworkGroupInput
+	tagIds: [ID!]
+}
+
+type Node {
+	id: ID!
+	name: String!
+	nameDraft: String
+	profile: NodeProfile
+	profileDraft: NodeProfile
+	agents: [Agent!]!
+	externalServices: [ExternalService!]!
+}
+
+type NodeConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [NodeEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Node!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+input NodeDraftInput {
+	nameDraft: String!
+	profileDraft: NodeProfileInput
+	agents: [AgentDraftInput!]
+	externalServices: [ExternalServiceInput!]
+}
+
+"""
+An edge in a connection.
+"""
+type NodeEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Node!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input NodeInput {
+	name: String!
+	nameDraft: String
+	profile: NodeProfileInput
+	profileDraft: NodeProfileInput
+	agents: [AgentInput!]!
+	externalServices: [ExternalServiceInput!]!
+}
+
+type NodeProfile {
+	customerId: ID!
+	description: String!
+	hostname: String!
+}
+
+input NodeProfileInput {
+	customerId: ID!
+	description: String!
+	hostname: String!
+}
+
+type NodeStatus {
+	"""
+	The name of the node.
+	
+	This is the user-defined name for the node, which may or may not be the same as the node's
+	hostname. The name should not be confused with the node's hostname, even though they could
+	be identical by coincidence.
+	"""
+	name: String!
+	nameDraft: String
+	profile: NodeProfile
+	profileDraft: NodeProfile
+	"""
+	The average CPU usage in percent.
+	"""
+	cpuUsage: Float
+	"""
+	Indicates whether the Manager server is running on this node or not.
+	"""
+	manager: Boolean!
+	"""
+	The list of agents running on the node. `AgentSnapshot` contains the agent's kind, stored
+	status in the database, and config and draft configurations.
+	"""
+	agents: [AgentSnapshot!]!
+	"""
+	The list of external services running on the node. `ExternalServiceSnapshot` contains the
+	external service's kind, stored status in the database, and draft configurations.
+	"""
+	externalServices: [ExternalServiceSnapshot!]!
+	id: ID!
+	"""
+	The RAM size in bytes within the range representable by a `u64`.
+	"""
+	totalMemory: StringNumber
+	"""
+	The amount of used RAM in bytes within the range representable by a `u64`.
+	"""
+	usedMemory: StringNumber
+	"""
+	The total disk space in bytes within the range representable by a `u64`.
+	"""
+	totalDiskSpace: StringNumber
+	"""
+	The total disk space in bytes that is currently used within the range representable by a
+	`u64`.
+	"""
+	usedDiskSpace: StringNumber
+	"""
+	The round-trip time to the node in seconds.
+	"""
+	ping: Float
+}
+
+type NodeStatusConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [NodeStatusEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [NodeStatus!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type NodeStatusEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: NodeStatus!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type NonBrowser implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Host
+	"""
+	host: String!
+	"""
+	HTTP Method
+	"""
+	method: String!
+	"""
+	URI
+	"""
+	uri: String!
+	"""
+	Referer
+	"""
+	referer: String!
+	"""
+	HTTP Version
+	"""
+	version: String!
+	"""
+	User Agent
+	"""
+	userAgent: String!
+	"""
+	Request Length
+	"""
+	requestLen: StringNumber!
+	"""
+	Response Length
+	"""
+	responseLen: StringNumber!
+	"""
+	Status Code
+	"""
+	statusCode: Int!
+	"""
+	Status Message
+	"""
+	statusMsg: String!
+	"""
+	Username
+	"""
+	username: String!
+	"""
+	Password
+	"""
+	password: String!
+	"""
+	Cookie
+	"""
+	cookie: String!
+	"""
+	Content Encoding
+	"""
+	contentEncoding: String!
+	"""
+	Content Type
+	"""
+	contentType: String!
+	"""
+	Cache Control
+	"""
+	cacheControl: String!
+	"""
+	Filenames
+	"""
+	filenames: [String!]!
+	"""
+	MIME Types
+	"""
+	mimeTypes: [String!]!
+	"""
+	Body
+	"""
+	body: [Int!]!
+	"""
+	Last State
+	"""
+	state: String!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+	"""
+	Learning Method
+	"""
+	learningMethod: LearningMethod!
+}
+
+type Outlier {
+	size: Int!
+	id: ID!
+	modelId: ID!
+	events: [DateTime!]!
+	model: ModelDigest!
+}
+
+type OutlierConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [OutlierEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Outlier!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+input OutlierDistanceRange {
+	start: Float
+	end: Float
+}
+
+"""
+An edge in a connection.
+"""
+type OutlierEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Outlier!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input OutlierTimeRange {
+	start: DateTime
+	end: DateTime
+}
+
+type PacketAttr {
+	rawEventKind: RawEventKind!
+	attrName: String!
+	valueKind: ValueKind!
+	cmpKind: AttrCmpKind!
+	firstValue: [Int!]!
+	secondValue: [Int!]
+	weight: Float
+}
+
+input PacketAttrInput {
+	rawEventKind: RawEventKind!
+	attrName: String!
+	valueKind: ValueKind!
+	cmpKind: AttrCmpKind!
+	firstValue: [Int!]!
+	secondValue: [Int!]
+	weight: Float
+}
+
+"""
+Information about pagination in a connection
+"""
+type PageInfo {
+	"""
+	When paginating backwards, are there more items?
+	"""
+	hasPreviousPage: Boolean!
+	"""
+	When paginating forwards, are there more items?
+	"""
+	hasNextPage: Boolean!
+	"""
+	When paginating backwards, the cursor to continue.
+	"""
+	startCursor: String
+	"""
+	When paginating forwards, the cursor to continue.
+	"""
+	endCursor: String
+}
+
+type ParsedCertificate {
+	commonName: String
+	subjectAlternativeName: [String!]
+}
+
+enum Period {
+	SIX_HOURS
+	TWELVE_HOURS
+	ONE_DAY
+}
+
+type PortScan implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number) List
+	"""
+	respPorts: [Int!]!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Session start time of the first raw event used for detection.
+	"""
+	firstEventStartTime: DateTime!
+	"""
+	Session start time of the last raw event used for detection.
+	"""
+	lastEventStartTime: DateTime!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+input PreserveOutliersInput {
+	id: Int!
+	modelId: Int!
+	timestamp: Int!
+	rank: Int!
+	sensor: String!
+}
+
+type PreserveOutliersOutput {
+	id: ID!
+	modelId: ID!
+	timestamp: StringNumber!
+	sensor: String!
+}
+
+type Process {
+	user: String!
+	cpuUsage: String!
+	memUsage: String!
+	startTime: DateTime!
+	command: String!
+}
+
+type Qualifier {
+	id: ID!
+	description: String!
+}
+
+type QualifierConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [QualifierEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Qualifier!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type QualifierEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Qualifier!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+A set of queries defined in the schema.
+"""
+type Query {
+	"""
+	A list of blocked networks, optionally filtered by customer IDs.
+	
+	When `customerIds` is provided, results are filtered by the intersection
+	of requested customer IDs and the caller's accessible customer scope
+	(deduplicated and sorted for deterministic ordering and pagination).
+	If the intersection is empty, the request is denied.
+	When omitted, admins can access all customers, while scoped users can
+	access only their own customers.
+	"""
+	blockNetworkList(customerIds: [ID!], after: String, before: String, first: Int, last: Int): BlockNetworkConnection!
+	"""
+	A list of available alert categories.
+	"""
+	categories(after: String, before: String, first: Int, last: Int): CategoryConnection!
+	"""
+	A list of clusters in descending order of cluster size.
+	"""
+	clusters(model: ID!, categories: [ID!], detectors: [ID!], qualifiers: [ID!], statuses: [ID!], after: String, before: String, first: Int, last: Int): ClusterConnection!
+	topIpAddressesOfCluster(model: ID!, clusterId: ID!, size: Int): [TopElementCountsByColumn!]!
+	topTimeSeriesOfCluster(model: ID!, clusterId: ID!, cutoffRate: Float, trendiOrder: Int, start: Int, end: Int): TimeSeriesResult!
+	"""
+	A list of customers.
+	"""
+	customerList(after: String, before: String, first: Int, last: Int): CustomerConnection!
+	"""
+	A customer for the given ID.
+	"""
+	customer(id: ID!): Customer!
+	"""
+	A list of data sources.
+	"""
+	dataSourceList(after: String, before: String, first: Int, last: Int): DataSourceConnection!
+	backups: [BackupInfo!]!
+	"""
+	Retrieves the current backup configuration.
+	
+	Returns the stored configuration if one exists, otherwise returns `None`.
+	
+	Accessible to `SystemAdministrator` only.
+	"""
+	backupConfig: BackupConfig
+	"""
+	Looks up a single event by its opaque `id`.
+	
+	`id` is the value previously returned from `Event.id`. Decoding the
+	`id` is internal; consumers must not parse it.
+	
+	Returns `null` when no event with the given `id` exists, or when the
+	caller's customer/sensor scope does not include the event. The same
+	role guard and tenant scoping used by `eventList` apply here.
+	
+	IDs are stable for as long as the event is retained under the current
+	storage key format. Retention drop or a future key-format migration
+	may invalidate them.
+	"""
+	event(id: ID!): Event
+	"""
+	A list of events with timestamp on or after `start` and before `end`.
+	"""
+	eventList(filter: EventListFilterInput!, after: String, before: String, first: Int, last: Int): EventConnection!
+	"""
+	A list of detection events sorted by triage policy score in descending
+	order.
+	
+	Returns events that have triage scores applied based on the specified
+	triage policies. Each event is sorted by its highest triage score, and
+	only the top `count` events are returned.
+	
+	# Arguments
+	
+	* `filter` - Event filtering criteria, including triage policies to apply
+	* `count` - Maximum number of events to return (defaults to 100)
+	
+	# Errors
+	
+	Returns an error if:
+	* The database connection fails
+	* The filter parameters are invalid
+	* An event cannot be processed
+	"""
+	eventTriageList(filter: EventListFilterInput!, count: Int): [Event!]!
+	"""
+	A list of events that pass the standard filter, with optional inline
+	triage scoring and exclusions.
+	
+	Unlike `eventList`, this resolver returns every event passing the
+	standard filter regardless of whether any triage policy matched.
+	When `triage.policies` is supplied, matching policies attach their
+	scores via `triageScores`; events that score nothing keep
+	`triageScores: null` and remain in the connection. When
+	`triage.exclusions` is supplied, matching events are removed from
+	the connection. The cursor pagination contract matches `eventList`.
+	"""
+	eventListWithTriage(filter: EventStandardFilterInput!, triage: EventTriageInput, after: String, before: String, first: Int, last: Int): EventConnection!
+	"""
+	The number of events for each category, with timestamp on or after
+	`start` and before `end`.
+	"""
+	eventCountsByCategory(filter: EventListFilterInput!, first: Int!): U8EventCounter!
+	"""
+	The number of events for each country code recorded on them, with
+	timestamp on or after `start` and before `end`. The `"ZZ"` bucket holds
+	events whose country could not be determined, and the `"XX"` bucket
+	holds events recorded without country information. Both bucket values
+	can be used in `countries` filters.
+	"""
+	eventCountsByCountry(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	"""
+	The number of events for each IP address, with timestamp on or after
+	`start` and before `end`.
+	"""
+	eventCountsByIpAddress(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	"""
+	The number of events for each originator and responder IP address pair,
+	with timestamp on or after `start` and before `end`. Each entry in
+	`values` is a string representation of the originator and responder IP
+	address pair. For example, originator IP address 10.0.0.1 and responder IP
+	address 10.0.0.2 become "10.0.0.1-10.0.0.2".
+	"""
+	eventCountsByIpAddressPair(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	"""
+	The number of events for each originator and responder IP address pair and
+	event kind, with timestamp on or after `start` and before `end`. Each
+	entry in `values` is a string representation of the originator and
+	responder IP address pair and kind. For example, a DNS covert channel
+	event with originator IP address 10.0.0.1, responder IP address 10.0.0.2
+	become "10.0.0.1-10.0.0.2-DNS Covert Channel".
+	"""
+	eventCountsByIpAddressPairAndKind(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	"""
+	The number of events for each originator IP address, with timestamp on or
+	after `start` and before `end`.
+	"""
+	eventCountsByOriginatorIpAddress(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	"""
+	The number of events for each responder IP address, with timestamp on
+	or after `start` and before `end`.
+	"""
+	eventCountsByResponderIpAddress(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	"""
+	The number of events for each kind, with timestamp on or after `start`
+	and before `end`.
+	"""
+	eventCountsByKind(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	"""
+	The number of events for each level, with timestamp on or after `start`
+	and before `end`.
+	"""
+	eventCountsByLevel(filter: EventListFilterInput!, first: Int!): ThreatLevelEventCounter!
+	"""
+	The number of events for each network, with timestamp on or after
+	`start` and before `end`.
+	"""
+	eventCountsByNetwork(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	"""
+	A time series of event frequencies. The period length is given in
+	seconds.
+	"""
+	eventFrequencySeries(filter: EventListFilterInput!, period: Int!): [Int!]!
+	"""
+	Look up an Indicator by the given name.
+	"""
+	indicator(name: String!): ModelIndicator
+	"""
+	A list of Indicators.
+	"""
+	indicatorList: [ModelIndicator!]!
+	"""
+	The location of an IP address.
+	"""
+	ipLocation(address: IpAddress!): IpLocation
+	"""
+	The list of locations for up to 200 IP addresses.
+	"""
+	ipLocationList(addresses: [IpAddress!]!): [IpLocationItem!]!
+	"""
+	A list of models.
+	"""
+	models(after: String, before: String, first: Int, last: Int): ModelDigestConnection!
+	csvColumnExtra(model: ID!): CsvColumnExtraConfig
+	structuredColumnTypes(model: ID!): [StructuredColumnType!]!
+	timeRangeOfModel(model: ID!): TimeRange!
+	topTimeSeries(model: ID!, size: Int, time: NaiveDateTime, minSlope: Float, trendiOrder: Int, cutoffRate: Float, trendCategory: String, start: Int, end: Int): [TopTrendsByColumn!]!
+	topColumns(model: ID!, size: Int, time: NaiveDateTime, portionOfClusters: Float, portionOfTopN: Float): [TopElementCountsByColumn!]!
+	topIpAddresses(model: ID!, size: Int, time: NaiveDateTime, portionOfClusters: Float, portionOfTopElements: Float): [TopElementCountsByColumn!]!
+	topMultimaps(model: ID!, size: Int, minMapSize: Int, time: NaiveDateTime): [TopMultimaps!]!
+	"""
+	A list of networks.
+	"""
+	networkList(after: String, before: String, first: Int, last: Int): NetworkConnection!
+	"""
+	A network for the given ID.
+	"""
+	network(id: ID!): Network!
+	"""
+	A list of nodes.
+	"""
+	nodeList(after: String, before: String, first: Int, last: Int): NodeConnection!
+	"""
+	A node for the given ID.
+	"""
+	node(id: ID!): Node!
+	"""
+	A list of nodes that have at least one deployed sensor agent
+	(`SENSOR`-kind agent with `config` set), scoped to customers the caller
+	can access. Nodes whose `profile` is `None` are excluded.
+	"""
+	customerSensorList(customerIds: [Int!], after: String, before: String, first: Int, last: Int): SensorConnection!
+	"""
+	A list of status of nodes.
+	"""
+	nodeStatusList(after: String, before: String, first: Int, last: Int): NodeStatusConnection!
+	"""
+	A list of qualifiers.
+	"""
+	qualifiers(after: String, before: String, first: Int, last: Int): QualifierConnection!
+	"""
+	A list of outliers.
+	"""
+	outliers(model: ID!, after: String, before: String, first: Int, last: Int): OutlierConnection!
+	"""
+	A list of saved outliers, grouped by clustering time. Within each group,
+	the outliers are sorted by their distance to the cluster centers.
+	"""
+	savedOutliers(modelId: ID!, time: NaiveDateTime, after: String, before: String, first: Int, last: Int): RankedOutlierConnection!
+	"""
+	A list of outliers, grouped by clustering time. Within each group,
+	the outliers are sorted by their distance to the cluster centers.
+	"""
+	rankedOutliers(modelId: ID!, time: NaiveDateTime, after: String, before: String, first: Int, last: Int, filter: SearchFilterInput): RankedOutlierConnection!
+	"""
+	A list of sampling policies.
+	"""
+	samplingPolicyList(after: String, before: String, first: Int, last: Int): SamplingPolicyConnection!
+	"""
+	Looks up a sampling policy by the given id.
+	"""
+	samplingPolicy(id: ID!): SamplingPolicy!
+	columnStatistics(model: ID!, cluster: ID!, time: [NaiveDateTime!]!): JSON!
+	roundsByCluster(model: ID!, cluster: ID!, after: String, before: String, first: Int, last: Int): RoundByClusterConnection!
+	roundsByModel(model: ID!, after: String, before: String, first: Int, last: Int): RoundByModelConnection!
+	"""
+	A list of statuses.
+	"""
+	statuses(after: String, before: String, first: Int, last: Int): StatusConnection!
+	"""
+	A list of event tags.
+	"""
+	eventTagList: [Tag!]!
+	"""
+	A list of network tags.
+	"""
+	networkTagList(customerId: ID): [Tag!]!
+	"""
+	A list of workflow tags.
+	"""
+	workflowTagList: [Tag!]!
+	"""
+	A list of model templates.
+	"""
+	templateList(after: String, before: String, first: Int, last: Int): TemplateConnection!
+	"""
+	A list of tor exit nodes.
+	"""
+	torExitNodeList(after: String, before: String, first: Int, last: Int): TorExitNodeConnection!
+	"""
+	Look up a label database by the given name.
+	"""
+	labelDb(name: String!): LabelDb!
+	"""
+	A list of label databases.
+	"""
+	labelDbList: [LabelDb!]!
+	"""
+	Detail information of a rule in a label database.
+	"""
+	labelDbRule(name: String!, ruleId: String!): LabelDbRule
+	"""
+	A list of triage policies.
+	"""
+	triagePolicyList(after: String, before: String, first: Int, last: Int, customerId: ID): TriagePolicyConnection!
+	"""
+	Looks up a triage policy by the given id.
+	"""
+	triagePolicy(id: ID!): TriagePolicy!
+	triageExclusionReasons: [TriageExclusionReason!]!
+	triageExclusionReason(id: ID!): TriageExclusionReason!
+	"""
+	A list of triage responses.
+	"""
+	triageResponseList(after: String, before: String, first: Int, last: Int): TriageResponseConnection!
+	"""
+	Looks up a triage response by the given sensor and time.
+	"""
+	triageResponse(sensor: String!, time: DateTime!): TriageResponse
+	"""
+	A list of trusted domains.
+	"""
+	trustedDomainList(after: String, before: String, first: Int, last: Int): TrustedDomainConnection!
+	"""
+	traffic filtering rules of agents.
+	"""
+	trafficFilterList(hostFqdns: [String!]): [TrafficFilter!]
+	"""
+	A list of allowed networks, optionally filtered by customer IDs.
+	
+	When `customerIds` is provided, results are filtered by the intersection
+	of requested customer IDs and the caller's accessible customer scope
+	(deduplicated and sorted for deterministic ordering and pagination).
+	If the intersection is empty, the request is denied.
+	When omitted, admins can access all customers, while scoped users can
+	access only their own customers.
+	"""
+	allowNetworkList(customerIds: [ID!], after: String, before: String, first: Int, last: Int): AllowNetworkConnection!
+	"""
+	A list of trusted user agent list.
+	"""
+	trustedUserAgentList(after: String, before: String, first: Int, last: Int): TrustedUserAgentConnection!
+	"""
+	A list of process of the node.
+	"""
+	processList(hostname: String!): [Process!]!
+}
+
+type RankedOutlier {
+	timestamp: Int!
+	rank: Int!
+	sensor: String!
+	distance: Float!
+	saved: Boolean!
+	id: ID!
+	modelId: ID!
+}
+
+type RankedOutlierConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [RankedOutlierEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [RankedOutlier!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type RankedOutlierEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: RankedOutlier!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+enum RawEventKind {
+	BOOTP
+	CONN
+	DHCP
+	DNS
+	FTP
+	HTTP
+	KERBEROS
+	LDAP
+	LOG
+	MQTT
+	NETWORK
+	NFS
+	NTLM
+	RADIUS
+	RDP
+	SMB
+	SMTP
+	SSH
+	TLS
+	WINDOW
+	DCE_RPC
+}
+
+type RdpBruteForce implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Responder IP (Address) List
+	"""
+	respAddrs: [String!]!
+	"""
+	Responder Country List
+	
+	The two-letter country codes recorded for the responder IP addresses,
+	one per address in the same order. Each code is `"ZZ"` if the country
+	could not be determined for that address, or `"XX"` if no country
+	information was recorded for this event.
+	"""
+	respCountries: [String!]!
+	"""
+	Responder Customer List
+	"""
+	respCustomers: [Customer]!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Session start time of the first raw event used for detection.
+	"""
+	firstEventStartTime: DateTime!
+	"""
+	Session start time of the last raw event used for detection.
+	"""
+	lastEventStartTime: DateTime!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type Regression {
+	slope: Float!
+	intercept: Float!
+	rSquare: Float!
+}
+
+type RepeatedHttpSessions implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Session start time of the first raw event used for detection.
+	"""
+	firstEventStartTime: DateTime!
+	"""
+	Session start time of the last raw event used for detection.
+	"""
+	lastEventStartTime: DateTime!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+	"""
+	Learning Method
+	"""
+	learningMethod: LearningMethod!
+}
+
+type Response {
+	minimumScore: Float!
+	kind: ResponseKind!
+}
+
+input ResponseInput {
+	minimumScore: Float!
+	kind: ResponseKind!
+}
+
+enum ResponseKind {
+	MANUAL
+	BLACKLIST
+	WHITELIST
+}
+
+type Round {
+	time: NaiveDateTime!
+	"""
+	The first event id in the round within a string represantable by a
+	`i64`.
+	"""
+	firstEventId: StringNumber!
+	"""
+	The last event id in the round within a string represantable by a
+	`i64`.
+	"""
+	lastEventId: StringNumber!
+}
+
+type RoundByClusterConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [RoundByClusterEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Round!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type RoundByClusterEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Round!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type RoundByModelConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [RoundEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Round!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type RoundEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Round!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type SamplingPolicy {
+	id: ID!
+	name: String!
+	kind: Kind!
+	interval: Interval!
+	period: Period!
+	offset: Int!
+	srcIp: String
+	dstIp: String
+	node: String
+	column: StringNumber
+	immutable: Boolean!
+	creationTime: DateTime!
+}
+
+type SamplingPolicyConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [SamplingPolicyEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [SamplingPolicy!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type SamplingPolicyEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: SamplingPolicy!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input SamplingPolicyInput {
+	name: String!
+	kind: Kind!
+	interval: Interval!
+	period: Period!
+	offset: Int!
+	srcIp: IpAddress
+	dstIp: IpAddress
+	node: String
+	column: Int
+	immutable: Boolean!
+}
+
+input SearchFilterInput {
+	time: OutlierTimeRange
+	distance: OutlierDistanceRange
+	tag: String
+	remark: String
+}
+
+"""
+A node belonging to a customer that has at least one deployed sensor agent
+(a `SENSOR`-kind agent whose `config` is set).
+"""
+type Sensor {
+	"""
+	The ID of the owning customer.
+	"""
+	customerId: Int!
+	"""
+	The ID of the node this sensor runs on. Substitute directly into
+	`EventListFilterInput.sensors`.
+	"""
+	nodeId: ID!
+	"""
+	The fully-qualified hostname of the host on which the sensor runs.
+	Equal to `Event.sensor` for events emitted by this sensor.
+	"""
+	hostFqdn: String!
+}
+
+type SensorConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [SensorEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Sensor!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type SensorEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Sensor!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+enum SkipReason {
+	"""
+	The agent's current DB `config` is `None`.
+	"""
+	NOT_CONFIGURED
+	"""
+	The agent's current DB `config` is `Some("")` (direct-setup magic-string marker).
+	"""
+	DIRECT_SETUP
+}
+
+type SkippedAgent {
+	"""
+	The bare agent key (matching `Agent.key`).
+	"""
+	agentKey: String!
+	reason: SkipReason!
+}
+
+type Status {
+	id: ID!
+	description: String!
+}
+
+type StatusConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [StatusEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Status!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type StatusEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Status!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type StringEventCounter {
+	values: [String!]!
+	counts: [Int!]!
+}
+
+scalar StringNumber
+
+enum StructuredClusteringAlgorithm {
+	DBSCAN
+	OPTICS
+}
+
+type StructuredClusteringTemplate {
+	name: String!
+	description: String!
+	algorithm: StructuredClusteringAlgorithm
+	eps: Float
+	format: String
+	"""
+	The time interval of the template in string represantable by a vector of `i64`.
+	"""
+	timeIntervals: [StringNumber!]
+	numbersOfTopN: [Int!]
+}
+
+input StructuredClusteringTemplateInput {
+	name: String!
+	description: String
+	algorithm: StructuredClusteringAlgorithm
+	eps: Float
+	format: String
+	timeIntervals: [Int!]
+	numbersOfTopN: [Int!]
+}
+
+type StructuredColumnType {
+	columnIndex: Int!
+	dataType: String!
+}
+
+"""
+A set of subscription defined in the schema.
+"""
+type Subscription {
+	"""
+	A stream of events with timestamp on.
+	"""
+	eventStream(start: DateTime!, fetchInterval: Int, eventStuckCheckInterval: Int): Event!
+	rankedOutlierStream(start: DateTime!, fetchInterval: Int): RankedOutlier!
+}
+
+type SuspiciousTlsTraffic implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Server Name
+	"""
+	serverName: String!
+	"""
+	ALPN Protocol
+	"""
+	alpnProtocol: String!
+	"""
+	JA3 Fingerprint
+	"""
+	ja3: String!
+	"""
+	TLS Version
+	"""
+	version: String!
+	"""
+	Client Cipher Suites
+	"""
+	clientCipherSuites: [Int!]!
+	"""
+	Client Extensions
+	"""
+	clientExtensions: [Int!]!
+	"""
+	Cipher
+	"""
+	cipher: Int!
+	"""
+	Extensions
+	"""
+	extensions: [Int!]!
+	"""
+	JA3S Fingerprint
+	"""
+	ja3S: String!
+	"""
+	Certificate Serial Number
+	"""
+	serial: String!
+	"""
+	(Certificate) Subject Country
+	"""
+	subjectCountry: String!
+	"""
+	(Certificate) Subject Organization Name
+	"""
+	subjectOrgName: String!
+	"""
+	(Certificate) Common Name
+	"""
+	subjectCommonName: String!
+	"""
+	(Certificate) Validity Start
+	"""
+	validityNotBefore: StringNumber!
+	"""
+	(Certificate) Validity End
+	"""
+	validityNotAfter: StringNumber!
+	"""
+	(Certificate) Subject Alternative Name
+	"""
+	subjectAltName: String!
+	"""
+	(Certificate) Issuer Country
+	"""
+	issuerCountry: String!
+	"""
+	(Certificate) Issuer Organization Name
+	"""
+	issuerOrgName: String!
+	"""
+	(Certificate) Issuer Organization Unit Name
+	"""
+	issuerOrgUnitName: String!
+	"""
+	(Certificate) Issuer Common Name
+	"""
+	issuerCommonName: String!
+	"""
+	Last Alert Message
+	"""
+	lastAlert: Int!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+}
+
+type Tag {
+	name: String!
+	id: ID!
+}
+
+union Template = StructuredClusteringTemplate | UnstructuredClusteringTemplate
+
+type TemplateConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [TemplateEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Template!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type TemplateEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Template!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+enum ThreatCategory {
+	RECONNAISSANCE
+	INITIAL_ACCESS
+	EXECUTION
+	CREDENTIAL_ACCESS
+	DISCOVERY
+	LATERAL_MOVEMENT
+	COMMAND_AND_CONTROL
+	EXFILTRATION
+	IMPACT
+	COLLECTION
+	DEFENSE_EVASION
+	PERSISTENCE
+	PRIVILEGE_ESCALATION
+	RESOURCE_DEVELOPMENT
+}
+
+"""
+Threat level.
+"""
+enum ThreatLevel {
+	VERY_LOW
+	LOW
+	MEDIUM
+	HIGH
+	VERY_HIGH
+}
+
+type ThreatLevelEventCounter {
+	values: [ThreatLevel!]!
+	counts: [Int!]!
+}
+
+type TimeCount {
+	time: NaiveDateTime!
+	count: Int!
+}
+
+type TimeRange {
+	lower: NaiveDateTime
+	upper: NaiveDateTime
+}
+
+type TimeSeriesResult {
+	earliest: NaiveDateTime
+	latest: NaiveDateTime
+	series: [ColumnTimeSeries!]!
+}
+
+type TopColumnsOfCluster {
+	clusterId: ID!
+	columns: [TopElementCountsByColumn!]!
+}
+
+type TopElementCountsByColumn {
+	"""
+	The column index of top element counts by column in string
+	representable within the range of a `usize`.
+	"""
+	columnIndex: StringNumber!
+	counts: [ElementCount!]!
+}
+
+type TopMultimaps {
+	"""
+	The n index of multi map in string representable within the range of a
+	`usize`.
+	"""
+	nIndex: StringNumber!
+	selected: [TopColumnsOfCluster!]!
+}
+
+type TopTrendsByColumn {
+	countIndex: Int!
+	trends: [ClusterTrend!]!
+}
+
+type TorConnection implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	Host
+	"""
+	host: String!
+	"""
+	HTTP Method
+	"""
+	method: String!
+	"""
+	URI
+	"""
+	uri: String!
+	"""
+	Referer
+	"""
+	referer: String!
+	"""
+	HTTP Version
+	"""
+	version: String!
+	"""
+	User Agent
+	"""
+	userAgent: String!
+	"""
+	Request Length
+	"""
+	requestLen: StringNumber!
+	"""
+	Response Length
+	"""
+	responseLen: StringNumber!
+	"""
+	Status Code
+	"""
+	statusCode: Int!
+	"""
+	Status Message
+	"""
+	statusMsg: String!
+	"""
+	Username
+	"""
+	username: String!
+	"""
+	Password
+	"""
+	password: String!
+	"""
+	Cookie
+	"""
+	cookie: String!
+	"""
+	Content Encoding
+	"""
+	contentEncoding: String!
+	"""
+	Content Type
+	"""
+	contentType: String!
+	"""
+	Cache Control
+	"""
+	cacheControl: String!
+	"""
+	Filenames
+	"""
+	filenames: [String!]!
+	"""
+	MIME Types
+	"""
+	mimeTypes: [String!]!
+	"""
+	Body
+	"""
+	body: [Int!]!
+	"""
+	Last State
+	"""
+	state: String!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+	"""
+	Learning Method
+	"""
+	learningMethod: LearningMethod!
+}
+
+type TorConnectionConn implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Originator IP (Address)
+	"""
+	origAddr: String!
+	"""
+	Originator Country
+	
+	The two-letter country code recorded for the originator IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	origCountry: String!
+	"""
+	Originator Customer
+	"""
+	origCustomer: Customer
+	"""
+	Originator Network
+	"""
+	origNetwork: Network
+	"""
+	Originator Port (Number)
+	"""
+	origPort: Int!
+	"""
+	Responder IP (Address)
+	"""
+	respAddr: String!
+	"""
+	Responder Country
+	
+	The two-letter country code recorded for the responder IP address.
+	`"ZZ"` if the country could not be determined for the address, and
+	`"XX"` if no country information was recorded for this event.
+	"""
+	respCountry: String!
+	"""
+	Responder Customer
+	"""
+	respCustomer: Customer
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Responder Port (Number)
+	"""
+	respPort: Int!
+	"""
+	Protocol Number
+	"""
+	proto: Int!
+	"""
+	Connection State
+	"""
+	connState: String!
+	"""
+	Start Time
+	"""
+	startTime: DateTime!
+	"""
+	Duration
+	
+	It is measured in nanoseconds.
+	"""
+	duration: StringNumber!
+	"""
+	Service Name
+	"""
+	service: String!
+	"""
+	Bytes Sent (by Source)
+	"""
+	origBytes: StringNumber!
+	"""
+	Bytes Received (by Destination)
+	"""
+	respBytes: StringNumber!
+	"""
+	Packets Sent (by Source)
+	"""
+	origPkts: StringNumber!
+	"""
+	Packets Received (by Destination)
+	"""
+	respPkts: StringNumber!
+	"""
+	Layer 2 Bytes Sent (by Source)
+	"""
+	origL2Bytes: StringNumber!
+	"""
+	Layer 2 Bytes Received (by Destination)
+	"""
+	respL2Bytes: StringNumber!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+	"""
+	Learning Method
+	"""
+	learningMethod: LearningMethod!
+}
+
+type TorExitNode {
+	ipAddress: String!
+	updatedAt: DateTime!
+}
+
+type TorExitNodeConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [TorExitNodeEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [TorExitNode!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type TorExitNodeEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: TorExitNode!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+enum TrafficDirection {
+	FROM
+	TO
+}
+
+type TrafficFilter {
+	"""
+	Host FQDN
+	"""
+	hostFqdn: String!
+	"""
+	The traffic filter rules.
+	"""
+	rules: [String!]!
+	"""
+	The last modification time.
+	"""
+	lastModificationTime: DateTime!
+	"""
+	The latest time when rules are applied to the agent successfully.
+	"""
+	updateTime: DateTime
+	"""
+	The last modification time.
+	"""
+	description: String
+}
+
+type TriageExclusionReason {
+	id: ID!
+	name: String!
+	description: String!
+	exclusionReason: ExclusionReason!
+}
+
+input TriageExclusionReasonInput {
+	name: String!
+	description: String!
+	ipAddress: HostNetworkGroupInput
+	domain: [String!]
+	hostname: [String!]
+	uri: [String!]
+}
+
+type TriagePolicy {
+	id: ID!
+	name: String!
+	triageExclusionId: [ID!]!
+	packetAttr: [PacketAttr!]!
+	confidence: [Confidence!]!
+	response: [Response!]!
+	creationTime: DateTime!
+	customerId: ID
+}
+
+type TriagePolicyConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [TriagePolicyEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [TriagePolicy!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type TriagePolicyEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: TriagePolicy!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input TriagePolicyInput {
+	name: String!
+	triageExclusionId: [ID!]!
+	packetAttr: [PacketAttrInput!]!
+	confidence: [ConfidenceInput!]!
+	response: [ResponseInput!]!
+	customerId: ID
+}
+
+type TriageResponse {
+	id: ID!
+	remarks: String!
+	tagIds: [ID!]!
+}
+
+type TriageResponseConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [TriageResponseEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [TriageResponse!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type TriageResponseEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: TriageResponse!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input TriageResponseInput {
+	key: [Int!]!
+	tagIds: [ID!]
+	remarks: String
+}
+
+type TriageScore {
+	policyId: ID!
+	score: Float!
+}
+
+type TrustedDomain {
+	name: String!
+	remarks: String!
+}
+
+type TrustedDomainConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [TrustedDomainEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [TrustedDomain!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type TrustedDomainEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: TrustedDomain!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+input TrustedDomainInput {
+	name: String!
+	remarks: String!
+}
+
+type TrustedUserAgent {
+	userAgent: String!
+	updatedAt: DateTime!
+}
+
+type TrustedUserAgentConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [TrustedUserAgentEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [TrustedUserAgent!]!
+	"""
+	The total number of edges.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type TrustedUserAgentEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: TrustedUserAgent!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type U8EventCounter {
+	values: [Int!]!
+	counts: [Int!]!
+}
+
+enum UnstructuredClusteringAlgorithm {
+	DISTRIBUTION
+	PREFIX
+}
+
+type UnstructuredClusteringTemplate {
+	name: String!
+	description: String!
+	algorithm: UnstructuredClusteringAlgorithm
+	minTokenLength: Int
+}
+
+input UnstructuredClusteringTemplateInput {
+	name: String!
+	description: String
+	algorithm: UnstructuredClusteringAlgorithm
+	minTokenLength: Int
+}
+
+type UnusualDestinationPattern implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Start boundary of the anomaly sampling window used for detection.
+	"""
+	samplingWindowStartTime: DateTime!
+	"""
+	End boundary of the anomaly sampling window used for detection.
+	"""
+	samplingWindowEndTime: DateTime!
+	"""
+	Responder IP (Address) List
+	"""
+	respAddrs: [String!]!
+	"""
+	Responder Country List
+	
+	The two-letter country codes recorded for the responder IP addresses,
+	one per address in the same order. Each code is `"ZZ"` if the country
+	could not be determined for that address, or `"XX"` if no country
+	information was recorded for this event.
+	"""
+	respCountries: [String!]!
+	"""
+	Responder Customer List
+	"""
+	respCustomers: [Customer]!
+	"""
+	Responder Network
+	"""
+	respNetwork: Network
+	"""
+	Count of connections
+	"""
+	count: Int!
+	"""
+	Expected mean of connections
+	"""
+	expectedMean: Float!
+	"""
+	Standard deviation of connections
+	"""
+	stdDeviation: Float!
+	"""
+	Z-score indicating how many standard deviations the count is from the
+	mean
+	"""
+	zScore: Float!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+	"""
+	Learning Method
+	"""
+	learningMethod: LearningMethod!
+}
+
+type UriTriageExclusion {
+	uri: [String!]!
+}
+
+enum ValueKind {
+	STRING
+	INTEGER
+	U_INTEGER
+	VECTOR
+	FLOAT
+	IP_ADDR
+	BOOL
+}
+
+type WindowsThreat implements Event {
+	"""
+	Opaque event identifier.
+	"""
+	id: ID!
+	"""
+	Event Generation Time
+	"""
+	time: DateTime!
+	"""
+	Sensor
+	"""
+	sensor: String!
+	"""
+	Service Name
+	"""
+	service: String!
+	"""
+	Agent Name
+	"""
+	agentName: String!
+	"""
+	Agent ID
+	"""
+	agentId: String!
+	"""
+	Process GUID
+	"""
+	processGuid: String!
+	"""
+	Process ID
+	"""
+	processId: Int!
+	"""
+	Executable Path
+	"""
+	image: String!
+	"""
+	User
+	"""
+	user: String!
+	"""
+	Event Content
+	"""
+	content: String!
+	"""
+	Database Name
+	"""
+	dbName: String!
+	"""
+	Pattern ID
+	"""
+	ruleId: Int!
+	"""
+	Referenced Label
+	"""
+	matchedTo: String!
+	"""
+	Cluster ID
+	"""
+	clusterId: ID!
+	"""
+	Attack Kind
+	"""
+	attackKind: String!
+	"""
+	Confidence
+	"""
+	confidence: Float!
+	"""
+	MITRE Tactic
+	"""
+	category: ThreatCategory
+	"""
+	Triage Scores
+	"""
+	triageScores: [TriageScore!]
+	"""
+	Threat Level
+	"""
+	level: ThreatLevel!
+	"""
+	Learning Method
+	"""
+	learningMethod: LearningMethod!
+}
+
+"""
+Directs the executor to include this field or fragment only when the `if` argument is true.
+"""
+directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+"""
+Directs the executor to skip this field or fragment when the `if` argument is true.
+"""
+directive @skip(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+"""
+Provides a scalar specification URL for specifying the behavior of custom scalar types.
+"""
+directive @specifiedBy(url: String!) on SCALAR
+schema {
+	query: Query
+	mutation: Mutation
+	subscription: Subscription
+}

@@ -67,7 +67,7 @@ use crate::auth::MtlsAuthenticator;
 use crate::auth::validate_context_jwt;
 #[cfg(feature = "auth-jwt")]
 use crate::auth::validate_token;
-use crate::backend::{AgentManager, CertManager};
+use crate::backend::{AgentManager, CertManager, HostOnboarder, PackageDeployer};
 
 #[cfg(feature = "auth-mtls")]
 const ERR_MTLS_REQUIRED: &str = "mTLS is required";
@@ -102,18 +102,26 @@ pub struct ServerConfig {
 /// ingestion. Such events are stored with the `"XX"` placeholder and are
 /// reachable through a `countries: ["XX"]` filter.
 ///
+/// `agent_manager`, `package_deployer` and `host_onboarder` are placed on the
+/// GraphQL schema, so a resolver reaches each of them through the request
+/// context.
+///
 /// # Panics
 ///
 /// Panics if binding to the address fails.
 #[allow(clippy::too_many_lines)]
-pub fn serve<A>(
+pub fn serve<A, D, O>(
     config: ServerConfig,
     store: Arc<RwLock<Store>>,
     ip_locator: Option<Arc<ip2location::DB>>,
     agent_manager: A,
+    package_deployer: D,
+    host_onboarder: O,
 ) -> Arc<Notify>
 where
     A: AgentManager + 'static,
+    D: PackageDeployer + 'static,
+    O: HostOnboarder + 'static,
 {
     use axum_server::{Handle, tls_rustls::RustlsConfig};
     use tracing::info;
@@ -121,6 +129,8 @@ where
     let schema = graphql::schema(
         store.clone(),
         agent_manager,
+        package_deployer,
+        host_onboarder,
         ip_locator,
         config.cert_manager.clone(),
         config.tls_reload_handle.clone(),
