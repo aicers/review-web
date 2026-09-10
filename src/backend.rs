@@ -283,8 +283,14 @@ impl fmt::Debug for JoinToken {
 /// either; `Debug` is derived and redacts the token through the token's own.
 #[derive(Debug)]
 pub struct HostOnboardingTicket {
+    /// The one-time token, disclosed on its own.
     token: JoinToken,
+    /// The command the operator runs on the host, which must not carry the
+    /// token. The redaction above reaches the token's own field and nothing
+    /// else, so a token interpolated into this string is printed in full by
+    /// the derived `Debug`.
     command: String,
+    /// The granted absolute deadline the ticket stops being usable at.
     expires_at: jiff::Timestamp,
 }
 
