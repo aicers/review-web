@@ -145,6 +145,82 @@ pub(crate) const MODULE_PACKAGE_IDS: [&str; 5] =
 #[allow(dead_code)]
 pub(crate) const CORE_PACKAGE_IDS: [&str; 3] = ["review", "aice-web-next", "roxyd"];
 
+// Upstream type-surface check for the six local types declared below.
+//
+// Each of `BuildId`, `OperationId`, `DeployOutcome`, `JoinToken`,
+// `HostOnboardingTicket` and `DeployError` is declared here only because
+// neither pinned upstream defines it. The surfaces checked, at the exact
+// revisions this crate pins in `Cargo.toml`:
+//
+// - `review-database` at `698254e` — the `pub use` surface of its `lib.rs`,
+//   which is every name this crate can import from it, and behind it the
+//   `tables::operation_attempt` and `tables::port_allocation` modules that
+//   hold the deployment types.
+// - `review-protocol` at `32ed9b0` — the `types::node` module, which carries
+//   the package (`NodePackageRequest`/`NodePackageResponse`/
+//   `NodePackageError`) and enrollment (`NodeEnrollRequest`/
+//   `NodeEnrollResponse`/`NodeEnrollError`) surfaces, plus the crate's
+//   `lib.rs` re-exports.
+//
+// None of the six names exists anywhere in either tree. What is there instead,
+// and why it is not the same type:
+//
+// - `BuildId` — `review_database::BuildSelector` asks for a build by version
+//   *or* commit, so it is a request and not an identity, and this crate
+//   already imports it. `review_protocol::types::node::PackageIdentity` pairs
+//   `version` and `commit` but adds `target`, making it a package identity
+//   rather than a build identity, and it is a wire type. The persisted form
+//   upstream keeps is `OperationAttempt::resolved_version` and
+//   `resolved_commit`, two independent `String` fields with nothing tying
+//   them together.
+// - `OperationId` — upstream keys the ledger on
+//   `OperationAttempt::idempotency_key`, a bare `String`. There is no newtype
+//   over it; `review-database` exports `OperationAction`, `OperationAttempt`,
+//   `OperationCleanupState`, `OperationOnFailure`, `OperationOutcome`,
+//   `OperationPhase`, `OperationRetentionBound` and `OperationRetryPolicy`,
+//   and no `OperationId`.
+// - `DeployOutcome` — `review_database::OperationOutcome`, which is
+//   `tables::operation_attempt::Outcome` under its re-export name, is the
+//   *terminal* result of an apply as persisted (`Succeeded`, `Failed`,
+//   `RolledBack`, `Cancelled`). This enum answers a different question —
+//   whether the call returned a terminal outcome at all, or only an
+//   acknowledgement that a self-disrupting apply owes a later reconciliation
+//   — so it is not that type under another name.
+// - `JoinToken` and `HostOnboardingTicket` — the nearest upstream surface is
+//   `review_protocol::types::node::BootstrapMaterial`, which this crate
+//   imports. `NodeEnrollRequest::Register` does cover new-host onboarding as
+//   well as a per-service install, but what it returns is the wrapped
+//   credential the *enrolling target* consumes to obtain its certificate —
+//   `role_id`, `wrapped_secret_id`, `ca_anchor`, `expires_at` — travelling
+//   agent-to-registrar. What these two types carry is the other half: the
+//   one-time secret an *operator* is handed for a host that cannot yet speak
+//   the protocol, and the command they paste on it. No type in either tree
+//   models that, and none wraps a secret with the consuming-`expose`,
+//   no-`Display`, no-`Clone` discipline `JoinToken` needs:
+//   `BootstrapMaterial` derives `Clone` and exposes its secret as a
+//   `pub String` field.
+// - `DeployError` — upstream carries typed failures, but none of them is this
+//   type. `review-database` raises `AddressAllocationError`,
+//   `InstanceAllocationError`, `PortAllocationError` and `RequestKeyError`,
+//   each scoped to one table's operation; `review-protocol` carries
+//   `NodePackageError` and `NodeEnrollError`, which are wire *data* and
+//   implement neither `std::error::Error` nor `Display` by design. This enum
+//   is the union those leave open at this crate's trait boundary, and it
+//   composes them rather than restating them — `RequestKey` is `#[from]`
+//   `review_database::RequestKeyError`, and `PortAllocationConflict` carries
+//   `review_database::PortOwner` whole.
+//
+// This is a different finding from the `BindAddrInput` note below, which
+// records a type that upstream *does* define — `ListenerBinding` — and that
+// this crate deliberately does not use for operator input. It is different
+// again from `BuildSelector`, `ListenerBinding`, `ListenerTransport`,
+// `PortOwner`, `FailurePolicy`, `DeliveryMode`, `PackageState` and
+// `BootstrapMaterial`, which are imported from upstream at the top of this
+// file and must stay imports rather than becoming local mirrors.
+//
+// Re-run this check whenever either pin moves: an upstream that grows one of
+// these types makes the local declaration a duplicate rather than a gap.
+
 /// A full build identity: the version and the commit that together name one
 /// build.
 ///
