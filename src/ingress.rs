@@ -42,7 +42,7 @@ use crate::auth::{MtlsAuthenticator, validate_context_jwt};
 use crate::{
     Error,
     backend::{
-        BuildId, CORE_PACKAGE_IDS, IngressStream, IngressStreamError, MODULE_PACKAGE_IDS,
+        AcceptedPackage, CORE_PACKAGE_IDS, IngressStream, IngressStreamError, MODULE_PACKAGE_IDS,
         PackageIngestError, PackageStoreReceiver,
     },
 };
@@ -91,12 +91,12 @@ struct AcceptedBuild {
     commit: String,
 }
 
-impl From<BuildId> for AcceptedBuild {
-    fn from(build: BuildId) -> Self {
+impl From<AcceptedPackage> for AcceptedBuild {
+    fn from(accepted: AcceptedPackage) -> Self {
         Self {
-            package_id: build.package_id,
-            version: build.version,
-            commit: build.commit,
+            package_id: accepted.package_id,
+            version: accepted.build.version,
+            commit: accepted.build.commit,
         }
     }
 }
@@ -257,11 +257,11 @@ async fn accept(
         return Err(Error::Forbidden(ERR_ROLE_NOT_PERMITTED.to_string()));
     };
 
-    let build = receiver
+    let accepted = receiver
         .accept_package(&permitted, capped_stream(body.into_data_stream(), limit))
         .await
         .map_err(|e| map_ingest_error(e, actor))?;
-    Ok(Json(build.into()))
+    Ok(Json(accepted.into()))
 }
 
 /// Accepts a signed package from a bearer-authenticated caller.
@@ -338,9 +338,10 @@ mod tests {
         ERR_SIGNATURE_INVALID, ERR_TOO_LARGE, ERR_TRANSPORT, ERR_UNAVAILABLE, Extension,
         PACKAGE_UPLOAD_PATH, PackageUploadLimit, Role, Router, StreamExt, capped_stream, router,
     };
+    use crate::DEFAULT_PACKAGE_UPLOAD_MAX_BYTES;
     use crate::backend::{
-        BuildId, CORE_PACKAGE_IDS, IngressStream, IngressStreamError, MODULE_PACKAGE_IDS,
-        PackageIngestError, PackageStoreReceiver,
+        AcceptedPackage, BuildId, CORE_PACKAGE_IDS, IngressStream, IngressStreamError,
+        MODULE_PACKAGE_IDS, PackageIngestError, PackageStoreReceiver,
     };
 
     #[cfg(feature = "auth-jwt")]
@@ -365,6 +366,26 @@ mod tests {
     #[test]
     fn the_route_is_mounted_at_the_published_path() {
         assert_eq!(PACKAGE_UPLOAD_PATH, "/api/package/upload");
+    }
+
+    /// The shipped default is provisional until a signing pipeline produces a
+    /// real `.pkg` (#948), so what a test can hold it to is that it behaves as
+    /// a cap rather than as a sentinel: an ordinary body streams through it
+    /// whole. That it is large enough not to refuse a real package is asserted
+    /// where the constant is declared, against the reasoning it came from.
+    #[tokio::test]
+    async fn the_shipped_default_admits_an_ordinary_body() {
+        let stub = stub(Outcome::Accept);
+        let sent = send(
+            &Caller::Role(Role::SystemAdministrator),
+            DEFAULT_PACKAGE_UPLOAD_MAX_BYTES,
+            &stub,
+            small_body(),
+        )
+        .await;
+
+        assert_eq!(sent.status, StatusCode::OK);
+        assert_eq!(stub.observed().error_item, None);
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -397,12 +418,14 @@ mod tests {
     }
 
     impl Outcome {
-        fn result(&self) -> Result<BuildId, PackageIngestError> {
+        fn result(&self) -> Result<AcceptedPackage, PackageIngestError> {
             match self {
-                Self::Accept => Ok(BuildId {
+                Self::Accept => Ok(AcceptedPackage {
                     package_id: ACCEPTED_PACKAGE_ID.to_string(),
-                    version: VERSION.to_string(),
-                    commit: COMMIT.to_string(),
+                    build: BuildId {
+                        version: VERSION.to_string(),
+                        commit: COMMIT.to_string(),
+                    },
                 }),
                 Self::SignatureInvalid => Err(PackageIngestError::SignatureInvalid),
                 Self::ManifestIncomplete => Err(PackageIngestError::ManifestIncomplete),
@@ -466,7 +489,7 @@ mod tests {
             &self,
             permitted_package_ids: &[&str],
             mut body: IngressStream,
-        ) -> Result<BuildId, PackageIngestError> {
+        ) -> Result<AcceptedPackage, PackageIngestError> {
             {
                 let mut observed = self.observed.lock().expect("the observation mutex");
                 observed.calls += 1;

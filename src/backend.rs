@@ -233,25 +233,23 @@ pub(crate) const CORE_PACKAGE_IDS: [&str; 3] = ["review", "aice-web-next", "roxy
 // Re-run this check whenever either pin moves: an upstream that grows one of
 // these types makes the local declaration a duplicate rather than a gap.
 
-/// A full build identity: the package-id, the version and the commit that
-/// together name one build.
+/// A full build identity: the version and the commit that together name one
+/// build.
 ///
-/// All three parts are always present. An absent installed build is expressed
-/// by `Option<BuildId>` at the call site, never by an empty or placeholder
+/// Both parts are always present. An absent installed build is expressed by
+/// `Option<BuildId>` at the call site, never by an empty or placeholder
 /// `version` or `commit` — the rest of the system is required to refuse an
 /// empty build identity, and a placeholder is that value arriving somewhere
 /// nothing will refuse it.
 ///
-/// `package_id` is what names the build to a reader who did not ask for it by
-/// package-id: [`PackageStoreReceiver::accept_package`] reads it out of a
-/// manifest its caller never sees, and the upload route renders it straight
-/// back to the uploader. On a method that is already keyed on a package-id —
-/// [`PackageDeployer::latest_build`], [`PackageDeployer::read_version`] — it
-/// simply repeats the key the caller passed in.
+/// It carries no package-id. Every method returning one is already keyed on a
+/// package-id the caller passed in — [`PackageDeployer::latest_build`],
+/// [`PackageDeployer::read_version`] — where a field would repeat that
+/// argument and could contradict it. The one caller that learns a package-id
+/// instead of supplying it, [`PackageStoreReceiver::accept_package`], is
+/// handed it beside the build identity in an [`AcceptedPackage`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BuildId {
-    /// The canonical package-id of the package this build is of.
-    pub package_id: String,
     /// The version the host reports, an opaque display label that is not
     /// required to be semver.
     pub version: String,
@@ -774,6 +772,24 @@ pub enum PackageIngestError {
     Unavailable,
 }
 
+/// What one upload was accepted into the store as.
+///
+/// It pairs the package-id the receiver read out of the manifest it verified
+/// with the build identity that manifest declared, and is the shape the upload
+/// route's `200` body is rendered from.
+///
+/// The package-id sits here rather than on [`BuildId`] because this is the one
+/// place it is learned rather than supplied. `BuildId`'s other uses are keyed
+/// on a package-id the caller already passed as an argument, so a field there
+/// would repeat that argument on every one of them and could disagree with it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceptedPackage {
+    /// The canonical package-id the verified manifest declared.
+    pub package_id: String,
+    /// The version and commit that manifest declared.
+    pub build: BuildId,
+}
+
 /// Takes signed packages into the build store.
 ///
 /// It is a separate trait from the trust-plane manager rather than another
@@ -781,7 +797,8 @@ pub enum PackageIngestError {
 /// reaches the package store" checkable rather than conventional.
 #[async_trait]
 pub trait PackageStoreReceiver: Send + Sync {
-    /// Streams a signed package into the store and returns the accepted build.
+    /// Streams a signed package into the store and returns the package-id and
+    /// build identity it was accepted as.
     ///
     /// The implementation verifies the signature, the hashes and the manifest,
     /// reads the package-id out of the manifest it verified, and commits only
@@ -812,7 +829,7 @@ pub trait PackageStoreReceiver: Send + Sync {
         &self,
         permitted_package_ids: &[&str],
         body: IngressStream,
-    ) -> Result<BuildId, PackageIngestError>;
+    ) -> Result<AcceptedPackage, PackageIngestError>;
 }
 
 /// Brings a new host under management.

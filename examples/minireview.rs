@@ -26,11 +26,11 @@ use review_web::auth::{MtlsAuthError, MtlsAuthenticator, MtlsIdentity};
 #[cfg(not(feature = "auth-mtls"))]
 use review_web::graphql::account::set_initial_admin_password;
 use review_web::{
-    self as web,
+    self as web, DEFAULT_PACKAGE_UPLOAD_MAX_BYTES,
     backend::{
-        AgentManager, BindAddrInput, BuildId, CertManager, DeployError, DeployOutcome,
-        HostOnboarder, HostOnboardingTicket, IngressStream, OperationId, PackageDeployer,
-        PackageIngestError, PackageStoreReceiver,
+        AcceptedPackage, AgentManager, BindAddrInput, BuildId, CertManager, DeployError,
+        DeployOutcome, HostOnboarder, HostOnboardingTicket, IngressStream, OperationId,
+        PackageDeployer, PackageIngestError, PackageStoreReceiver,
     },
     graphql::{
         Process, ResourceUsage, SamplingPolicy, customer::NetworksTargetAgentLookupKeysPair,
@@ -319,7 +319,7 @@ impl PackageStoreReceiver for PackageStore {
         &self,
         _permitted_package_ids: &[&str],
         _body: IngressStream,
-    ) -> Result<BuildId, PackageIngestError> {
+    ) -> Result<AcceptedPackage, PackageIngestError> {
         Err(PackageIngestError::Unavailable)
     }
 }
@@ -333,15 +333,6 @@ impl HostOnboarder for Onboarder {
         bail!("Host {host} cannot be onboarded without a registrar")
     }
 }
-
-/// What this example configures its package-upload route to accept.
-///
-/// It is this example's own configuration value and not a shipped default:
-/// the store receiver above accepts nothing, so no body ever reaches a store
-/// through it. The figure an operator's configuration falls back to is
-/// measured from the release pipeline's largest artifact and belongs with the
-/// configuration layer in `aicers/review`.
-const PACKAGE_UPLOAD_MAX_BYTES: u64 = 1 << 30;
 
 const DEFAULT_DATABASE_URL: &str = "postgres://review@localhost/review";
 const DEFAULT_SERVER: &str = "localhost";
@@ -576,7 +567,7 @@ fn run(config: &Config) -> Result<Arc<Notify>> {
         #[cfg(feature = "auth-mtls")]
         authenticator: Arc::new(MiniAuthenticator),
         package_store: Arc::new(PackageStore),
-        package_upload_max_bytes: PACKAGE_UPLOAD_MAX_BYTES,
+        package_upload_max_bytes: DEFAULT_PACKAGE_UPLOAD_MAX_BYTES,
     };
     let web_srv_shutdown_handle = web::serve(
         web_config,

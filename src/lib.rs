@@ -82,6 +82,47 @@ const ERR_MISSING_AUTHORIZATION: &str = "Missing Authorization";
 #[cfg(feature = "auth-jwt")]
 const DISABLE_LOCAL_AUTH_BYPASS_ENV: &str = "REVIEW_WEB_DISABLE_LOCAL_AUTH_BYPASS";
 
+/// The default maximum request-body size, in bytes, for the package-upload
+/// route: 2 GiB.
+///
+/// **This value is provisional.** It was reasoned about rather than measured,
+/// and #948 is the obligation to re-derive it.
+///
+/// What the cap is for is bounding what an authenticated uploader can write
+/// into `pending/` on this host's data volume, and any finite value serves
+/// that. A measurement matters only so the cap does not wrongly reject a
+/// legitimate build — and as of 2026-09-11 no signed `.pkg` exists to reject:
+/// `aicers/review` publishes releases with no assets and no signing pipeline
+/// produces one yet. The nearest artifact anything in this product ships is a
+/// bootler payload asset, a whole-product bundle rather than one package,
+/// whose largest published form is roughly 980 MB; 2 GiB clears that
+/// comfortably, so the first real signed package cannot plausibly be refused
+/// by it. Measuring that bundle and calling the result a package size would
+/// have laundered the same guess through a number that merely looks measured.
+///
+/// Re-derive it from a real signed `.pkg` — including a core component's
+/// container image, the case a module-sized cap would wrongly reject — once a
+/// signing pipeline produces one, and replace this reasoning with that
+/// measurement.
+///
+/// [`ServerConfig::package_upload_max_bytes`] carries the effective value.
+/// This constant is the shipped default an embedding application falls back
+/// to, and is exported because `ServerConfig` has no `Default` impl: a default
+/// that exists only in prose is one the operator's configuration layer in
+/// `aicers/review` cannot reach.
+pub const DEFAULT_PACKAGE_UPLOAD_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// The largest artifact anything in this product publishes as of 2026-09-11: a
+/// bootler payload asset, which is a whole-product bundle rather than one
+/// signed package, so no single package can plausibly exceed it.
+const LARGEST_PUBLISHED_ARTIFACT_BYTES: u64 = 980 * 1000 * 1000;
+
+// The whole basis of the provisional default is that it clears that artifact
+// comfortably. Lowering it past that point would make it capable of refusing
+// the first genuine signed package it ever saw, so the build fails rather than
+// the route quietly starting to reject legitimate uploads.
+const _: () = assert!(DEFAULT_PACKAGE_UPLOAD_MAX_BYTES > LARGEST_PUBLISHED_ARTIFACT_BYTES);
+
 /// Parameters for a web server.
 pub struct ServerConfig {
     pub addr: SocketAddr,
@@ -104,7 +145,8 @@ pub struct ServerConfig {
     /// The maximum request-body size, in bytes, the package-upload route
     /// accepts.
     ///
-    /// The field carries the effective value an operator configured. A body of
+    /// The field carries the effective value an operator configured; the
+    /// shipped default is [`DEFAULT_PACKAGE_UPLOAD_MAX_BYTES`]. A body of
     /// exactly this many bytes is accepted and one byte more is refused
     /// mid-stream with `413`.
     pub package_upload_max_bytes: u64,

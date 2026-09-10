@@ -26,9 +26,9 @@ mod mtls_integration {
         ServerConfig,
         auth::{MtlsAuthError, MtlsAuthenticator, MtlsIdentity},
         backend::{
-            AgentManager, BindAddrInput, BuildId, CertManager, DeployError, DeployOutcome,
-            HostOnboarder, HostOnboardingTicket, IngressStream, OperationId, PackageDeployer,
-            PackageIngestError, PackageStoreReceiver,
+            AcceptedPackage, AgentManager, BindAddrInput, BuildId, CertManager, DeployError,
+            DeployOutcome, HostOnboarder, HostOnboardingTicket, IngressStream, OperationId,
+            PackageDeployer, PackageIngestError, PackageStoreReceiver,
         },
     };
     use serde::Serialize;
@@ -292,7 +292,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
             &self,
             _permitted_package_ids: &[&str],
             _body: IngressStream,
-        ) -> Result<BuildId, PackageIngestError> {
+        ) -> Result<AcceptedPackage, PackageIngestError> {
             Err(PackageIngestError::Unavailable)
         }
     }
