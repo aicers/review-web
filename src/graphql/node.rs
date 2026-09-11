@@ -458,6 +458,12 @@ impl NodeTotalCount {
     }
 }
 
+// The install state carried by `Agent` and `ExternalService` is deliberately
+// not repeated on the two snapshot types below, which is what `nodeStatusList`
+// renders instead of those. A snapshot carries no `key`, so two instances of
+// one module on one host are two rows a client cannot tell apart, and an
+// `instance` or an installed identity hung there would name neither of them.
+// `node` and `nodeList` return the keyed types and are the route to that state.
 #[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
 pub struct AgentSnapshot {
     kind: AgentKind,
