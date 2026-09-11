@@ -109,14 +109,21 @@ enum AttemptAccess {
 /// - anything else, `bootroot` and any target this build does not recognise
 ///   included, takes the stricter side, so a target added upstream is not
 ///   readable by the weaker tier until someone decides it should be.
+///
+/// The two membership questions are asked through [`bind_package_class`], the
+/// crate's single class-comparison site, so this tiering and the mutations
+/// that refuse on the same lists cannot drift apart. Only the helper's verdict
+/// is read here: its refusal message names a request that was rejected, and
+/// nothing was rejected on this path — a target in neither list is answered,
+/// with the stricter tier.
 fn required_access(action: database::OperationAction, target: &str) -> AttemptAccess {
     if action == database::OperationAction::Onboard {
         return AttemptAccess::SystemAdministratorOnly;
     }
-    if CORE_PACKAGE_IDS.contains(&target) {
+    if bind_package_class(target, &CORE_PACKAGE_IDS).is_ok() {
         return AttemptAccess::SystemAdministratorOnly;
     }
-    if MODULE_PACKAGE_IDS.contains(&target) {
+    if bind_package_class(target, &MODULE_PACKAGE_IDS).is_ok() {
         return AttemptAccess::HostScoped;
     }
     AttemptAccess::SystemAdministratorOnly
