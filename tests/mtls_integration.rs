@@ -976,6 +976,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
         server.shutdown.notified().await;
         Ok(())
     }
+
     /// The route is mounted and its three extensions are layered by `serve`
     /// itself: an authenticated administrator reaches the receiver, and what
     /// comes back is the receiver's own verdict rather than the `500` a missing
