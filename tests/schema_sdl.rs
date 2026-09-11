@@ -78,7 +78,15 @@ fn definition<'a>(sdl: &'a str, header: &str) -> &'a str {
 fn the_install_state_fields_keep_their_signatures() {
     let sdl = rendered_sdl();
 
-    for header in ["type Agent {", "type ExternalService {"] {
+    // The two snapshot types are here beside the keyed ones because
+    // `nodeStatusList` renders those instead, and the install state has to be
+    // readable on the status path as well as on the list path.
+    for header in [
+        "type Agent {",
+        "type ExternalService {",
+        "type AgentSnapshot {",
+        "type ExternalServiceSnapshot {",
+    ] {
         let definition = definition(&sdl, header);
         assert!(
             definition.contains("\n\tinstance: StringNumber\n"),
@@ -111,7 +119,12 @@ fn the_install_state_fields_keep_their_signatures() {
     // nothing, and a field that is always empty is one a client has to be told
     // to ignore.
     assert!(definition(&sdl, "type ExternalService {").contains("\n\tboundAddrs: [BoundAddr!]!\n"));
+    assert!(
+        definition(&sdl, "type ExternalServiceSnapshot {")
+            .contains("\n\tboundAddrs: [BoundAddr!]!\n")
+    );
     assert!(!definition(&sdl, "type Agent {").contains("boundAddrs"));
+    assert!(!definition(&sdl, "type AgentSnapshot {").contains("boundAddrs"));
 
     let bound_addr = definition(&sdl, "type BoundAddr {");
     assert!(bound_addr.contains("\n\tkey: String!\n"));
@@ -164,8 +177,8 @@ fn the_lifecycle_enum_mirrors_the_stored_one() {
 /// let clients branch on either.
 ///
 /// The schema's unrelated `updateStatus` mutation, which edits a node's status
-/// description, is why this looks at the three types rather than at the whole
-/// document.
+/// description, is why this looks at the types carrying the field rather than
+/// at the whole document.
 #[test]
 fn the_schema_names_no_update_status_enum() {
     let sdl = rendered_sdl();
@@ -173,6 +186,8 @@ fn the_schema_names_no_update_status_enum() {
     for header in [
         "type Agent {",
         "type ExternalService {",
+        "type AgentSnapshot {",
+        "type ExternalServiceSnapshot {",
         "type CoreComponent {",
     ] {
         assert!(

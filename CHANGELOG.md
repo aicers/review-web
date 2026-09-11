@@ -69,7 +69,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `updateCheckFailed` says that comparison could not be made, which a bare
   `false` would have been indistinguishable from being up to date. `lifecycle`
   is null for an entry whose kind no package deploys, which is what
-  distinguishes it from a package-managed entry with nothing installed.
+  distinguishes it from a package-managed entry with nothing installed, and
+  such an entry reports no installed identity whatever the record holds. The
+  same fields are on `AgentSnapshot` and `ExternalServiceSnapshot`, so the
+  state is readable through `nodeStatusList` as well as through `node` and
+  `nodeList`.
 - Added the `coreComponentList` query, which returns the core-component
   registry — one entry per `(component, host)` for `review`, `aice-web-next`,
   `roxyd` and `bootroot` — with the same install state and update check as the

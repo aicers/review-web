@@ -205,6 +205,12 @@ impl Agent {
 
 impl From<&database::Agent> for Agent {
     fn from(input: &database::Agent) -> Self {
+        let state = install_state::projected_state(
+            input.kind.package_id(),
+            input.installed_version.as_deref(),
+            input.installed_commit.as_deref(),
+            input.lifecycle,
+        );
         Self {
             node_id: input.node_id,
             key: input.key.clone(),
@@ -213,9 +219,9 @@ impl From<&database::Agent> for Agent {
             config: input.config.as_ref().map(std::string::ToString::to_string),
             draft: input.draft.as_ref().map(std::string::ToString::to_string),
             instance: input.instance,
-            installed_version: input.installed_version.clone(),
-            installed_commit: input.installed_commit.clone(),
-            lifecycle: lifecycle_of(input.kind.package_id(), input.lifecycle),
+            installed_version: state.version,
+            installed_commit: state.commit,
+            lifecycle: state.lifecycle,
         }
     }
 }
@@ -327,6 +333,12 @@ impl ExternalService {
 
 impl From<&database::ExternalService> for ExternalService {
     fn from(input: &database::ExternalService) -> Self {
+        let state = install_state::projected_state(
+            input.kind.package_id(),
+            input.installed_version.as_deref(),
+            input.installed_commit.as_deref(),
+            input.lifecycle,
+        );
         Self {
             node_id: input.node_id,
             key: input.key.clone(),
@@ -334,23 +346,12 @@ impl From<&database::ExternalService> for ExternalService {
             status: input.status.into(),
             draft: input.draft.as_ref().map(std::string::ToString::to_string),
             instance: input.instance,
-            installed_version: input.installed_version.clone(),
-            installed_commit: input.installed_commit.clone(),
-            lifecycle: lifecycle_of(input.kind.package_id(), input.lifecycle),
+            installed_version: state.version,
+            installed_commit: state.commit,
+            lifecycle: state.lifecycle,
             bound_addrs: input.bound_addrs.iter().map(Into::into).collect(),
         }
     }
-}
-
-/// Returns the lifecycle to report for an entry whose kind maps to
-/// `package_id`.
-///
-/// A kind that maps to no package-id reports null instead of the stored
-/// lifecycle. `NOT_INSTALLED` asserts that this is a package-managed thing
-/// with nothing installed right now, which would have a client offer an
-/// install action for something no package can install.
-fn lifecycle_of(package_id: Option<&str>, lifecycle: database::Lifecycle) -> Option<Lifecycle> {
-    package_id.map(|_| lifecycle.into())
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Default)]
@@ -458,13 +459,16 @@ impl NodeTotalCount {
     }
 }
 
-// The install state carried by `Agent` and `ExternalService` is deliberately
-// not repeated on the two snapshot types below, which is what `nodeStatusList`
-// renders instead of those. A snapshot carries no `key`, so two instances of
-// one module on one host are two rows a client cannot tell apart, and an
-// `instance` or an installed identity hung there would name neither of them.
-// `node` and `nodeList` return the keyed types and are the route to that state.
+/// One agent of a node, as the status read path renders it.
+///
+/// It carries the same install state `Agent` does, because `nodeStatusList` is
+/// one of the two routes that state has to be readable on. It stays a
+/// snapshot rather than becoming an `Agent`: the configuration payload and the
+/// node identity belong to the list path, not to a status poll. `instance` is
+/// what tells two rows of one kind on one host apart here, since a snapshot
+/// carries no `key`.
 #[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
+#[graphql(complex)]
 pub struct AgentSnapshot {
     kind: AgentKind,
     stored_status: AgentStatus,
@@ -474,15 +478,173 @@ pub struct AgentSnapshot {
 
     /// Serialized TOML string containing the draft configuration of the agent.
     draft: Option<String>,
+
+    /// The instance number this entry is, or null for an entry with no
+    /// instance dimension and for one written before any number was recorded.
+    #[graphql(skip)]
+    instance: Option<u32>,
+
+    /// The version of the build installed on the host, as the host reports it.
+    ///
+    /// An opaque display label that is not required to be semver. It is null
+    /// together with `installedCommit` or not at all.
+    installed_version: Option<String>,
+
+    /// The commit of the build installed on the host, as the host reports it.
+    ///
+    /// Null together with `installedVersion` or not at all.
+    installed_commit: Option<String>,
+
+    /// The install and run state of the build on the host, or null if the
+    /// entry's kind maps to no package-id.
+    lifecycle: Option<Lifecycle>,
 }
 
+#[ComplexObject]
+impl AgentSnapshot {
+    /// The instance number this entry is, rendered as a decimal string.
+    ///
+    /// It is a `StringNumber` rather than an `Int` because the stored number
+    /// is a `u32`, whose upper half has no valid `Int` representation.
+    async fn instance(&self) -> Option<StringNumber<u32>> {
+        self.instance.map(StringNumber)
+    }
+
+    /// Whether the store holds a build newer than the installed one for this
+    /// entry's package.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context. A failed lookup is not an error: it is reported through
+    /// `updateCheckFailed`.
+    async fn update_available(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.update_state(ctx).await?.available)
+    }
+
+    /// Whether this response's lookup of the newest build for this entry's
+    /// package failed.
+    ///
+    /// When it is `true`, `updateAvailable` is `false`, and a client must not
+    /// render that pair as "up to date".
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context.
+    async fn update_check_failed(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.update_state(ctx).await?.check_failed)
+    }
+}
+
+impl AgentSnapshot {
+    async fn update_state(&self, ctx: &Context<'_>) -> Result<UpdateState> {
+        let kind = database::AgentKind::from(self.kind);
+        install_state::update_state(
+            ctx,
+            kind.package_id(),
+            install_state::installed_identity(
+                self.installed_version.as_deref(),
+                self.installed_commit.as_deref(),
+                self.lifecycle,
+            ),
+        )
+        .await
+    }
+}
+
+/// One external service of a node, as the status read path renders it.
+///
+/// The counterpart of [`AgentSnapshot`], and a snapshot for the same reason.
 #[derive(Clone, Deserialize, Serialize, SimpleObject, PartialEq)]
+#[graphql(complex)]
 pub struct ExternalServiceSnapshot {
     kind: ExternalServiceKind,
     stored_status: ExternalServiceStatus,
 
     /// Serialized TOML string containing the draft configuration of the external service.
     draft: Option<String>,
+
+    /// The instance number this entry is, or null for an entry with no
+    /// instance dimension and for one written before any number was recorded.
+    #[graphql(skip)]
+    instance: Option<u32>,
+
+    /// The version of the build installed on the host, as the host reports it.
+    ///
+    /// An opaque display label that is not required to be semver. It is null
+    /// together with `installedCommit` or not at all.
+    installed_version: Option<String>,
+
+    /// The commit of the build installed on the host, as the host reports it.
+    ///
+    /// Null together with `installedVersion` or not at all.
+    installed_commit: Option<String>,
+
+    /// The install and run state of the build on the host, or null if the
+    /// entry's kind maps to no package-id.
+    ///
+    /// `TI_CONTAINER` deploys from no package, so it reports null here rather
+    /// than `NOT_INSTALLED`.
+    lifecycle: Option<Lifecycle>,
+
+    /// The addresses this instance is currently bound to.
+    ///
+    /// An instance that has bound nothing yields the empty list, never null.
+    bound_addrs: Vec<BoundAddr>,
+}
+
+#[ComplexObject]
+impl ExternalServiceSnapshot {
+    /// The instance number this entry is, rendered as a decimal string.
+    ///
+    /// It is a `StringNumber` rather than an `Int` because the stored number
+    /// is a `u32`, whose upper half has no valid `Int` representation.
+    async fn instance(&self) -> Option<StringNumber<u32>> {
+        self.instance.map(StringNumber)
+    }
+
+    /// Whether the store holds a build newer than the installed one for this
+    /// entry's package.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context. A failed lookup is not an error: it is reported through
+    /// `updateCheckFailed`.
+    async fn update_available(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.update_state(ctx).await?.available)
+    }
+
+    /// Whether this response's lookup of the newest build for this entry's
+    /// package failed.
+    ///
+    /// When it is `true`, `updateAvailable` is `false`, and a client must not
+    /// render that pair as "up to date".
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context.
+    async fn update_check_failed(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.update_state(ctx).await?.check_failed)
+    }
+}
+
+impl ExternalServiceSnapshot {
+    async fn update_state(&self, ctx: &Context<'_>) -> Result<UpdateState> {
+        let kind = database::ExternalServiceKind::from(self.kind);
+        install_state::update_state(
+            ctx,
+            kind.package_id(),
+            install_state::installed_identity(
+                self.installed_version.as_deref(),
+                self.installed_commit.as_deref(),
+                self.lifecycle,
+            ),
+        )
+        .await
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize, SimpleObject)]
@@ -529,11 +691,13 @@ pub(super) struct NodeStatus {
     manager: bool,
 
     /// The list of agents running on the node. `AgentSnapshot` contains the agent's kind, stored
-    /// status in the database, and config and draft configurations.
+    /// status in the database, config and draft configurations, and the build state the host
+    /// reports.
     agents: Vec<AgentSnapshot>,
 
     /// The list of external services running on the node. `ExternalServiceSnapshot` contains the
-    /// external service's kind, stored status in the database, and draft configurations.
+    /// external service's kind, stored status in the database, draft configurations, and the build
+    /// state the host reports.
     external_services: Vec<ExternalServiceSnapshot>,
 }
 
@@ -575,21 +739,46 @@ impl NodeStatus {
         let agents = node
             .agents
             .iter()
-            .map(|agent| AgentSnapshot {
-                kind: agent.kind.into(),
-                stored_status: agent.status.into(),
-                config: agent.config.as_ref().map(ToString::to_string),
-                draft: agent.draft.as_ref().map(ToString::to_string),
+            .map(|agent| {
+                let state = install_state::projected_state(
+                    agent.kind.package_id(),
+                    agent.installed_version.as_deref(),
+                    agent.installed_commit.as_deref(),
+                    agent.lifecycle,
+                );
+                AgentSnapshot {
+                    kind: agent.kind.into(),
+                    stored_status: agent.status.into(),
+                    config: agent.config.as_ref().map(ToString::to_string),
+                    draft: agent.draft.as_ref().map(ToString::to_string),
+                    instance: agent.instance,
+                    installed_version: state.version,
+                    installed_commit: state.commit,
+                    lifecycle: state.lifecycle,
+                }
             })
             .collect();
 
         let external_services = node
             .external_services
             .iter()
-            .map(|agent| ExternalServiceSnapshot {
-                kind: agent.kind.into(),
-                stored_status: agent.status.into(),
-                draft: agent.draft.as_ref().map(ToString::to_string),
+            .map(|service| {
+                let state = install_state::projected_state(
+                    service.kind.package_id(),
+                    service.installed_version.as_deref(),
+                    service.installed_commit.as_deref(),
+                    service.lifecycle,
+                );
+                ExternalServiceSnapshot {
+                    kind: service.kind.into(),
+                    stored_status: service.status.into(),
+                    draft: service.draft.as_ref().map(ToString::to_string),
+                    instance: service.instance,
+                    installed_version: state.version,
+                    installed_commit: state.commit,
+                    lifecycle: state.lifecycle,
+                    bound_addrs: service.bound_addrs.iter().map(Into::into).collect(),
+                }
             })
             .collect();
 

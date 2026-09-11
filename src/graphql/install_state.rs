@@ -15,7 +15,7 @@ use async_graphql::{
 };
 use review_database as database;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OnceCell};
 use tracing::warn;
 
 use super::BoxedPackageDeployer;
@@ -30,7 +30,7 @@ use crate::backend::BuildId;
 ///
 /// It is never intent. A component may be `RUNNING` while the last
 /// configuration reload failed, which is what `AgentStatus` records.
-#[derive(Clone, Copy, Deserialize, Enum, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Enum, Eq, PartialEq, Serialize)]
 #[graphql(remote = "database::Lifecycle")]
 pub enum Lifecycle {
     NotInstalled,
@@ -67,6 +67,77 @@ impl UpdateState {
         available: false,
         check_failed: false,
     };
+}
+
+/// The install state of one stored row as the wire renders it.
+///
+/// It is what [`projected_state`] returns, and the only shape the read path
+/// builds an entry's install state from: the fields are normalized together
+/// there rather than copied one by one, so no caller can forward a half
+/// identity or an identity a package does not deploy.
+pub(super) struct ProjectedState {
+    /// The installed version, present only beside `commit`.
+    pub(super) version: Option<String>,
+    /// The installed commit, present only beside `version`.
+    pub(super) commit: Option<String>,
+    /// The stored lifecycle, or `None` for a row whose kind maps to no
+    /// package-id.
+    pub(super) lifecycle: Option<Lifecycle>,
+}
+
+/// Returns the install state to report for a row whose kind maps to
+/// `package_id`.
+///
+/// Two normalizations happen here rather than in each caller's field list,
+/// because each is an invariant of the wire contract that a per-field copy
+/// would quietly break:
+///
+/// - A kind that maps to no package-id reports **nothing** installed and a
+///   null lifecycle, whatever the record happens to carry. The row is not
+///   package-managed, so a stale or malformed identity left on it names no
+///   build anyone could act on, and `NOT_INSTALLED` would assert the stronger
+///   claim that something *could* be installed here — which would have a
+///   client offer an install action for something no package can install.
+/// - The identity halves travel together or not at all. They are one build
+///   identity and nothing in the store enforces that both are written, so a
+///   row carrying one half names no build and reports neither half.
+///
+/// Neither half is ever defaulted. An empty version or commit is a value the
+/// rest of the system is required to refuse, so a placeholder would be that
+/// value arriving where nothing will refuse it.
+pub(super) fn projected_state(
+    package_id: Option<&str>,
+    version: Option<&str>,
+    commit: Option<&str>,
+    lifecycle: database::Lifecycle,
+) -> ProjectedState {
+    if package_id.is_none() {
+        return ProjectedState {
+            version: None,
+            commit: None,
+            lifecycle: None,
+        };
+    }
+    let (version, commit) = paired_identity(version, commit);
+    ProjectedState {
+        version,
+        commit,
+        lifecycle: Some(lifecycle.into()),
+    }
+}
+
+/// Returns the identity halves if both are present, and two `None`s otherwise.
+///
+/// The core-component path needs this without the package-id question, since
+/// its `component` is itself the package-id and its lifecycle is never null.
+pub(super) fn paired_identity(
+    version: Option<&str>,
+    commit: Option<&str>,
+) -> (Option<String>, Option<String>) {
+    match version.zip(commit) {
+        Some((version, commit)) => (Some(version.to_string()), Some(commit.to_string())),
+        None => (None, None),
+    }
 }
 
 /// Returns the installed build identity, or `None` if there is none to compare
@@ -157,11 +228,16 @@ enum LatestBuild {
 /// later query, and what it would go stale against is an upload this same
 /// server accepted.
 ///
-/// The lock is held across the lookup on purpose: two rows of one package
-/// resolving concurrently then make one call between them rather than two.
+/// The map holds one cell per package-id and the map lock is released before
+/// the lookup runs. The cell is what makes two rows of one package share a
+/// single call — the second waits on the first rather than repeating it —
+/// while a package whose store is slow or unreachable delays only its own
+/// rows. Holding the map lock across the lookup instead would serialize every
+/// distinct package behind that one, which is the opposite of the promise
+/// that a failing package leaves the rows that read fine alone.
 #[derive(Default)]
 pub(super) struct LatestBuildMemo {
-    answers: Mutex<HashMap<String, LatestBuild>>,
+    answers: Mutex<HashMap<String, Arc<OnceCell<LatestBuild>>>>,
 }
 
 impl LatestBuildMemo {
@@ -178,20 +254,23 @@ impl LatestBuildMemo {
         deployer: &dyn crate::backend::PackageDeployer,
         package_id: &str,
     ) -> LatestBuild {
-        let mut answers = self.answers.lock().await;
-        if let Some(answer) = answers.get(package_id) {
-            return answer.clone();
-        }
-        let answer = match deployer.latest_build(package_id).await {
-            Ok(Some(build)) => LatestBuild::Found(build),
-            Ok(None) => LatestBuild::Missing,
-            Err(e) => {
-                warn!("cannot read the latest build of package {package_id}: {e:#}");
-                LatestBuild::Failed
-            }
+        let answer = {
+            let mut answers = self.answers.lock().await;
+            Arc::clone(answers.entry(package_id.to_string()).or_default())
         };
-        answers.insert(package_id.to_string(), answer.clone());
         answer
+            .get_or_init(|| async {
+                match deployer.latest_build(package_id).await {
+                    Ok(Some(build)) => LatestBuild::Found(build),
+                    Ok(None) => LatestBuild::Missing,
+                    Err(e) => {
+                        warn!("cannot read the latest build of package {package_id}: {e:#}");
+                        LatestBuild::Failed
+                    }
+                }
+            })
+            .await
+            .clone()
     }
 }
 
@@ -239,7 +318,10 @@ mod tests {
     use serde_json::json;
     use tokio::sync::Notify;
 
-    use super::{Lifecycle as GqlLifecycle, installed_identity};
+    use super::{
+        LatestBuild, LatestBuildMemo, Lifecycle as GqlLifecycle, installed_identity,
+        projected_state,
+    };
     use crate::{
         backend::CertManager,
         graphql::{
@@ -385,6 +467,90 @@ mod tests {
             installed_identity(Some("1.0.0"), Some("abc"), Some(GqlLifecycle::NotInstalled)),
             None
         );
+    }
+
+    #[test]
+    fn the_projection_normalizes_both_absences() {
+        let no_package = projected_state(None, Some("1.0.0"), Some("abc"), Lifecycle::Running);
+        assert_eq!(no_package.version, None);
+        assert_eq!(no_package.commit, None);
+        assert_eq!(no_package.lifecycle, None);
+
+        let half = projected_state(Some("hog"), Some("1.0.0"), None, Lifecycle::Running);
+        assert_eq!(half.version, None);
+        assert_eq!(half.commit, None);
+        assert_eq!(half.lifecycle, Some(GqlLifecycle::Running));
+
+        let other_half = projected_state(Some("hog"), None, Some("abc"), Lifecycle::Running);
+        assert_eq!(other_half.version, None);
+        assert_eq!(other_half.commit, None);
+
+        let whole = projected_state(Some("hog"), Some("1.0.0"), Some("abc"), Lifecycle::Running);
+        assert_eq!(whole.version.as_deref(), Some("1.0.0"));
+        assert_eq!(whole.commit.as_deref(), Some("abc"));
+        assert_eq!(whole.lifecycle, Some(GqlLifecycle::Running));
+    }
+
+    /// One package's lookup does not hold up another's.
+    ///
+    /// The memo makes rows of one package share a call, and the way it does
+    /// that must not turn into a queue across packages: a store that is slow
+    /// or unreachable for one package would then delay every other package in
+    /// the same response, which is the opposite of the promise that a failing
+    /// lookup leaves the rows that read fine alone. The gate holds `hog` open
+    /// until `giganto` has answered, so a memo that serialized the two would
+    /// never finish.
+    #[tokio::test]
+    async fn one_package_lookup_does_not_block_another() {
+        let gate = Arc::new(Notify::new());
+        let builds = Arc::new(
+            LatestBuildStub::default()
+                .with_answer("hog", "1.2.0", "abcabc")
+                .with_answer("giganto", "2.0.0", "defdef")
+                .with_gate("hog", gate.clone()),
+        );
+        let deployer = MockPackageDeployer::with_builds(builds.clone());
+        let memo = LatestBuildMemo::default();
+
+        let resolved = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::join!(memo.latest_build(&deployer, "hog"), async {
+                let answer = memo.latest_build(&deployer, "giganto").await;
+                gate.notify_one();
+                answer
+            })
+        })
+        .await
+        .expect("a lookup of one package does not wait on another");
+
+        assert!(matches!(resolved.0, LatestBuild::Found(build) if build.version == "1.2.0"));
+        assert!(matches!(resolved.1, LatestBuild::Found(build) if build.version == "2.0.0"));
+    }
+
+    /// Two rows of one package share a single lookup even when they resolve
+    /// together, rather than both missing an answer that has not landed yet.
+    #[tokio::test]
+    async fn concurrent_rows_of_one_package_share_one_lookup() {
+        let gate = Arc::new(Notify::new());
+        let builds = Arc::new(
+            LatestBuildStub::default()
+                .with_answer("hog", "1.2.0", "abcabc")
+                .with_gate("hog", gate.clone()),
+        );
+        let deployer = MockPackageDeployer::with_builds(builds.clone());
+        let memo = LatestBuildMemo::default();
+
+        let resolved = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::join!(memo.latest_build(&deployer, "hog"), async {
+                gate.notify_one();
+                memo.latest_build(&deployer, "hog").await
+            })
+        })
+        .await
+        .expect("the second row waits on the first rather than deadlocking");
+
+        assert!(matches!(resolved.0, LatestBuild::Found(_)));
+        assert!(matches!(resolved.1, LatestBuild::Found(_)));
+        assert_eq!(builds.calls("hog"), 1);
     }
 
     #[tokio::test]
@@ -847,15 +1013,15 @@ mod tests {
         assert_eq!(entry["updateCheckFailed"], json!(false));
     }
 
-    /// A stored half-identity is reported as it is and compared against
-    /// nothing.
+    /// A stored half-identity reads back as no identity at all.
     ///
     /// The two identity fields are one build identity and the record is
     /// supposed to carry them together, but nothing in the store enforces
-    /// that. A row that carries one half names no build, so it cannot be
-    /// compared against the latest one — and the half it does carry is still
-    /// reported rather than blanked, because the read path shows what is
-    /// stored and never substitutes a placeholder for what is not.
+    /// that. The wire contract does: the two are null together or not at all,
+    /// so a row carrying one half reports neither and is compared against no
+    /// build. Reporting the half that is there would put a version with no
+    /// commit — a build nobody can name — in front of an operator, which is
+    /// the same conflation the null-lifecycle discriminator exists to refuse.
     #[tokio::test]
     async fn a_half_identity_names_no_build_to_compare() {
         let builds = Arc::new(LatestBuildStub::default().with_answer("hog", "1.2.0", "abcabc"));
@@ -887,7 +1053,7 @@ mod tests {
             json!({
                 "key": "001.hog",
                 "instance": "1",
-                "installedVersion": "1.0.0",
+                "installedVersion": null,
                 "installedCommit": null,
                 "lifecycle": "RUNNING",
                 "updateAvailable": false,
@@ -900,11 +1066,161 @@ mod tests {
                 "key": "002.hog",
                 "instance": "2",
                 "installedVersion": null,
-                "installedCommit": "aaaaaa",
+                "installedCommit": null,
                 "lifecycle": "RUNNING",
                 "updateAvailable": false,
                 "updateCheckFailed": false,
             })
+        );
+    }
+
+    /// A row of a kind no package deploys reports nothing installed, whatever
+    /// the record carries.
+    ///
+    /// The stored fields are `Option`s and nothing stops a row of such a kind
+    /// from carrying a version and a commit — a kind that used to be
+    /// package-managed, a host reporting a build it assembled itself. The
+    /// projection is keyed on the package mapping rather than on the
+    /// lifecycle, so the identity is dropped with the lifecycle rather than
+    /// surviving beside a null one.
+    #[tokio::test]
+    async fn a_kind_with_no_package_reports_no_installed_identity() {
+        let builds = Arc::new(LatestBuildStub::default());
+        let schema = schema_with(&builds).await;
+        let id = insert_node(
+            &schema.store(),
+            "node1",
+            vec![],
+            vec![external_service(
+                "001.ti-container",
+                ExternalServiceKind::TiContainer,
+                Some(1),
+                Some(("9.9.9", "zzzzzz")),
+                Lifecycle::Running,
+                &[],
+            )],
+        );
+
+        let res = schema
+            .execute_as_system_admin(&external_services_query(id))
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_json_eq!(
+            res.data.into_json().unwrap()["node"]["externalServices"][0].clone(),
+            json!({
+                "key": "001.ti-container",
+                "instance": "1",
+                "installedVersion": null,
+                "installedCommit": null,
+                "lifecycle": null,
+                "updateAvailable": false,
+                "updateCheckFailed": false,
+                "boundAddrs": [],
+            })
+        );
+        assert_eq!(
+            builds.total_calls(),
+            0,
+            "a kind with no package-id consults no store"
+        );
+    }
+
+    /// The status read path carries the same state the list path does.
+    ///
+    /// `nodeStatusList` is the other route this state has to be readable on,
+    /// and it renders snapshots rather than the keyed types. The snapshots
+    /// carry `instance`, which is what tells two rows of one kind on one host
+    /// apart where there is no `key`.
+    #[tokio::test]
+    async fn the_status_path_carries_the_state() {
+        let builds = Arc::new(
+            LatestBuildStub::default()
+                .with_answer("hog", "1.2.0", "abcabc")
+                .with_answer("giganto", "2.0.0", "defdef"),
+        );
+        let schema = schema_with(&builds).await;
+        insert_node(
+            &schema.store(),
+            "node1",
+            vec![
+                agent(
+                    "001.hog",
+                    AgentKind::SemiSupervised,
+                    Some(1),
+                    Some(("1.2.0", "abcabc")),
+                    Lifecycle::Running,
+                ),
+                agent(
+                    "002.hog",
+                    AgentKind::SemiSupervised,
+                    Some(2),
+                    Some(("1.1.0", "yyyyyy")),
+                    Lifecycle::Running,
+                ),
+            ],
+            vec![external_service(
+                "001.giganto",
+                ExternalServiceKind::DataStore,
+                Some(1),
+                None,
+                Lifecycle::NotInstalled,
+                &[("ingest", "10.0.0.1:38370")],
+            )],
+        );
+
+        let res = schema
+            .execute_as_system_admin(
+                "{ nodeStatusList(first: 10) { nodes { \
+                 agents { kind instance installedVersion installedCommit lifecycle \
+                 updateAvailable updateCheckFailed } \
+                 externalServices { kind instance installedVersion installedCommit lifecycle \
+                 updateAvailable updateCheckFailed boundAddrs { key addr } } } } }",
+            )
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        let node = res.data.into_json().unwrap()["nodeStatusList"]["nodes"][0].clone();
+        assert_json_eq!(
+            node["agents"].clone(),
+            json!([
+                {
+                    "kind": "SEMI_SUPERVISED",
+                    "instance": "1",
+                    "installedVersion": "1.2.0",
+                    "installedCommit": "abcabc",
+                    "lifecycle": "RUNNING",
+                    "updateAvailable": false,
+                    "updateCheckFailed": false,
+                },
+                {
+                    "kind": "SEMI_SUPERVISED",
+                    "instance": "2",
+                    "installedVersion": "1.1.0",
+                    "installedCommit": "yyyyyy",
+                    "lifecycle": "RUNNING",
+                    "updateAvailable": true,
+                    "updateCheckFailed": false,
+                },
+            ])
+        );
+        assert_json_eq!(
+            node["externalServices"].clone(),
+            json!([{
+                "kind": "DATA_STORE",
+                "instance": "1",
+                "installedVersion": null,
+                "installedCommit": null,
+                "lifecycle": "NOT_INSTALLED",
+                "updateAvailable": false,
+                "updateCheckFailed": false,
+                "boundAddrs": [{"key": "ingest", "addr": "10.0.0.1:38370"}],
+            }])
+        );
+        assert_eq!(
+            builds.calls("hog"),
+            1,
+            "the status path shares the request's memo like the list path"
         );
     }
 

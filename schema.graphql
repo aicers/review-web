@@ -130,6 +130,16 @@ type AgentNotifyAttempt {
 	error: String
 }
 
+"""
+One agent of a node, as the status read path renders it.
+
+It carries the same install state `Agent` does, because `nodeStatusList` is
+one of the two routes that state has to be readable on. It stays a
+snapshot rather than becoming an `Agent`: the configuration payload and the
+node identity belong to the list path, not to a status poll. `instance` is
+what tells two rows of one kind on one host apart here, since a snapshot
+carries no `key`.
+"""
 type AgentSnapshot {
 	kind: AgentKind!
 	storedStatus: AgentStatus!
@@ -141,6 +151,55 @@ type AgentSnapshot {
 	Serialized TOML string containing the draft configuration of the agent.
 	"""
 	draft: String
+	"""
+	The version of the build installed on the host, as the host reports it.
+	
+	An opaque display label that is not required to be semver. It is null
+	together with `installedCommit` or not at all.
+	"""
+	installedVersion: String
+	"""
+	The commit of the build installed on the host, as the host reports it.
+	
+	Null together with `installedVersion` or not at all.
+	"""
+	installedCommit: String
+	"""
+	The install and run state of the build on the host, or null if the
+	entry's kind maps to no package-id.
+	"""
+	lifecycle: Lifecycle
+	"""
+	The instance number this entry is, rendered as a decimal string.
+	
+	It is a `StringNumber` rather than an `Int` because the stored number
+	is a `u32`, whose upper half has no valid `Int` representation.
+	"""
+	instance: StringNumber
+	"""
+	Whether the store holds a build newer than the installed one for this
+	entry's package.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context. A failed lookup is not an error: it is reported through
+	`updateCheckFailed`.
+	"""
+	updateAvailable: Boolean!
+	"""
+	Whether this response's lookup of the newest build for this entry's
+	package failed.
+	
+	When it is `true`, `updateAvailable` is `false`, and a client must not
+	render that pair as "up to date".
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context.
+	"""
+	updateCheckFailed: Boolean!
 }
 
 enum AgentStatus {
@@ -4457,6 +4516,11 @@ enum ExternalServiceKind {
 	TI_CONTAINER
 }
 
+"""
+One external service of a node, as the status read path renders it.
+
+The counterpart of [`AgentSnapshot`], and a snapshot for the same reason.
+"""
 type ExternalServiceSnapshot {
 	kind: ExternalServiceKind!
 	storedStatus: ExternalServiceStatus!
@@ -4464,6 +4528,64 @@ type ExternalServiceSnapshot {
 	Serialized TOML string containing the draft configuration of the external service.
 	"""
 	draft: String
+	"""
+	The version of the build installed on the host, as the host reports it.
+	
+	An opaque display label that is not required to be semver. It is null
+	together with `installedCommit` or not at all.
+	"""
+	installedVersion: String
+	"""
+	The commit of the build installed on the host, as the host reports it.
+	
+	Null together with `installedVersion` or not at all.
+	"""
+	installedCommit: String
+	"""
+	The install and run state of the build on the host, or null if the
+	entry's kind maps to no package-id.
+	
+	`TI_CONTAINER` deploys from no package, so it reports null here rather
+	than `NOT_INSTALLED`.
+	"""
+	lifecycle: Lifecycle
+	"""
+	The addresses this instance is currently bound to.
+	
+	An instance that has bound nothing yields the empty list, never null.
+	"""
+	boundAddrs: [BoundAddr!]!
+	"""
+	The instance number this entry is, rendered as a decimal string.
+	
+	It is a `StringNumber` rather than an `Int` because the stored number
+	is a `u32`, whose upper half has no valid `Int` representation.
+	"""
+	instance: StringNumber
+	"""
+	Whether the store holds a build newer than the installed one for this
+	entry's package.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context. A failed lookup is not an error: it is reported through
+	`updateCheckFailed`.
+	"""
+	updateAvailable: Boolean!
+	"""
+	Whether this response's lookup of the newest build for this entry's
+	package failed.
+	
+	When it is `true`, `updateAvailable` is `false`, and a client must not
+	render that pair as "up to date".
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context.
+	"""
+	updateCheckFailed: Boolean!
 }
 
 enum ExternalServiceStatus {
@@ -6435,12 +6557,14 @@ type NodeStatus {
 	manager: Boolean!
 	"""
 	The list of agents running on the node. `AgentSnapshot` contains the agent's kind, stored
-	status in the database, and config and draft configurations.
+	status in the database, config and draft configurations, and the build state the host
+	reports.
 	"""
 	agents: [AgentSnapshot!]!
 	"""
 	The list of external services running on the node. `ExternalServiceSnapshot` contains the
-	external service's kind, stored status in the database, and draft configurations.
+	external service's kind, stored status in the database, draft configurations, and the build
+	state the host reports.
 	"""
 	externalServices: [ExternalServiceSnapshot!]!
 	id: ID!

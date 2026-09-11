@@ -1038,8 +1038,13 @@ impl AgentManager for MockAgentManager {
         unimplemented!()
     }
 
+    // A mock host reports no resource usage and answers no ping. Both are
+    // errors rather than `unimplemented!()` because the status read path calls
+    // them for every node it renders and discards the failure, so a panic here
+    // would make `nodeStatusList` untestable through this schema for reasons
+    // that have nothing to do with what a test is asserting.
     async fn get_resource_usage(&self, _hostname: &str) -> Result<ResourceUsage, anyhow::Error> {
-        unimplemented!()
+        anyhow::bail!("the mock host reports no resource usage")
     }
 
     async fn halt(&self, _hostname: &str) -> Result<(), anyhow::Error> {
@@ -1047,7 +1052,7 @@ impl AgentManager for MockAgentManager {
     }
 
     async fn ping(&self, _hostname: &str) -> Result<std::time::Duration, anyhow::Error> {
-        unimplemented!()
+        anyhow::bail!("the mock host answers no ping")
     }
 
     async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error> {
@@ -1103,6 +1108,9 @@ struct LatestBuildStub {
     failing: std::collections::HashSet<String>,
     /// Every package-id asked about, in the order it was asked.
     calls: std::sync::Mutex<Vec<String>>,
+    /// The package-ids whose lookup parks until the test releases it, which is
+    /// how a test holds one package's lookup open while another runs.
+    gates: std::collections::HashMap<String, Arc<tokio::sync::Notify>>,
 }
 
 #[cfg(test)]
@@ -1123,11 +1131,20 @@ impl LatestBuildStub {
         self
     }
 
-    fn latest_build(&self, package_id: &str) -> Result<Option<BuildId>, anyhow::Error> {
+    /// Parks the lookup of `package_id` until `gate` is notified.
+    fn with_gate(mut self, package_id: &str, gate: Arc<tokio::sync::Notify>) -> Self {
+        self.gates.insert(package_id.to_string(), gate);
+        self
+    }
+
+    async fn latest_build(&self, package_id: &str) -> Result<Option<BuildId>, anyhow::Error> {
         self.calls
             .lock()
             .unwrap_or_else(|e| panic!("Mutex poisoned: {e}"))
             .push(package_id.to_string());
+        if let Some(gate) = self.gates.get(package_id) {
+            gate.notified().await;
+        }
         if self.failing.contains(package_id) {
             anyhow::bail!("the build store could not be read");
         }
@@ -1278,7 +1295,7 @@ impl PackageDeployer for MockPackageDeployer {
     // Answers from the stub the deployer was built with, which holds no build
     // at all unless a test put one there.
     async fn latest_build(&self, target: &str) -> Result<Option<BuildId>, anyhow::Error> {
-        self.builds.latest_build(target)
+        self.builds.latest_build(target).await
     }
 
     async fn package_status(

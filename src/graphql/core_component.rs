@@ -151,11 +151,17 @@ impl CoreComponent {
 
 impl From<&database::CoreComponent> for CoreComponent {
     fn from(input: &database::CoreComponent) -> Self {
+        // The halves travel together or not at all: nothing in the store
+        // enforces that both are written, and half an identity names no build.
+        let (installed_version, installed_commit) = install_state::paired_identity(
+            input.installed_version.as_deref(),
+            input.installed_commit.as_deref(),
+        );
         Self {
             component: input.component.clone(),
             host: input.host.clone(),
-            installed_version: input.installed_version.clone(),
-            installed_commit: input.installed_commit.clone(),
+            installed_version,
+            installed_commit,
             lifecycle: input.lifecycle.into(),
             installer_managed: input.installer_managed,
         }
