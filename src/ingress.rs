@@ -55,9 +55,11 @@ use crate::{
 /// route accepts would invite a second, core-only endpoint: a second way in to
 /// secure, against the "only such ingress" property this route exists to hold.
 ///
-/// It is a published contract. The `aice-web-next` BFF fronts it and calls it
-/// by name, so renaming it is a coordinated change across two repositories.
-const PACKAGE_UPLOAD_PATH: &str = "/api/package/upload";
+/// It is a published contract, and public for that reason: the `aice-web-next`
+/// BFF fronts it and calls it by name, so renaming it is a coordinated change
+/// across two repositories, and a caller that names this constant is carried
+/// through that change by the compiler rather than by a literal it repeated.
+pub const PACKAGE_UPLOAD_PATH: &str = "/api/package/upload";
 
 const ERR_ROLE_NOT_PERMITTED: &str = "uploading a signed package is not permitted for this role";
 const ERR_SIGNATURE_INVALID: &str = "the package signature is invalid";
