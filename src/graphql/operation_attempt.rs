@@ -1025,6 +1025,92 @@ mod tests {
         assert_eq!(res.data.into_json().unwrap()["inFlightInstalls"], json!([]));
     }
 
+    /// The pair the caller asked for is the pair it is answered for.
+    ///
+    /// A running install on another host, and one of another module on this
+    /// host, are both rows the scan walks past and neither is listed.
+    #[tokio::test]
+    async fn in_flight_installs_answers_for_the_pair_it_was_asked_for() {
+        const MINE: &str = "0aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        const ELSEWHERE: &str = "0bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        const ANOTHER_TARGET: &str = "0ccccccc-cccc-4ccc-8ccc-cccccccccccc";
+        const OTHER_HOST: &str = "host2.example.com";
+        let schema = TestSchema::new().await;
+        insert_node(&schema.store(), "node1", HOST, CUSTOMER, vec![], vec![]);
+        insert_node(
+            &schema.store(),
+            "node2",
+            OTHER_HOST,
+            CUSTOMER,
+            vec![],
+            vec![],
+        );
+        seed(
+            &schema.store(),
+            &attempt(MINE, OperationAction::Install, HOST, "hog", Some(1)),
+        );
+        seed(
+            &schema.store(),
+            &attempt(
+                ELSEWHERE,
+                OperationAction::Install,
+                OTHER_HOST,
+                "hog",
+                Some(1),
+            ),
+        );
+        seed(
+            &schema.store(),
+            &attempt(
+                ANOTHER_TARGET,
+                OperationAction::Install,
+                HOST,
+                "piglet",
+                Some(1),
+            ),
+        );
+
+        let res = schema
+            .execute_as_system_admin(&in_flight_query(HOST, "hog"))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        let listed = data["inFlightInstalls"].as_array().unwrap();
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert_eq!(listed[0]["id"], json!(MINE));
+    }
+
+    /// Two installs that began in the same instant are still ordered, because
+    /// the id breaks the tie and the scan order is not an order at all.
+    #[tokio::test]
+    async fn in_flight_installs_breaks_a_tie_on_the_id() {
+        const EARLIER: &str = "1aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        const LATER: &str = "2bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        let schema = TestSchema::new().await;
+        insert_node(&schema.store(), "node1", HOST, CUSTOMER, vec![], vec![]);
+        // Seeded in the reverse of the order they must come back in, and both
+        // under the instant `attempt` stamps.
+        seed(
+            &schema.store(),
+            &attempt(LATER, OperationAction::Install, HOST, "hog", Some(2)),
+        );
+        seed(
+            &schema.store(),
+            &attempt(EARLIER, OperationAction::Install, HOST, "hog", Some(1)),
+        );
+
+        let res = schema
+            .execute_as_system_admin(&in_flight_query(HOST, "hog"))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        let listed = data["inFlightInstalls"].as_array().unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0]["startedAt"], listed[1]["startedAt"]);
+        assert_eq!(listed[0]["id"], json!(EARLIER));
+        assert_eq!(listed[1]["id"], json!(LATER));
+    }
+
     /// A target outside the five module package-ids is refused, so observation
     /// is no looser than action.
     #[tokio::test]
