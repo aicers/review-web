@@ -15,10 +15,14 @@ use async_graphql::{
     Context, Enum, InputObject, Object, Result, SimpleObject, StringNumber, Union,
 };
 use review_database::{BuildSelector, RequestKeyError};
+use review_protocol::types::capability::ROLLBACK_SUPERVISOR;
 use tracing::info;
 
 use super::{
-    super::{BoxedHostOnboarder, BoxedPackageDeployer, Role, RoleGuard, customer_access},
+    super::{
+        BoxedAgentManager, BoxedHostOnboarder, BoxedPackageDeployer, Role, RoleGuard,
+        customer_access,
+    },
     DeployMutation,
     bind_addr::{
         BindAddrInput, HostOccupancyUnavailable, HostPortOccupied, PortAllocationConflict,
@@ -127,6 +131,7 @@ pub(crate) struct UpdateCoreComponentSuccess {
 pub(crate) enum UpdateCoreComponentResult {
     Success(UpdateCoreComponentSuccess),
     CleanupPending(CleanupPending),
+    RollbackUnsupported(RollbackUnsupported),
 }
 
 /// The one-time credential and command for bringing a host under management.
@@ -174,11 +179,30 @@ pub(crate) struct CleanupPending {
     operation_id: String,
 }
 
+/// The host advertises no rollback supervisor, so `ROLLBACK` cannot be
+/// honoured on it.
+///
+/// It is a mutation result rather than an ordinary error because it is the one
+/// pre-backend refusal the operator can act on from the form they submitted:
+/// the remedy is to resubmit the same request with `HOLD`. A host that could
+/// not be *asked* what it advertises is not this — that is an ordinary GraphQL
+/// error, so a host that answered nothing and a host that answered nothing
+/// legible never render alike.
+#[derive(SimpleObject)]
+pub(crate) struct RollbackUnsupported {
+    /// The host whose advertised set lacks the capability.
+    host: String,
+    /// The capability tag the host does not advertise, so a client names what
+    /// is missing rather than restating it.
+    capability: String,
+}
+
 /// What `installService` answers with.
 // Every other refusal — the guard, the per-host check, the class binding, a
-// malformed request key, a malformed selector, an unparseable bind address,
-// and every `DeployError` variant outside this list — is an ordinary GraphQL
-// error. None of them is a state the install form renders.
+// malformed request key, a malformed selector, an unparseable bind address, a
+// capability set that could not be read, and every `DeployError` variant
+// outside this list — is an ordinary GraphQL error. None of them is a state
+// the install form renders.
 #[derive(Union)]
 pub(crate) enum InstallServiceResult {
     Success(InstallServiceSuccess),
@@ -187,6 +211,7 @@ pub(crate) enum InstallServiceResult {
     HostOccupancyUnavailable(HostOccupancyUnavailable),
     RequestKeyReused(RequestKeyReused),
     CleanupPending(CleanupPending),
+    RollbackUnsupported(RollbackUnsupported),
 }
 
 /// What `updateService` answers with.
@@ -197,6 +222,7 @@ pub(crate) enum InstallServiceResult {
 pub(crate) enum UpdateServiceResult {
     Success(UpdateServiceSuccess),
     CleanupPending(CleanupPending),
+    RollbackUnsupported(RollbackUnsupported),
 }
 
 /// What `removeService` answers with.
@@ -342,6 +368,51 @@ fn cleanup_pending(
     }
 }
 
+/// Answers whether the submitted failure policy may go to `host`, refusing
+/// `ROLLBACK` on a host that advertises no rollback supervisor.
+///
+/// `Ok(None)` means the operation proceeds. `Ok(Some(_))` is the refusal, which
+/// each caller renders as its own union's [`RollbackUnsupported`] member.
+///
+/// The set is read here, on every invocation that asks for a rollback, and
+/// never cached: it is live state that stops being true the moment the
+/// supervisor stops answering. `HOLD` reads nothing at all, because nothing
+/// about it turns on the answer.
+///
+/// An empty set is refused exactly as a non-empty one lacking the tag is.
+/// `review-protocol` documents an empty set as the agent having advertised
+/// nothing, the peer too old to send the field included, and a host that
+/// cannot say it has a rollback supervisor is a host whose rollback nothing
+/// can rely on.
+///
+/// # Errors
+///
+/// Returns an error if the capability set cannot be read. A host that could
+/// not be asked is never reported as a host that answered no, and a failed
+/// read is never an implicit grant.
+async fn check_rollback_support(
+    ctx: &Context<'_>,
+    host: &str,
+    on_failure: FailurePolicy,
+) -> Result<Option<RollbackUnsupported>> {
+    if !matches!(on_failure, FailurePolicy::Rollback) {
+        return Ok(None);
+    }
+    let agents = ctx.data::<BoxedAgentManager>()?;
+    if agents
+        .capabilities(host)
+        .await?
+        .contains(ROLLBACK_SUPERVISOR)
+    {
+        Ok(None)
+    } else {
+        Ok(Some(RollbackUnsupported {
+            host: host.to_string(),
+            capability: ROLLBACK_SUPERVISOR.to_string(),
+        }))
+    }
+}
+
 #[Object]
 impl DeployMutation {
     /// Installs `target` on `host` as a newly allocated instance and returns
@@ -378,6 +449,9 @@ impl DeployMutation {
         check_request_key(&request_key)?;
         let selector = self::build_selector(build_selector)?;
         let addrs = self::bind_addrs(bind_addrs)?;
+        if let Some(refusal) = check_rollback_support(ctx, &host, on_failure).await? {
+            return Ok(InstallServiceResult::RollbackUnsupported(refusal));
+        }
 
         let deployer = ctx.data::<BoxedPackageDeployer>()?;
         // The request is recorded before the call rather than after it, so a
@@ -466,6 +540,9 @@ impl DeployMutation {
         customer_access::check_hostname_access(ctx, &host)?;
         bind_package_class(&target, &MODULE_PACKAGE_IDS)?;
         let selector = self::build_selector(build_selector)?;
+        if let Some(refusal) = check_rollback_support(ctx, &host, on_failure).await? {
+            return Ok(UpdateServiceResult::RollbackUnsupported(refusal));
+        }
 
         let deployer = ctx.data::<BoxedPackageDeployer>()?;
         // Logged before the call, for the same reason as in `install_service`.
@@ -551,6 +628,9 @@ impl DeployMutation {
     ) -> Result<UpdateCoreComponentResult> {
         bind_package_class(&component, &backend::CORE_PACKAGE_IDS)?;
         let selector = self::build_selector(build_selector)?;
+        if let Some(refusal) = check_rollback_support(ctx, &host, on_failure).await? {
+            return Ok(UpdateCoreComponentResult::RollbackUnsupported(refusal));
+        }
 
         let deployer = ctx.data::<BoxedPackageDeployer>()?;
         info_with_username!(ctx, "Update of {component} requested on {host}");
@@ -613,8 +693,11 @@ mod tests {
         Agent, AgentKind, AgentStatus, BuildSelector, Lifecycle, ListenerBinding,
         ListenerTransport, Node, NodeProfile, PortOwner, RequestKeyError, Role,
     };
-    use review_protocol::types::node::{
-        BootstrapMaterial, DeliveryMode, FailurePolicy as BackendFailurePolicy, PackageState,
+    use review_protocol::types::{
+        capability::{NODE_PACKAGE, ROLLBACK_SUPERVISOR},
+        node::{
+            BootstrapMaterial, DeliveryMode, FailurePolicy as BackendFailurePolicy, PackageState,
+        },
     };
     use serde_json::json;
     use tracing_subscriber::fmt::MakeWriter;
@@ -622,12 +705,14 @@ mod tests {
     use super::{BuildSelectorInput, bind_package_class, build_selector, is_uuid_v4};
     use crate::{
         backend::{
-            BindAddrInput as BackendBindAddrInput, BuildId, CORE_PACKAGE_IDS, DeployError,
-            DeployOutcome, HostOnboarder, HostOnboardingTicket as BackendHostOnboardingTicket,
-            JoinToken, MODULE_PACKAGE_IDS, OperationId, PackageDeployer,
+            AgentManager, BindAddrInput as BackendBindAddrInput, BuildId, CORE_PACKAGE_IDS,
+            DeployError, DeployOutcome, HostOnboarder,
+            HostOnboardingTicket as BackendHostOnboardingTicket, JoinToken, MODULE_PACKAGE_IDS,
+            OperationId, PackageDeployer,
         },
         graphql::{
-            BoxedHostOnboarder, BoxedPackageDeployer, Mutation, Query, RoleGuard, Schema,
+            BoxedAgentManager, BoxedHostOnboarder, BoxedPackageDeployer, Mutation,
+            NetworksTargetAgentLookupKeysPair, Query, RoleGuard, SamplingPolicy, Schema,
             Subscription, TestSchema,
         },
     };
@@ -1024,6 +1109,144 @@ mod tests {
         }
     }
 
+    /// The message a capability read that fails answers with, which the gate
+    /// surfaces as an ordinary GraphQL error rather than as a union member.
+    const CAPABILITY_READ_FAILURE: &str = "the host could not be asked what it advertises";
+
+    /// What a [`CapabilityStub`] answers a capability read with.
+    #[derive(Clone, Copy)]
+    enum Advertised {
+        /// The host advertises exactly these tags. An empty slice is a host
+        /// that advertised nothing, which the wire does not tell apart from a
+        /// peer too old to send the field.
+        Tags(&'static [&'static str]),
+        /// The read itself fails, which is not an answer about the host.
+        Unreadable,
+    }
+
+    /// Every host a [`CapabilityStub`] was asked about, in order.
+    ///
+    /// A test reads it back to hold the gate to two promises the response
+    /// alone cannot show: that an unauthorized caller never reaches the read,
+    /// and that a `HOLD` does not make one.
+    #[derive(Default)]
+    struct CapabilityReads(Mutex<Vec<String>>);
+
+    impl CapabilityReads {
+        fn hosts(&self) -> Vec<String> {
+            self.0.lock().unwrap().clone()
+        }
+
+        fn count(&self) -> usize {
+            self.0.lock().unwrap().len()
+        }
+    }
+
+    /// Answers the capability read from a fixed script and records every host
+    /// it was asked about.
+    ///
+    /// The other methods panic: a test that reaches one is testing something
+    /// these mutations do not do.
+    struct CapabilityStub {
+        reads: Arc<CapabilityReads>,
+        advertised: Advertised,
+    }
+
+    impl CapabilityStub {
+        fn boxed(advertised: Advertised) -> (BoxedAgentManager, Arc<CapabilityReads>) {
+            let reads = Arc::<CapabilityReads>::default();
+            let stub = Self {
+                reads: Arc::clone(&reads),
+                advertised,
+            };
+            (Box::new(stub), reads)
+        }
+
+        /// A host advertising exactly `tags`.
+        fn advertising(tags: &'static [&'static str]) -> (BoxedAgentManager, Arc<CapabilityReads>) {
+            Self::boxed(Advertised::Tags(tags))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AgentManager for CapabilityStub {
+        async fn capabilities(
+            &self,
+            hostname: &str,
+        ) -> Result<std::collections::BTreeSet<String>, anyhow::Error> {
+            self.reads.0.lock().unwrap().push(hostname.to_string());
+            match self.advertised {
+                Advertised::Tags(tags) => Ok(tags.iter().map(|tag| (*tag).to_string()).collect()),
+                Advertised::Unreadable => anyhow::bail!(CAPABILITY_READ_FAILURE),
+            }
+        }
+
+        async fn send_agent_specific_internal_networks(
+            &self,
+            _networks: &[NetworksTargetAgentLookupKeysPair],
+        ) -> Result<Vec<String>, anyhow::Error> {
+            unimplemented!("this stub answers the capability read only")
+        }
+
+        async fn send_agent_specific_allow_networks(
+            &self,
+            _networks: &[NetworksTargetAgentLookupKeysPair],
+        ) -> Result<Vec<String>, anyhow::Error> {
+            unimplemented!("this stub answers the capability read only")
+        }
+
+        async fn send_agent_specific_block_networks(
+            &self,
+            _networks: &[NetworksTargetAgentLookupKeysPair],
+        ) -> Result<Vec<String>, anyhow::Error> {
+            unimplemented!("this stub answers the capability read only")
+        }
+
+        async fn online_apps_by_host_id(
+            &self,
+        ) -> Result<std::collections::HashMap<String, Vec<(String, String)>>, anyhow::Error>
+        {
+            unimplemented!("this stub answers the capability read only")
+        }
+
+        async fn broadcast_crusher_sampling_policy(
+            &self,
+            _sampling_policies: &[SamplingPolicy],
+        ) -> Result<(), anyhow::Error> {
+            unimplemented!("this stub answers the capability read only")
+        }
+
+        async fn get_process_list(
+            &self,
+            _hostname: &str,
+        ) -> Result<Vec<roxy::Process>, anyhow::Error> {
+            unimplemented!("this stub answers the capability read only")
+        }
+
+        async fn get_resource_usage(
+            &self,
+            _hostname: &str,
+        ) -> Result<roxy::ResourceUsage, anyhow::Error> {
+            unimplemented!("this stub answers the capability read only")
+        }
+
+        async fn halt(&self, _hostname: &str) -> Result<(), anyhow::Error> {
+            unimplemented!("this stub answers the capability read only")
+        }
+
+        async fn ping(&self, _hostname: &str) -> Result<std::time::Duration, anyhow::Error> {
+            unimplemented!("this stub answers the capability read only")
+        }
+
+        async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error> {
+            unimplemented!("this stub answers the capability read only")
+        }
+
+        async fn update_config(&self, _agent_lookup_key: &str) -> Result<(), anyhow::Error> {
+            unimplemented!("this stub answers the capability read only")
+        }
+    }
+
     #[derive(Clone, Default)]
     struct LogCapture(Arc<Mutex<Vec<u8>>>);
 
@@ -1061,11 +1284,13 @@ mod tests {
         ... on HostPortOccupied { listenerKey transport port }
         ... on HostOccupancyUnavailable { host reason }
         ... on RequestKeyReused { requestKey }
-        ... on CleanupPending { host target instance operationId }";
+        ... on CleanupPending { host target instance operationId }
+        ... on RollbackUnsupported { host capability }";
 
     const UPDATE_SELECTION: &str = "__typename
         ... on UpdateServiceSuccess { operationId disposition }
-        ... on CleanupPending { host target instance operationId }";
+        ... on CleanupPending { host target instance operationId }
+        ... on RollbackUnsupported { host capability }";
 
     const REMOVE_SELECTION: &str = "__typename
         ... on RemoveServiceSuccess { operationId }
@@ -1073,7 +1298,8 @@ mod tests {
 
     const CORE_UPDATE_SELECTION: &str = "__typename
         ... on UpdateCoreComponentSuccess { operationId disposition }
-        ... on CleanupPending { host target instance operationId }";
+        ... on CleanupPending { host target instance operationId }
+        ... on RollbackUnsupported { host capability }";
 
     fn install_mutation(args: &str) -> String {
         format!("mutation {{ installService({args}) {{ {INSTALL_SELECTION} }} }}")
@@ -1101,10 +1327,14 @@ mod tests {
         )
     }
 
+    /// A schema with no store, whose host advertises the rollback supervisor
+    /// so that the default `ROLLBACK` is not what a test using it is
+    /// measuring.
     fn schema_without_store(
         deployer: BoxedPackageDeployer,
         onboarder: BoxedHostOnboarder,
     ) -> Schema {
+        let (agents, _reads) = CapabilityStub::advertising(&[ROLLBACK_SUPERVISOR]);
         Schema::build(
             Query::default(),
             Mutation::default(),
@@ -1112,6 +1342,7 @@ mod tests {
         )
         .data(deployer)
         .data(onboarder)
+        .data(agents)
         .finish()
     }
 
@@ -2384,6 +2615,329 @@ mod tests {
         assert!(refusal.message.contains("roxyd"), "{}", refusal.message);
     }
 
+    /// The three gated submissions, one per mutation, each paired with the
+    /// response field it answers under. `on_failure` is appended when it is
+    /// given, and left to the schema's `ROLLBACK` default otherwise.
+    ///
+    /// Every one names `host1`; that the refusal carries the host the request
+    /// gave rather than that one constant is what
+    /// `the_refusal_names_the_host_the_request_gave` establishes.
+    fn every_gated_mutation(on_failure: Option<&str>) -> [(String, &'static str); 3] {
+        let policy = on_failure.map_or_else(String::new, |policy| format!(", onFailure: {policy}"));
+        [
+            (
+                install_mutation(&format!("{}{policy}", install_args("giganto"))),
+                "installService",
+            ),
+            (
+                update_mutation(&format!("{}{policy}", update_args("giganto"))),
+                "updateService",
+            ),
+            (
+                core_update_mutation(&format!("{}{policy}", core_update_args("review", "host1"))),
+                "updateCoreComponent",
+            ),
+        ]
+    }
+
+    /// A schema whose host answers the capability read as `advertised`.
+    async fn schema_advertising(advertised: Advertised) -> (TestSchema, Arc<CapabilityReads>) {
+        let (agents, reads) = CapabilityStub::boxed(advertised);
+        (
+            TestSchema::new_with_params(agents, None, "testuser").await,
+            reads,
+        )
+    }
+
+    /// A host advertising nothing and a host advertising other tags but not
+    /// this one are refused identically: the gate turns on the tag's absence,
+    /// never on the set being empty, and no absent-field exemption exists.
+    ///
+    /// A `ROLLBACK` the client spelled out and one it left to the schema's
+    /// default are the same policy by the time the resolver sees it, so both
+    /// spellings are held to the same refusal.
+    #[tokio::test]
+    async fn rollback_on_a_host_without_the_supervisor_is_the_union_member() {
+        for advertised in [
+            Advertised::Tags(&[]),
+            Advertised::Tags(&[NODE_PACKAGE, "colocated:review"]),
+        ] {
+            for on_failure in [None, Some("ROLLBACK")] {
+                for (query, field) in every_gated_mutation(on_failure) {
+                    let (deployer, calls) = RecordingDeployer::applying();
+                    let (schema, reads) = schema_advertising(advertised).await;
+
+                    let res = schema
+                        .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                        .await;
+
+                    assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
+                    let data = res.data.into_json().unwrap();
+                    assert_eq!(data[field]["__typename"], "RollbackUnsupported", "{query}");
+                    assert_eq!(data[field]["host"], "host1", "{query}");
+                    // The value as it crosses the wire, spelled out here so a
+                    // constant renamed upstream cannot make this pass silently.
+                    assert_eq!(data[field]["capability"], "rollback-supervisor", "{query}");
+                    assert_eq!(calls.total(), 0, "{query}");
+                    assert_eq!(reads.hosts(), vec!["host1".to_string()], "{query}");
+                }
+            }
+        }
+    }
+
+    /// The refusal names the host the request gave, and the read asks about
+    /// that same host, rather than either being the one host the other gate
+    /// tests happen to name.
+    #[tokio::test]
+    async fn the_refusal_names_the_host_the_request_gave() {
+        let (deployer, calls) = RecordingDeployer::applying();
+        let (schema, reads) = schema_advertising(Advertised::Tags(&[])).await;
+        let query = core_update_mutation(&core_update_args("review", "control-host"));
+
+        let res = schema
+            .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "updateCoreComponent": {
+                    "__typename": "RollbackUnsupported",
+                    "host": "control-host",
+                    "capability": "rollback-supervisor",
+                }
+            })
+        );
+        assert_eq!(calls.total(), 0);
+        assert_eq!(reads.hosts(), vec!["control-host".to_string()]);
+    }
+
+    /// The same request, against the same mock now advertising the tag,
+    /// reaches the deployer.
+    #[tokio::test]
+    async fn the_advertised_supervisor_lets_each_gated_mutation_through() {
+        for (query, field) in every_gated_mutation(None) {
+            let (deployer, calls) = RecordingDeployer::applying();
+            let (schema, reads) =
+                schema_advertising(Advertised::Tags(&[NODE_PACKAGE, ROLLBACK_SUPERVISOR])).await;
+
+            let res = schema
+                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .await;
+
+            assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
+            let data = res.data.into_json().unwrap();
+            assert!(
+                data[field]["__typename"]
+                    .as_str()
+                    .is_some_and(|name| name.ends_with("Success")),
+                "{query}: {}",
+                data[field]["__typename"]
+            );
+            assert_eq!(calls.total(), 1, "{query}");
+            assert_eq!(reads.count(), 1, "{query}");
+        }
+    }
+
+    /// `HOLD` turns on nothing the host advertises, so it is accepted against
+    /// a host advertising nothing and the read is skipped entirely.
+    #[tokio::test]
+    async fn hold_is_accepted_without_a_capability_read() {
+        for (query, field) in every_gated_mutation(Some("HOLD")) {
+            let (deployer, calls) = RecordingDeployer::applying();
+            let (schema, reads) = schema_advertising(Advertised::Tags(&[])).await;
+
+            let res = schema
+                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .await;
+
+            assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
+            let data = res.data.into_json().unwrap();
+            assert!(
+                data[field]["__typename"]
+                    .as_str()
+                    .is_some_and(|name| name.ends_with("Success")),
+                "{query}: {}",
+                data[field]["__typename"]
+            );
+            assert_eq!(calls.total(), 1, "{query}");
+            assert_eq!(reads.count(), 0, "{query}");
+        }
+    }
+
+    /// A removal carries no failure policy, so nothing about it turns on the
+    /// capability set.
+    #[tokio::test]
+    async fn remove_service_is_ungated() {
+        let (deployer, calls) = RecordingDeployer::applying();
+        let (schema, reads) = schema_advertising(Advertised::Tags(&[])).await;
+
+        let res = schema
+            .execute_as_system_admin_with_data(
+                &remove_mutation(&remove_args("giganto")),
+                deployer as BoxedPackageDeployer,
+            )
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "removeService": {
+                    "__typename": "RemoveServiceSuccess",
+                    "operationId": OPERATION_ID,
+                }
+            })
+        );
+        assert_eq!(calls.total(), 1);
+        assert_eq!(reads.count(), 0);
+    }
+
+    /// Onboarding carries no failure policy either, and reaches its own
+    /// backend without a capability read.
+    #[tokio::test]
+    async fn onboard_host_is_ungated() {
+        let (deployer, _deploy_calls) = RecordingDeployer::applying();
+        let (onboarder, onboard_calls) = RecordingOnboarder::boxed(OnboardAnswer::Succeed);
+        let (agents, reads) = CapabilityStub::advertising(&[]);
+        let schema = Schema::build(
+            Query::default(),
+            Mutation::default(),
+            Subscription::default(),
+        )
+        .data(deployer as BoxedPackageDeployer)
+        .data(onboarder)
+        .data(agents)
+        .finish();
+
+        let res = execute_without_store(&schema, &onboard_mutation("new-host")).await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(onboard_calls.count(), 1);
+        assert_eq!(reads.count(), 0);
+    }
+
+    /// A host that could not be asked is never rendered as a host that
+    /// answered no: the read failure is an ordinary GraphQL error, carrying
+    /// the manager's own words, and grants nothing.
+    #[tokio::test]
+    async fn a_failed_capability_read_is_an_ordinary_graphql_error() {
+        for (query, _field) in every_gated_mutation(None) {
+            let (deployer, calls) = RecordingDeployer::applying();
+            let (schema, reads) = schema_advertising(Advertised::Unreadable).await;
+
+            let res = schema
+                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .await;
+
+            assert_eq!(res.errors.len(), 1, "{query}");
+            assert_eq!(res.errors[0].message, CAPABILITY_READ_FAILURE, "{query}");
+            let rendered = res.data.into_json().unwrap().to_string();
+            assert!(!rendered.contains("RollbackUnsupported"), "{query}");
+            assert_eq!(calls.total(), 0, "{query}");
+            assert_eq!(reads.count(), 1, "{query}");
+        }
+    }
+
+    /// The gate runs after authorization, so a caller outside the guard
+    /// cannot use it to probe what a host advertises.
+    #[tokio::test]
+    async fn an_unauthorized_caller_never_reaches_the_capability_read() {
+        for (query, _field) in every_gated_mutation(None) {
+            let (deployer, calls) = RecordingDeployer::applying();
+            let (schema, reads) = schema_advertising(Advertised::Tags(&[])).await;
+
+            let res = schema
+                .execute_with_guard_and_data(
+                    &query,
+                    RoleGuard::Role(Role::SecurityMonitor),
+                    deployer as BoxedPackageDeployer,
+                )
+                .await;
+
+            assert_eq!(res.errors.len(), 1, "{query}");
+            assert_eq!(res.errors[0].message, "Forbidden", "{query}");
+            assert_eq!(calls.total(), 0, "{query}");
+            assert_eq!(reads.count(), 0, "{query}");
+        }
+    }
+
+    /// The per-host check is authorization too, so a scoped operator on a
+    /// foreign host learns nothing about it either.
+    #[tokio::test]
+    async fn a_scoped_user_on_a_foreign_host_never_reaches_the_capability_read() {
+        for query in [
+            install_mutation(&install_args("giganto")),
+            update_mutation(&update_args("giganto")),
+        ] {
+            let (deployer, calls) = RecordingDeployer::applying();
+            let (schema, reads) = schema_advertising(Advertised::Tags(&[])).await;
+            super::super::test_support::insert_active_node(
+                &schema.store(),
+                "giganto_host",
+                2,
+                "host1",
+            );
+
+            let res = schema
+                .execute_as_scoped_user_with_data(
+                    &query,
+                    Role::SecurityAdministrator,
+                    Some(vec![1]),
+                    deployer as BoxedPackageDeployer,
+                )
+                .await;
+
+            assert_eq!(res.errors.len(), 1, "{query}");
+            assert_eq!(res.errors[0].message, "Forbidden", "{query}");
+            assert_eq!(calls.total(), 0, "{query}");
+            assert_eq!(reads.count(), 0, "{query}");
+        }
+    }
+
+    /// The set is live state, so it is read again on every invocation that
+    /// asks for a rollback rather than remembered from the last one.
+    #[tokio::test]
+    async fn the_capability_set_is_read_on_every_invocation() {
+        let (schema, reads) = schema_advertising(Advertised::Tags(&[ROLLBACK_SUPERVISOR])).await;
+        let query = update_mutation(&update_args("giganto"));
+
+        for _ in 0..2 {
+            let (deployer, calls) = RecordingDeployer::applying();
+            let res = schema
+                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .await;
+            assert!(res.errors.is_empty(), "{:?}", res.errors);
+            assert_eq!(calls.total(), 1);
+        }
+
+        assert_eq!(
+            reads.hosts(),
+            vec!["host1".to_string(), "host1".to_string()]
+        );
+    }
+
+    /// The refusal carries the host and the missing tag, and nothing else.
+    #[test]
+    fn the_rollback_refusal_has_exactly_its_declared_fields() {
+        let sdl = rendered_sdl();
+        let body = sdl
+            .split("type RollbackUnsupported {")
+            .nth(1)
+            .expect("the schema declares the refusal")
+            .split("\n}")
+            .next()
+            .expect("the refusal body ends");
+        let fields: Vec<&str> = body
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.contains(':'))
+            .collect();
+
+        assert_eq!(fields, vec!["host: String!", "capability: String!"]);
+    }
+
     #[test]
     fn the_selector_conversion_refuses_both_and_neither() {
         assert_eq!(
@@ -2465,11 +3019,13 @@ mod tests {
         assert_eq!(
             sdl_line(&sdl, "union InstallServiceResult"),
             "union InstallServiceResult = InstallServiceSuccess | PortAllocationConflict | \
-             HostPortOccupied | HostOccupancyUnavailable | RequestKeyReused | CleanupPending"
+             HostPortOccupied | HostOccupancyUnavailable | RequestKeyReused | CleanupPending | \
+             RollbackUnsupported"
         );
         assert_eq!(
             sdl_line(&sdl, "union UpdateServiceResult"),
-            "union UpdateServiceResult = UpdateServiceSuccess | CleanupPending"
+            "union UpdateServiceResult = UpdateServiceSuccess | CleanupPending | \
+             RollbackUnsupported"
         );
         assert_eq!(
             sdl_line(&sdl, "union RemoveServiceResult"),
@@ -2477,7 +3033,8 @@ mod tests {
         );
         assert_eq!(
             sdl_line(&sdl, "union UpdateCoreComponentResult"),
-            "union UpdateCoreComponentResult = UpdateCoreComponentSuccess | CleanupPending"
+            "union UpdateCoreComponentResult = UpdateCoreComponentSuccess | CleanupPending | \
+             RollbackUnsupported"
         );
         assert!(!sdl.contains("union HostOnboardingTicket"));
     }

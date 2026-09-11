@@ -47,6 +47,13 @@ impl AgentManager for MockAgentManager {
         unimplemented!()
     }
 
+    async fn capabilities(
+        &self,
+        _hostname: &str,
+    ) -> Result<std::collections::BTreeSet<String>, anyhow::Error> {
+        unimplemented!()
+    }
+
     async fn get_process_list(&self, _hostname: &str) -> Result<Vec<roxy::Process>, anyhow::Error> {
         unimplemented!()
     }

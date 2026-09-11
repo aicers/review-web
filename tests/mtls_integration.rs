@@ -153,6 +153,15 @@ xvcNsYaYqk6sRk/INvcaN2E=
             Ok(())
         }
 
+        // The stub host advertises nothing, which is the answer of a host
+        // that sent no capability set.
+        async fn capabilities(
+            &self,
+            _hostname: &str,
+        ) -> Result<std::collections::BTreeSet<String>, anyhow::Error> {
+            Ok(std::collections::BTreeSet::new())
+        }
+
         async fn get_process_list(
             &self,
             _hostname: &str,

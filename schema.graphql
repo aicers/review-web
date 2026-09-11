@@ -5421,7 +5421,7 @@ type HttpThreat implements Event {
 """
 What `installService` answers with.
 """
-union InstallServiceResult = InstallServiceSuccess | PortAllocationConflict | HostPortOccupied | HostOccupancyUnavailable | RequestKeyReused | CleanupPending
+union InstallServiceResult = InstallServiceSuccess | PortAllocationConflict | HostPortOccupied | HostOccupancyUnavailable | RequestKeyReused | CleanupPending | RollbackUnsupported
 
 """
 The install was accepted, and this is the operation to poll.
@@ -8257,6 +8257,29 @@ enum ResponseKind {
 	WHITELIST
 }
 
+"""
+The host advertises no rollback supervisor, so `ROLLBACK` cannot be
+honoured on it.
+
+It is a mutation result rather than an ordinary error because it is the one
+pre-backend refusal the operator can act on from the form they submitted:
+the remedy is to resubmit the same request with `HOLD`. A host that could
+not be *asked* what it advertises is not this — that is an ordinary GraphQL
+error, so a host that answered nothing and a host that answered nothing
+legible never render alike.
+"""
+type RollbackUnsupported {
+	"""
+	The host whose advertised set lacks the capability.
+	"""
+	host: String!
+	"""
+	The capability tag the host does not advertise, so a client names what
+	is missing rather than restating it.
+	"""
+	capability: String!
+}
+
 type Round {
 	time: NaiveDateTime!
 	"""
@@ -9585,7 +9608,7 @@ type UnusualDestinationPattern implements Event {
 """
 What `updateCoreComponent` answers with.
 """
-union UpdateCoreComponentResult = UpdateCoreComponentSuccess | CleanupPending
+union UpdateCoreComponentResult = UpdateCoreComponentSuccess | CleanupPending | RollbackUnsupported
 
 """
 A core-component update was accepted, and this is the operation to poll.
@@ -9607,7 +9630,7 @@ What `updateService` answers with.
 An update allocates nothing, so neither bind-address conflict and no
 request-key refusal is reachable from it.
 """
-union UpdateServiceResult = UpdateServiceSuccess | CleanupPending
+union UpdateServiceResult = UpdateServiceSuccess | CleanupPending | RollbackUnsupported
 
 """
 The update was accepted, and this is the operation to poll.
