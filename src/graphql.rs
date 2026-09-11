@@ -1038,6 +1038,19 @@ impl AgentManager for MockAgentManager {
         unimplemented!()
     }
 
+    // The mock host advertises the rollback supervisor, so the deployment
+    // mutations' default `ROLLBACK` is not refused by the capability gate. A
+    // test about the gate itself substitutes its own manager.
+    async fn capabilities(
+        &self,
+        _hostname: &str,
+    ) -> Result<std::collections::BTreeSet<String>, anyhow::Error> {
+        Ok(
+            std::iter::once(review_protocol::types::capability::ROLLBACK_SUPERVISOR.to_string())
+                .collect(),
+        )
+    }
+
     async fn get_process_list(&self, _hostname: &str) -> Result<Vec<Process>, anyhow::Error> {
         unimplemented!()
     }

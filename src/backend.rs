@@ -1,4 +1,11 @@
-use std::{collections::HashMap, fmt, net::SocketAddr, path::PathBuf, pin::Pin, time::Duration};
+use std::{
+    collections::{BTreeSet, HashMap},
+    fmt,
+    net::SocketAddr,
+    path::PathBuf,
+    pin::Pin,
+    time::Duration,
+};
 
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -55,6 +62,19 @@ pub trait AgentManager: Send + Sync {
         &self,
         _sampling_policies: &[SamplingPolicy],
     ) -> Result<(), anyhow::Error>;
+
+    /// Returns the capability tags the given host advertises.
+    ///
+    /// The whole advertised set crosses unfiltered and untranslated, so a
+    /// caller asking whether one tag is present asks it of this set. The tags
+    /// are advertised rather than authoritative, and an empty set is what a
+    /// host that advertised nothing answers with, including one too old to
+    /// send the field at all.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the host's capability set cannot be read.
+    async fn capabilities(&self, hostname: &str) -> Result<BTreeSet<String>, anyhow::Error>;
 
     /// Returns the list of processes running on the given host.
     async fn get_process_list(&self, _hostname: &str) -> Result<Vec<Process>, anyhow::Error>;

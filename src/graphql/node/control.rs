@@ -2722,6 +2722,13 @@ mod tests {
             Ok(())
         }
 
+        async fn capabilities(
+            &self,
+            hostname: &str,
+        ) -> Result<std::collections::BTreeSet<String>, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
         async fn get_process_list(
             &self,
             hostname: &str,
@@ -2816,6 +2823,13 @@ mod tests {
             _sampling_policies: &[SamplingPolicy],
         ) -> Result<(), anyhow::Error> {
             anyhow::bail!("Failed to broadcast crusher sampling policy")
+        }
+
+        async fn capabilities(
+            &self,
+            hostname: &str,
+        ) -> Result<std::collections::BTreeSet<String>, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
         }
 
         async fn get_process_list(

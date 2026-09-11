@@ -1,6 +1,6 @@
 use std::sync::RwLock;
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     env, fs,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -188,6 +188,10 @@ impl AgentManager for Manager {
         _policy: &[SamplingPolicy],
     ) -> Result<(), Error> {
         bail!("Crusher nodes are unreachable")
+    }
+
+    async fn capabilities(&self, hostname: &str) -> Result<BTreeSet<String>, Error> {
+        bail!("Host {hostname} is unreachable")
     }
 
     async fn get_process_list(&self, hostname: &str) -> Result<Vec<Process>, Error> {

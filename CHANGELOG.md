@@ -43,6 +43,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   that build a `ServerConfig`.
 - Added the `Conflict` variant to the public `Error` enum, rendered as `409`.
   This is a breaking API change for callers that match on it exhaustively.
+- Added the required `capabilities` method to the public `AgentManager` trait,
+  which returns the whole set of capability tags a host advertises. It has no
+  default implementation, because a default would answer for a host the
+  implementation never asked, so this is a breaking API change for callers that
+  implement the trait.
 - Renamed the corresponding GraphQL schema fields and arguments to match the
   upstream `review-database` field names:
   - `Agent.node` and `ExternalService.node` are now `nodeId`.
@@ -153,16 +158,22 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   take the `instance` the read path renders, as the `StringNumber` scalar. Each
   mutation answers with a result union, so a refusal a client can act on —
   `PortAllocationConflict`, `HostPortOccupied`, `HostOccupancyUnavailable`,
-  `RequestKeyReused` or `CleanupPending` — arrives as a typed member rather
-  than as an error string. `onFailure` chooses between `ROLLBACK` and `HOLD`
-  and defaults to `ROLLBACK`, and `buildSelector` names either a version or a
-  commit. The configuration draft-to-apply mutations are unchanged: an install
-  or an update never rides the draft.
+  `RequestKeyReused`, `CleanupPending` or `RollbackUnsupported` — arrives as a
+  typed member rather than as an error string. `onFailure` chooses between
+  `ROLLBACK` and `HOLD` and defaults to `ROLLBACK`, and `buildSelector` names
+  either a version or a commit. A `ROLLBACK` against a host that advertises no
+  `rollback-supervisor` capability is refused as `RollbackUnsupported`, naming
+  the host and the missing capability, rather than being quietly downgraded to
+  a hold; the remedy is to resubmit with `HOLD`. The capability set is read on
+  each such request, and a read that fails is an ordinary GraphQL error rather
+  than a refusal. The configuration draft-to-apply mutations are unchanged: an
+  install or an update never rides the draft.
 - Added the system-administrator-only `updateCoreComponent` and `onboardHost`
   GraphQL mutations. Core updates accept the three product-managed core
-  package-ids and return the operation id and deployment disposition, while
-  onboarding returns the operation id together with the one-time join token,
-  command and granted expiry.
+  package-ids, carry the same `onFailure` policy and rollback capability gate
+  as the module mutations, and return the operation id and deployment
+  disposition, while onboarding returns the operation id together with the
+  one-time join token, command and granted expiry.
 
 ### Fixed
 
