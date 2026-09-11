@@ -661,8 +661,8 @@ New mutations:
   `axum::body::to_bytes(_, usize::MAX)` or otherwise load the whole `.pkg`
   into memory (signed packages can be large; the store receiver verifies
   signature + hashes + manifest-completeness on the streamed bytes before
-  accepting). Returns the accepted build id `(package-id, version, commit)` or
-  a typed verification error.
+  accepting). Returns the accepted package-id **beside** a `BuildId` — not a
+  three-field build id, see §9 — or a typed verification error.
 - **[DECISION] The route enforces a configured maximum body size while
   streaming — sized for the largest legitimate package, not a guessed number —
   and the role comes from the same source as the GraphQL guards.**
@@ -1229,3 +1229,27 @@ supersedes.
     opaque string would discard an ordering the format defines and the
     strictly-greater check depends on. This fixes only what crosses the
     seam; §5c stands, and the route still does not interpret the generation.
+
+20. **The accepted upload returns the package-id BESIDE a `BuildId`, and
+    `BuildId` stays `{version, commit}`.** §5c said the route "Returns the
+    accepted build id `(package-id, version, commit)`" while §4 declared
+    `BuildId` with two fields and keyed `latest_build` on the package-id
+    alone, and the document reconciled the two nowhere. Both readings were
+    defensible from it, and both were taken: the trait issue read §4 and
+    shipped the two-field type, while the upload-route issue read §5c, said
+    in its own body that `BuildId` was the three-field type, and forbade
+    declaring a second one — which left its implementer with no shape that
+    satisfied all three and produced a first attempt that grew `BuildId`
+    with a `package_id` field.
+
+    That growth is the wrong resolution, and the reason is the type's other
+    two uses. `latest_build(target)` and `read_version(host, target,
+    instance)` both take the package-id as an argument, so a field would
+    repeat it at two of three call sites and could **contradict** the
+    argument at either. Only the upload result needs it, because the route
+    learns the package-id from the verified manifest rather than from its
+    caller. So the result type carries both — `AcceptedPackage { package_id,
+    build }` as shipped — and the identity type stays what every other
+    caller already had. Growing `BuildId` would also have broken
+    `aicers/review`, which implements the trait against the landed shape.
+    Corrected in §5c.
