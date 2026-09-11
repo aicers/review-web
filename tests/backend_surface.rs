@@ -1,4 +1,5 @@
-//! Exercises the deploy and package-ingest surfaces from outside the crate.
+//! Exercises the deploy, package-ingest and trust-ingest surfaces from outside
+//! the crate.
 //!
 //! `aicers/review` is the real implementer, so the constructors and the field
 //! visibility have to work from another crate. An integration test is compiled
@@ -23,7 +24,8 @@ use review_protocol::types::node::{
 use review_web::backend::{
     AcceptedPackage, BindAddrInput, BuildId, DeployError, DeployOutcome, HostOnboarder,
     HostOnboardingTicket, IngressStream, IngressStreamError, JoinToken, OperationId,
-    PackageDeployer, PackageIngestError, PackageStoreReceiver,
+    PackageDeployer, PackageIngestError, PackageStoreReceiver, TrustActivation, TrustIngestError,
+    TrustManager,
 };
 
 const TOKEN: &str = "s3cret-join-token";
@@ -540,6 +542,89 @@ async fn an_error_item_discards_the_upload_and_picks_the_variant() {
         // Nothing was committed, so the receiver never recorded what it read.
         assert!(
             receiver
+                .observed
+                .lock()
+                .expect("the observation mutex")
+                .is_empty()
+        );
+    }
+}
+
+/// A trust manager living outside the crate, as the production implementation
+/// does, and faithfully translating the shared stream's terminal error item.
+struct OutsideTrustManager {
+    observed: Mutex<Vec<usize>>,
+}
+
+#[async_trait]
+impl TrustManager for OutsideTrustManager {
+    async fn accept_generation(
+        &self,
+        mut body: IngressStream,
+    ) -> Result<TrustActivation, TrustIngestError> {
+        let mut chunks = Vec::new();
+        while let Some(item) = body.next().await {
+            match item {
+                Ok(chunk) => chunks.push(chunk.len()),
+                Err(IngressStreamError::TooLarge { .. }) => {
+                    return Err(TrustIngestError::TooLarge);
+                }
+                Err(IngressStreamError::Transport(_)) => {
+                    return Err(TrustIngestError::Transport);
+                }
+            }
+        }
+        *self.observed.lock().expect("the observation mutex") = chunks;
+        Ok(TrustActivation { epoch: u64::MAX })
+    }
+}
+
+#[tokio::test]
+async fn an_outside_trust_manager_streams_a_generation_and_returns_the_full_epoch() {
+    let manager: Box<dyn TrustManager> = Box::new(OutsideTrustManager {
+        observed: Mutex::new(Vec::new()),
+    });
+    let activation = manager
+        .accept_generation(ingress_stream(vec![
+            Ok(Bytes::from_static(b"aaaa")),
+            Ok(Bytes::from_static(b"bb")),
+        ]))
+        .await
+        .expect("the stub activates the generation");
+
+    assert_eq!(activation.epoch, u64::MAX);
+}
+
+#[tokio::test]
+async fn an_outside_trust_manager_preserves_each_stream_error_kind() {
+    for (item, expected) in [
+        (
+            Err(IngressStreamError::TooLarge { limit: 4 }),
+            TrustIngestError::TooLarge,
+        ),
+        (
+            Err(IngressStreamError::Transport(
+                "the peer went away".to_string(),
+            )),
+            TrustIngestError::Transport,
+        ),
+    ] {
+        let manager = OutsideTrustManager {
+            observed: Mutex::new(Vec::new()),
+        };
+        let Err(error) = manager
+            .accept_generation(ingress_stream(vec![Ok(Bytes::from_static(b"aaaa")), item]))
+            .await
+        else {
+            panic!("an error item must prevent activation");
+        };
+
+        assert_eq!(
+            std::mem::discriminant(&error),
+            std::mem::discriminant(&expected)
+        );
+        assert!(
+            manager
                 .observed
                 .lock()
                 .expect("the observation mutex")

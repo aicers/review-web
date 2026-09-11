@@ -13,6 +13,7 @@ use anyhow::{Context, Error, Result, anyhow, bail};
 use async_trait::async_trait;
 use config::{Environment, File};
 use futures::{
+    StreamExt,
     future::{self, Either},
     pin_mut,
 };
@@ -26,11 +27,12 @@ use review_web::auth::{MtlsAuthError, MtlsAuthenticator, MtlsIdentity};
 #[cfg(not(feature = "auth-mtls"))]
 use review_web::graphql::account::set_initial_admin_password;
 use review_web::{
-    self as web, DEFAULT_PACKAGE_UPLOAD_MAX_BYTES,
+    self as web, DEFAULT_PACKAGE_UPLOAD_MAX_BYTES, DEFAULT_TRUST_GENERATION_MAX_BYTES,
     backend::{
         AcceptedPackage, AgentManager, BindAddrInput, BuildId, CertManager, DeployError,
         DeployOutcome, HostOnboarder, HostOnboardingTicket, IngressStream, OperationId,
-        PackageDeployer, PackageIngestError, PackageStoreReceiver,
+        PackageDeployer, PackageIngestError, PackageStoreReceiver, TrustActivation,
+        TrustIngestError, TrustManager,
     },
     graphql::{
         Process, ResourceUsage, SamplingPolicy, customer::NetworksTargetAgentLookupKeysPair,
@@ -324,6 +326,31 @@ impl PackageStoreReceiver for PackageStore {
     }
 }
 
+/// A trust manager that activates nothing, because this example has no
+/// release-signing trust implementation.
+struct TrustStore;
+
+#[async_trait]
+impl TrustManager for TrustStore {
+    async fn accept_generation(
+        &self,
+        mut body: IngressStream,
+    ) -> Result<TrustActivation, TrustIngestError> {
+        while let Some(item) = body.next().await {
+            match item {
+                Ok(_chunk) => {}
+                Err(web::backend::IngressStreamError::TooLarge { .. }) => {
+                    return Err(TrustIngestError::TooLarge);
+                }
+                Err(web::backend::IngressStreamError::Transport(_)) => {
+                    return Err(TrustIngestError::Transport);
+                }
+            }
+        }
+        Err(TrustIngestError::Unavailable)
+    }
+}
+
 /// An onboarder that mints no ticket, because no registrar is configured.
 struct Onboarder;
 
@@ -568,6 +595,8 @@ fn run(config: &Config) -> Result<Arc<Notify>> {
         authenticator: Arc::new(MiniAuthenticator),
         package_store: Arc::new(PackageStore),
         package_upload_max_bytes: DEFAULT_PACKAGE_UPLOAD_MAX_BYTES,
+        trust_manager: Arc::new(TrustStore),
+        trust_generation_max_bytes: DEFAULT_TRUST_GENERATION_MAX_BYTES,
     };
     let web_srv_shutdown_handle = web::serve(
         web_config,

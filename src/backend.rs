@@ -830,6 +830,82 @@ pub trait PackageStoreReceiver: Send + Sync {
     ) -> Result<AcceptedPackage, PackageIngestError>;
 }
 
+/// What the trust manager activated from a submitted generation.
+pub struct TrustActivation {
+    /// The release-ops-allocated sequence number from the signed generation.
+    ///
+    /// This is a `u64` because `aicers/bootler`
+    /// `docs/rfcs/0004-module-packaging-and-core-extraction.md` section 5
+    /// defines the trust-set epoch as one monotonic release-ops sequence.
+    pub epoch: u64,
+}
+
+/// Why a release-signing trust-set generation was not activated.
+///
+/// No variant carries free text. The manager parses the highest-privilege
+/// payload in the system, and leaving nowhere for parser context, a key id or
+/// submitted bytes to be stored prevents that material from reaching this
+/// crate's HTTP response or audit record. The epoch conflict is the sole
+/// structured exception: its two bounded scalars are the operator-facing
+/// reason that conflict differs from a malformed document.
+#[derive(Debug, thiserror::Error)]
+pub enum TrustIngestError {
+    /// The generation's signature did not verify.
+    #[error("trust generation signature is invalid")]
+    SignatureInvalid,
+    /// The generation's structure is malformed.
+    #[error("trust generation is malformed")]
+    Malformed,
+    /// The submitted generation is not newer than the active generation.
+    #[error("trust generation epoch {submitted} is not newer than the active epoch {active}")]
+    EpochNotNewer {
+        /// The release-ops-allocated sequence number that was submitted.
+        submitted: u64,
+        /// The release-ops-allocated sequence number that is active.
+        active: u64,
+    },
+    /// The stream ended with [`IngressStreamError::TooLarge`].
+    #[error("trust generation exceeded the configured maximum")]
+    TooLarge,
+    /// The stream ended with [`IngressStreamError::Transport`].
+    #[error("reading the trust generation failed")]
+    Transport,
+    /// The trust manager could not accept a generation.
+    #[error("the trust manager is unavailable")]
+    Unavailable,
+}
+
+/// Verifies and activates release-signing trust-set generations.
+///
+/// This is separate from [`PackageStoreReceiver`]. That separation makes it
+/// impossible for the trust ingress route to hand a generation to the module
+/// store accidentally.
+#[async_trait]
+pub trait TrustManager: Send + Sync {
+    /// Streams a signed release-signing trust-set generation to review, which
+    /// verifies it, checks its epoch is strictly greater than the active one,
+    /// and activates it.
+    ///
+    /// On an `Err` item from `body`, the implementation must activate nothing
+    /// and leave the active generation in place, and must map that item
+    /// faithfully: [`IngressStreamError::TooLarge`] becomes
+    /// [`TrustIngestError::TooLarge`], and a transport failure becomes
+    /// [`TrustIngestError::Transport`]. The two are not interchangeable — a
+    /// cap-tripped stream reported as `Transport` reaches the client as `400`
+    /// where the route owes it `413`, and once the stream has been handed over
+    /// this crate has no way to tell the two apart.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the generation's signature or structure does not
+    /// verify, if its epoch is not strictly greater than the active epoch, if
+    /// the stream yields an error item, or if the trust manager is unavailable.
+    async fn accept_generation(
+        &self,
+        body: IngressStream,
+    ) -> Result<TrustActivation, TrustIngestError>;
+}
+
 /// Brings a new host under management.
 ///
 /// Onboarding installs nothing, so no [`PackageDeployer`] method represents

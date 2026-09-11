@@ -115,6 +115,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `DEFAULT_PACKAGE_UPLOAD_MAX_BYTES` is exported as the shipped default for
   that field. A successful upload answers `200` with the accepted build as
   `{"packageId", "version", "commit"}`.
+- Added the system-administrator-only `POST /api/trust/generation` route for
+  streaming signed release-trust generations to a new `TrustManager` backend,
+  with an independently configured request cap and typed activation failures.
 - Added the operation-attempt read surface, which reports what an install,
   update, remove or onboarding did rather than only what a host ended up
   with. The new `OperationAttempt` type carries the operation's id, action,

@@ -1,10 +1,10 @@
 //! HTTP ingress for content that cannot travel over GraphQL.
 //!
-//! A signed package may be a container image, so it reaches `REView` as a
-//! streamed request body rather than as base64 in a mutation. Everything here
-//! forwards bytes as they arrive: nothing on this path collects a body into a
-//! buffer, and the byte cap is enforced chunk by chunk while the body is still
-//! being read.
+//! Signed packages and trust-set generations reach `REView` as streamed
+//! request bodies rather than as base64 in mutations. Everything here forwards
+//! bytes as they arrive: nothing on these paths collects a body into a buffer,
+//! and each byte cap is enforced chunk by chunk while the body is still being
+//! read.
 //!
 //! The pieces every ingress route needs are module-level rather than folded
 //! into a handler: the byte-counting adapter [`capped_stream`], and
@@ -37,7 +37,7 @@ use futures::{Stream, StreamExt};
 use review_database::Store;
 use review_database::types::Role;
 use serde::Serialize;
-use tracing::warn;
+use tracing::{info, warn};
 
 #[cfg(feature = "auth-mtls")]
 use crate::TlsPeerInfo;
@@ -49,7 +49,7 @@ use crate::{
     Error,
     backend::{
         AcceptedPackage, CORE_PACKAGE_IDS, IngressStream, IngressStreamError, MODULE_PACKAGE_IDS,
-        PackageIngestError, PackageStoreReceiver,
+        PackageIngestError, PackageStoreReceiver, TrustActivation, TrustIngestError, TrustManager,
     },
 };
 
@@ -67,6 +67,13 @@ use crate::{
 /// through that change by the compiler rather than by a literal it repeated.
 pub const PACKAGE_UPLOAD_PATH: &str = "/api/package/upload";
 
+/// The one path a signed trust-set generation is submitted to.
+///
+/// A generation has no package tier or alternate payload shape, and it never
+/// reaches the package store. Keeping the published path in one constant also
+/// keeps tests and router wiring from creating an accidental second contract.
+const TRUST_GENERATION_PATH: &str = "/api/trust/generation";
+
 const ERR_ROLE_NOT_PERMITTED: &str = "uploading a signed package is not permitted for this role";
 const ERR_SIGNATURE_INVALID: &str = "the package signature is invalid";
 const ERR_MANIFEST_INCOMPLETE: &str =
@@ -78,10 +85,24 @@ const ERR_UNAVAILABLE: &str = "the package store is unavailable";
 
 const VARIANT_SIGNATURE_INVALID: &str = "SignatureInvalid";
 const VARIANT_MANIFEST_INCOMPLETE: &str = "ManifestIncomplete";
+const VARIANT_MALFORMED: &str = "Malformed";
+const VARIANT_EPOCH_NOT_NEWER: &str = "EpochNotNewer";
 const VARIANT_PACKAGE_NOT_PERMITTED: &str = "PackageNotPermitted";
 const VARIANT_TOO_LARGE: &str = "TooLarge";
 const VARIANT_TRANSPORT: &str = "Transport";
 const VARIANT_UNAVAILABLE: &str = "Unavailable";
+
+const ERR_TRUST_ROLE_NOT_PERMITTED: &str =
+    "submitting a trust generation is not permitted for this role";
+const ERR_TRUST_SIGNATURE_INVALID: &str = "trust generation signature is invalid";
+const ERR_TRUST_MALFORMED: &str = "trust generation is malformed";
+const ERR_TRUST_EPOCH_NOT_NEWER: &str = "trust generation epoch is not newer than the active epoch";
+const ERR_TRUST_TOO_LARGE: &str = "the trust generation exceeded the configured maximum size";
+const ERR_TRUST_TRANSPORT: &str = "reading the trust generation failed";
+const ERR_TRUST_UNAVAILABLE: &str = "the trust manager is unavailable";
+
+const TRUST_OUTCOME_ACTIVATED: &str = "Activated";
+const TRUST_OUTCOME_FORBIDDEN: &str = "Forbidden";
 
 /// The maximum request-body size, in bytes, the package-upload route accepts.
 ///
@@ -90,6 +111,14 @@ const VARIANT_UNAVAILABLE: &str = "Unavailable";
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackageUploadLimit(pub(crate) u64);
 
+/// The maximum request-body size, in bytes, the trust-generation route
+/// accepts.
+///
+/// Its distinct type prevents it from colliding with [`PackageUploadLimit`]
+/// when both are installed as extensions on the same router.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TrustGenerationLimit(pub(crate) u64);
+
 /// The build a successful upload was accepted as.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -97,6 +126,21 @@ struct AcceptedBuild {
     package_id: String,
     version: String,
     commit: String,
+}
+
+/// The trust-set generation activated in response to a submission.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivatedTrustGeneration {
+    epoch: u64,
+}
+
+impl From<TrustActivation> for ActivatedTrustGeneration {
+    fn from(activation: TrustActivation) -> Self {
+        Self {
+            epoch: activation.epoch,
+        }
+    }
 }
 
 impl From<AcceptedPackage> for AcceptedBuild {
@@ -111,7 +155,9 @@ impl From<AcceptedPackage> for AcceptedBuild {
 
 /// Builds the router carrying the ingress routes.
 pub(crate) fn router() -> Router {
-    Router::new().route(PACKAGE_UPLOAD_PATH, post(upload_package))
+    Router::new()
+        .route(PACKAGE_UPLOAD_PATH, post(upload_package))
+        .route(TRUST_GENERATION_PATH, post(submit_trust_generation))
 }
 
 /// Counts a body's bytes as they pass and cuts it off at `limit`.
@@ -324,6 +370,58 @@ fn map_ingest_error(error: PackageIngestError, actor: &str) -> Error {
     }
 }
 
+fn log_trust_outcome(actor: &str, outcome: &'static str) {
+    info!(
+        actor,
+        route = TRUST_GENERATION_PATH,
+        outcome,
+        "a trust generation submission completed"
+    );
+}
+
+/// Maps a trust manager's failure to a response and an audit outcome.
+///
+/// The exhaustive match deliberately has no catch-all arm. Every response
+/// message is owned here, and the only submitted values that can reach one are
+/// the two bounded epoch scalars.
+fn map_trust_ingest_error(error: &TrustIngestError, actor: &str) -> Error {
+    match error {
+        TrustIngestError::SignatureInvalid => {
+            log_trust_outcome(actor, VARIANT_SIGNATURE_INVALID);
+            Error::BadRequest(ERR_TRUST_SIGNATURE_INVALID.to_string())
+        }
+        TrustIngestError::Malformed => {
+            log_trust_outcome(actor, VARIANT_MALFORMED);
+            Error::BadRequest(ERR_TRUST_MALFORMED.to_string())
+        }
+        TrustIngestError::EpochNotNewer { submitted, active } => {
+            info!(
+                actor,
+                route = TRUST_GENERATION_PATH,
+                outcome = VARIANT_EPOCH_NOT_NEWER,
+                submitted,
+                active,
+                "a trust generation submission completed"
+            );
+            Error::Conflict(format!(
+                "{ERR_TRUST_EPOCH_NOT_NEWER}: submitted {submitted}, active {active}"
+            ))
+        }
+        TrustIngestError::TooLarge => {
+            log_trust_outcome(actor, VARIANT_TOO_LARGE);
+            Error::PayloadTooLarge(ERR_TRUST_TOO_LARGE.to_string())
+        }
+        TrustIngestError::Transport => {
+            log_trust_outcome(actor, VARIANT_TRANSPORT);
+            Error::BadRequest(ERR_TRUST_TRANSPORT.to_string())
+        }
+        TrustIngestError::Unavailable => {
+            log_trust_outcome(actor, VARIANT_UNAVAILABLE);
+            Error::ServiceUnavailable(ERR_TRUST_UNAVAILABLE.to_string())
+        }
+    }
+}
+
 /// Streams an authenticated caller's body into the store receiver.
 ///
 /// The role is expanded into permitted package-ids before a single byte of the
@@ -353,6 +451,35 @@ async fn accept(
     Ok(Json(accepted.into()))
 }
 
+/// Streams a system administrator's body into the trust manager.
+///
+/// Authorization is complete before `body` is converted into a stream, so a
+/// refused body is dropped unread and no byte reaches the shared counter.
+async fn accept_trust_generation(
+    manager: &Arc<dyn TrustManager>,
+    limit: u64,
+    actor: &IngressActor,
+    body: Body,
+) -> Result<Json<ActivatedTrustGeneration>, Error> {
+    if actor.role != Role::SystemAdministrator {
+        log_trust_outcome(&actor.name, TRUST_OUTCOME_FORBIDDEN);
+        return Err(Error::Forbidden(ERR_TRUST_ROLE_NOT_PERMITTED.to_string()));
+    }
+
+    let activation = manager
+        .accept_generation(capped_stream(body.into_data_stream(), limit))
+        .await
+        .map_err(|error| map_trust_ingest_error(&error, &actor.name))?;
+    info!(
+        actor = actor.name,
+        route = TRUST_GENERATION_PATH,
+        outcome = TRUST_OUTCOME_ACTIVATED,
+        epoch = activation.epoch,
+        "a trust generation submission completed"
+    );
+    Ok(Json(activation.into()))
+}
+
 /// Accepts a signed package from a bearer-authenticated caller.
 ///
 /// The role is extracted here rather than in a `route_layer` because the two
@@ -370,6 +497,20 @@ async fn upload_package(
     accept(&receiver, limit, &actor, body).await
 }
 
+/// Accepts a trust generation from a bearer-authenticated system
+/// administrator.
+#[cfg(feature = "auth-jwt")]
+async fn submit_trust_generation(
+    Extension(store): Extension<Arc<std::sync::RwLock<Store>>>,
+    Extension(manager): Extension<Arc<dyn TrustManager>>,
+    Extension(TrustGenerationLimit(limit)): Extension<TrustGenerationLimit>,
+    auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
+    body: Body,
+) -> Result<Json<ActivatedTrustGeneration>, Error> {
+    let actor = authenticate(&store, auth)?;
+    accept_trust_generation(&manager, limit, &actor, body).await
+}
+
 /// Accepts a signed package from an mTLS peer.
 ///
 /// The peer's leaf certificate authenticates the caller and the context JWT
@@ -385,6 +526,21 @@ async fn upload_package(
 ) -> Result<Json<AcceptedBuild>, Error> {
     let actor = authenticate(authenticator.as_ref(), peer, auth)?;
     accept(&receiver, limit, &actor, body).await
+}
+
+/// Accepts a trust generation from an mTLS-authenticated system
+/// administrator.
+#[cfg(feature = "auth-mtls")]
+async fn submit_trust_generation(
+    Extension(authenticator): Extension<Arc<dyn MtlsAuthenticator>>,
+    Extension(manager): Extension<Arc<dyn TrustManager>>,
+    Extension(TrustGenerationLimit(limit)): Extension<TrustGenerationLimit>,
+    peer: Option<Extension<Arc<TlsPeerInfo>>>,
+    auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
+    body: Body,
+) -> Result<Json<ActivatedTrustGeneration>, Error> {
+    let actor = authenticate(authenticator.as_ref(), peer, auth)?;
+    accept_trust_generation(&manager, limit, &actor, body).await
 }
 
 #[cfg(test)]
@@ -405,14 +561,20 @@ mod tests {
 
     use super::{
         Body, Bytes, ERR_MANIFEST_INCOMPLETE, ERR_PACKAGE_NOT_PERMITTED, ERR_ROLE_NOT_PERMITTED,
-        ERR_SIGNATURE_INVALID, ERR_TOO_LARGE, ERR_TRANSPORT, ERR_UNAVAILABLE, Extension,
-        PACKAGE_UPLOAD_PATH, PackageUploadLimit, Role, Router, StreamExt, capped_stream, router,
+        ERR_SIGNATURE_INVALID, ERR_TOO_LARGE, ERR_TRANSPORT, ERR_TRUST_EPOCH_NOT_NEWER,
+        ERR_TRUST_MALFORMED, ERR_TRUST_ROLE_NOT_PERMITTED, ERR_TRUST_SIGNATURE_INVALID,
+        ERR_TRUST_TOO_LARGE, ERR_TRUST_TRANSPORT, ERR_TRUST_UNAVAILABLE, ERR_UNAVAILABLE,
+        Extension, PACKAGE_UPLOAD_PATH, PackageUploadLimit, Role, Router, StreamExt,
+        TRUST_GENERATION_PATH, TRUST_OUTCOME_ACTIVATED, TrustGenerationLimit,
+        VARIANT_EPOCH_NOT_NEWER, VARIANT_MALFORMED, VARIANT_SIGNATURE_INVALID, VARIANT_TOO_LARGE,
+        VARIANT_TRANSPORT, VARIANT_UNAVAILABLE, capped_stream, router,
     };
-    use crate::DEFAULT_PACKAGE_UPLOAD_MAX_BYTES;
     use crate::backend::{
         AcceptedPackage, BuildId, CORE_PACKAGE_IDS, IngressStream, IngressStreamError,
-        MODULE_PACKAGE_IDS, PackageIngestError, PackageStoreReceiver,
+        MODULE_PACKAGE_IDS, PackageIngestError, PackageStoreReceiver, TrustActivation,
+        TrustIngestError, TrustManager,
     };
+    use crate::{DEFAULT_PACKAGE_UPLOAD_MAX_BYTES, DEFAULT_TRUST_GENERATION_MAX_BYTES};
 
     #[cfg(feature = "auth-jwt")]
     const USERNAME: &str = "uploader";
@@ -431,6 +593,10 @@ mod tests {
     const MARKER: &str = "leak-marker-9f3a1c";
     #[cfg(feature = "auth-mtls")]
     const CLIENT_DNS: &str = "001.aice-web-next.node-01.example.com";
+    #[cfg(feature = "auth-jwt")]
+    const EXPECTED_TRUST_ACTOR: &str = USERNAME;
+    #[cfg(feature = "auth-mtls")]
+    const EXPECTED_TRUST_ACTOR: &str = "001.aice-web-next.node-01";
 
     /// The route answers at the published path and nowhere else. Every other
     /// test reaches the handler through [`PACKAGE_UPLOAD_PATH`], which holds
@@ -617,6 +783,149 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Debug)]
+    enum TrustOutcome {
+        Activate(u64),
+        SignatureInvalid,
+        Malformed,
+        EpochNotNewer { submitted: u64, active: u64 },
+        TooLarge,
+        Transport,
+        Unavailable,
+    }
+
+    impl TrustOutcome {
+        fn result(&self) -> Result<TrustActivation, TrustIngestError> {
+            match self {
+                Self::Activate(epoch) => Ok(TrustActivation { epoch: *epoch }),
+                Self::SignatureInvalid => Err(TrustIngestError::SignatureInvalid),
+                Self::Malformed => Err(TrustIngestError::Malformed),
+                Self::EpochNotNewer { submitted, active } => Err(TrustIngestError::EpochNotNewer {
+                    submitted: *submitted,
+                    active: *active,
+                }),
+                Self::TooLarge => Err(TrustIngestError::TooLarge),
+                Self::Transport => Err(TrustIngestError::Transport),
+                Self::Unavailable => Err(TrustIngestError::Unavailable),
+            }
+        }
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct TrustObserved {
+        calls: usize,
+        chunks: usize,
+        peak_chunk_len: usize,
+        total_len: u64,
+        bytes: Vec<u8>,
+        error_item: Option<ErrorItem>,
+        items_after_error: usize,
+        produced_when_first_chunk_seen: Option<usize>,
+    }
+
+    struct StubTrustManager {
+        observed: Arc<Mutex<TrustObserved>>,
+        outcome: TrustOutcome,
+        produced: Arc<AtomicUsize>,
+        record_bytes: bool,
+    }
+
+    struct TrustStub {
+        manager: Arc<StubTrustManager>,
+        observed: Arc<Mutex<TrustObserved>>,
+        produced: Arc<AtomicUsize>,
+        package_calls: Arc<AtomicUsize>,
+    }
+
+    fn trust_stub(outcome: TrustOutcome) -> TrustStub {
+        trust_stub_with_recording(outcome, true)
+    }
+
+    fn trust_stub_with_recording(outcome: TrustOutcome, record_bytes: bool) -> TrustStub {
+        let observed = Arc::new(Mutex::new(TrustObserved::default()));
+        let produced = Arc::new(AtomicUsize::new(0));
+        TrustStub {
+            manager: Arc::new(StubTrustManager {
+                observed: observed.clone(),
+                outcome,
+                produced: produced.clone(),
+                record_bytes,
+            }),
+            observed,
+            produced,
+            package_calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    impl TrustStub {
+        fn observed(&self) -> TrustObserved {
+            self.observed.lock().expect("the observation mutex").clone()
+        }
+    }
+
+    #[async_trait]
+    impl TrustManager for StubTrustManager {
+        async fn accept_generation(
+            &self,
+            mut body: IngressStream,
+        ) -> Result<TrustActivation, TrustIngestError> {
+            self.observed.lock().expect("the observation mutex").calls += 1;
+
+            let mut stream_error = None;
+            while let Some(item) = body.next().await {
+                let mut observed = self.observed.lock().expect("the observation mutex");
+                if observed.error_item.is_some() {
+                    observed.items_after_error += 1;
+                }
+                match item {
+                    Ok(chunk) => {
+                        if observed.chunks == 0 {
+                            observed.produced_when_first_chunk_seen =
+                                Some(self.produced.load(Ordering::SeqCst));
+                        }
+                        observed.chunks += 1;
+                        observed.peak_chunk_len = observed.peak_chunk_len.max(chunk.len());
+                        observed.total_len +=
+                            u64::try_from(chunk.len()).expect("a chunk length fits in a u64");
+                        if self.record_bytes {
+                            observed.bytes.extend_from_slice(&chunk);
+                        }
+                    }
+                    Err(error) => {
+                        let kind = match error {
+                            IngressStreamError::TooLarge { .. } => ErrorItem::TooLarge,
+                            IngressStreamError::Transport(_) => ErrorItem::Transport,
+                        };
+                        observed.error_item = Some(kind);
+                        stream_error = Some(kind);
+                    }
+                }
+            }
+
+            if let Some(kind) = stream_error {
+                return Err(match kind {
+                    ErrorItem::TooLarge => TrustIngestError::TooLarge,
+                    ErrorItem::Transport => TrustIngestError::Transport,
+                });
+            }
+            self.outcome.result()
+        }
+    }
+
+    struct CountingPackageStore(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl PackageStoreReceiver for CountingPackageStore {
+        async fn accept_package(
+            &self,
+            _permitted_package_ids: &[&str],
+            _body: IngressStream,
+        ) -> Result<AcceptedPackage, PackageIngestError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err(PackageIngestError::Unavailable)
+        }
+    }
+
     #[derive(Clone, Default)]
     struct LogCapture(Arc<Mutex<Vec<u8>>>);
 
@@ -679,6 +988,12 @@ mod tests {
                         .map(ToString::to_string)
                 })
                 .unwrap_or_default()
+        }
+
+        fn u64_field(&self, name: &str) -> Option<u64> {
+            serde_json::from_str::<Value>(&self.raw)
+                .ok()
+                .and_then(|body| body.get(name).and_then(Value::as_u64))
         }
     }
 
@@ -783,6 +1098,47 @@ mod tests {
         run(router, request).await
     }
 
+    #[cfg(feature = "auth-jwt")]
+    async fn send_trust(caller: &Caller, limit: u64, stub: &TrustStub, body: Body) -> Sent {
+        use std::sync::RwLock;
+
+        use review_database::Store;
+
+        let db_dir = tempfile::tempdir().expect("a temporary directory");
+        let backup_dir = tempfile::tempdir().expect("a temporary directory");
+        let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("a store");
+        crate::auth::update_jwt_secret(crate::graphql::test_jwt_secret_der().to_vec())
+            .expect("the test secret is settable");
+
+        let token = match caller {
+            Caller::Anonymous => None,
+            Caller::Invalid => Some("not.a.token".to_string()),
+            Caller::Role(role) => {
+                let (token, _) = crate::auth::create_token(USERNAME.to_string(), role.to_string())
+                    .expect("a token for the role");
+                crate::auth::insert_token(&store, &token, USERNAME).expect("the token is stored");
+                Some(token)
+            }
+        };
+        let store = Arc::new(RwLock::new(store));
+
+        let manager: Arc<dyn TrustManager> = stub.manager.clone();
+        let package_store: Arc<dyn PackageStoreReceiver> =
+            Arc::new(CountingPackageStore(stub.package_calls.clone()));
+        let router = router()
+            .layer(Extension(store))
+            .layer(Extension(manager))
+            .layer(Extension(package_store))
+            .layer(Extension(TrustGenerationLimit(limit)));
+
+        let mut builder = Request::builder().method("POST").uri(TRUST_GENERATION_PATH);
+        if let Some(token) = token {
+            builder = builder.header("authorization", format!("Bearer {token}"));
+        }
+        let request = builder.body(body).expect("a well-formed request");
+        run(router, request).await
+    }
+
     #[cfg(feature = "auth-mtls")]
     struct StubAuthenticator;
 
@@ -855,6 +1211,73 @@ mod tests {
             .layer(Extension(PackageUploadLimit(limit)));
 
         let mut builder = Request::builder().method("POST").uri(PACKAGE_UPLOAD_PATH);
+        if let Some(token) = token {
+            builder = builder.header("authorization", format!("Bearer {token}"));
+        }
+        let mut request = builder.body(body).expect("a well-formed request");
+        request.extensions_mut().insert(Arc::new(TlsPeerInfo {
+            certs: vec![cert_der],
+        }));
+        run(router, request).await
+    }
+
+    #[cfg(feature = "auth-mtls")]
+    async fn send_trust(caller: &Caller, limit: u64, stub: &TrustStub, body: Body) -> Sent {
+        use chrono::{Duration, Utc};
+        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+        use rcgen::{CertificateParams, KeyPair, PKCS_ECDSA_P256_SHA256};
+        use rustls::pki_types::CertificateDer;
+
+        use super::TlsPeerInfo;
+        use crate::auth::MtlsAuthenticator;
+
+        #[derive(serde::Serialize)]
+        struct ContextClaims {
+            role: String,
+            customer_ids: Option<Vec<u32>>,
+            exp: i64,
+        }
+
+        let key_pair =
+            KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).expect("P-256 is supported in tests");
+        let params = CertificateParams::new(vec![CLIENT_DNS.to_string()]).expect("a valid DNS SAN");
+        let cert = params
+            .self_signed(&key_pair)
+            .expect("the generated key pair signs its own certificate");
+        let cert_der = CertificateDer::from(cert.der().to_vec());
+        let key_der = key_pair.serialize_der();
+
+        let token = match caller {
+            Caller::Anonymous => None,
+            Caller::Invalid => Some("not.a.token".to_string()),
+            Caller::Role(role) => {
+                let claims = ContextClaims {
+                    role: role.to_string(),
+                    customer_ids: Some(vec![1]),
+                    exp: (Utc::now() + Duration::minutes(5)).timestamp(),
+                };
+                Some(
+                    encode(
+                        &Header::new(Algorithm::ES256),
+                        &claims,
+                        &EncodingKey::from_ec_der(&key_der),
+                    )
+                    .expect("the key was generated for ES256"),
+                )
+            }
+        };
+
+        let manager: Arc<dyn TrustManager> = stub.manager.clone();
+        let package_store: Arc<dyn PackageStoreReceiver> =
+            Arc::new(CountingPackageStore(stub.package_calls.clone()));
+        let authenticator: Arc<dyn MtlsAuthenticator> = Arc::new(StubAuthenticator);
+        let router = router()
+            .layer(Extension(authenticator))
+            .layer(Extension(manager))
+            .layer(Extension(package_store))
+            .layer(Extension(TrustGenerationLimit(limit)));
+
+        let mut builder = Request::builder().method("POST").uri(TRUST_GENERATION_PATH);
         if let Some(token) = token {
             builder = builder.header("authorization", format!("Bearer {token}"));
         }
@@ -1226,6 +1649,245 @@ mod tests {
             assert!(!sent.raw.contains(MARKER), "{outcome:?}");
             assert!(!sent.logs.contains(MARKER), "{outcome:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn the_trust_route_is_mounted_at_its_published_path() {
+        let wrong_method = Request::builder()
+            .method("GET")
+            .uri(TRUST_GENERATION_PATH)
+            .body(Body::empty())
+            .expect("a well-formed request");
+        let sent = run(router(), wrong_method).await;
+        assert_eq!(sent.status, StatusCode::METHOD_NOT_ALLOWED);
+
+        let neighbour = Request::builder()
+            .method("POST")
+            .uri(format!("{TRUST_GENERATION_PATH}/current"))
+            .body(Body::empty())
+            .expect("a well-formed request");
+        let sent = run(router(), neighbour).await;
+        assert_eq!(sent.status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_system_administrator_streams_a_generation_only_to_the_trust_manager() {
+        let stub = trust_stub(TrustOutcome::Activate(u64::MAX));
+        let submitted = Bytes::from_static(b"a signed trust generation");
+        let sent = send_trust(
+            &Caller::Role(Role::SystemAdministrator),
+            CAP,
+            &stub,
+            body_of(vec![submitted.clone()]),
+        )
+        .await;
+
+        assert_eq!(sent.status, StatusCode::OK);
+        assert_eq!(sent.u64_field("epoch"), Some(u64::MAX));
+        let observed = stub.observed();
+        assert_eq!(observed.calls, 1);
+        assert_eq!(observed.bytes, submitted);
+        assert_eq!(stub.package_calls.load(Ordering::SeqCst), 0);
+        assert!(sent.logs.contains(EXPECTED_TRUST_ACTOR));
+        assert!(sent.logs.contains(TRUST_OUTCOME_ACTIVATED));
+        assert!(sent.logs.contains(&u64::MAX.to_string()));
+    }
+
+    #[tokio::test]
+    async fn every_other_role_is_forbidden_before_the_trust_body_is_read() {
+        for role in [
+            Role::SecurityAdministrator,
+            Role::SecurityManager,
+            Role::SecurityMonitor,
+        ] {
+            let stub = trust_stub(TrustOutcome::Activate(7));
+            let body = counted_body(1, CHUNK_LEN, stub.produced.clone());
+            let sent = send_trust(&Caller::Role(role), CAP, &stub, body).await;
+
+            assert_eq!(sent.status, StatusCode::FORBIDDEN, "{role}");
+            assert_eq!(sent.error(), ERR_TRUST_ROLE_NOT_PERMITTED, "{role}");
+            let observed = stub.observed();
+            assert_eq!(observed.calls, 0, "{role}");
+            assert_eq!(observed.chunks, 0, "{role}");
+            assert_eq!(stub.produced.load(Ordering::SeqCst), 0, "{role}");
+            assert_eq!(stub.package_calls.load(Ordering::SeqCst), 0, "{role}");
+        }
+    }
+
+    #[tokio::test]
+    async fn absent_or_invalid_credentials_do_not_reach_the_trust_manager() {
+        for caller in [Caller::Anonymous, Caller::Invalid] {
+            let stub = trust_stub(TrustOutcome::Activate(7));
+            let body = counted_body(1, CHUNK_LEN, stub.produced.clone());
+            let sent = send_trust(&caller, CAP, &stub, body).await;
+
+            assert_eq!(sent.status, StatusCode::UNAUTHORIZED);
+            assert_eq!(stub.observed().calls, 0);
+            assert_eq!(stub.produced.load(Ordering::SeqCst), 0);
+            assert_eq!(stub.package_calls.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    /// The manager observes each source chunk as it arrives and sees the first
+    /// one before the source produces the second. Byte recording is disabled
+    /// in this case so the test manager, like the route, retains no growing
+    /// copy of the 64 MiB body.
+    #[tokio::test]
+    async fn a_large_trust_generation_is_streamed_without_whole_body_buffering() {
+        const CHUNKS: usize = HUGE_CHUNKS / 4;
+
+        let stub = trust_stub_with_recording(TrustOutcome::Activate(7), false);
+        let body = counted_body(CHUNKS, HUGE_CHUNK_LEN, stub.produced.clone());
+        let sent = send_trust(
+            &Caller::Role(Role::SystemAdministrator),
+            GENEROUS_CAP,
+            &stub,
+            body,
+        )
+        .await;
+
+        assert_eq!(sent.status, StatusCode::OK);
+        let observed = stub.observed();
+        assert_eq!(observed.chunks, CHUNKS);
+        assert_eq!(observed.peak_chunk_len, HUGE_CHUNK_LEN);
+        assert_eq!(
+            observed.total_len,
+            u64::try_from(CHUNKS * HUGE_CHUNK_LEN).expect("the total fits in a u64")
+        );
+        assert_eq!(observed.produced_when_first_chunk_seen, Some(1));
+        assert!(observed.bytes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_trust_cap_is_inclusive_and_cuts_off_the_first_excess_byte() {
+        let exact = trust_stub(TrustOutcome::Activate(7));
+        let exact_body = counted_body(4, CHUNK_LEN, exact.produced.clone());
+        let sent = send_trust(
+            &Caller::Role(Role::SystemAdministrator),
+            CAP,
+            &exact,
+            exact_body,
+        )
+        .await;
+        assert_eq!(sent.status, StatusCode::OK);
+        assert_eq!(exact.observed().total_len, CAP);
+        assert!(exact.observed().error_item.is_none());
+
+        let excess = trust_stub(TrustOutcome::Activate(7));
+        let mut chunks = vec![Bytes::from(vec![b't'; CHUNK_LEN]); 4];
+        chunks.push(Bytes::from_static(b"!"));
+        let sent = send_trust(
+            &Caller::Role(Role::SystemAdministrator),
+            CAP,
+            &excess,
+            body_of(chunks),
+        )
+        .await;
+
+        assert_eq!(sent.status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(sent.error(), ERR_TRUST_TOO_LARGE);
+        let observed = excess.observed();
+        assert_eq!(observed.total_len, CAP);
+        assert_eq!(observed.chunks, 4);
+        assert_eq!(observed.error_item, Some(ErrorItem::TooLarge));
+        assert_eq!(observed.items_after_error, 0);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_trust_submission_maps_the_final_stream_error_to_bad_request() {
+        let stub = trust_stub(TrustOutcome::Activate(7));
+        let sent = send_trust(
+            &Caller::Role(Role::SystemAdministrator),
+            CAP,
+            &stub,
+            dropping_body(),
+        )
+        .await;
+
+        assert_eq!(sent.status, StatusCode::BAD_REQUEST);
+        assert_eq!(sent.error(), ERR_TRUST_TRANSPORT);
+        let observed = stub.observed();
+        assert_eq!(observed.chunks, 1);
+        assert_eq!(observed.error_item, Some(ErrorItem::Transport));
+        assert_eq!(observed.items_after_error, 0);
+    }
+
+    #[tokio::test]
+    async fn every_trust_manager_failure_maps_to_its_status_and_owned_message() {
+        let table = [
+            (
+                TrustOutcome::SignatureInvalid,
+                StatusCode::BAD_REQUEST,
+                ERR_TRUST_SIGNATURE_INVALID.to_string(),
+                VARIANT_SIGNATURE_INVALID,
+            ),
+            (
+                TrustOutcome::Malformed,
+                StatusCode::BAD_REQUEST,
+                ERR_TRUST_MALFORMED.to_string(),
+                VARIANT_MALFORMED,
+            ),
+            (
+                TrustOutcome::EpochNotNewer {
+                    submitted: 7,
+                    active: 9,
+                },
+                StatusCode::CONFLICT,
+                format!("{ERR_TRUST_EPOCH_NOT_NEWER}: submitted 7, active 9"),
+                VARIANT_EPOCH_NOT_NEWER,
+            ),
+            (
+                TrustOutcome::TooLarge,
+                StatusCode::PAYLOAD_TOO_LARGE,
+                ERR_TRUST_TOO_LARGE.to_string(),
+                VARIANT_TOO_LARGE,
+            ),
+            (
+                TrustOutcome::Transport,
+                StatusCode::BAD_REQUEST,
+                ERR_TRUST_TRANSPORT.to_string(),
+                VARIANT_TRANSPORT,
+            ),
+            (
+                TrustOutcome::Unavailable,
+                StatusCode::SERVICE_UNAVAILABLE,
+                ERR_TRUST_UNAVAILABLE.to_string(),
+                VARIANT_UNAVAILABLE,
+            ),
+        ];
+
+        for (outcome, status, message, variant) in table {
+            let stub = trust_stub(outcome.clone());
+            let sent = send_trust(
+                &Caller::Role(Role::SystemAdministrator),
+                CAP,
+                &stub,
+                marker_body(),
+            )
+            .await;
+
+            assert_eq!(sent.status, status, "{outcome:?}");
+            assert_eq!(sent.error(), message, "{outcome:?}");
+            assert!(sent.logs.contains(EXPECTED_TRUST_ACTOR), "{outcome:?}");
+            assert!(sent.logs.contains(variant), "{outcome:?}");
+            assert!(!sent.raw.contains(MARKER), "{outcome:?}");
+            assert!(!sent.logs.contains(MARKER), "{outcome:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_provisional_trust_default_admits_an_ordinary_generation() {
+        let stub = trust_stub(TrustOutcome::Activate(7));
+        let sent = send_trust(
+            &Caller::Role(Role::SystemAdministrator),
+            DEFAULT_TRUST_GENERATION_MAX_BYTES,
+            &stub,
+            marker_body(),
+        )
+        .await;
+
+        assert_eq!(sent.status, StatusCode::OK);
+        assert_eq!(stub.observed().error_item, None);
     }
 
     #[tokio::test]

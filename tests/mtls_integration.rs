@@ -30,6 +30,7 @@ mod mtls_integration {
             AcceptedPackage, AgentManager, BindAddrInput, BuildId, CertManager, DeployError,
             DeployOutcome, HostOnboarder, HostOnboardingTicket, IngressStream, IngressStreamError,
             OperationId, PackageDeployer, PackageIngestError, PackageStoreReceiver,
+            TrustActivation, TrustIngestError, TrustManager,
         },
         ingress::PACKAGE_UPLOAD_PATH,
     };
@@ -314,6 +315,29 @@ xvcNsYaYqk6sRk/INvcaN2E=
         }
     }
 
+    struct StubTrustManager;
+
+    #[async_trait]
+    impl TrustManager for StubTrustManager {
+        async fn accept_generation(
+            &self,
+            mut body: IngressStream,
+        ) -> Result<TrustActivation, TrustIngestError> {
+            while let Some(item) = body.next().await {
+                match item {
+                    Ok(_chunk) => {}
+                    Err(IngressStreamError::TooLarge { .. }) => {
+                        return Err(TrustIngestError::TooLarge);
+                    }
+                    Err(IngressStreamError::Transport(_)) => {
+                        return Err(TrustIngestError::Transport);
+                    }
+                }
+            }
+            Err(TrustIngestError::Unavailable)
+        }
+    }
+
     struct StubAuthenticator;
 
     impl MtlsAuthenticator for StubAuthenticator {
@@ -516,6 +540,8 @@ xvcNsYaYqk6sRk/INvcaN2E=
             authenticator: Arc::new(StubAuthenticator),
             package_store: Arc::new(StubPackageStore),
             package_upload_max_bytes: PACKAGE_UPLOAD_MAX_BYTES,
+            trust_manager: Arc::new(StubTrustManager),
+            trust_generation_max_bytes: PACKAGE_UPLOAD_MAX_BYTES,
         };
 
         let shutdown = review_web::serve(
