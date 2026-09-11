@@ -14,6 +14,7 @@ use tracing::info;
 use super::{
     Role, RoleGuard,
     install_state::{self, Lifecycle, UpdateState},
+    operation_attempt::{self, OperationAttempt},
 };
 use crate::info_with_username;
 
@@ -128,6 +129,26 @@ impl CoreComponent {
     /// context.
     async fn update_check_failed(&self, ctx: &Context<'_>) -> Result<bool> {
         Ok(self.update_state(ctx).await?.check_failed)
+    }
+
+    /// The current operation attempt for this row's `(host, component)`, or
+    /// null if it has none.
+    ///
+    /// It is the running attempt where there is one, otherwise the attempt
+    /// that still owes a compensation, otherwise the last one to finish. That
+    /// ordering is `review-database`'s, not this crate's.
+    ///
+    /// The lookup carries no instance number: a core component's class has no
+    /// instance dimension, so its attempts are recorded under none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the ledger cannot be read.
+    async fn latest_operation_attempt(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<Option<OperationAttempt>> {
+        operation_attempt::latest_attempt(ctx, &self.host, &self.component, None)
     }
 }
 
