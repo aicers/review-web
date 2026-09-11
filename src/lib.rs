@@ -86,9 +86,10 @@ const DISABLE_LOCAL_AUTH_BYPASS_ENV: &str = "REVIEW_WEB_DISABLE_LOCAL_AUTH_BYPAS
 /// route: 2 GiB.
 ///
 /// **This value is provisional.** It was reasoned about rather than measured.
-/// Re-derive it from a real signed `.pkg` — a core component's container
-/// image included — once a signing pipeline produces one, and replace this
-/// paragraph with what was measured and when.
+/// Re-derive it from a real signed `.pkg` — including a core component's
+/// container image, the case a module-sized cap would wrongly reject — once a
+/// signing pipeline produces one, and replace this paragraph with what was
+/// measured and when.
 ///
 /// What the cap is for is bounding what an authenticated uploader can write
 /// into `pending/` on this host's data volume, and any finite value serves
@@ -101,11 +102,6 @@ const DISABLE_LOCAL_AUTH_BYPASS_ENV: &str = "REVIEW_WEB_DISABLE_LOCAL_AUTH_BYPAS
 /// comfortably, so the first real signed package cannot plausibly be refused
 /// by it. Measuring that bundle and calling the result a package size would
 /// have laundered the same guess through a number that merely looks measured.
-///
-/// Re-derive it from a real signed `.pkg` — including a core component's
-/// container image, the case a module-sized cap would wrongly reject — once a
-/// signing pipeline produces one, and replace this reasoning with that
-/// measurement.
 ///
 /// [`ServerConfig::package_upload_max_bytes`] carries the effective value.
 /// This constant is the shipped default an embedding application falls back
