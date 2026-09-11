@@ -708,9 +708,10 @@ mod tests {
             (Box::new(deployer), calls)
         }
 
-        /// A stub that succeeds, for the tests whose whole assertion is that
-        /// the backend was never reached.
-        fn unreached() -> (Box<dyn PackageDeployer>, Arc<Calls>) {
+        /// A stub that succeeds with `Applied`, for every test whose
+        /// assertion is about what reached the backend — the recorded call,
+        /// or the absence of one.
+        fn applying() -> (Box<dyn PackageDeployer>, Arc<Calls>) {
             Self::boxed(Answer::Succeed(DeployOutcome::Applied))
         }
 
@@ -920,7 +921,7 @@ mod tests {
     #[tokio::test]
     async fn a_role_outside_the_guard_is_rejected_without_a_backend_call() {
         for query in every_mutation("giganto") {
-            let (deployer, calls) = RecordingDeployer::unreached();
+            let (deployer, calls) = RecordingDeployer::applying();
             let schema = TestSchema::new().await;
 
             let res = schema
@@ -939,7 +940,7 @@ mod tests {
     #[tokio::test]
     async fn a_scoped_user_on_a_foreign_host_is_rejected_without_a_backend_call() {
         for query in every_mutation("giganto") {
-            let (deployer, calls) = RecordingDeployer::unreached();
+            let (deployer, calls) = RecordingDeployer::applying();
             let schema = TestSchema::new().await;
             super::super::test_support::insert_active_node(
                 &schema.store(),
@@ -970,7 +971,7 @@ mod tests {
     #[tokio::test]
     async fn a_scoped_user_whose_customer_owns_the_host_reaches_the_backend() {
         for query in every_mutation("giganto") {
-            let (deployer, calls) = RecordingDeployer::unreached();
+            let (deployer, calls) = RecordingDeployer::applying();
             let schema = TestSchema::new().await;
             super::super::test_support::insert_active_node(
                 &schema.store(),
@@ -997,7 +998,7 @@ mod tests {
     async fn a_target_outside_the_module_class_is_rejected_without_a_backend_call() {
         for target in FOREIGN_TARGETS {
             for query in every_mutation(target) {
-                let (deployer, calls) = RecordingDeployer::unreached();
+                let (deployer, calls) = RecordingDeployer::applying();
                 let schema = TestSchema::new().await;
 
                 let res = schema
@@ -1020,7 +1021,7 @@ mod tests {
     /// parses to.
     #[tokio::test]
     async fn the_bind_addresses_reach_the_backend_unchanged() {
-        let (deployer, calls) = RecordingDeployer::unreached();
+        let (deployer, calls) = RecordingDeployer::applying();
         let schema = TestSchema::new().await;
         let args = format!(
             r#"{}, bindAddrs: [
@@ -1069,7 +1070,7 @@ mod tests {
     /// request from an empty list and must not be defaulted into one.
     #[tokio::test]
     async fn an_absent_bind_address_list_reaches_the_backend_as_none() {
-        let (deployer, calls) = RecordingDeployer::unreached();
+        let (deployer, calls) = RecordingDeployer::applying();
         let schema = TestSchema::new().await;
 
         let res = schema
@@ -1085,7 +1086,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_empty_bind_address_list_reaches_the_backend_as_an_empty_list() {
-        let (deployer, calls) = RecordingDeployer::unreached();
+        let (deployer, calls) = RecordingDeployer::applying();
         let schema = TestSchema::new().await;
         let args = format!("{}, bindAddrs: []", install_args("giganto"));
 
@@ -1103,7 +1104,7 @@ mod tests {
     #[tokio::test]
     async fn an_unparseable_bind_address_is_refused_without_a_backend_call() {
         for addr in ["not-an-address", "127.0.0.1", "127.0.0.1:not-a-port"] {
-            let (deployer, calls) = RecordingDeployer::unreached();
+            let (deployer, calls) = RecordingDeployer::applying();
             let schema = TestSchema::new().await;
             let args = format!(
                 r#"{}, bindAddrs: [{{listenerKey: "ingest", addr: "{addr}"}}]"#,
@@ -1276,7 +1277,7 @@ mod tests {
             "b0a6f6aé-7f7a-4b7c-9a3f-3f9b1a2c4d5e",
             "",
         ] {
-            let (deployer, calls) = RecordingDeployer::unreached();
+            let (deployer, calls) = RecordingDeployer::applying();
             let schema = TestSchema::new().await;
             let args = format!(
                 r#"host: "host1", target: "giganto", buildSelector: {{version: "0.1.0"}}, requestKey: "{key}""#
@@ -1302,7 +1303,7 @@ mod tests {
         let omitted = r#"host: "host1", target: "giganto", buildSelector: {version: "0.1.0"}"#;
         let null = format!("{omitted}, requestKey: null");
         for args in [omitted.to_string(), null] {
-            let (deployer, calls) = RecordingDeployer::unreached();
+            let (deployer, calls) = RecordingDeployer::applying();
             let schema = TestSchema::new().await;
 
             let res = schema
@@ -1336,7 +1337,7 @@ mod tests {
         ];
 
         for (submitted, expected) in cases {
-            let (deployer, calls) = RecordingDeployer::unreached();
+            let (deployer, calls) = RecordingDeployer::applying();
             let schema = TestSchema::new().await;
             let args = format!(
                 r#"host: "host1", target: "giganto", buildSelector: {submitted}, requestKey: "{REQUEST_KEY}""#
@@ -1365,7 +1366,7 @@ mod tests {
             ));
 
             for query in [install, update] {
-                let (deployer, calls) = RecordingDeployer::unreached();
+                let (deployer, calls) = RecordingDeployer::applying();
                 let schema = TestSchema::new().await;
 
                 let res = schema
@@ -1385,7 +1386,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_omitted_on_failure_reaches_the_trait_as_rollback() {
-        let (deployer, calls) = RecordingDeployer::unreached();
+        let (deployer, calls) = RecordingDeployer::applying();
         let schema = TestSchema::new().await;
 
         let res = schema
@@ -1408,7 +1409,7 @@ mod tests {
             ("ROLLBACK", BackendFailurePolicy::Rollback),
             ("HOLD", BackendFailurePolicy::Hold),
         ] {
-            let (deployer, calls) = RecordingDeployer::unreached();
+            let (deployer, calls) = RecordingDeployer::applying();
             let schema = TestSchema::new().await;
             let args = format!("{}, onFailure: {submitted}", install_args("giganto"));
 
@@ -1422,7 +1423,7 @@ mod tests {
             assert!(res.errors.is_empty(), "{submitted}: {:?}", res.errors);
             assert_eq!(calls.only_install().on_failure, expected, "{submitted}");
 
-            let (deployer, calls) = RecordingDeployer::unreached();
+            let (deployer, calls) = RecordingDeployer::applying();
             let schema = TestSchema::new().await;
             let args = format!("{}, onFailure: {submitted}", update_args("giganto"));
 
@@ -1471,7 +1472,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_update_reaches_the_trait_with_its_instance_and_returns_the_id() {
-        let (deployer, calls) = RecordingDeployer::unreached();
+        let (deployer, calls) = RecordingDeployer::applying();
         let schema = TestSchema::new().await;
 
         let res = schema
@@ -1506,7 +1507,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_removal_reaches_the_trait_with_its_instance_and_returns_the_id() {
-        let (deployer, calls) = RecordingDeployer::unreached();
+        let (deployer, calls) = RecordingDeployer::applying();
         let schema = TestSchema::new().await;
 
         let res = schema
@@ -1586,7 +1587,7 @@ mod tests {
             .to_string();
         assert_eq!(rendered, "4294967295");
 
-        let (deployer, calls) = RecordingDeployer::unreached();
+        let (deployer, calls) = RecordingDeployer::applying();
         let args = format!(
             r#"host: "host1", target: "hog", instance: "{rendered}", buildSelector: {{version: "0.1.0"}}"#
         );
