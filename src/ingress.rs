@@ -379,6 +379,15 @@ fn log_trust_outcome(actor: &str, outcome: &'static str) {
     );
 }
 
+fn log_trust_refusal(actor: &str) {
+    info!(
+        actor,
+        route = TRUST_GENERATION_PATH,
+        outcome = TRUST_OUTCOME_FORBIDDEN,
+        "a trust generation submission was rejected"
+    );
+}
+
 /// Maps a trust manager's failure to a response and an audit outcome.
 ///
 /// The exhaustive match deliberately has no catch-all arm. Every response
@@ -462,7 +471,7 @@ async fn accept_trust_generation(
     body: Body,
 ) -> Result<Json<ActivatedTrustGeneration>, Error> {
     if actor.role != Role::SystemAdministrator {
-        log_trust_outcome(&actor.name, TRUST_OUTCOME_FORBIDDEN);
+        log_trust_refusal(&actor.name);
         return Err(Error::Forbidden(ERR_TRUST_ROLE_NOT_PERMITTED.to_string()));
     }
 
@@ -565,9 +574,10 @@ mod tests {
         ERR_TRUST_MALFORMED, ERR_TRUST_ROLE_NOT_PERMITTED, ERR_TRUST_SIGNATURE_INVALID,
         ERR_TRUST_TOO_LARGE, ERR_TRUST_TRANSPORT, ERR_TRUST_UNAVAILABLE, ERR_UNAVAILABLE,
         Extension, PACKAGE_UPLOAD_PATH, PackageUploadLimit, Role, Router, StreamExt,
-        TRUST_GENERATION_PATH, TRUST_OUTCOME_ACTIVATED, TrustGenerationLimit,
-        VARIANT_EPOCH_NOT_NEWER, VARIANT_MALFORMED, VARIANT_SIGNATURE_INVALID, VARIANT_TOO_LARGE,
-        VARIANT_TRANSPORT, VARIANT_UNAVAILABLE, capped_stream, router,
+        TRUST_GENERATION_PATH, TRUST_OUTCOME_ACTIVATED, TRUST_OUTCOME_FORBIDDEN,
+        TrustGenerationLimit, VARIANT_EPOCH_NOT_NEWER, VARIANT_MALFORMED,
+        VARIANT_SIGNATURE_INVALID, VARIANT_TOO_LARGE, VARIANT_TRANSPORT, VARIANT_UNAVAILABLE,
+        capped_stream, router,
     };
     use crate::backend::{
         AcceptedPackage, BuildId, CORE_PACKAGE_IDS, IngressStream, IngressStreamError,
@@ -1061,7 +1071,12 @@ mod tests {
     }
 
     #[cfg(feature = "auth-jwt")]
-    async fn send(caller: &Caller, limit: u64, stub: &Stub, body: Body) -> Sent {
+    async fn send_authenticated(
+        caller: &Caller,
+        path: &str,
+        body: Body,
+        configure: impl FnOnce(Router) -> Router,
+    ) -> Sent {
         use std::sync::RwLock;
 
         use review_database::Store;
@@ -1083,14 +1098,9 @@ mod tests {
             }
         };
         let store = Arc::new(RwLock::new(store));
+        let router = configure(router().layer(Extension(store)));
 
-        let receiver: Arc<dyn PackageStoreReceiver> = stub.receiver.clone();
-        let router = router()
-            .layer(Extension(store))
-            .layer(Extension(receiver))
-            .layer(Extension(PackageUploadLimit(limit)));
-
-        let mut builder = Request::builder().method("POST").uri(PACKAGE_UPLOAD_PATH);
+        let mut builder = Request::builder().method("POST").uri(path);
         if let Some(token) = token {
             builder = builder.header("authorization", format!("Bearer {token}"));
         }
@@ -1099,44 +1109,28 @@ mod tests {
     }
 
     #[cfg(feature = "auth-jwt")]
+    async fn send(caller: &Caller, limit: u64, stub: &Stub, body: Body) -> Sent {
+        let receiver: Arc<dyn PackageStoreReceiver> = stub.receiver.clone();
+        send_authenticated(caller, PACKAGE_UPLOAD_PATH, body, |router| {
+            router
+                .layer(Extension(receiver))
+                .layer(Extension(PackageUploadLimit(limit)))
+        })
+        .await
+    }
+
+    #[cfg(feature = "auth-jwt")]
     async fn send_trust(caller: &Caller, limit: u64, stub: &TrustStub, body: Body) -> Sent {
-        use std::sync::RwLock;
-
-        use review_database::Store;
-
-        let db_dir = tempfile::tempdir().expect("a temporary directory");
-        let backup_dir = tempfile::tempdir().expect("a temporary directory");
-        let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("a store");
-        crate::auth::update_jwt_secret(crate::graphql::test_jwt_secret_der().to_vec())
-            .expect("the test secret is settable");
-
-        let token = match caller {
-            Caller::Anonymous => None,
-            Caller::Invalid => Some("not.a.token".to_string()),
-            Caller::Role(role) => {
-                let (token, _) = crate::auth::create_token(USERNAME.to_string(), role.to_string())
-                    .expect("a token for the role");
-                crate::auth::insert_token(&store, &token, USERNAME).expect("the token is stored");
-                Some(token)
-            }
-        };
-        let store = Arc::new(RwLock::new(store));
-
         let manager: Arc<dyn TrustManager> = stub.manager.clone();
         let package_store: Arc<dyn PackageStoreReceiver> =
             Arc::new(CountingPackageStore(stub.package_calls.clone()));
-        let router = router()
-            .layer(Extension(store))
-            .layer(Extension(manager))
-            .layer(Extension(package_store))
-            .layer(Extension(TrustGenerationLimit(limit)));
-
-        let mut builder = Request::builder().method("POST").uri(TRUST_GENERATION_PATH);
-        if let Some(token) = token {
-            builder = builder.header("authorization", format!("Bearer {token}"));
-        }
-        let request = builder.body(body).expect("a well-formed request");
-        run(router, request).await
+        send_authenticated(caller, TRUST_GENERATION_PATH, body, |router| {
+            router
+                .layer(Extension(manager))
+                .layer(Extension(package_store))
+                .layer(Extension(TrustGenerationLimit(limit)))
+        })
+        .await
     }
 
     #[cfg(feature = "auth-mtls")]
@@ -1158,7 +1152,12 @@ mod tests {
     }
 
     #[cfg(feature = "auth-mtls")]
-    async fn send(caller: &Caller, limit: u64, stub: &Stub, body: Body) -> Sent {
+    async fn send_authenticated(
+        caller: &Caller,
+        path: &str,
+        body: Body,
+        configure: impl FnOnce(Router) -> Router,
+    ) -> Sent {
         use chrono::{Duration, Utc};
         use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
         use rcgen::{CertificateParams, KeyPair, PKCS_ECDSA_P256_SHA256};
@@ -1203,14 +1202,10 @@ mod tests {
             }
         };
 
-        let receiver: Arc<dyn PackageStoreReceiver> = stub.receiver.clone();
         let authenticator: Arc<dyn MtlsAuthenticator> = Arc::new(StubAuthenticator);
-        let router = router()
-            .layer(Extension(authenticator))
-            .layer(Extension(receiver))
-            .layer(Extension(PackageUploadLimit(limit)));
+        let router = configure(router().layer(Extension(authenticator)));
 
-        let mut builder = Request::builder().method("POST").uri(PACKAGE_UPLOAD_PATH);
+        let mut builder = Request::builder().method("POST").uri(path);
         if let Some(token) = token {
             builder = builder.header("authorization", format!("Bearer {token}"));
         }
@@ -1222,70 +1217,28 @@ mod tests {
     }
 
     #[cfg(feature = "auth-mtls")]
+    async fn send(caller: &Caller, limit: u64, stub: &Stub, body: Body) -> Sent {
+        let receiver: Arc<dyn PackageStoreReceiver> = stub.receiver.clone();
+        send_authenticated(caller, PACKAGE_UPLOAD_PATH, body, |router| {
+            router
+                .layer(Extension(receiver))
+                .layer(Extension(PackageUploadLimit(limit)))
+        })
+        .await
+    }
+
+    #[cfg(feature = "auth-mtls")]
     async fn send_trust(caller: &Caller, limit: u64, stub: &TrustStub, body: Body) -> Sent {
-        use chrono::{Duration, Utc};
-        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
-        use rcgen::{CertificateParams, KeyPair, PKCS_ECDSA_P256_SHA256};
-        use rustls::pki_types::CertificateDer;
-
-        use super::TlsPeerInfo;
-        use crate::auth::MtlsAuthenticator;
-
-        #[derive(serde::Serialize)]
-        struct ContextClaims {
-            role: String,
-            customer_ids: Option<Vec<u32>>,
-            exp: i64,
-        }
-
-        let key_pair =
-            KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).expect("P-256 is supported in tests");
-        let params = CertificateParams::new(vec![CLIENT_DNS.to_string()]).expect("a valid DNS SAN");
-        let cert = params
-            .self_signed(&key_pair)
-            .expect("the generated key pair signs its own certificate");
-        let cert_der = CertificateDer::from(cert.der().to_vec());
-        let key_der = key_pair.serialize_der();
-
-        let token = match caller {
-            Caller::Anonymous => None,
-            Caller::Invalid => Some("not.a.token".to_string()),
-            Caller::Role(role) => {
-                let claims = ContextClaims {
-                    role: role.to_string(),
-                    customer_ids: Some(vec![1]),
-                    exp: (Utc::now() + Duration::minutes(5)).timestamp(),
-                };
-                Some(
-                    encode(
-                        &Header::new(Algorithm::ES256),
-                        &claims,
-                        &EncodingKey::from_ec_der(&key_der),
-                    )
-                    .expect("the key was generated for ES256"),
-                )
-            }
-        };
-
         let manager: Arc<dyn TrustManager> = stub.manager.clone();
         let package_store: Arc<dyn PackageStoreReceiver> =
             Arc::new(CountingPackageStore(stub.package_calls.clone()));
-        let authenticator: Arc<dyn MtlsAuthenticator> = Arc::new(StubAuthenticator);
-        let router = router()
-            .layer(Extension(authenticator))
-            .layer(Extension(manager))
-            .layer(Extension(package_store))
-            .layer(Extension(TrustGenerationLimit(limit)));
-
-        let mut builder = Request::builder().method("POST").uri(TRUST_GENERATION_PATH);
-        if let Some(token) = token {
-            builder = builder.header("authorization", format!("Bearer {token}"));
-        }
-        let mut request = builder.body(body).expect("a well-formed request");
-        request.extensions_mut().insert(Arc::new(TlsPeerInfo {
-            certs: vec![cert_der],
-        }));
-        run(router, request).await
+        send_authenticated(caller, TRUST_GENERATION_PATH, body, |router| {
+            router
+                .layer(Extension(manager))
+                .layer(Extension(package_store))
+                .layer(Extension(TrustGenerationLimit(limit)))
+        })
+        .await
     }
 
     fn ids(list: &[&str]) -> Vec<String> {
@@ -1711,6 +1664,9 @@ mod tests {
             assert_eq!(observed.chunks, 0, "{role}");
             assert_eq!(stub.produced.load(Ordering::SeqCst), 0, "{role}");
             assert_eq!(stub.package_calls.load(Ordering::SeqCst), 0, "{role}");
+            assert!(sent.logs.contains(EXPECTED_TRUST_ACTOR), "{role}");
+            assert!(sent.logs.contains(TRUST_OUTCOME_FORBIDDEN), "{role}");
+            assert!(sent.logs.contains("was rejected"), "{role}");
         }
     }
 
@@ -1888,6 +1844,7 @@ mod tests {
 
         assert_eq!(sent.status, StatusCode::OK);
         assert_eq!(stub.observed().error_item, None);
+        assert!(!sent.logs.contains(MARKER));
     }
 
     #[tokio::test]

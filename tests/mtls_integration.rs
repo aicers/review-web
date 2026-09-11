@@ -48,6 +48,7 @@ mod mtls_integration {
     // This suite's own cap for the package-upload route, small enough that a
     // test can post one byte past it without moving a megabyte to do it.
     const PACKAGE_UPLOAD_MAX_BYTES: u64 = 1024;
+    const TRUST_GENERATION_MAX_BYTES: u64 = 1024;
     const ERR_MISSING_SAN: &str = "Missing SAN";
     const ERR_NO_DNS_SAN: &str = "No DNS SAN";
     const ERR_MISSING_INSTANCE: &str = "Missing instance";
@@ -541,7 +542,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
             package_store: Arc::new(StubPackageStore),
             package_upload_max_bytes: PACKAGE_UPLOAD_MAX_BYTES,
             trust_manager: Arc::new(StubTrustManager),
-            trust_generation_max_bytes: PACKAGE_UPLOAD_MAX_BYTES,
+            trust_generation_max_bytes: TRUST_GENERATION_MAX_BYTES,
         };
 
         let shutdown = review_web::serve(

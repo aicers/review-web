@@ -37,6 +37,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Added the `Forbidden` and `PayloadTooLarge` variants to the public `Error`
   enum, rendered as `403` and `413`. This is a breaking API change for callers
   that match on it exhaustively.
+- Added the required `trust_manager` and `trust_generation_max_bytes` fields to
+  `ServerConfig`, which carry the trust-generation receiver and the route's
+  independent maximum body size. This is a breaking API change for callers
+  that build a `ServerConfig`.
+- Added the `Conflict` variant to the public `Error` enum, rendered as `409`.
+  This is a breaking API change for callers that match on it exhaustively.
 - Renamed the corresponding GraphQL schema fields and arguments to match the
   upstream `review-database` field names:
   - `Agent.node` and `ExternalService.node` are now `nodeId`.
@@ -117,7 +123,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `{"packageId", "version", "commit"}`.
 - Added the system-administrator-only `POST /api/trust/generation` route for
   streaming signed release-trust generations to a new `TrustManager` backend,
-  with an independently configured request cap and typed activation failures.
+  with an independently configured `trust_generation_max_bytes` request cap,
+  typed activation failures and `DEFAULT_TRUST_GENERATION_MAX_BYTES` as the
+  exported shipped default.
 - Added the operation-attempt read surface, which reports what an install,
   update, remove or onboarding did rather than only what a host ended up
   with. The new `OperationAttempt` type carries the operation's id, action,
