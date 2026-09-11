@@ -217,6 +217,7 @@ struct SubQueryTwoB(
     allow_network::AllowNetworkQuery,
     trusted_user_agent::UserAgentQuery,
     node::ProcessListQuery,
+    node::BindAddrQuery,
 );
 
 /// A set of mutations defined in the schema.
@@ -1501,6 +1502,43 @@ impl TestSchema {
             Some(CustomerIds(customer_ids)),
         )
         .await
+    }
+
+    /// Executes a query as a scoped user with one extra piece of request-scoped
+    /// data.
+    ///
+    /// Request data wins over schema data of the same type, which is what lets
+    /// a test substitute its own stub for one the test schema already carries.
+    async fn execute_as_scoped_user_with_data(
+        &self,
+        query: &str,
+        role: Role,
+        customer_ids: Option<Vec<u32>>,
+        data: impl Send + Sync + 'static,
+    ) -> async_graphql::Response {
+        #[cfg(feature = "auth-jwt")]
+        {
+            self.upsert_test_account(TEST_SCOPED_USERNAME, role, customer_ids);
+            let request: async_graphql::Request = query.into();
+            let request = self
+                .request_with_guard(request, RoleGuard::Role(role))
+                .data(TEST_SCOPED_USERNAME.to_string())
+                .data(data);
+            return self.schema.execute(request).await;
+        }
+
+        #[cfg(feature = "auth-mtls")]
+        {
+            let request: async_graphql::Request = query.into();
+            let request = self
+                .request_with_context(
+                    request,
+                    RoleGuard::Role(role),
+                    Some(CustomerIds(customer_ids)),
+                )
+                .data(data);
+            self.schema.execute(request).await
+        }
     }
 
     #[cfg(feature = "auth-jwt")]

@@ -124,10 +124,8 @@ pub trait CertManager: Send + Sync {
 /// mapping from those enums and must never become one: a `target` here is a
 /// free `String` off a GraphQL argument or a ledger row, with no variant set
 /// to enumerate.
-// The five call sites that classify a target by package class land in sibling
-// issues; the list is declared here because it is what they all depend on, and
-// the tests below assert its membership.
-#[allow(dead_code)]
+// The list is declared here because every call site that classifies a target
+// by package class depends on it; the tests below assert its membership.
 pub(crate) const MODULE_PACKAGE_IDS: [&str; 5] =
     ["piglet", "giganto", "hog", "reconverge", "crusher"];
 

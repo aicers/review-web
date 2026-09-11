@@ -212,6 +212,40 @@ type BackupInfo {
 	size: StringNumber!
 }
 
+"""
+One address review proposes for one listener.
+
+There is deliberately no `editable` flag: it could never be false, and the
+fields an operator may not change are read from the allocation row rather
+than from a proposal.
+"""
+type BindAddrProposal {
+	"""
+	The name the component knows the listener by.
+	"""
+	listenerKey: String!
+	"""
+	The transport the listener binds on.
+	"""
+	transport: Transport!
+	"""
+	The proposed address, as `<ip>:<port>`.
+	"""
+	addr: String!
+}
+
+"""
+The addresses review would choose for the next instance of a component.
+"""
+type BindAddrProposals {
+	"""
+	One proposal per listener the component binds, in review's own order.
+	It is empty for every component with no listeners of its own, which is
+	an ordinary answer rather than a failure.
+	"""
+	proposals: [BindAddrProposal!]!
+}
+
 type BlockNetwork {
 	id: ID!
 	customerId: ID!
@@ -4570,6 +4604,23 @@ input HostNetworkGroupInput {
 	ranges: [IpRangeInput!]!
 }
 
+"""
+The host could not be asked what it already has bound.
+
+It names the host so the UI can offer a retry rather than rendering an
+empty install form.
+"""
+type HostOccupancyUnavailable {
+	"""
+	The host that could not be read.
+	"""
+	host: String!
+	"""
+	Why it could not be read.
+	"""
+	reason: String!
+}
+
 type HostnameTriageExclusion {
 	hostname: [String!]!
 }
@@ -7005,6 +7056,16 @@ type Query {
 	A list of process of the node.
 	"""
 	processList(hostname: String!): [Process!]!
+	"""
+	Returns the addresses review would propose for the next instance of
+	`target` on `host`.
+	
+	It takes no `instance`: the instance being recommended for is the one
+	the following install will allocate. It reserves nothing, so a proposal
+	goes stale only between this call and the install that carries it back,
+	and that install is where the staleness is caught.
+	"""
+	recommendBindAddrs(host: String!, target: String!): RecommendBindAddrsResult!
 }
 
 type RankedOutlier {
@@ -7153,6 +7214,12 @@ type RdpBruteForce implements Event {
 	"""
 	level: ThreatLevel!
 }
+
+"""
+What a bind-address recommendation answers with: the proposals, or the
+reason the host's occupancy could not be read.
+"""
+union RecommendBindAddrsResult = BindAddrProposals | HostOccupancyUnavailable
 
 type Regression {
 	slope: Float!
@@ -8277,6 +8344,18 @@ type TrafficFilter {
 	The last modification time.
 	"""
 	description: String
+}
+
+"""
+The transport a listener binds on.
+
+It is carried so a form can label a field without inferring it, and it is
+never accepted back on a mutation: transport comes from review's own
+catalog, not from the operator.
+"""
+enum Transport {
+	TCP
+	UDP
 }
 
 type TriageExclusionReason {
