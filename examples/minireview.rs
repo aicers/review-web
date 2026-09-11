@@ -26,10 +26,11 @@ use review_web::auth::{MtlsAuthError, MtlsAuthenticator, MtlsIdentity};
 #[cfg(not(feature = "auth-mtls"))]
 use review_web::graphql::account::set_initial_admin_password;
 use review_web::{
-    self as web,
+    self as web, DEFAULT_PACKAGE_UPLOAD_MAX_BYTES,
     backend::{
-        AgentManager, BindAddrInput, BuildId, CertManager, DeployError, DeployOutcome,
-        HostOnboarder, HostOnboardingTicket, OperationId, PackageDeployer,
+        AcceptedPackage, AgentManager, BindAddrInput, BuildId, CertManager, DeployError,
+        DeployOutcome, HostOnboarder, HostOnboardingTicket, IngressStream, OperationId,
+        PackageDeployer, PackageIngestError, PackageStoreReceiver,
     },
     graphql::{
         Process, ResourceUsage, SamplingPolicy, customer::NetworksTargetAgentLookupKeysPair,
@@ -308,6 +309,21 @@ impl PackageDeployer for Deployer {
     }
 }
 
+/// A store receiver that takes no package, because this example ships no
+/// build store.
+struct PackageStore;
+
+#[async_trait]
+impl PackageStoreReceiver for PackageStore {
+    async fn accept_package(
+        &self,
+        _permitted_package_ids: &[&str],
+        _body: IngressStream,
+    ) -> Result<AcceptedPackage, PackageIngestError> {
+        Err(PackageIngestError::Unavailable)
+    }
+}
+
 /// An onboarder that mints no ticket, because no registrar is configured.
 struct Onboarder;
 
@@ -550,6 +566,8 @@ fn run(config: &Config) -> Result<Arc<Notify>> {
         client_key_path: config.client_key.clone(),
         #[cfg(feature = "auth-mtls")]
         authenticator: Arc::new(MiniAuthenticator),
+        package_store: Arc::new(PackageStore),
+        package_upload_max_bytes: DEFAULT_PACKAGE_UPLOAD_MAX_BYTES,
     };
     let web_srv_shutdown_handle = web::serve(
         web_config,

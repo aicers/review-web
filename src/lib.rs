@@ -3,6 +3,7 @@ pub mod archive;
 pub mod auth;
 pub mod backend;
 pub mod graphql;
+pub mod ingress;
 
 #[cfg(all(feature = "auth-mtls", feature = "auth-jwt"))]
 compile_error!("features \"auth-mtls\" and \"auth-jwt\" are mutually exclusive");
@@ -67,7 +68,10 @@ use crate::auth::MtlsAuthenticator;
 use crate::auth::validate_context_jwt;
 #[cfg(feature = "auth-jwt")]
 use crate::auth::validate_token;
-use crate::backend::{AgentManager, CertManager, HostOnboarder, PackageDeployer};
+use crate::backend::{
+    AgentManager, CertManager, HostOnboarder, PackageDeployer, PackageStoreReceiver,
+};
+use crate::ingress::PackageUploadLimit;
 
 #[cfg(feature = "auth-mtls")]
 const ERR_MTLS_REQUIRED: &str = "mTLS is required";
@@ -77,6 +81,45 @@ const ERR_MTLS_MISSING_CERT: &str = "mTLS client certificate is missing";
 const ERR_MISSING_AUTHORIZATION: &str = "Missing Authorization";
 #[cfg(feature = "auth-jwt")]
 const DISABLE_LOCAL_AUTH_BYPASS_ENV: &str = "REVIEW_WEB_DISABLE_LOCAL_AUTH_BYPASS";
+
+/// The default maximum request-body size, in bytes, for the package-upload
+/// route: 2 GiB.
+///
+/// **This value is provisional.** It was reasoned about rather than measured.
+/// Re-derive it from a real signed `.pkg` — including a core component's
+/// container image, the case a module-sized cap would wrongly reject — once a
+/// signing pipeline produces one, and replace this paragraph with what was
+/// measured and when.
+///
+/// What the cap is for is bounding what an authenticated uploader can write
+/// into `pending/` on this host's data volume, and any finite value serves
+/// that. A measurement matters only so the cap does not wrongly reject a
+/// legitimate build — and as of 2026-09-11 no signed `.pkg` exists to reject:
+/// `aicers/review` publishes releases with no assets and no signing pipeline
+/// produces one yet. The nearest artifact anything in this product ships is a
+/// bootler payload asset, a whole-product bundle rather than one package,
+/// whose largest published form is roughly 980 MB; 2 GiB clears that
+/// comfortably, so the first real signed package cannot plausibly be refused
+/// by it. Measuring that bundle and calling the result a package size would
+/// have laundered the same guess through a number that merely looks measured.
+///
+/// [`ServerConfig::package_upload_max_bytes`] carries the effective value.
+/// This constant is the shipped default an embedding application falls back
+/// to, and is exported because `ServerConfig` has no `Default` impl: a default
+/// that exists only in prose is one the operator's configuration layer in
+/// `aicers/review` cannot reach.
+pub const DEFAULT_PACKAGE_UPLOAD_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// The largest artifact anything in this product publishes as of 2026-09-11: a
+/// bootler payload asset, which is a whole-product bundle rather than one
+/// signed package, so no single package can plausibly exceed it.
+const LARGEST_PUBLISHED_ARTIFACT_BYTES: u64 = 980 * 1000 * 1000;
+
+// The whole basis of the provisional default is that it clears that artifact
+// comfortably. Lowering it past that point would make it capable of refusing
+// the first genuine signed package it ever saw, so the build fails rather than
+// the route quietly starting to reject legitimate uploads.
+const _: () = assert!(DEFAULT_PACKAGE_UPLOAD_MAX_BYTES > LARGEST_PUBLISHED_ARTIFACT_BYTES);
 
 /// Parameters for a web server.
 pub struct ServerConfig {
@@ -91,6 +134,20 @@ pub struct ServerConfig {
     pub client_key_path: Option<PathBuf>,
     #[cfg(feature = "auth-mtls")]
     pub authenticator: Arc<dyn MtlsAuthenticator>,
+    /// Takes a signed package streamed to the package-upload route into the
+    /// build store.
+    ///
+    /// It is not feature-gated: the route it serves is reachable under both
+    /// authentication configurations.
+    pub package_store: Arc<dyn PackageStoreReceiver>,
+    /// The maximum request-body size, in bytes, the package-upload route
+    /// accepts.
+    ///
+    /// The field carries the effective value an operator configured; the
+    /// shipped default is [`DEFAULT_PACKAGE_UPLOAD_MAX_BYTES`]. A body of
+    /// exactly this many bytes is accepted and one byte more is refused
+    /// mid-stream with `413`.
+    pub package_upload_max_bytes: u64,
 }
 
 /// Runs a web server.
@@ -160,9 +217,14 @@ where
                     "/graphql/playground",
                     get(graphql_playground).post(graphql_handler),
                 )
+                .merge(ingress::router())
                 .fallback_service(static_files.layer(TraceLayer::new_for_http()))
                 .layer(Extension(schema.clone()))
-                .layer(Extension(store.clone()));
+                .layer(Extension(store.clone()))
+                .layer(Extension(config.package_store.clone()))
+                .layer(Extension(PackageUploadLimit(
+                    config.package_upload_max_bytes,
+                )));
             #[cfg(feature = "auth-mtls")]
             let router = router.layer(Extension(config.authenticator.clone()));
             #[cfg(feature = "auth-jwt")]
@@ -560,6 +622,10 @@ pub enum Error {
     TimeOut(String),
     #[error("Authentication Error: {0}")]
     Unauthorized(String),
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+    #[error("Payload Too Large: {0}")]
+    PayloadTooLarge(String),
     #[error("Not found: {0}")]
     NotFound(String),
     #[error("InternalServerError: {0}")]
@@ -578,6 +644,8 @@ impl IntoResponse for Error {
             Self::WithStatus(s) => (s, format!("Oops, {s}")),
             Self::TimeOut(msg) => (StatusCode::REQUEST_TIMEOUT, msg),
             Self::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
+            Self::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
+            Self::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg),
             Self::InternalServerError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             Self::NotFound(msg) | Self::Other(msg) => (StatusCode::NOT_FOUND, msg),
         };

@@ -10,6 +10,7 @@ mod mtls_integration {
     use anyhow::Context;
     use async_trait::async_trait;
     use chrono::{Duration as ChronoDuration, Utc};
+    use futures::StreamExt;
     use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
     use rcgen::{
         BasicConstraints, Certificate, CertificateParams, DnType, IsCa, Issuer, KeyPair,
@@ -26,9 +27,11 @@ mod mtls_integration {
         ServerConfig,
         auth::{MtlsAuthError, MtlsAuthenticator, MtlsIdentity},
         backend::{
-            AgentManager, BindAddrInput, BuildId, CertManager, DeployError, DeployOutcome,
-            HostOnboarder, HostOnboardingTicket, OperationId, PackageDeployer,
+            AcceptedPackage, AgentManager, BindAddrInput, BuildId, CertManager, DeployError,
+            DeployOutcome, HostOnboarder, HostOnboardingTicket, IngressStream, IngressStreamError,
+            OperationId, PackageDeployer, PackageIngestError, PackageStoreReceiver,
         },
+        ingress::PACKAGE_UPLOAD_PATH,
     };
     use serde::Serialize;
     use serde_json::json;
@@ -41,6 +44,9 @@ mod mtls_integration {
     const LOCALHOST_IP: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
     const NON_ADMIN_ROLE: &str = "Security Administrator";
     const EXPECTED_SERVICE: &str = "web-app";
+    // This suite's own cap for the package-upload route, small enough that a
+    // test can post one byte past it without moving a megabyte to do it.
+    const PACKAGE_UPLOAD_MAX_BYTES: u64 = 1024;
     const ERR_MISSING_SAN: &str = "Missing SAN";
     const ERR_NO_DNS_SAN: &str = "No DNS SAN";
     const ERR_MISSING_INSTANCE: &str = "Missing instance";
@@ -280,6 +286,34 @@ xvcNsYaYqk6sRk/INvcaN2E=
         }
     }
 
+    /// A receiver with no store behind it, which still drains the stream and
+    /// honours the discard contract the trait's rustdoc states: an error item
+    /// decides the variant returned, and an upload that arrives whole is refused
+    /// because this suite has nowhere to put it.
+    struct StubPackageStore;
+
+    #[async_trait]
+    impl PackageStoreReceiver for StubPackageStore {
+        async fn accept_package(
+            &self,
+            _permitted_package_ids: &[&str],
+            mut body: IngressStream,
+        ) -> Result<AcceptedPackage, PackageIngestError> {
+            while let Some(item) = body.next().await {
+                match item {
+                    Ok(_chunk) => {}
+                    Err(IngressStreamError::TooLarge { .. }) => {
+                        return Err(PackageIngestError::TooLarge);
+                    }
+                    Err(IngressStreamError::Transport(_)) => {
+                        return Err(PackageIngestError::Transport);
+                    }
+                }
+            }
+            Err(PackageIngestError::Unavailable)
+        }
+    }
+
     struct StubAuthenticator;
 
     impl MtlsAuthenticator for StubAuthenticator {
@@ -422,6 +456,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
 
     struct TestServer {
         url: String,
+        upload_url: String,
         shutdown: Arc<tokio::sync::Notify>,
         ca_cert: Certificate,
         issuer: Issuer<'static, KeyPair>,
@@ -479,6 +514,8 @@ xvcNsYaYqk6sRk/INvcaN2E=
             client_cert_path: None,
             client_key_path: None,
             authenticator: Arc::new(StubAuthenticator),
+            package_store: Arc::new(StubPackageStore),
+            package_upload_max_bytes: PACKAGE_UPLOAD_MAX_BYTES,
         };
 
         let shutdown = review_web::serve(
@@ -492,6 +529,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
 
         Ok(TestServer {
             url: format!("https://{addr_ip}:{port}/graphql"),
+            upload_url: format!("https://{addr_ip}:{port}{PACKAGE_UPLOAD_PATH}"),
             shutdown,
             ca_cert,
             issuer,
@@ -559,6 +597,43 @@ xvcNsYaYqk6sRk/INvcaN2E=
             }
         }
         Err(anyhow::anyhow!("failed to reach mTLS server: {last_err:?}"))
+    }
+
+    async fn send_package_upload(
+        client: &reqwest::Client,
+        url: &str,
+        token: Option<&str>,
+        body: Vec<u8>,
+    ) -> anyhow::Result<reqwest::Response> {
+        let mut last_err = None;
+        for _ in 0..20 {
+            let mut request = client
+                .post(url)
+                .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+                .body(body.clone());
+            if let Some(token) = token {
+                request = request.bearer_auth(token);
+            }
+            match request.send().await {
+                Ok(res) => return Ok(res),
+                Err(err) => {
+                    last_err = Some(err);
+                    sleep(Duration::from_millis(150)).await;
+                }
+            }
+        }
+        Err(anyhow::anyhow!("failed to reach mTLS server: {last_err:?}"))
+    }
+
+    async fn upload_error(response: reqwest::Response) -> anyhow::Result<String> {
+        let body: serde_json::Value =
+            serde_json::from_str(&response.text().await.context("read response body")?)
+                .context("parse response JSON")?;
+        Ok(body
+            .get("error")
+            .and_then(|value| value.as_str())
+            .context("read error")?
+            .to_string())
     }
 
     #[tokio::test]
@@ -897,6 +972,76 @@ xvcNsYaYqk6sRk/INvcaN2E=
         let parsed: serde_json::Value = serde_json::from_str(msg.to_text()?)?;
         assert_eq!(parsed["type"], "connection_error");
 
+        server.shutdown.notify_one();
+        server.shutdown.notified().await;
+        Ok(())
+    }
+
+    /// The route is mounted and its three extensions are layered by `serve`
+    /// itself: an authenticated administrator reaches the receiver, and what
+    /// comes back is the receiver's own verdict rather than the `500` a missing
+    /// `Extension` would produce. This suite's receiver has no store behind it,
+    /// so that verdict is `Unavailable`.
+    #[tokio::test]
+    async fn mtls_package_upload_reaches_the_configured_receiver() -> anyhow::Result<()> {
+        let server = start_test_server()?;
+        let (client, client_key) =
+            build_client_with_identity(&server.issuer, &server.ca_cert, SERVICE_DNS)?;
+        let token = sign_context_jwt(client_key.serialize_der().as_slice())?;
+
+        let response = send_package_upload(
+            &client,
+            &server.upload_url,
+            Some(&token),
+            b"a package".to_vec(),
+        )
+        .await?;
+        assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!upload_error(response).await?.is_empty());
+        server.shutdown.notify_one();
+        server.shutdown.notified().await;
+        Ok(())
+    }
+
+    /// `ServerConfig::package_upload_max_bytes` reaches the handler, which is
+    /// the one thing a router assembled by hand in a unit test cannot show: a
+    /// body one byte past this suite's configured cap is cut off mid-stream and
+    /// answered `413` with the ordinary `{"error": ...}` body, over a real
+    /// connection that is not reset.
+    #[tokio::test]
+    async fn mtls_package_upload_enforces_the_configured_cap() -> anyhow::Result<()> {
+        let server = start_test_server()?;
+        let (client, client_key) =
+            build_client_with_identity(&server.issuer, &server.ca_cert, SERVICE_DNS)?;
+        let token = sign_context_jwt(client_key.serialize_der().as_slice())?;
+
+        let over_cap =
+            usize::try_from(PACKAGE_UPLOAD_MAX_BYTES).context("the test cap fits in a usize")? + 1;
+        let response = send_package_upload(
+            &client,
+            &server.upload_url,
+            Some(&token),
+            vec![b'p'; over_cap],
+        )
+        .await?;
+        assert_eq!(response.status(), reqwest::StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(!upload_error(response).await?.is_empty());
+        server.shutdown.notify_one();
+        server.shutdown.notified().await;
+        Ok(())
+    }
+
+    /// The route carries no local-authentication bypass: a peer holding a valid
+    /// client certificate but no context JWT is still refused.
+    #[tokio::test]
+    async fn mtls_package_upload_rejects_missing_authorization() -> anyhow::Result<()> {
+        let server = start_test_server()?;
+        let (client, _client_key) =
+            build_client_with_identity(&server.issuer, &server.ca_cert, SERVICE_DNS)?;
+
+        let response =
+            send_package_upload(&client, &server.upload_url, None, b"a package".to_vec()).await?;
+        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
         server.shutdown.notify_one();
         server.shutdown.notified().await;
         Ok(())
