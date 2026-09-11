@@ -342,6 +342,21 @@ on a host outside their customer. Specifically:
   Security-admin-or-customer path. `onboardHost` in particular mints a bootroot
   identity (D2 §4d) — a privileged infra action.
 
+**Every one of the five records its request BEFORE the backend call, not its
+outcome after it.** The line names the operator and what they asked for on
+which host, and it is emitted once the guards have passed and the input has
+been converted, immediately before the `PackageDeployer` or `HostOnboarder`
+call. A refusal is exactly the case an audit reads back, so a line written
+after a successful call is the one an auditor cannot find. Nothing is emitted
+on the success path in addition: a caller that wants the outcome has the
+operation id and `operationAttempt(id)`, and a second line per invocation
+would double the volume to restate what the operation record already holds.
+`onboardHost` is bound by this like the rest — it is the most privileged of
+the five and carries no customer scoping, so its attempt is the one most
+worth having — and no audit line ever carries a join token, which `JoinToken`
+makes structurally impossible by offering no `Display`, `as_str`, `Deref` or
+`AsRef<str>`. See §9 entry 21.
+
 New mutations:
 
 - **[DECISION] `installService` ALLOCATES; the other two name an existing
@@ -1253,3 +1268,22 @@ supersedes.
     caller already had. Growing `BuildId` would also have broken
     `aicers/review`, which implements the trait against the landed shape.
     Corrected in §5c.
+
+21. **Every immediate-action mutation logs its REQUEST before the backend
+    call, never its outcome after it.** This document said nothing about
+    audit-log placement, so the decomposition settled it per issue: the four
+    mutations in #933 and #934 record the request before the call, under a
+    comment arguing that a refusal is exactly what an audit reads back, while
+    #934's body separately specified `onboardHost` as recording "that a token
+    was issued for a host and nothing more" — which places its only line
+    after the call, behind a `?`. A failed onboarding therefore left no
+    record at all, on the one mutation that mints a bootroot identity and
+    that carries no customer scoping to narrow who may attempt it.
+
+    The reviewer on #934 raised it and did not block the merge, and #934's
+    verification correctly declined to file it: the implementation matched
+    its own issue. Resolving it is therefore a change to that decision rather
+    than a defect report, and it is recorded here so the rule reaches the
+    mutations this surface grows later rather than being re-derived from four
+    examples and one exception. Stated in §5a; implemented for `onboardHost`
+    in #961.
