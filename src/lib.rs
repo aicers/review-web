@@ -69,9 +69,9 @@ use crate::auth::validate_context_jwt;
 #[cfg(feature = "auth-jwt")]
 use crate::auth::validate_token;
 use crate::backend::{
-    AgentManager, CertManager, HostOnboarder, PackageDeployer, PackageStoreReceiver,
+    AgentManager, CertManager, HostOnboarder, PackageDeployer, PackageStoreReceiver, TrustManager,
 };
-use crate::ingress::PackageUploadLimit;
+use crate::ingress::{PackageUploadLimit, TrustGenerationLimit};
 
 #[cfg(feature = "auth-mtls")]
 const ERR_MTLS_REQUIRED: &str = "mTLS is required";
@@ -121,6 +121,37 @@ const LARGEST_PUBLISHED_ARTIFACT_BYTES: u64 = 980 * 1000 * 1000;
 // the route quietly starting to reject legitimate uploads.
 const _: () = assert!(DEFAULT_PACKAGE_UPLOAD_MAX_BYTES > LARGEST_PUBLISHED_ARTIFACT_BYTES);
 
+/// The default maximum request-body size, in bytes, for the trust-generation
+/// route: 2 MiB.
+///
+/// **This value is provisional.** As of 2026-09-11 it is derived from the
+/// serialized `aicers/deploy-core` `TrustSetDocument` shape, not measured from
+/// a generated artifact. Compact JSON needs about 180 bytes for each anchor's
+/// two 64-character lowercase-hex values and revocation flag, and about 120
+/// bytes for each withdrawn package/version/40-character-commit triple. The
+/// planning cardinalities are 100 anchors and 10,000 withdrawn builds:
+/// `100 * 180 + 10,000 * 120 = 1,218,000` bytes. The 2 MiB default therefore
+/// leaves 879,152 bytes of headroom for the top-level fields, longer safe
+/// identifiers, whitespace and the signed container envelope.
+///
+/// Re-derive this value from a real generation once release-ops mints one,
+/// replacing this arithmetic with the generation, cardinalities, measured
+/// size and measurement date. This cap bounds per-request work and memory; the
+/// trust route never reaches the package store's `pending/` directory.
+///
+/// [`ServerConfig::trust_generation_max_bytes`] carries the effective value.
+/// This constant is exported because `ServerConfig` has no `Default` impl, so
+/// an embedding application's operator configuration needs a shipped fallback.
+pub const DEFAULT_TRUST_GENERATION_MAX_BYTES: u64 = 2 * 1024 * 1024;
+
+const DERIVED_TRUST_GENERATION_BYTES: u64 = 100 * 180 + 10_000 * 120;
+
+// Keep the provisional default tied to the documented format arithmetic and
+// headroom. A changed value must update the derivation above rather than become
+// an unexplained package-sized ceiling.
+const _: () =
+    assert!(DEFAULT_TRUST_GENERATION_MAX_BYTES - DERIVED_TRUST_GENERATION_BYTES == 879_152);
+
 /// Parameters for a web server.
 pub struct ServerConfig {
     pub addr: SocketAddr,
@@ -148,6 +179,20 @@ pub struct ServerConfig {
     /// exactly this many bytes is accepted and one byte more is refused
     /// mid-stream with `413`.
     pub package_upload_max_bytes: u64,
+    /// Verifies and activates a trust generation streamed to the trust-plane
+    /// ingress route.
+    ///
+    /// It is not feature-gated: the route it serves is reachable under both
+    /// authentication configurations.
+    pub trust_manager: Arc<dyn TrustManager>,
+    /// The maximum request-body size, in bytes, the trust-generation route
+    /// accepts.
+    ///
+    /// The field carries the effective value an operator configured; the
+    /// shipped default is [`DEFAULT_TRUST_GENERATION_MAX_BYTES`]. A body of
+    /// exactly this many bytes is accepted and one byte more is refused
+    /// mid-stream with `413`.
+    pub trust_generation_max_bytes: u64,
 }
 
 /// Runs a web server.
@@ -224,6 +269,10 @@ where
                 .layer(Extension(config.package_store.clone()))
                 .layer(Extension(PackageUploadLimit(
                     config.package_upload_max_bytes,
+                )))
+                .layer(Extension(config.trust_manager.clone()))
+                .layer(Extension(TrustGenerationLimit(
+                    config.trust_generation_max_bytes,
                 )));
             #[cfg(feature = "auth-mtls")]
             let router = router.layer(Extension(config.authenticator.clone()));
@@ -626,6 +675,8 @@ pub enum Error {
     Forbidden(String),
     #[error("Payload Too Large: {0}")]
     PayloadTooLarge(String),
+    #[error("Conflict: {0}")]
+    Conflict(String),
     #[error("Not found: {0}")]
     NotFound(String),
     #[error("InternalServerError: {0}")]
@@ -646,6 +697,7 @@ impl IntoResponse for Error {
             Self::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
             Self::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             Self::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg),
+            Self::Conflict(msg) => (StatusCode::CONFLICT, msg),
             Self::InternalServerError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             Self::NotFound(msg) | Self::Other(msg) => (StatusCode::NOT_FOUND, msg),
         };

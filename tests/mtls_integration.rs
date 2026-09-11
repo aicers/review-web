@@ -30,6 +30,7 @@ mod mtls_integration {
             AcceptedPackage, AgentManager, BindAddrInput, BuildId, CertManager, DeployError,
             DeployOutcome, HostOnboarder, HostOnboardingTicket, IngressStream, IngressStreamError,
             OperationId, PackageDeployer, PackageIngestError, PackageStoreReceiver,
+            TrustActivation, TrustIngestError, TrustManager,
         },
         ingress::PACKAGE_UPLOAD_PATH,
     };
@@ -47,6 +48,7 @@ mod mtls_integration {
     // This suite's own cap for the package-upload route, small enough that a
     // test can post one byte past it without moving a megabyte to do it.
     const PACKAGE_UPLOAD_MAX_BYTES: u64 = 1024;
+    const TRUST_GENERATION_MAX_BYTES: u64 = 1024;
     const ERR_MISSING_SAN: &str = "Missing SAN";
     const ERR_NO_DNS_SAN: &str = "No DNS SAN";
     const ERR_MISSING_INSTANCE: &str = "Missing instance";
@@ -314,6 +316,29 @@ xvcNsYaYqk6sRk/INvcaN2E=
         }
     }
 
+    struct StubTrustManager;
+
+    #[async_trait]
+    impl TrustManager for StubTrustManager {
+        async fn accept_generation(
+            &self,
+            mut body: IngressStream,
+        ) -> Result<TrustActivation, TrustIngestError> {
+            while let Some(item) = body.next().await {
+                match item {
+                    Ok(_chunk) => {}
+                    Err(IngressStreamError::TooLarge { .. }) => {
+                        return Err(TrustIngestError::TooLarge);
+                    }
+                    Err(IngressStreamError::Transport(_)) => {
+                        return Err(TrustIngestError::Transport);
+                    }
+                }
+            }
+            Err(TrustIngestError::Unavailable)
+        }
+    }
+
     struct StubAuthenticator;
 
     impl MtlsAuthenticator for StubAuthenticator {
@@ -516,6 +541,8 @@ xvcNsYaYqk6sRk/INvcaN2E=
             authenticator: Arc::new(StubAuthenticator),
             package_store: Arc::new(StubPackageStore),
             package_upload_max_bytes: PACKAGE_UPLOAD_MAX_BYTES,
+            trust_manager: Arc::new(StubTrustManager),
+            trust_generation_max_bytes: TRUST_GENERATION_MAX_BYTES,
         };
 
         let shutdown = review_web::serve(
