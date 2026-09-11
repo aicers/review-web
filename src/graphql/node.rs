@@ -2,7 +2,9 @@ mod bind_addr;
 mod control;
 mod crud;
 mod customer_sensor_list;
-mod deploy;
+// `pub(super)` so `graphql::operation_attempt` reaches `bind_package_class`:
+// the class binding has one comparison site for the whole crate.
+pub(super) mod deploy;
 mod input;
 mod process;
 mod status;

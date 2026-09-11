@@ -14,7 +14,7 @@ use async_graphql::{Context, Enum, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::{self as database, Store, event::Direction};
 
-use super::{Role, RoleGuard, customer_access, install_state};
+use super::{Role, RoleGuard, customer_access, install_state, node::deploy::bind_package_class};
 use crate::backend::{CORE_PACKAGE_IDS, MODULE_PACKAGE_IDS};
 
 /// The refusal message every role and customer-scope rejection in this crate
@@ -343,9 +343,9 @@ impl OperationAttemptQuery {
         target: String,
     ) -> Result<Vec<OperationAttempt>> {
         customer_access::check_hostname_access(ctx, &host)?;
-        if !MODULE_PACKAGE_IDS.contains(&target.as_str()) {
-            return Err(format!("{target} is not a module package").into());
-        }
+        // The class binding is `deploy`'s single comparison site rather than a
+        // second one here: one target must not have two classes.
+        bind_package_class(&target, &MODULE_PACKAGE_IDS)?;
 
         let store = super::get_store(ctx)?;
         let map = store.operation_attempt_map();
@@ -1132,7 +1132,7 @@ mod tests {
             assert_eq!(res.errors.len(), 1, "{target}");
             assert_eq!(
                 res.errors[0].message,
-                format!("{target} is not a module package"),
+                format!("{target} is not one of the package-ids this operation accepts"),
                 "{target}"
             );
         }
