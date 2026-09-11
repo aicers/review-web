@@ -1215,6 +1215,12 @@ mod tests {
         // The registry is keyed on `(component, host)` and iterated in its own
         // key order, which groups a component's hosts together and orders them
         // among themselves; nothing here re-sorts it.
+        //
+        // That order is a deterministic function of the pair but is not
+        // lexicographic: the key is a bincode tuple whose halves carry varint
+        // length prefixes, so a shorter `component` sorts first and `roxyd`
+        // precedes `review`. Re-sorting to read prettier is exactly what the
+        // contract forbids, so the expectation below is the encoding's order.
         assert_eq!(
             pairs,
             vec![
