@@ -353,6 +353,8 @@ mod tests {
     const COMMIT: &str = "a1b2c3d";
     const CHUNK_LEN: usize = 16 * 1024;
     const CAP: u64 = 64 * 1024;
+    /// A cap smaller than one chunk, so the first chunk alone overruns it.
+    const TINY_CAP: u64 = 8;
     const GENEROUS_CAP: u64 = 1 << 40;
     /// A body far larger than any buffer a handler could sanely hold: 4096
     /// chunks of 64 KiB, or 256 MiB.
@@ -958,6 +960,31 @@ mod tests {
         assert_eq!(observed.items_after_error, 0);
         assert_eq!(observed.chunks, 4);
         assert_eq!(observed.total_len, CAP);
+    }
+
+    /// The cap is crossed by the chunk that opens the body, so the receiver is
+    /// handed the error item and nothing else. The chunk that crosses is not
+    /// forwarded in part or in whole, which is what keeps the inclusive
+    /// comparison from admitting a body that only its first chunk overruns.
+    #[tokio::test]
+    async fn a_first_chunk_past_the_cap_hands_the_receiver_nothing_but_the_error() {
+        let stub = stub(Outcome::Accept);
+        let body = body_of(vec![Bytes::from(vec![b'p'; CHUNK_LEN])]);
+        let sent = send(
+            &Caller::Role(Role::SystemAdministrator),
+            TINY_CAP,
+            &stub,
+            body,
+        )
+        .await;
+
+        assert_eq!(sent.status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(sent.error(), ERR_TOO_LARGE);
+        let observed = stub.observed();
+        assert_eq!(observed.chunks, 0);
+        assert_eq!(observed.total_len, 0);
+        assert_eq!(observed.error_item, Some(ErrorItem::TooLarge));
+        assert_eq!(observed.items_after_error, 0);
     }
 
     #[tokio::test]
