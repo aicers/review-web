@@ -1,4 +1,4 @@
-//! Exercises the deploy surface from outside the crate.
+//! Exercises the deploy and package-ingest surfaces from outside the crate.
 //!
 //! `aicers/review` is the real implementer, so the constructors and the field
 //! visibility have to work from another crate. An integration test is compiled
@@ -7,9 +7,11 @@
 //! and are unreachable here on purpose, so the crate's own unit tests cover
 //! that direction and this file covers the construction side.
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Mutex};
 
 use async_trait::async_trait;
+use axum::body::Bytes;
+use futures::StreamExt;
 use review_database::{
     BuildSelector, ListenerBinding, ListenerTransport, PortOwner, RequestKeyError,
 };
@@ -19,11 +21,13 @@ use review_protocol::types::node::{
     BootstrapMaterial, DeliveryMode, FailurePolicy, Lifecycle as ProtocolLifecycle, PackageState,
 };
 use review_web::backend::{
-    BindAddrInput, BuildId, DeployError, DeployOutcome, HostOnboarder, HostOnboardingTicket,
-    JoinToken, OperationId, PackageDeployer,
+    AcceptedPackage, BindAddrInput, BuildId, DeployError, DeployOutcome, HostOnboarder,
+    HostOnboardingTicket, IngressStream, IngressStreamError, JoinToken, OperationId,
+    PackageDeployer, PackageIngestError, PackageStoreReceiver,
 };
 
 const TOKEN: &str = "s3cret-join-token";
+const ACCEPTED_PACKAGE_ID: &str = "piglet";
 const REQUEST_KEY: &str = "b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e";
 
 /// An implementer living outside the crate, exactly as `aicers/review` will.
@@ -406,4 +410,140 @@ async fn the_onboarding_ticket_redacts_its_token() {
     assert!(!rendered.contains(TOKEN), "{rendered}");
     assert!(rendered.contains("<redacted>"), "{rendered}");
     assert_eq!(operation_id.to_string(), REQUEST_KEY);
+}
+
+/// A receiver living outside the crate, which honours the discard contract the
+/// trait's rustdoc states: it consumes the stream, and an error item on it
+/// throws the upload away and decides the variant returned.
+struct OutsideReceiver {
+    observed: Mutex<Vec<usize>>,
+}
+
+#[async_trait]
+impl PackageStoreReceiver for OutsideReceiver {
+    async fn accept_package(
+        &self,
+        permitted_package_ids: &[&str],
+        mut body: IngressStream,
+    ) -> Result<AcceptedPackage, PackageIngestError> {
+        let mut written = Vec::new();
+        while let Some(item) = body.next().await {
+            match item {
+                Ok(chunk) => written.push(chunk.len()),
+                Err(IngressStreamError::TooLarge { .. }) => {
+                    // Nothing under `pending/` survives an error item, so the
+                    // bytes accepted so far are dropped rather than committed.
+                    return Err(PackageIngestError::TooLarge);
+                }
+                Err(IngressStreamError::Transport(_)) => {
+                    return Err(PackageIngestError::Transport);
+                }
+            }
+        }
+        *self.observed.lock().expect("the observation mutex") = written;
+
+        if !permitted_package_ids.contains(&ACCEPTED_PACKAGE_ID) {
+            return Err(PackageIngestError::PackageNotPermitted {
+                package_id: ACCEPTED_PACKAGE_ID.to_string(),
+            });
+        }
+        Ok(AcceptedPackage {
+            package_id: ACCEPTED_PACKAGE_ID.to_string(),
+            build: BuildId {
+                version: "0.21.0".to_string(),
+                commit: "a1b2c3d".to_string(),
+            },
+        })
+    }
+}
+
+/// Builds the stream shape the route hands over: boxed and pinned, because the
+/// implementer cannot name the crate's own adapter type.
+fn ingress_stream(items: Vec<Result<Bytes, IngressStreamError>>) -> IngressStream {
+    Box::pin(futures::stream::iter(items))
+}
+
+#[tokio::test]
+async fn an_outside_receiver_reads_a_whole_upload_and_names_what_it_accepted() {
+    let receiver: Box<dyn PackageStoreReceiver> = Box::new(OutsideReceiver {
+        observed: Mutex::new(Vec::new()),
+    });
+    let accepted = receiver
+        .accept_package(
+            &[ACCEPTED_PACKAGE_ID],
+            ingress_stream(vec![
+                Ok(Bytes::from_static(b"aaaa")),
+                Ok(Bytes::from_static(b"bb")),
+            ]),
+        )
+        .await
+        .expect("the stub takes the package");
+
+    assert_eq!(accepted.package_id, ACCEPTED_PACKAGE_ID);
+    assert_eq!(accepted.build.version, "0.21.0");
+    assert_eq!(accepted.build.commit, "a1b2c3d");
+}
+
+/// The permitted set travels with the upload, so a receiver outside the crate
+/// refuses an id that is absent from it rather than committing and reporting
+/// afterwards.
+#[tokio::test]
+async fn an_outside_receiver_refuses_an_id_absent_from_the_permitted_set() {
+    let receiver = OutsideReceiver {
+        observed: Mutex::new(Vec::new()),
+    };
+    let error = receiver
+        .accept_package(
+            &["giganto"],
+            ingress_stream(vec![Ok(Bytes::from_static(b"aaaa"))]),
+        )
+        .await
+        .expect_err("the accepted id is not permitted");
+
+    assert!(matches!(
+        error,
+        PackageIngestError::PackageNotPermitted { package_id } if package_id == ACCEPTED_PACKAGE_ID
+    ));
+}
+
+/// Both stream errors are nameable from another crate and carry the contract's
+/// mapping, which is the one thing the route cannot enforce for the implementer.
+#[tokio::test]
+async fn an_error_item_discards_the_upload_and_picks_the_variant() {
+    for (item, expected) in [
+        (
+            Err(IngressStreamError::TooLarge { limit: 4 }),
+            PackageIngestError::TooLarge,
+        ),
+        (
+            Err(IngressStreamError::Transport(
+                "the peer went away".to_string(),
+            )),
+            PackageIngestError::Transport,
+        ),
+    ] {
+        let receiver = OutsideReceiver {
+            observed: Mutex::new(Vec::new()),
+        };
+        let error = receiver
+            .accept_package(
+                &[ACCEPTED_PACKAGE_ID],
+                ingress_stream(vec![Ok(Bytes::from_static(b"aaaa")), item]),
+            )
+            .await
+            .expect_err("an error item throws the upload away");
+
+        assert_eq!(
+            std::mem::discriminant(&error),
+            std::mem::discriminant(&expected)
+        );
+        // Nothing was committed, so the receiver never recorded what it read.
+        assert!(
+            receiver
+                .observed
+                .lock()
+                .expect("the observation mutex")
+                .is_empty()
+        );
+    }
 }

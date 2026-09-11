@@ -394,7 +394,7 @@ mod tests {
         Transport,
     }
 
-    #[derive(Debug, Default)]
+    #[derive(Clone, Debug, Default)]
     struct Observed {
         calls: usize,
         permitted: Vec<String>,
@@ -469,17 +469,7 @@ mod tests {
 
     impl Stub {
         fn observed(&self) -> Observed {
-            let observed = self.observed.lock().expect("the observation mutex");
-            Observed {
-                calls: observed.calls,
-                permitted: observed.permitted.clone(),
-                chunks: observed.chunks,
-                peak_chunk_len: observed.peak_chunk_len,
-                total_len: observed.total_len,
-                error_item: observed.error_item,
-                items_after_error: observed.items_after_error,
-                produced_when_first_chunk_seen: observed.produced_when_first_chunk_seen,
-            }
+            self.observed.lock().expect("the observation mutex").clone()
         }
     }
 
