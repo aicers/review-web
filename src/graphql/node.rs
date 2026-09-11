@@ -2,6 +2,7 @@ mod bind_addr;
 mod control;
 mod crud;
 mod customer_sensor_list;
+mod deploy;
 mod input;
 mod process;
 mod status;
@@ -48,6 +49,10 @@ pub(super) struct ProcessListQuery;
 /// The root of the bind-address recommendation query.
 #[derive(Default)]
 pub(super) struct BindAddrQuery;
+
+/// The root of the module install, update and removal mutations.
+#[derive(Default)]
+pub(super) struct DeployMutation;
 
 #[derive(Clone, Deserialize, PartialEq, Serialize, Copy, Eq, Enum)]
 #[graphql(remote = "database::AgentKind")]

@@ -358,6 +358,40 @@ type BackupInfo {
 }
 
 """
+Who holds an allocated address.
+
+It carries no listener key: the contended row's key is rendered by the
+conflict itself.
+"""
+type BindAddrHolder {
+	"""
+	The canonical package-id of the component holding the address.
+	"""
+	component: String!
+	"""
+	The instance number holding it. It is a `u32` upstream, which `Int`
+	cannot represent, so it crosses as the `StringNumber` scalar.
+	"""
+	instance: StringNumber!
+}
+
+"""
+One address an operator submits with an install.
+
+There is no `transport` field: transport is never operator input.
+"""
+input BindAddrInput {
+	"""
+	The name the component knows the listener by, passed through unchecked.
+	"""
+	listenerKey: String!
+	"""
+	The address to bind, as `<ip>:<port>`.
+	"""
+	addr: String!
+}
+
+"""
 One address review proposes for one listener.
 
 There is deliberately no `editable` flag: it could never be false, and the
@@ -3243,6 +3277,23 @@ type BoundAddr {
 	addr: String!
 }
 
+"""
+The build the operator asked for: exactly one field is set.
+
+GraphQL has no input union, so the two alternatives cross as nullable
+fields and a submission setting both or neither is refused.
+"""
+input BuildSelectorInput {
+	"""
+	A version, which review turns into a build.
+	"""
+	version: String
+	"""
+	An exact commit.
+	"""
+	commit: String
+}
+
 type Category {
 	id: ID!
 	name: String!
@@ -3283,6 +3334,35 @@ type CategoryEdge {
 
 type CertificatePayload {
 	parsedCertificate: [ParsedCertificate!]!
+}
+
+"""
+A teardown is still owed on the target, so a new operation on it cannot
+start.
+
+It is a mutation result rather than a read field because a client that read
+the owed cleanup a moment earlier can still lose the race, and the
+operation id is what lets a screen point at the cleanup instead of saying
+"try again later".
+"""
+type CleanupPending {
+	"""
+	The host the teardown is owed on.
+	"""
+	host: String!
+	"""
+	The package-id the teardown is owed for.
+	"""
+	target: String!
+	"""
+	The instance the teardown is owed for. It is null when the refused
+	install never allocated one.
+	"""
+	instance: StringNumber
+	"""
+	The operation that owes it.
+	"""
+	operationId: String!
 }
 
 type Cluster {
@@ -3877,6 +3957,25 @@ type DceRpcContext {
 	transferMinor: Int!
 	acceptance: Int!
 	reason: Int!
+}
+
+"""
+Whether the apply finished or was accepted for later reconciliation.
+
+A client must not read `ACCEPTED` as done: it means the apply tore down its
+own response channel and the true outcome is reconciled later, which is what
+an operation query is for.
+"""
+enum DeployDisposition {
+	"""
+	The agent finished the apply and reported a terminal outcome.
+	"""
+	APPLIED
+	"""
+	A self-disrupting apply answered before the swap tore the response
+	channel down, so the true outcome is reconciled later.
+	"""
+	ACCEPTED
 }
 
 type DhcpOption {
@@ -4743,6 +4842,20 @@ type ExtraThreat implements Event {
 }
 
 """
+What an apply does with a host it could not finish.
+"""
+enum FailurePolicy {
+	"""
+	Put the build that was there back.
+	"""
+	ROLLBACK
+	"""
+	Leave the failure standing for an operator to look at.
+	"""
+	HOLD
+}
+
+"""
 Traffic flow direction.
 """
 enum FlowKind {
@@ -5039,6 +5152,29 @@ type HostOccupancyUnavailable {
 	reason: String!
 }
 
+"""
+Something the allocation table does not know about holds the port on the
+host.
+
+It has no holder field at all, because there is none to name: host
+occupancy is a live probe of the host rather than an allocation row, and
+is identity-free by design.
+"""
+type HostPortOccupied {
+	"""
+	The listener the port was wanted for.
+	"""
+	listenerKey: String!
+	"""
+	The transport the port was wanted on.
+	"""
+	transport: Transport!
+	"""
+	The occupied port.
+	"""
+	port: Int!
+}
+
 type HostnameTriageExclusion {
 	hostname: [String!]!
 }
@@ -5258,6 +5394,26 @@ type HttpThreat implements Event {
 	Learning Method
 	"""
 	learningMethod: LearningMethod!
+}
+
+"""
+What `installService` answers with.
+"""
+union InstallServiceResult = InstallServiceSuccess | PortAllocationConflict | HostPortOccupied | HostOccupancyUnavailable | RequestKeyReused | CleanupPending
+
+"""
+The install was accepted, and this is the operation to poll.
+"""
+type InstallServiceSuccess {
+	"""
+	The attempt's durable identity, which for an install is the submitted
+	`requestKey`.
+	"""
+	operationId: String!
+	"""
+	Whether the apply finished or was accepted for later reconciliation.
+	"""
+	disposition: DeployDisposition!
 }
 
 enum Interval {
@@ -6270,6 +6426,39 @@ type Mutation {
 	"""
 	updateLabelDb(name: String!, new: String!): LabelDbOutput!
 	"""
+	Installs `target` on `host` as a newly allocated instance and returns
+	the operation to poll.
+	
+	It takes no `instance`: review picks the next free instance number and
+	this instance's addresses, which is why the mutation instead carries a
+	client-minted `requestKey` that becomes the attempt's durable
+	idempotency key. The client generates that key once per install the
+	operator initiated, so a double-click carries the same value — and
+	comes back as the same success — while a deliberate "add another
+	instance" carries a new one.
+	
+	`bindAddrs` is optional. Absent means "no listening addresses to set",
+	which is every component review's catalog does not list.
+	"""
+	installService(host: String!, target: String!, buildSelector: BuildSelectorInput!, onFailure: FailurePolicy! = ROLLBACK, bindAddrs: [BindAddrInput!], requestKey: String!): InstallServiceResult!
+	"""
+	Updates the build of an existing instance and returns the operation to
+	poll.
+	
+	The identity already exists, so nothing is allocated or registered
+	here. `instance` is the number the UI read from the row it acted on,
+	never typed by an operator; whether it names an instance that exists is
+	review's answer, and this resolver performs no existence check of its
+	own.
+	"""
+	updateService(host: String!, target: String!, instance: StringNumber!, buildSelector: BuildSelectorInput!, onFailure: FailurePolicy! = ROLLBACK): UpdateServiceResult!
+	"""
+	Removes an existing instance and returns the operation to poll.
+	
+	Confirming the removal with the operator is a UI concern.
+	"""
+	removeService(host: String!, target: String!, instance: StringNumber!): RemoveServiceResult!
+	"""
 	Inserts a new triage policy, returning the ID of the new triage.
 	"""
 	insertTriagePolicy(name: String!, triageExclusionId: [ID!]!, packetAttr: [PacketAttrInput!]!, confidence: [ConfidenceInput!]!, response: [ResponseInput!]!, customerId: ID): ID!
@@ -7163,6 +7352,36 @@ enum Period {
 	ONE_DAY
 }
 
+"""
+Another instance already holds the address in the allocation table.
+
+It carries every part of the refusal, so a screen can name the holder
+rather than reporting a bare conflict.
+"""
+type PortAllocationConflict {
+	"""
+	The name the component knows the contended listener by, which is the
+	holder's own listener key.
+	"""
+	listenerKey: String!
+	"""
+	The host the contended address is bound on.
+	"""
+	host: String!
+	"""
+	The transport the contended address is bound on.
+	"""
+	transport: Transport!
+	"""
+	The contended port. A `u16` is exactly representable as `Int`.
+	"""
+	port: Int!
+	"""
+	Who holds it.
+	"""
+	holder: BindAddrHolder!
+}
+
 type PortScan implements Event {
 	"""
 	Opaque event identifier.
@@ -7862,6 +8081,23 @@ type Regression {
 	rSquare: Float!
 }
 
+"""
+What `removeService` answers with.
+"""
+union RemoveServiceResult = RemoveServiceSuccess | CleanupPending
+
+"""
+The removal was accepted, and this is the operation to poll.
+
+It carries no disposition because `remove` returns only an id.
+"""
+type RemoveServiceSuccess {
+	"""
+	The attempt's durable identity.
+	"""
+	operationId: String!
+}
+
 type RepeatedHttpSessions implements Event {
 	"""
 	Opaque event identifier.
@@ -7955,6 +8191,21 @@ type RepeatedHttpSessions implements Event {
 	Learning Method
 	"""
 	learningMethod: LearningMethod!
+}
+
+"""
+The request key already names an attempt submitted with a different
+request.
+
+It is non-retryable: the same submission produces the same refusal. A
+repeat carrying the *same* request is not this — it is a success carrying
+the first call's operation id.
+"""
+type RequestKeyReused {
+	"""
+	The key as submitted.
+	"""
+	requestKey: String!
 }
 
 type Response {
@@ -9296,6 +9547,28 @@ type UnusualDestinationPattern implements Event {
 	Learning Method
 	"""
 	learningMethod: LearningMethod!
+}
+
+"""
+What `updateService` answers with.
+
+An update allocates nothing, so neither bind-address conflict and no
+request-key refusal is reachable from it.
+"""
+union UpdateServiceResult = UpdateServiceSuccess | CleanupPending
+
+"""
+The update was accepted, and this is the operation to poll.
+"""
+type UpdateServiceSuccess {
+	"""
+	The attempt's durable identity.
+	"""
+	operationId: String!
+	"""
+	Whether the apply finished or was accepted for later reconciliation.
+	"""
+	disposition: DeployDisposition!
 }
 
 type UriTriageExclusion {

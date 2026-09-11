@@ -298,6 +298,7 @@ struct SubMutationTwoA(
 #[derive(MergedObject, Default)]
 struct SubMutationTwoB(
     label_db::LabelDbMutation,
+    node::DeployMutation,
     triage::TriagePolicyMutation,
     triage::TriageExclusionReasonMutation,
     triage::TriageResponseMutation,

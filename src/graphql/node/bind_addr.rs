@@ -17,6 +17,7 @@ use review_database::{ListenerBinding, ListenerTransport, PortOwner};
 use super::{
     super::{BoxedPackageDeployer, Role, RoleGuard, customer_access},
     BindAddrQuery,
+    deploy::bind_package_class,
 };
 use crate::backend::{DeployError, MODULE_PACKAGE_IDS};
 
@@ -155,11 +156,8 @@ pub(crate) struct HostPortOccupied {
 /// silently dropped. No `From<DeployError>` impl is written for it: such an
 /// impl could not be total, since each object is reachable from exactly one of
 /// the enum's six variants.
-// The `installService` resolver is the caller, and lands in a sibling issue;
-// the function is `pub(crate)` from the day it is written so that issue calls
-// it rather than building a second construction site. The tests below exercise
-// it in the meantime.
-#[allow(dead_code)]
+// The `installService` resolver is the caller; the function is `pub(crate)` so
+// that resolver calls it rather than building a second construction site.
 pub(crate) fn port_allocation_conflict(
     host: String,
     transport: ListenerTransport,
@@ -185,7 +183,6 @@ pub(crate) fn port_allocation_conflict(
 /// to look up, nothing to default and no holder to omit, because the variant
 /// carries none.
 // Declared `pub(crate)` for the same reason as [`port_allocation_conflict`].
-#[allow(dead_code)]
 pub(crate) fn host_port_occupied(
     listener_key: String,
     transport: ListenerTransport,
@@ -255,9 +252,9 @@ impl BindAddrQuery {
         target: String,
     ) -> Result<RecommendBindAddrsResult> {
         customer_access::check_hostname_access(ctx, &host)?;
-        if !MODULE_PACKAGE_IDS.contains(&target.as_str()) {
-            return Err(format!("{target} is not a module package").into());
-        }
+        // The class binding is `deploy`'s single comparison site rather than a
+        // second one here: one target must not have two classes.
+        bind_package_class(&target, &MODULE_PACKAGE_IDS)?;
 
         let deployer = ctx.data::<BoxedPackageDeployer>()?;
         match deployer.recommend_bind_addrs(&host, &target).await {
@@ -585,7 +582,7 @@ mod tests {
             assert_eq!(res.errors.len(), 1, "{target}");
             assert_eq!(
                 res.errors[0].message,
-                format!("{target} is not a module package")
+                format!("{target} is not one of the package-ids this operation accepts")
             );
             assert_eq!(calls.load(Ordering::SeqCst), 0, "{target}");
         }

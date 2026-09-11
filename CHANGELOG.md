@@ -130,6 +130,23 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   core package and an unrecognised target are readable by system
   administrators alone, and a module package is customer-scoped to the host
   the row names.
+- Added the `installService`, `updateService` and `removeService` GraphQL
+  mutations, which install, update and remove a module package on a host and
+  return the operation id to poll. All three are open to system and security
+  administrators, are scoped to the caller's own customers, and accept only the
+  five module package-ids. `installService` allocates, so it takes no
+  `instance` and instead takes a client-minted `requestKey` that dedupes the
+  operator's intent: a resubmission carrying the same request comes back as the
+  same success with the same operation id, while one carrying a different
+  request comes back as `RequestKeyReused`. `updateService` and `removeService`
+  take the `instance` the read path renders, as the `StringNumber` scalar. Each
+  mutation answers with a result union, so a refusal a client can act on —
+  `PortAllocationConflict`, `HostPortOccupied`, `HostOccupancyUnavailable`,
+  `RequestKeyReused` or `CleanupPending` — arrives as a typed member rather
+  than as an error string. `onFailure` chooses between `ROLLBACK` and `HOLD`
+  and defaults to `ROLLBACK`, and `buildSelector` names either a version or a
+  commit. The configuration draft-to-apply mutations are unchanged: an install
+  or an update never rides the draft.
 
 ### Fixed
 
