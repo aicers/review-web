@@ -1486,6 +1486,9 @@ mod tests {
         let debug = calls.only_ticket_debug();
         assert!(debug.contains("<redacted>"), "{debug}");
         assert!(!debug.contains(JOIN_TOKEN), "{debug}");
+        logs.clone()
+            .flush()
+            .expect("flushing the in-memory log capture succeeds");
         let logs = logs.contents();
         assert!(logs.contains("token issued for new-host"), "{logs}");
         assert!(!logs.contains(JOIN_TOKEN), "{logs}");
