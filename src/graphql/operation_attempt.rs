@@ -14,7 +14,7 @@ use async_graphql::{Context, Enum, Object, Result, StringNumber};
 use chrono::{DateTime, Utc};
 use review_database::{self as database, Store, event::Direction};
 
-use super::{Role, RoleGuard, customer_access, install_state};
+use super::{Role, RoleGuard, customer_access, install_state, node::deploy::bind_package_class};
 use crate::backend::{CORE_PACKAGE_IDS, MODULE_PACKAGE_IDS};
 
 /// The refusal message every role and customer-scope rejection in this crate
@@ -109,14 +109,21 @@ enum AttemptAccess {
 /// - anything else, `bootroot` and any target this build does not recognise
 ///   included, takes the stricter side, so a target added upstream is not
 ///   readable by the weaker tier until someone decides it should be.
+///
+/// The two membership questions are asked through [`bind_package_class`], the
+/// crate's single class-comparison site, so this tiering and the mutations
+/// that refuse on the same lists cannot drift apart. Only the helper's verdict
+/// is read here: its refusal message names a request that was rejected, and
+/// nothing was rejected on this path — a target in neither list is answered,
+/// with the stricter tier.
 fn required_access(action: database::OperationAction, target: &str) -> AttemptAccess {
     if action == database::OperationAction::Onboard {
         return AttemptAccess::SystemAdministratorOnly;
     }
-    if CORE_PACKAGE_IDS.contains(&target) {
+    if bind_package_class(target, &CORE_PACKAGE_IDS).is_ok() {
         return AttemptAccess::SystemAdministratorOnly;
     }
-    if MODULE_PACKAGE_IDS.contains(&target) {
+    if bind_package_class(target, &MODULE_PACKAGE_IDS).is_ok() {
         return AttemptAccess::HostScoped;
     }
     AttemptAccess::SystemAdministratorOnly
@@ -343,9 +350,9 @@ impl OperationAttemptQuery {
         target: String,
     ) -> Result<Vec<OperationAttempt>> {
         customer_access::check_hostname_access(ctx, &host)?;
-        if !MODULE_PACKAGE_IDS.contains(&target.as_str()) {
-            return Err(format!("{target} is not a module package").into());
-        }
+        // The class binding is `deploy`'s single comparison site rather than a
+        // second one here: one target must not have two classes.
+        bind_package_class(&target, &MODULE_PACKAGE_IDS)?;
 
         let store = super::get_store(ctx)?;
         let map = store.operation_attempt_map();
@@ -1132,7 +1139,7 @@ mod tests {
             assert_eq!(res.errors.len(), 1, "{target}");
             assert_eq!(
                 res.errors[0].message,
-                format!("{target} is not a module package"),
+                format!("{target} is not one of the package-ids this operation accepts"),
                 "{target}"
             );
         }

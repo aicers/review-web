@@ -2,6 +2,9 @@ mod bind_addr;
 mod control;
 mod crud;
 mod customer_sensor_list;
+// `pub(super)` so `graphql::operation_attempt` reaches `bind_package_class`:
+// the class binding has one comparison site for the whole crate.
+pub(super) mod deploy;
 mod input;
 mod process;
 mod status;
@@ -48,6 +51,10 @@ pub(super) struct ProcessListQuery;
 /// The root of the bind-address recommendation query.
 #[derive(Default)]
 pub(super) struct BindAddrQuery;
+
+/// The root of the module install, update and removal mutations.
+#[derive(Default)]
+pub(super) struct DeployMutation;
 
 #[derive(Clone, Deserialize, PartialEq, Serialize, Copy, Eq, Enum)]
 #[graphql(remote = "database::AgentKind")]

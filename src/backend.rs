@@ -283,8 +283,6 @@ impl OperationId {
 
     /// Yields the key without copying, for a resolver returning it as an owned
     /// `String!`.
-    // Declared here for the same reason as `as_str`.
-    #[allow(dead_code)]
     #[must_use]
     pub(crate) fn into_inner(self) -> String {
         self.0
