@@ -6,6 +6,12 @@
 //! buffer, and the byte cap is enforced chunk by chunk while the body is still
 //! being read.
 //!
+//! The pieces every ingress route needs are module-level rather than folded
+//! into a handler: the byte-counting adapter [`capped_stream`], and
+//! [`authenticate`], which turns whichever credential the build's feature
+//! configuration uses into an [`IngressActor`]. A route added here calls them
+//! rather than carrying a second copy.
+//!
 //! What the tier check here guarantees is about this **route**, not about the
 //! bytes on disk. The build store is writable by `REView`'s own service
 //! account, so a component compromised on that host can edit `accepted/`
@@ -148,6 +154,88 @@ where
     }))
 }
 
+/// The authenticated caller of an ingress route.
+///
+/// Every route in this module needs the same two things out of a credential:
+/// the role its tier check reads, and a name to record a rejection against.
+/// Which credential carries them differs by feature, not by route, so the
+/// extraction lives here rather than in a handler — a second ingress route
+/// calls [`authenticate`] instead of repeating it.
+pub(crate) struct IngressActor {
+    /// The name a rejection is logged against — a username under `auth-jwt`,
+    /// the peer's `instance.service.host` identity under `auth-mtls`.
+    pub(crate) name: String,
+    pub(crate) role: Role,
+}
+
+/// Authenticates a bearer-token caller and reads its role.
+///
+/// Role extraction happens inside the handler rather than in a `route_layer`
+/// because the two feature configurations authenticate through different
+/// paths; this is the `auth-jwt` one, validating the token exactly as the JWT
+/// GraphQL handler does.
+///
+/// # Errors
+///
+/// Returns [`Error::Unauthorized`] if the request carries no bearer token or
+/// if the token does not validate against the store.
+///
+/// # Panics
+///
+/// Panics if the store lock is poisoned, which means another thread panicked
+/// while holding it and the store's contents can no longer be trusted.
+#[cfg(feature = "auth-jwt")]
+pub(crate) fn authenticate(
+    store: &std::sync::RwLock<Store>,
+    auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
+) -> Result<IngressActor, Error> {
+    let auth = auth?;
+    let (name, role) = {
+        let store = store
+            .read()
+            .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
+        validate_token(&store, auth.token())?
+    };
+    Ok(IngressActor { name, role })
+}
+
+/// Authenticates an mTLS peer and reads its role.
+///
+/// The peer's leaf certificate authenticates the caller and the context JWT
+/// bound to it carries the role, exactly as the mTLS GraphQL handler does.
+/// This is the `auth-mtls` counterpart of the `auth-jwt` helper above, and
+/// the reason role extraction is not a `route_layer`.
+///
+/// # Errors
+///
+/// Returns [`Error::Unauthorized`] if the connection carried no peer
+/// certificate, if the leaf certificate does not authenticate, or if the
+/// context JWT is absent or not bound to that certificate.
+#[cfg(feature = "auth-mtls")]
+pub(crate) fn authenticate(
+    authenticator: &dyn MtlsAuthenticator,
+    peer: Option<Extension<Arc<TlsPeerInfo>>>,
+    auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
+) -> Result<IngressActor, Error> {
+    let peer = peer
+        .map(|Extension(p)| p)
+        .ok_or_else(|| Error::Unauthorized(crate::ERR_MTLS_REQUIRED.to_string()))?;
+    let cert = peer
+        .leaf_cert()
+        .ok_or_else(|| Error::Unauthorized(crate::ERR_MTLS_MISSING_CERT.to_string()))?;
+    let identity = authenticator.authenticate(cert)?;
+
+    let auth = auth?;
+    let (role, _customer_ids) = validate_context_jwt(auth.token(), cert)?;
+    Ok(IngressActor {
+        name: format!(
+            "{}.{}.{}",
+            identity.instance, identity.service, identity.host
+        ),
+        role,
+    })
+}
+
 /// Expands a role into the package-ids it may write, or `None` if it may write
 /// none.
 ///
@@ -246,13 +334,12 @@ fn map_ingest_error(error: PackageIngestError, actor: &str) -> Error {
 async fn accept(
     receiver: &Arc<dyn PackageStoreReceiver>,
     limit: u64,
-    role: Role,
-    actor: &str,
+    actor: &IngressActor,
     body: Body,
 ) -> Result<Json<AcceptedBuild>, Error> {
-    let Some(permitted) = permitted_package_ids(role) else {
+    let Some(permitted) = permitted_package_ids(actor.role) else {
         warn!(
-            actor,
+            actor = actor.name,
             route = PACKAGE_UPLOAD_PATH,
             "a signed-package upload was refused: the role is neither administrator tier"
         );
@@ -262,7 +349,7 @@ async fn accept(
     let accepted = receiver
         .accept_package(&permitted, capped_stream(body.into_data_stream(), limit))
         .await
-        .map_err(|e| map_ingest_error(e, actor))?;
+        .map_err(|e| map_ingest_error(e, &actor.name))?;
     Ok(Json(accepted.into()))
 }
 
@@ -279,14 +366,8 @@ async fn upload_package(
     auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
     body: Body,
 ) -> Result<Json<AcceptedBuild>, Error> {
-    let auth = auth?;
-    let (username, role) = {
-        let store = store
-            .read()
-            .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
-        validate_token(&store, auth.token())?
-    };
-    accept(&receiver, limit, role, &username, body).await
+    let actor = authenticate(&store, auth)?;
+    accept(&receiver, limit, &actor, body).await
 }
 
 /// Accepts a signed package from an mTLS peer.
@@ -302,21 +383,8 @@ async fn upload_package(
     auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
     body: Body,
 ) -> Result<Json<AcceptedBuild>, Error> {
-    let peer = peer
-        .map(|Extension(p)| p)
-        .ok_or_else(|| Error::Unauthorized(crate::ERR_MTLS_REQUIRED.to_string()))?;
-    let cert = peer
-        .leaf_cert()
-        .ok_or_else(|| Error::Unauthorized(crate::ERR_MTLS_MISSING_CERT.to_string()))?;
-    let identity = authenticator.authenticate(cert)?;
-
-    let auth = auth?;
-    let (role, _customer_ids) = validate_context_jwt(auth.token(), cert)?;
-    let actor = format!(
-        "{}.{}.{}",
-        identity.instance, identity.service, identity.host
-    );
-    accept(&receiver, limit, role, &actor, body).await
+    let actor = authenticate(authenticator.as_ref(), peer, auth)?;
+    accept(&receiver, limit, &actor, body).await
 }
 
 #[cfg(test)]
