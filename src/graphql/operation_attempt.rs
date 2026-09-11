@@ -1182,6 +1182,19 @@ mod tests {
             .await;
         assert_eq!(refused.errors.len(), 1, "{:?}", refused.errors);
         assert_eq!(refused.errors[0].message, "Forbidden");
+
+        // The host-scoped check runs before the module-class one, so a caller
+        // outside the host's customer is told nothing about the target it
+        // named.
+        let refused = schema
+            .execute_as_scoped_user(
+                &in_flight_query(HOST, "roxyd"),
+                Role::SecurityAdministrator,
+                Some(vec![OTHER_CUSTOMER]),
+            )
+            .await;
+        assert_eq!(refused.errors.len(), 1, "{:?}", refused.errors);
+        assert_eq!(refused.errors[0].message, "Forbidden");
     }
 
     /// The inline field takes the three steps `review-database` takes, in that
