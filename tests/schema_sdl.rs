@@ -247,3 +247,123 @@ fn the_core_component_registry_is_not_reachable_through_a_node() {
     let node_status = definition(&sdl, "type NodeStatus {");
     assert!(!node_status.contains("CoreComponent"), "{REGENERATE}");
 }
+
+/// The operation-attempt surface carries the names, nullability and scalars
+/// its contract names.
+///
+/// The id is a `String!` and not an `ID!`, because the value is client-minted
+/// and `ID` coerces an input integer to a string; `instance` is the
+/// `StringNumber` this schema already uses for a `u32`; and the two timestamps
+/// are the `DateTime` scalar the node read path already renders.
+#[test]
+fn the_operation_attempt_type_keeps_its_signature() {
+    let sdl = rendered_sdl();
+
+    let attempt = definition(&sdl, "type OperationAttempt {");
+    for field in [
+        "\n\tid: String!\n",
+        "\n\taction: OperationAction!\n",
+        "\n\tphase: OperationPhase!\n",
+        "\n\toutcome: OperationOutcome\n",
+        "\n\thost: String!\n",
+        "\n\ttarget: String\n",
+        "\n\tinstance: StringNumber\n",
+        "\n\tresolvedVersion: String\n",
+        "\n\tresolvedCommit: String\n",
+        "\n\tcleanupOwed: OperationCleanupState\n",
+        "\n\tstartedAt: DateTime!\n",
+        "\n\texpiresAt: DateTime!\n",
+    ] {
+        assert!(attempt.contains(field), "{field}: {REGENERATE}");
+    }
+    assert!(!attempt.contains("id: ID!"), "{REGENERATE}");
+    assert!(!attempt.contains("instance: Int"), "{REGENERATE}");
+    // The record's internal bookkeeping stays off the wire.
+    for field in [
+        "installIntent",
+        "packageDigest",
+        "retryPolicy",
+        "finalizedAt",
+        "backupId",
+        "preUpdateVersion",
+    ] {
+        assert!(!attempt.contains(field), "{field}: {REGENERATE}");
+    }
+
+    assert!(
+        sdl.contains("\n\toperationAttempt(id: String!): OperationAttempt\n"),
+        "{REGENERATE}"
+    );
+    assert!(
+        sdl.contains(
+            "\n\tinFlightInstalls(host: String!, target: String!): [OperationAttempt!]!\n"
+        ),
+        "{REGENERATE}"
+    );
+}
+
+/// The four operation enums mirror the stored ones, one variant for one
+/// variant, and none of them carries a fallback.
+#[test]
+fn the_operation_enums_mirror_the_stored_ones() {
+    let sdl = rendered_sdl();
+
+    for (header, expected) in [
+        (
+            "enum OperationAction {",
+            vec!["INSTALL", "UPDATE", "REMOVE", "ONBOARD"],
+        ),
+        (
+            "enum OperationPhase {",
+            vec!["PENDING", "DISPATCHED", "AWAITING_REPORT", "COMPLETED"],
+        ),
+        (
+            "enum OperationOutcome {",
+            vec!["SUCCEEDED", "FAILED", "ROLLED_BACK", "CANCELLED"],
+        ),
+        (
+            "enum OperationCleanupState {",
+            vec!["PENDING_DEREGISTER", "PENDING_IDENTITY_TEARDOWN"],
+        ),
+    ] {
+        let variants: Vec<&str> = definition(&sdl, header)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        assert_eq!(variants, expected, "{header}");
+    }
+}
+
+/// The inline latest attempt is on the three entry types and on no other.
+///
+/// It is reachable only through read paths already guarded
+/// `SystemAdministrator` or `SecurityAdministrator`, and hanging it on a
+/// fourth type would be the way that stops being true.
+#[test]
+fn the_inline_latest_attempt_is_on_the_three_entry_types() {
+    let sdl = rendered_sdl();
+
+    for header in [
+        "type Agent {",
+        "type ExternalService {",
+        "type CoreComponent {",
+    ] {
+        assert!(
+            definition(&sdl, header).contains("\n\tlatestOperationAttempt: OperationAttempt\n"),
+            "{header}: {REGENERATE}"
+        );
+    }
+    assert_eq!(
+        sdl.matches("\tlatestOperationAttempt: OperationAttempt\n")
+            .count(),
+        3,
+        "{REGENERATE}"
+    );
+    // One word for one concept: no type spells it shorter.
+    assert!(!sdl.contains("latestOperation:"), "{REGENERATE}");
+    // No history query and no desired version comes with it.
+    assert!(!sdl.contains("desiredVersion"), "{REGENERATE}");
+    assert!(!sdl.contains("operationAttemptList"), "{REGENERATE}");
+    assert!(!sdl.contains("operationAttemptHistory"), "{REGENERATE}");
+}

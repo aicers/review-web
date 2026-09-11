@@ -115,6 +115,21 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `DEFAULT_PACKAGE_UPLOAD_MAX_BYTES` is exported as the shipped default for
   that field. A successful upload answers `200` with the accepted build as
   `{"packageId", "version", "commit"}`.
+- Added the operation-attempt read surface, which reports what an install,
+  update, remove or onboarding did rather than only what a host ended up
+  with. The new `OperationAttempt` type carries the operation's id, action,
+  phase, outcome, host, target, instance, resolved build identity, owed
+  cleanup and its start and expiry instants; `operationAttempt(id)` looks one
+  up by the idempotency key the client minted, so a client whose install
+  response was lost can still ask what became of it, and
+  `inFlightInstalls(host, target)` lists the installs still running for a
+  pair, which have no service row to be read through. `Agent`,
+  `ExternalService` and `CoreComponent` each carry `latestOperationAttempt`,
+  the current attempt for that entry's own host, package and instance.
+  Reading an operation is never looser than starting it: an onboarding, a
+  core package and an unrecognised target are readable by system
+  administrators alone, and a module package is customer-scoped to the host
+  the row names.
 
 ### Fixed
 

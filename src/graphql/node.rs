@@ -23,7 +23,10 @@ use review_database as database;
 use roxy::Process as RoxyProcess;
 use serde::{Deserialize, Serialize};
 
-use super::install_state::{self, Lifecycle, UpdateState};
+use super::{
+    install_state::{self, Lifecycle, UpdateState},
+    operation_attempt::{self, OperationAttempt},
+};
 
 pub(super) const SEMI_SUPERVISED_AGENT: &str = "hog";
 
@@ -190,6 +193,33 @@ impl Agent {
     async fn update_check_failed(&self, ctx: &Context<'_>) -> Result<bool> {
         Ok(self.update_state(ctx).await?.check_failed)
     }
+
+    /// The current operation attempt for this entry's own
+    /// `(host, target, instance)`, or null if the triple has none.
+    ///
+    /// It is the running attempt where there is one, otherwise the attempt
+    /// that still owes a compensation, otherwise the last one to finish. That
+    /// ordering is `review-database`'s, not this crate's, so an attempt still
+    /// owing a teardown is never hidden behind a newer one that finished.
+    ///
+    /// It is null for an entry whose kind maps to no package-id: there is no
+    /// target to look an attempt up under.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the node map or the ledger cannot be read.
+    async fn latest_operation_attempt(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<Option<OperationAttempt>> {
+        let kind = database::AgentKind::from(self.kind);
+        operation_attempt::latest_attempt_for_node_entry(
+            ctx,
+            self.node_id,
+            kind.package_id(),
+            self.instance,
+        )
+    }
 }
 
 impl Agent {
@@ -317,6 +347,33 @@ impl ExternalService {
     /// context.
     async fn update_check_failed(&self, ctx: &Context<'_>) -> Result<bool> {
         Ok(self.update_state(ctx).await?.check_failed)
+    }
+
+    /// The current operation attempt for this entry's own
+    /// `(host, target, instance)`, or null if the triple has none.
+    ///
+    /// It is the running attempt where there is one, otherwise the attempt
+    /// that still owes a compensation, otherwise the last one to finish. That
+    /// ordering is `review-database`'s, not this crate's, so an attempt still
+    /// owing a teardown is never hidden behind a newer one that finished.
+    ///
+    /// It is null for an entry whose kind maps to no package-id, which
+    /// `TI_CONTAINER` is: there is no target to look an attempt up under.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the node map or the ledger cannot be read.
+    async fn latest_operation_attempt(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<Option<OperationAttempt>> {
+        let kind = database::ExternalServiceKind::from(self.kind);
+        operation_attempt::latest_attempt_for_node_entry(
+            ctx,
+            self.node_id,
+            kind.package_id(),
+            self.instance,
+        )
     }
 }
 

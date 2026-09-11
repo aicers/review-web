@@ -74,6 +74,23 @@ type Agent {
 	context.
 	"""
 	updateCheckFailed: Boolean!
+	"""
+	The current operation attempt for this entry's own
+	`(host, target, instance)`, or null if the triple has none.
+	
+	It is the running attempt where there is one, otherwise the attempt
+	that still owes a compensation, otherwise the last one to finish. That
+	ordering is `review-database`'s, not this crate's, so an attempt still
+	owing a teardown is never hidden behind a newer one that finished.
+	
+	It is null for an entry whose kind maps to no package-id: there is no
+	target to look an attempt up under.
+	
+	# Errors
+	
+	Returns an error if the node map or the ledger cannot be read.
+	"""
+	latestOperationAttempt: OperationAttempt
 }
 
 input AgentDraftInput {
@@ -3456,6 +3473,22 @@ type CoreComponent {
 	context.
 	"""
 	updateCheckFailed: Boolean!
+	"""
+	The current operation attempt for this row's `(host, component)`, or
+	null if it has none.
+	
+	It is the running attempt where there is one, otherwise the attempt
+	that still owes a compensation, otherwise the last one to finish. That
+	ordering is `review-database`'s, not this crate's.
+	
+	The lookup carries no instance number: a core component's class has no
+	instance dimension, so its attempts are recorded under none.
+	
+	# Errors
+	
+	Returns an error if the ledger cannot be read.
+	"""
+	latestOperationAttempt: OperationAttempt
 }
 
 type CryptocurrencyMiningPool implements Event {
@@ -4536,6 +4569,23 @@ type ExternalService {
 	context.
 	"""
 	updateCheckFailed: Boolean!
+	"""
+	The current operation attempt for this entry's own
+	`(host, target, instance)`, or null if the triple has none.
+	
+	It is the running attempt where there is one, otherwise the attempt
+	that still owes a compensation, otherwise the last one to finish. That
+	ordering is `review-database`'s, not this crate's, so an attempt still
+	owing a teardown is never hidden behind a newer one that finished.
+	
+	It is null for an entry whose kind maps to no package-id, which
+	`TI_CONTAINER` is: there is no target to look an attempt up under.
+	
+	# Errors
+	
+	Returns an error if the node map or the ledger cannot be read.
+	"""
+	latestOperationAttempt: OperationAttempt
 }
 
 input ExternalServiceInput {
@@ -6868,6 +6918,147 @@ type NonBrowser implements Event {
 	learningMethod: LearningMethod!
 }
 
+"""
+The operator's intent for an attempt.
+
+It mirrors `review_database::OperationAction` one variant for one variant.
+The stored enum carries no fallback variant, so this one invents no
+`UNKNOWN`: a variant added upstream stops the `remote` conversion — and so
+this crate — from compiling, which is the point.
+"""
+enum OperationAction {
+	INSTALL
+	UPDATE
+	REMOVE
+	ONBOARD
+}
+
+type OperationAttempt {
+	"""
+	The idempotency key of the operation, which for an install is the
+	client's own request key.
+	
+	It is a `String` and not an `ID`: the value is client-minted and
+	compared byte for byte by the ledger, and `ID` coerces an input integer
+	to a string, which is a way for one key to arrive as two.
+	"""
+	id: String!
+	"""
+	The operator's intent.
+	"""
+	action: OperationAction!
+	"""
+	How far `review` has driven the attempt.
+	"""
+	phase: OperationPhase!
+	"""
+	The terminal result, or null while the attempt is still running.
+	
+	Null here is where "not terminal yet" lives; it is not a result of its
+	own.
+	"""
+	outcome: OperationOutcome
+	"""
+	The host the operation applies to.
+	"""
+	host: String!
+	"""
+	The package-id the operation targets, or null for an attempt that
+	targets no package.
+	
+	An `ONBOARD` attempt is the null case: it brings a host under
+	management and installs nothing.
+	"""
+	target: String
+	"""
+	The instance number the operation concerns, rendered as a decimal
+	string.
+	
+	It is a `StringNumber` rather than an `Int` because the stored number
+	is a `u32`, whose upper half has no valid `Int` representation — and
+	because a client reads an instance here and hands it straight back to a
+	mutation, so one value must not cross this API under two scalars. Null
+	means the attempt names no instance: an onboarding, or an install still
+	choosing one.
+	"""
+	instance: StringNumber
+	"""
+	The version the build selector resolved to, or null for an attempt that
+	resolved no build.
+	
+	Null together with `resolvedCommit` or not at all: the two are one
+	build identity, and half of one can be compared against nothing.
+	"""
+	resolvedVersion: String
+	"""
+	The commit the build selector resolved to, or null for an attempt that
+	resolved no build.
+	
+	Null together with `resolvedVersion` or not at all.
+	"""
+	resolvedCommit: String
+	"""
+	The compensation the attempt still owes, or null when it owes nothing.
+	
+	It is a read field and nothing more: this surface makes an owed
+	teardown visible, and offers no way to force one.
+	"""
+	cleanupOwed: OperationCleanupState
+	"""
+	When the attempt began.
+	"""
+	startedAt: DateTime!
+	"""
+	The absolute deadline the attempt carries.
+	
+	An attempt past it that `review` has not yet swept is still
+	non-terminal and still reported: expiry is `review`'s to act on, and
+	this is what lets a client age the row itself.
+	"""
+	expiresAt: DateTime!
+}
+
+"""
+The compensation an attempt still owes.
+
+It mirrors `review_database::OperationCleanupState`, and it is an enum
+rather than a human-readable reason: the two states are different things to
+say and different things to do, so a UI has to branch on the variant, and
+server-composed English could be neither localised nor branched on.
+"""
+enum OperationCleanupState {
+	PENDING_DEREGISTER
+	PENDING_IDENTITY_TEARDOWN
+}
+
+"""
+The terminal result of an attempt.
+
+It mirrors `review_database::OperationOutcome`. `ROLLED_BACK` is what
+distinguishes an update that put the previous build back from one that
+never ran, which the installed version alone cannot.
+"""
+enum OperationOutcome {
+	SUCCEEDED
+	FAILED
+	ROLLED_BACK
+	CANCELLED
+}
+
+"""
+How far `review` has driven an attempt.
+
+It mirrors `review_database::OperationPhase`, and is coarse for the same
+reason the stored enum is: the fine verify/enroll/start sub-steps belong to
+the host agent and are not recorded.
+"""
+enum OperationPhase {
+	PENDING
+	DISPATCHED
+	AWAITING_REPORT
+	COMPLETED
+}
+
 type Outlier {
 	size: Int!
 	id: ID!
@@ -7416,6 +7607,45 @@ type Query {
 	Returns an error if the registry cannot be read.
 	"""
 	coreComponentList: [CoreComponent!]!
+	"""
+	Returns the operation attempt held under `id`, or null if none is.
+	
+	`id` is the attempt's idempotency key, which for an install is the
+	request key the client minted. That is the point of accepting an id
+	rather than a server-issued handle: a client whose install response was
+	lost can still ask what became of it.
+	
+	A null answer means the id names no row, and a caller is free to read
+	it as indeterminate. A refusal is not that: it is a field error beside
+	a null, so the two can never be confused.
+	
+	# Errors
+	
+	Returns an error if the caller may not read the attempt the row
+	describes, or if the ledger cannot be read.
+	"""
+	operationAttempt(id: String!): OperationAttempt
+	"""
+	Returns the non-terminal install attempts for `(host, target)`.
+	
+	An install still in flight has no service row — one is created only on
+	terminal success — so a running install is invisible to the inline
+	fields and needs this query. It is keyed on the pair rather than the
+	triple because no caller knows the instance number before the install
+	succeeds, and it answers with a list because two installs of one module
+	on one host may legitimately run at once. A pair with none answers with
+	the empty list, never null.
+	
+	The order is `startedAt` ascending, tie-broken by `id`, so the response
+	is deterministic; the record scan order is idempotency-key order, which
+	is arbitrary. That order is display only and selects nothing.
+	
+	# Errors
+	
+	Returns an error if the caller has no access to `host`, if `target` is
+	not a module package-id, or if the ledger cannot be read.
+	"""
+	inFlightInstalls(host: String!, target: String!): [OperationAttempt!]!
 	"""
 	A list of triage policies.
 	"""

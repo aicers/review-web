@@ -24,6 +24,7 @@ pub(crate) mod label_db;
 mod model;
 pub(crate) mod network;
 mod node;
+mod operation_attempt;
 mod outlier;
 mod qualifier;
 mod sampling;
@@ -213,6 +214,7 @@ struct SubQueryTwoA(
 #[derive(MergedObject, Default)]
 struct SubQueryTwoB(
     core_component::CoreComponentQuery,
+    operation_attempt::OperationAttemptQuery,
     triage::TriagePolicyQuery,
     triage::TriageExclusionReasonQuery,
     triage::TriageResponseQuery,
