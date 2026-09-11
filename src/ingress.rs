@@ -364,12 +364,28 @@ mod tests {
     #[cfg(feature = "auth-mtls")]
     const CLIENT_DNS: &str = "001.aice-web-next.node-01.example.com";
 
-    /// The path is a published contract the `aice-web-next` BFF calls by name,
-    /// so a rename has to be a deliberate, coordinated change rather than a
-    /// tidy-up.
-    #[test]
-    fn the_route_is_mounted_at_the_published_path() {
-        assert_eq!(PACKAGE_UPLOAD_PATH, "/api/package/upload");
+    /// The route answers at the published path and nowhere else. Every other
+    /// test reaches the handler through [`PACKAGE_UPLOAD_PATH`], which holds
+    /// one half of that; this one holds the other, that the router serves this
+    /// path only for `POST` and serves nothing beneath it — a second way in
+    /// would look exactly like a neighbouring path that also answered.
+    #[tokio::test]
+    async fn the_route_is_mounted_at_the_published_path() {
+        let wrong_method = Request::builder()
+            .method("GET")
+            .uri(PACKAGE_UPLOAD_PATH)
+            .body(Body::empty())
+            .expect("a well-formed request");
+        let sent = run(router(), wrong_method).await;
+        assert_eq!(sent.status, StatusCode::METHOD_NOT_ALLOWED);
+
+        let neighbour = Request::builder()
+            .method("POST")
+            .uri(format!("{PACKAGE_UPLOAD_PATH}/core"))
+            .body(Body::empty())
+            .expect("a well-formed request");
+        let sent = run(router(), neighbour).await;
+        assert_eq!(sent.status, StatusCode::NOT_FOUND);
     }
 
     /// The shipped default is provisional until a signing pipeline produces a

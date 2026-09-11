@@ -109,10 +109,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   write core and module packages, a `SecurityAdministrator` module packages
   only, and any other role is refused with `403` before a byte of the body is
   read — and forwards the body to the receiver chunk by chunk without ever
-  holding it whole. A body that reaches `ServerConfig`'s
+  holding it whole. A body that exceeds `ServerConfig`'s
   `package_upload_max_bytes` is cut off where the limit is crossed and answered
-  `413`; `DEFAULT_PACKAGE_UPLOAD_MAX_BYTES` is exported as the shipped default
-  for that field. A successful upload answers `200` with the accepted build as
+  `413`, while one of exactly that size is accepted;
+  `DEFAULT_PACKAGE_UPLOAD_MAX_BYTES` is exported as the shipped default for
+  that field. A successful upload answers `200` with the accepted build as
   `{"packageId", "version", "commit"}`.
 
 ### Fixed
