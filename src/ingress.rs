@@ -369,7 +369,7 @@ mod tests {
     }
 
     /// The shipped default is provisional until a signing pipeline produces a
-    /// real `.pkg` (#948), so what a test can hold it to is that it behaves as
+    /// real `.pkg`, so what a test can hold it to is that it behaves as
     /// a cap rather than as a sentinel: an ordinary body streams through it
     /// whole. That it is large enough not to refuse a real package is asserted
     /// where the constant is declared, against the reasoning it came from.

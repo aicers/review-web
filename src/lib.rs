@@ -85,8 +85,10 @@ const DISABLE_LOCAL_AUTH_BYPASS_ENV: &str = "REVIEW_WEB_DISABLE_LOCAL_AUTH_BYPAS
 /// The default maximum request-body size, in bytes, for the package-upload
 /// route: 2 GiB.
 ///
-/// **This value is provisional.** It was reasoned about rather than measured,
-/// and #948 is the obligation to re-derive it.
+/// **This value is provisional.** It was reasoned about rather than measured.
+/// Re-derive it from a real signed `.pkg` — a core component's container
+/// image included — once a signing pipeline produces one, and replace this
+/// paragraph with what was measured and when.
 ///
 /// What the cap is for is bounding what an authenticated uploader can write
 /// into `pending/` on this host's data volume, and any finite value serves
