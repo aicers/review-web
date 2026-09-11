@@ -1470,8 +1470,19 @@ mod tests {
         };
 
         assert!(response.errors.is_empty(), "{:?}", response.errors);
+        let data = response.data.into_json().unwrap();
+        let token = data["onboardHost"]["token"]
+            .as_str()
+            .expect("the response carries a token string");
+        // Stated on the response's own token rather than left to the exact
+        // comparison below, which fails the same way for every wrong value and
+        // so does not name the one this route exists to keep out. Containment
+        // rather than equality against the bare placeholder, because
+        // `JoinToken`'s `Debug` renders `JoinToken(<redacted>)` and a
+        // comparison against `<redacted>` alone would pass on it.
+        assert!(!token.contains("<redacted>"), "{token}");
         assert_json_eq!(
-            response.data.into_json().unwrap(),
+            data,
             json!({
                 "onboardHost": {
                     "operationId": ONBOARD_OPERATION_ID,
