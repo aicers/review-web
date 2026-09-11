@@ -349,6 +349,11 @@ impl DeployMutation {
         let addrs = self::bind_addrs(bind_addrs)?;
 
         let deployer = ctx.data::<BoxedPackageDeployer>()?;
+        // The request is recorded before the call rather than after it, so a
+        // privileged operation a scoped operator asked for is in the log
+        // whatever review answers: a refusal is exactly the case an audit
+        // reads back.
+        info_with_username!(ctx, "Install of {target} requested on {host}");
         match deployer
             .install(
                 &host,
@@ -361,7 +366,6 @@ impl DeployMutation {
             .await
         {
             Ok((outcome, operation_id)) => {
-                info_with_username!(ctx, "Install of {target} requested on {host}");
                 Ok(InstallServiceResult::Success(InstallServiceSuccess {
                     operation_id: operation_id.into_inner(),
                     disposition: outcome.into(),
@@ -433,6 +437,8 @@ impl DeployMutation {
         let selector = self::build_selector(build_selector)?;
 
         let deployer = ctx.data::<BoxedPackageDeployer>()?;
+        // Logged before the call, for the same reason as in `install_service`.
+        info_with_username!(ctx, "Update of {target} requested on {host}");
         match deployer
             .update(
                 &host,
@@ -443,13 +449,10 @@ impl DeployMutation {
             )
             .await
         {
-            Ok((outcome, operation_id)) => {
-                info_with_username!(ctx, "Update of {target} requested on {host}");
-                Ok(UpdateServiceResult::Success(UpdateServiceSuccess {
-                    operation_id: operation_id.into_inner(),
-                    disposition: outcome.into(),
-                }))
-            }
+            Ok((outcome, operation_id)) => Ok(UpdateServiceResult::Success(UpdateServiceSuccess {
+                operation_id: operation_id.into_inner(),
+                disposition: outcome.into(),
+            })),
             Err(DeployError::CleanupPending {
                 host,
                 target,
@@ -481,13 +484,12 @@ impl DeployMutation {
         bind_package_class(&target, &MODULE_PACKAGE_IDS)?;
 
         let deployer = ctx.data::<BoxedPackageDeployer>()?;
+        // Logged before the call, for the same reason as in `install_service`.
+        info_with_username!(ctx, "Removal of {target} requested on {host}");
         match deployer.remove(&host, &target, Some(instance.0)).await {
-            Ok(operation_id) => {
-                info_with_username!(ctx, "Removal of {target} requested on {host}");
-                Ok(RemoveServiceResult::Success(RemoveServiceSuccess {
-                    operation_id: operation_id.into_inner(),
-                }))
-            }
+            Ok(operation_id) => Ok(RemoveServiceResult::Success(RemoveServiceSuccess {
+                operation_id: operation_id.into_inner(),
+            })),
             Err(DeployError::CleanupPending {
                 host,
                 target,
