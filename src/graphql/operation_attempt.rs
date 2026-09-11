@@ -355,7 +355,7 @@ impl OperationAttemptQuery {
         // skipped, so a corrupt row cannot quietly shrink the answer.
         let mut attempts = Vec::new();
         for row in map.iter(Direction::Forward, None) {
-            let row: database::OperationAttempt = row.map_err(async_graphql::Error::from)?;
+            let row = row?;
             if row.action == database::OperationAction::Install
                 && !row.is_terminal()
                 && row.host == host
