@@ -1,9 +1,10 @@
-//! The module install, update and removal mutations.
+//! The immediate package-deployment and host-onboarding mutations.
 //!
 //! These are immediate actions and never ride the configuration draft: the
 //! resolver authorizes, validates the shape of what was submitted, makes one
-//! [`PackageDeployer`](crate::backend::PackageDeployer) call and renders what
-//! comes back.
+//! call through [`PackageDeployer`](crate::backend::PackageDeployer) or
+//! [`HostOnboarder`](crate::backend::HostOnboarder), and renders what comes
+//! back.
 //!
 //! Nothing here reads a store or the attempt ledger. Which instance an install
 //! allocates, whether an instance exists, how single-flight derives its key and
@@ -17,7 +18,7 @@ use review_database::{BuildSelector, RequestKeyError};
 use tracing::info;
 
 use super::{
-    super::{BoxedPackageDeployer, Role, RoleGuard, customer_access},
+    super::{BoxedHostOnboarder, BoxedPackageDeployer, Role, RoleGuard, customer_access},
     DeployMutation,
     bind_addr::{
         BindAddrInput, HostOccupancyUnavailable, HostPortOccupied, PortAllocationConflict,
@@ -26,7 +27,8 @@ use super::{
 };
 use crate::{
     backend::{
-        BindAddrInput as BackendBindAddrInput, DeployError, MODULE_PACKAGE_IDS, OperationId,
+        self, BindAddrInput as BackendBindAddrInput, DeployError,
+        HostOnboardingTicket as BackendHostOnboardingTicket, MODULE_PACKAGE_IDS, OperationId,
     },
     info_with_username,
 };
@@ -109,6 +111,35 @@ pub(crate) struct UpdateServiceSuccess {
 pub(crate) struct RemoveServiceSuccess {
     /// The attempt's durable identity.
     operation_id: String,
+}
+
+/// A core-component update was accepted, and this is the operation to poll.
+#[derive(SimpleObject)]
+pub(crate) struct UpdateCoreComponentSuccess {
+    /// The attempt's durable identity.
+    operation_id: String,
+    /// Whether the apply finished or was accepted for later reconciliation.
+    disposition: DeployDisposition,
+}
+
+/// What `updateCoreComponent` answers with.
+#[derive(Union)]
+pub(crate) enum UpdateCoreComponentResult {
+    Success(UpdateCoreComponentSuccess),
+    CleanupPending(CleanupPending),
+}
+
+/// The one-time credential and command for bringing a host under management.
+#[derive(SimpleObject)]
+pub(crate) struct HostOnboardingTicket {
+    /// The onboarding operation to poll.
+    operation_id: String,
+    /// The live one-time credential the operator supplies to the host.
+    token: String,
+    /// The one-liner the operator runs on the host.
+    command: String,
+    /// The granted absolute deadline at which the token expires.
+    expires_at: jiff::Timestamp,
 }
 
 /// The request key already names an attempt submitted with a different
@@ -504,13 +535,76 @@ impl DeployMutation {
             Err(e) => Err(e.into()),
         }
     }
+
+    /// Updates a control-plane component and returns the operation to poll.
+    /// Core components have no instance dimension. Registry existence and a
+    /// singleton component's fixed host are review's answers, reached through
+    /// the one backend call rather than checked against a second source here.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
+    async fn update_core_component(
+        &self,
+        ctx: &Context<'_>,
+        component: String,
+        host: String,
+        build_selector: BuildSelectorInput,
+        #[graphql(default_with = "FailurePolicy::Rollback")] on_failure: FailurePolicy,
+    ) -> Result<UpdateCoreComponentResult> {
+        bind_package_class(&component, &backend::CORE_PACKAGE_IDS)?;
+        let selector = self::build_selector(build_selector)?;
+
+        let deployer = ctx.data::<BoxedPackageDeployer>()?;
+        info_with_username!(ctx, "Update of {component} requested on {host}");
+        match deployer
+            .update(&host, &component, None, selector, on_failure.into())
+            .await
+        {
+            Ok((outcome, operation_id)) => Ok(UpdateCoreComponentResult::Success(
+                UpdateCoreComponentSuccess {
+                    operation_id: operation_id.into_inner(),
+                    disposition: outcome.into(),
+                },
+            )),
+            Err(DeployError::CleanupPending {
+                host,
+                target,
+                instance,
+                operation_id,
+            }) => Ok(UpdateCoreComponentResult::CleanupPending(cleanup_pending(
+                host,
+                target,
+                instance,
+                operation_id,
+            ))),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Starts onboarding a host and returns its one-time ticket.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
+    async fn onboard_host(&self, ctx: &Context<'_>, host: String) -> Result<HostOnboardingTicket> {
+        let onboarder = ctx.data::<BoxedHostOnboarder>()?;
+        let (ticket, operation_id): (BackendHostOnboardingTicket, OperationId) =
+            onboarder.onboard_host(&host).await?;
+        let (token, command, expires_at) = ticket.into_parts();
+        info_with_username!(ctx, "Host onboarding token issued for {host}");
+        Ok(HostOnboardingTicket {
+            operation_id: operation_id.into_inner(),
+            token: token.expose(),
+            command,
+            expires_at,
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
+        io::{self, Write},
         net::SocketAddr,
-        sync::{Arc, Mutex},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
 
     use assert_json_diff::assert_json_eq;
@@ -523,14 +617,19 @@ mod tests {
         BootstrapMaterial, DeliveryMode, FailurePolicy as BackendFailurePolicy, PackageState,
     };
     use serde_json::json;
+    use tracing_subscriber::fmt::MakeWriter;
 
     use super::{BuildSelectorInput, bind_package_class, build_selector, is_uuid_v4};
     use crate::{
         backend::{
             BindAddrInput as BackendBindAddrInput, BuildId, CORE_PACKAGE_IDS, DeployError,
-            DeployOutcome, MODULE_PACKAGE_IDS, OperationId, PackageDeployer,
+            DeployOutcome, HostOnboarder, HostOnboardingTicket as BackendHostOnboardingTicket,
+            JoinToken, MODULE_PACKAGE_IDS, OperationId, PackageDeployer,
         },
-        graphql::{BoxedPackageDeployer, Mutation, Query, RoleGuard, Subscription, TestSchema},
+        graphql::{
+            BoxedHostOnboarder, BoxedPackageDeployer, Mutation, Query, RoleGuard, Schema,
+            Subscription, TestSchema,
+        },
     };
 
     /// A canonical `UUIDv4`, which is what a client mints per install.
@@ -540,6 +639,11 @@ mod tests {
     /// install answers with the submitted key instead, which is what review
     /// does.
     const OPERATION_ID: &str = "11111111-2222-4333-8444-555555555555";
+
+    const ONBOARD_OPERATION_ID: &str = "99999999-8888-4777-8666-555555555555";
+    const JOIN_TOKEN: &str = "one-time-token-that-must-stay-secret";
+    const ONBOARD_COMMAND: &str = "roxyd join --token-file /run/review/token";
+    const EXPIRES_AT_SECOND: i64 = 1_700_000_123;
 
     /// The key a `RequestKeyReused` refusal carries. It is deliberately not
     /// [`REQUEST_KEY`], so a resolver that rendered its own argument instead of
@@ -609,6 +713,14 @@ mod tests {
             let installs = self.installs();
             assert_eq!(installs.len(), 1, "exactly one install is expected");
             installs.into_iter().next().expect("the length is one")
+        }
+
+        /// The one update the stub was asked to make.
+        fn only_update(&self) -> UpdateCall {
+            let updates = self.updates();
+            assert_eq!(updates.len(), 1, "exactly one update is expected");
+            assert_eq!(self.total(), 1, "no other deployment call is expected");
+            updates.into_iter().next().expect("the length is one")
         }
     }
 
@@ -836,6 +948,111 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    enum OnboardAnswer {
+        Succeed,
+        Fail,
+    }
+
+    #[derive(Default)]
+    struct OnboardCalls {
+        count: AtomicUsize,
+        hosts: Mutex<Vec<String>>,
+        ticket_debug: Mutex<Vec<String>>,
+    }
+
+    impl OnboardCalls {
+        fn count(&self) -> usize {
+            self.count.load(Ordering::SeqCst)
+        }
+
+        fn only_host(&self) -> String {
+            let hosts = self.hosts.lock().unwrap();
+            assert_eq!(hosts.len(), 1, "exactly one onboarding call is expected");
+            hosts.first().expect("the length is one").clone()
+        }
+
+        fn only_ticket_debug(&self) -> String {
+            let rendered = self.ticket_debug.lock().unwrap();
+            assert_eq!(rendered.len(), 1, "exactly one ticket is expected");
+            rendered.first().expect("the length is one").clone()
+        }
+    }
+
+    struct RecordingOnboarder {
+        calls: Arc<OnboardCalls>,
+        answer: OnboardAnswer,
+    }
+
+    impl RecordingOnboarder {
+        fn boxed(answer: OnboardAnswer) -> (BoxedHostOnboarder, Arc<OnboardCalls>) {
+            let calls = Arc::<OnboardCalls>::default();
+            (
+                Box::new(Self {
+                    calls: Arc::clone(&calls),
+                    answer,
+                }),
+                calls,
+            )
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HostOnboarder for RecordingOnboarder {
+        async fn onboard_host(
+            &self,
+            host: &str,
+        ) -> Result<(BackendHostOnboardingTicket, OperationId), anyhow::Error> {
+            self.calls.count.fetch_add(1, Ordering::SeqCst);
+            self.calls.hosts.lock().unwrap().push(host.to_string());
+            match self.answer {
+                OnboardAnswer::Succeed => {
+                    let ticket = BackendHostOnboardingTicket::new(
+                        JoinToken::new(JOIN_TOKEN.to_string()),
+                        ONBOARD_COMMAND.to_string(),
+                        jiff::Timestamp::from_second(EXPIRES_AT_SECOND)?,
+                    );
+                    self.calls
+                        .ticket_debug
+                        .lock()
+                        .unwrap()
+                        .push(format!("{ticket:?}"));
+                    Ok((ticket, OperationId::new(ONBOARD_OPERATION_ID.to_string())))
+                }
+                OnboardAnswer::Fail => anyhow::bail!("review could not mint a host ticket"),
+            }
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct LogCapture(Arc<Mutex<Vec<u8>>>);
+
+    impl LogCapture {
+        fn contents(&self) -> String {
+            let buffer = self.0.lock().unwrap();
+            String::from_utf8_lossy(&buffer).into_owned()
+        }
+    }
+
+    impl Write for LogCapture {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl MakeWriter<'_> for LogCapture {
+        type Writer = Self;
+
+        fn make_writer(&self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
     const INSTALL_SELECTION: &str = "__typename
         ... on InstallServiceSuccess { operationId disposition }
         ... on PortAllocationConflict {
@@ -854,6 +1071,10 @@ mod tests {
         ... on RemoveServiceSuccess { operationId }
         ... on CleanupPending { host target instance operationId }";
 
+    const CORE_UPDATE_SELECTION: &str = "__typename
+        ... on UpdateCoreComponentSuccess { operationId disposition }
+        ... on CleanupPending { host target instance operationId }";
+
     fn install_mutation(args: &str) -> String {
         format!("mutation {{ installService({args}) {{ {INSTALL_SELECTION} }} }}")
     }
@@ -864,6 +1085,44 @@ mod tests {
 
     fn remove_mutation(args: &str) -> String {
         format!("mutation {{ removeService({args}) {{ {REMOVE_SELECTION} }} }}")
+    }
+
+    fn core_update_mutation(args: &str) -> String {
+        format!("mutation {{ updateCoreComponent({args}) {{ {CORE_UPDATE_SELECTION} }} }}")
+    }
+
+    fn core_update_args(component: &str, host: &str) -> String {
+        format!(r#"component: "{component}", host: "{host}", buildSelector: {{version: "0.1.0"}}"#)
+    }
+
+    fn onboard_mutation(host: &str) -> String {
+        format!(
+            r#"mutation {{ onboardHost(host: "{host}") {{ operationId token command expiresAt }} }}"#
+        )
+    }
+
+    fn schema_without_store(
+        deployer: BoxedPackageDeployer,
+        onboarder: BoxedHostOnboarder,
+    ) -> Schema {
+        Schema::build(
+            Query::default(),
+            Mutation::default(),
+            Subscription::default(),
+        )
+        .data(deployer)
+        .data(onboarder)
+        .finish()
+    }
+
+    async fn execute_without_store(schema: &Schema, query: &str) -> async_graphql::Response {
+        schema
+            .execute(
+                async_graphql::Request::new(query)
+                    .data(RoleGuard::Role(Role::SystemAdministrator))
+                    .data("testuser".to_string()),
+            )
+            .await
     }
 
     /// A well-formed `installService` submission against `target`.
@@ -916,6 +1175,340 @@ mod tests {
             .unwrap_or_else(|| panic!("the schema declares no {name}"))
             .trim()
             .to_string()
+    }
+
+    #[tokio::test]
+    async fn core_and_onboarding_mutations_require_a_system_administrator() {
+        for role in [
+            Role::SecurityAdministrator,
+            Role::SecurityManager,
+            Role::SecurityMonitor,
+        ] {
+            let (deployer, deploy_calls) = RecordingDeployer::applying();
+            let schema = TestSchema::new().await;
+            let query = core_update_mutation(&core_update_args("review", "control-host"));
+            let response = schema
+                .execute_with_guard_and_data(
+                    &query,
+                    RoleGuard::Role(role),
+                    deployer as BoxedPackageDeployer,
+                )
+                .await;
+            assert_eq!(response.errors.len(), 1, "{role:?}");
+            assert_eq!(response.errors[0].message, "Forbidden", "{role:?}");
+            assert_eq!(deploy_calls.total(), 0, "{role:?}");
+
+            let (onboarder, onboard_calls) = RecordingOnboarder::boxed(OnboardAnswer::Succeed);
+            let response = schema
+                .execute_with_guard_and_data(
+                    &onboard_mutation("new-host"),
+                    RoleGuard::Role(role),
+                    onboarder,
+                )
+                .await;
+            assert_eq!(response.errors.len(), 1, "{role:?}");
+            assert_eq!(response.errors[0].message, "Forbidden", "{role:?}");
+            assert_eq!(onboard_calls.count(), 0, "{role:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn only_core_package_ids_reach_the_core_update_backend() {
+        for component in CORE_PACKAGE_IDS {
+            let (deployer, calls) = RecordingDeployer::applying();
+            let schema = TestSchema::new().await;
+            let query = core_update_mutation(&core_update_args(component, "control-host"));
+            let response = schema
+                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .await;
+
+            assert!(
+                response.errors.is_empty(),
+                "{component}: {:?}",
+                response.errors
+            );
+            let call = calls.only_update();
+            assert_eq!(call.target, component);
+            assert_eq!(call.instance, None);
+        }
+
+        for component in std::iter::once("bootroot").chain(MODULE_PACKAGE_IDS) {
+            let (deployer, calls) = RecordingDeployer::applying();
+            let schema = TestSchema::new().await;
+            let query = core_update_mutation(&core_update_args(component, "control-host"));
+            let response = schema
+                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .await;
+
+            assert_eq!(response.errors.len(), 1, "{component}");
+            assert!(
+                response.errors[0].message.contains(component),
+                "{component}: {}",
+                response.errors[0].message
+            );
+            assert_eq!(calls.total(), 0, "{component}");
+        }
+    }
+
+    #[tokio::test]
+    async fn core_update_forwards_selector_policy_host_and_no_instance() {
+        let cases = [
+            (
+                r#"{version: "0.1.0"}"#,
+                None,
+                BuildSelector::Version("0.1.0".to_string()),
+                BackendFailurePolicy::Rollback,
+            ),
+            (
+                r#"{commit: "0123456789abcdef"}"#,
+                Some("HOLD"),
+                BuildSelector::Commit("0123456789abcdef".to_string()),
+                BackendFailurePolicy::Hold,
+            ),
+        ];
+
+        for (selector, policy, expected_selector, expected_policy) in cases {
+            let (deployer, calls) = RecordingDeployer::applying();
+            let schema = TestSchema::new().await;
+            let policy = policy.map_or_else(String::new, |value| format!(", onFailure: {value}"));
+            let args = format!(
+                r#"component: "roxyd", host: "host byte-for-byte", buildSelector: {selector}{policy}"#
+            );
+            let response = schema
+                .execute_as_system_admin_with_data(
+                    &core_update_mutation(&args),
+                    deployer as BoxedPackageDeployer,
+                )
+                .await;
+
+            assert!(response.errors.is_empty(), "{:?}", response.errors);
+            let call = calls.only_update();
+            assert_eq!(call.host, "host byte-for-byte");
+            assert_eq!(call.target, "roxyd");
+            assert_eq!(call.instance, None);
+            assert_eq!(call.selector, expected_selector);
+            assert_eq!(call.on_failure, expected_policy);
+        }
+    }
+
+    #[tokio::test]
+    async fn hold_is_forwarded_for_each_self_affecting_component() {
+        for component in ["review", "aice-web-next"] {
+            let (deployer, calls) = RecordingDeployer::applying();
+            let schema = TestSchema::new().await;
+            let args = format!(
+                r"{}, onFailure: HOLD",
+                core_update_args(component, "control-host")
+            );
+            let response = schema
+                .execute_as_system_admin_with_data(
+                    &core_update_mutation(&args),
+                    deployer as BoxedPackageDeployer,
+                )
+                .await;
+
+            assert!(
+                response.errors.is_empty(),
+                "{component}: {:?}",
+                response.errors
+            );
+            assert_eq!(calls.only_update().on_failure, BackendFailurePolicy::Hold);
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_core_selectors_are_refused_without_a_backend_call() {
+        for selector in [r#"{version: "0.1.0", commit: "abcdef"}"#, "{}"] {
+            let (deployer, calls) = RecordingDeployer::applying();
+            let schema = TestSchema::new().await;
+            let args =
+                format!(r#"component: "review", host: "control-host", buildSelector: {selector}"#);
+            let response = schema
+                .execute_as_system_admin_with_data(
+                    &core_update_mutation(&args),
+                    deployer as BoxedPackageDeployer,
+                )
+                .await;
+
+            assert_eq!(response.errors.len(), 1, "{selector}");
+            assert!(response.errors[0].message.contains("buildSelector"));
+            assert_eq!(calls.total(), 0, "{selector}");
+        }
+    }
+
+    #[tokio::test]
+    async fn core_update_has_no_instance_argument() {
+        let (deployer, calls) = RecordingDeployer::applying();
+        let schema = TestSchema::new().await;
+        let args = format!(
+            r#"{}, instance: "1""#,
+            core_update_args("review", "control-host")
+        );
+        let response = schema
+            .execute_as_system_admin_with_data(
+                &core_update_mutation(&args),
+                deployer as BoxedPackageDeployer,
+            )
+            .await;
+
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(calls.total(), 0);
+    }
+
+    #[tokio::test]
+    async fn unknown_core_registry_keys_are_forwarded_without_a_store() {
+        for (component, host) in [
+            ("roxyd", "host-with-no-registry-entry"),
+            ("review", "some-other-host"),
+        ] {
+            let (deployer, calls) = RecordingDeployer::boxed(Answer::Fail(Failure::Other));
+            let (onboarder, _) = RecordingOnboarder::boxed(OnboardAnswer::Succeed);
+            let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+            let query = core_update_mutation(&core_update_args(component, host));
+            let response = execute_without_store(&schema, &query).await;
+
+            assert_eq!(response.errors.len(), 1, "{component}@{host}");
+            assert_eq!(
+                response.errors[0].message,
+                "review answered something unmodelled"
+            );
+            let call = calls.only_update();
+            assert_eq!(call.host, host);
+            assert_eq!(call.target, component);
+            assert_eq!(call.instance, None);
+        }
+    }
+
+    #[tokio::test]
+    async fn core_update_renders_both_deploy_dispositions() {
+        for (outcome, expected) in [
+            (DeployOutcome::Applied, "APPLIED"),
+            (DeployOutcome::Accepted, "ACCEPTED"),
+        ] {
+            let (deployer, _) = RecordingDeployer::boxed(Answer::Succeed(outcome));
+            let schema = TestSchema::new().await;
+            let response = schema
+                .execute_as_system_admin_with_data(
+                    &core_update_mutation(&core_update_args("review", "control-host")),
+                    deployer as BoxedPackageDeployer,
+                )
+                .await;
+
+            assert!(response.errors.is_empty(), "{:?}", response.errors);
+            assert_json_eq!(
+                response.data.into_json().unwrap(),
+                json!({
+                    "updateCoreComponent": {
+                        "__typename": "UpdateCoreComponentSuccess",
+                        "operationId": OPERATION_ID,
+                        "disposition": expected,
+                    }
+                })
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cleanup_pending_is_the_only_core_update_error_returned_as_a_member() {
+        let (deployer, _) = RecordingDeployer::boxed(Answer::Fail(Failure::CleanupPending(None)));
+        let schema = TestSchema::new().await;
+        let response = schema
+            .execute_as_system_admin_with_data(
+                &core_update_mutation(&core_update_args("review", "control-host")),
+                deployer as BoxedPackageDeployer,
+            )
+            .await;
+
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        assert_json_eq!(
+            response.data.into_json().unwrap(),
+            json!({
+                "updateCoreComponent": {
+                    "__typename": "CleanupPending",
+                    "host": "giganto-host-7",
+                    "target": "giganto",
+                    "instance": null,
+                    "operationId": OPERATION_ID,
+                }
+            })
+        );
+
+        for failure in [
+            Failure::PortAllocationConflict,
+            Failure::HostPortOccupied,
+            Failure::HostOccupancyUnavailable,
+            Failure::RequestKeyReused,
+            Failure::Other,
+        ] {
+            let (deployer, _) = RecordingDeployer::boxed(Answer::Fail(failure));
+            let schema = TestSchema::new().await;
+            let response = schema
+                .execute_as_system_admin_with_data(
+                    &core_update_mutation(&core_update_args("review", "control-host")),
+                    deployer as BoxedPackageDeployer,
+                )
+                .await;
+            assert_eq!(response.errors.len(), 1);
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn onboarding_renders_the_ticket_without_logging_or_debugging_the_token() {
+        let (deployer, _) = RecordingDeployer::applying();
+        let (onboarder, calls) = RecordingOnboarder::boxed(OnboardAnswer::Succeed);
+        let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+        let logs = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .finish();
+
+        let response = {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            execute_without_store(&schema, &onboard_mutation("new-host")).await
+        };
+
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        assert_json_eq!(
+            response.data.into_json().unwrap(),
+            json!({
+                "onboardHost": {
+                    "operationId": ONBOARD_OPERATION_ID,
+                    "token": JOIN_TOKEN,
+                    "command": ONBOARD_COMMAND,
+                    "expiresAt": "2023-11-14T22:15:23Z",
+                }
+            })
+        );
+        assert_eq!(calls.count(), 1);
+        assert_eq!(calls.only_host(), "new-host");
+        let debug = calls.only_ticket_debug();
+        assert!(debug.contains("<redacted>"), "{debug}");
+        assert!(!debug.contains(JOIN_TOKEN), "{debug}");
+        logs.clone()
+            .flush()
+            .expect("flushing the in-memory log capture succeeds");
+        let logs = logs.contents();
+        assert!(logs.contains("token issued for new-host"), "{logs}");
+        assert!(!logs.contains(JOIN_TOKEN), "{logs}");
+        assert!(!logs.contains("<redacted>"), "{logs}");
+    }
+
+    #[tokio::test]
+    async fn onboarding_errors_are_ordinary_graphql_errors() {
+        let (deployer, _) = RecordingDeployer::applying();
+        let (onboarder, calls) = RecordingOnboarder::boxed(OnboardAnswer::Fail);
+        let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+        let response = execute_without_store(&schema, &onboard_mutation("new-host")).await;
+
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(
+            response.errors[0].message,
+            "review could not mint a host ticket"
+        );
+        assert_eq!(calls.count(), 1);
+        assert_eq!(calls.only_host(), "new-host");
     }
 
     #[tokio::test]
@@ -1814,9 +2407,8 @@ mod tests {
         );
     }
 
-    /// The three mutations carry exactly the arguments, nullability and types
-    /// the contract names — `installService` with no `instance` and a non-null
-    /// `requestKey`, the other two with a non-null `StringNumber` instance.
+    /// The deployment and onboarding mutations carry exactly the arguments,
+    /// nullability and types their contracts name.
     #[test]
     fn the_mutations_keep_their_signatures() {
         let sdl = rendered_sdl();
@@ -1841,6 +2433,18 @@ mod tests {
             "removeService(host: String!, target: String!, instance: StringNumber!): \
              RemoveServiceResult!"
         );
+        let core_update = sdl_line(&sdl, "updateCoreComponent(");
+        assert_eq!(
+            core_update,
+            "updateCoreComponent(component: String!, host: String!, buildSelector: \
+             BuildSelectorInput!, onFailure: FailurePolicy! = ROLLBACK): \
+             UpdateCoreComponentResult!"
+        );
+        assert!(!core_update.contains("instance"), "{core_update}");
+        assert_eq!(
+            sdl_line(&sdl, "onboardHost("),
+            "onboardHost(host: String!): HostOnboardingTicket!"
+        );
     }
 
     #[test]
@@ -1859,6 +2463,38 @@ mod tests {
         assert_eq!(
             sdl_line(&sdl, "union RemoveServiceResult"),
             "union RemoveServiceResult = RemoveServiceSuccess | CleanupPending"
+        );
+        assert_eq!(
+            sdl_line(&sdl, "union UpdateCoreComponentResult"),
+            "union UpdateCoreComponentResult = UpdateCoreComponentSuccess | CleanupPending"
+        );
+        assert!(!sdl.contains("union HostOnboardingTicket"));
+    }
+
+    #[test]
+    fn the_host_onboarding_ticket_has_exactly_its_declared_fields() {
+        let sdl = rendered_sdl();
+        let body = sdl
+            .split("type HostOnboardingTicket {")
+            .nth(1)
+            .expect("the schema declares the ticket")
+            .split("\n}")
+            .next()
+            .expect("the ticket body ends");
+        let fields: Vec<&str> = body
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.contains(':'))
+            .collect();
+
+        assert_eq!(
+            fields,
+            vec![
+                "operationId: String!",
+                "token: String!",
+                "command: String!",
+                "expiresAt: DateTime!",
+            ]
         );
     }
 
