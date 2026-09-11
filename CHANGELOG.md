@@ -158,6 +158,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   and defaults to `ROLLBACK`, and `buildSelector` names either a version or a
   commit. The configuration draft-to-apply mutations are unchanged: an install
   or an update never rides the draft.
+- Added the system-administrator-only `updateCoreComponent` and `onboardHost`
+  GraphQL mutations. Core updates accept the three product-managed core
+  package-ids and return the operation id and deployment disposition, while
+  onboarding returns the operation id together with the one-time join token,
+  command and granted expiry.
 
 ### Fixed
 

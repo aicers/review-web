@@ -5153,6 +5153,28 @@ type HostOccupancyUnavailable {
 }
 
 """
+The one-time credential and command for bringing a host under management.
+"""
+type HostOnboardingTicket {
+	"""
+	The onboarding operation to poll.
+	"""
+	operationId: String!
+	"""
+	The live one-time credential the operator supplies to the host.
+	"""
+	token: String!
+	"""
+	The one-liner the operator runs on the host.
+	"""
+	command: String!
+	"""
+	The granted absolute deadline at which the token expires.
+	"""
+	expiresAt: DateTime!
+}
+
+"""
 Something the allocation table does not know about holds the port on the
 host.
 
@@ -6458,6 +6480,17 @@ type Mutation {
 	Confirming the removal with the operator is a UI concern.
 	"""
 	removeService(host: String!, target: String!, instance: StringNumber!): RemoveServiceResult!
+	"""
+	Updates a control-plane component and returns the operation to poll.
+	Core components have no instance dimension. Registry existence and a
+	singleton component's fixed host are review's answers, reached through
+	the one backend call rather than checked against a second source here.
+	"""
+	updateCoreComponent(component: String!, host: String!, buildSelector: BuildSelectorInput!, onFailure: FailurePolicy! = ROLLBACK): UpdateCoreComponentResult!
+	"""
+	Starts onboarding a host and returns its one-time ticket.
+	"""
+	onboardHost(host: String!): HostOnboardingTicket!
 	"""
 	Inserts a new triage policy, returning the ID of the new triage.
 	"""
@@ -9547,6 +9580,25 @@ type UnusualDestinationPattern implements Event {
 	Learning Method
 	"""
 	learningMethod: LearningMethod!
+}
+
+"""
+What `updateCoreComponent` answers with.
+"""
+union UpdateCoreComponentResult = UpdateCoreComponentSuccess | CleanupPending
+
+"""
+A core-component update was accepted, and this is the operation to poll.
+"""
+type UpdateCoreComponentSuccess {
+	"""
+	The attempt's durable identity.
+	"""
+	operationId: String!
+	"""
+	Whether the apply finished or was accepted for later reconciliation.
+	"""
+	disposition: DeployDisposition!
 }
 
 """
