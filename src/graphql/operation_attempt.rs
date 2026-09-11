@@ -1295,6 +1295,51 @@ mod tests {
         }
     }
 
+    /// A node carrying only a draft profile has no hostname to key on, and its
+    /// entries answer null rather than falling back to the drafted one.
+    ///
+    /// The draft is what the node *would* be called once applied; the ledger
+    /// records an attempt under the name the host answers to now, so reading
+    /// one under the draft would report another host's work.
+    #[tokio::test]
+    async fn the_inline_attempt_is_null_for_a_node_with_no_applied_profile() {
+        const DRAFTED: &str = "drafted.example.com";
+        let schema = TestSchema::new().await;
+        let node = Node {
+            id: u32::MAX,
+            name: "node1".to_string(),
+            name_draft: Some("node1".to_string()),
+            profile: None,
+            profile_draft: Some(NodeProfile {
+                customer_id: CUSTOMER,
+                description: String::new(),
+                hostname: DRAFTED.to_string(),
+            }),
+            agents: vec![agent("hog1", AgentKind::SemiSupervised, Some(1))],
+            external_services: Vec::new(),
+            creation_time: Utc::now(),
+        };
+        let node_id = schema.store().node_map().put(&node).expect("insert node");
+        // An attempt under the drafted hostname, which a lookup that fell back
+        // to the draft would find.
+        seed(
+            &schema.store(),
+            &attempt("draft-1", OperationAction::Update, DRAFTED, "hog", Some(1)),
+        );
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                "{{ node(id: \"{node_id}\") {{ agents {{ latestOperationAttempt {{ id }} }} }} }}"
+            ))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        assert_eq!(
+            data["node"]["agents"][0]["latestOperationAttempt"],
+            json!(null)
+        );
+    }
+
     /// An entry whose kind maps to no package-id has no target to look an
     /// attempt up under, and answers null without raising.
     #[tokio::test]
