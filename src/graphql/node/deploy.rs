@@ -1282,6 +1282,27 @@ mod tests {
         }
     }
 
+    /// Runs `f` under an INFO-level subscriber writing into a fresh capture and
+    /// returns its output next to the captured text. The subscriber is set on
+    /// the calling thread alone, so the caller must be a `current_thread` test.
+    /// Nothing buffers on the way: `LogCapture` appends each formatted event to
+    /// the shared buffer as it is written, so the text is complete on return.
+    async fn capturing_logs<F: Future>(f: F) -> (F::Output, String) {
+        let logs = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .finish();
+
+        let output = {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            f.await
+        };
+
+        (output, logs.contents())
+    }
+
     const INSTALL_SELECTION: &str = "__typename
         ... on InstallServiceSuccess { operationId disposition }
         ... on PortAllocationConflict {
@@ -1694,17 +1715,8 @@ mod tests {
         let (deployer, _) = RecordingDeployer::applying();
         let (onboarder, calls) = RecordingOnboarder::boxed(OnboardAnswer::Succeed);
         let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
-        let logs = LogCapture::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(logs.clone())
-            .with_max_level(tracing::Level::INFO)
-            .with_ansi(false)
-            .finish();
-
-        let response = {
-            let _guard = tracing::subscriber::set_default(subscriber);
-            execute_without_store(&schema, &onboard_mutation("new-host")).await
-        };
+        let mutation = onboard_mutation("new-host");
+        let (response, logs) = capturing_logs(execute_without_store(&schema, &mutation)).await;
 
         assert!(response.errors.is_empty(), "{:?}", response.errors);
         let data = response.data.into_json().unwrap();
@@ -1734,10 +1746,6 @@ mod tests {
         let debug = calls.only_ticket_debug();
         assert!(debug.contains("<redacted>"), "{debug}");
         assert!(!debug.contains(JOIN_TOKEN), "{debug}");
-        logs.clone()
-            .flush()
-            .expect("flushing the in-memory log capture succeeds");
-        let logs = logs.contents();
         assert!(logs.contains("Onboarding of new-host requested"), "{logs}");
         assert!(!logs.contains(JOIN_TOKEN), "{logs}");
         assert!(!logs.contains("<redacted>"), "{logs}");
@@ -1758,17 +1766,8 @@ mod tests {
         let (deployer, _) = RecordingDeployer::applying();
         let (onboarder, calls) = RecordingOnboarder::boxed(OnboardAnswer::Fail);
         let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
-        let logs = LogCapture::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(logs.clone())
-            .with_max_level(tracing::Level::INFO)
-            .with_ansi(false)
-            .finish();
-
-        let response = {
-            let _guard = tracing::subscriber::set_default(subscriber);
-            execute_without_store(&schema, &onboard_mutation("new-host")).await
-        };
+        let mutation = onboard_mutation("new-host");
+        let (response, logs) = capturing_logs(execute_without_store(&schema, &mutation)).await;
 
         assert_eq!(response.errors.len(), 1);
         assert_eq!(
@@ -1779,10 +1778,6 @@ mod tests {
         assert_eq!(calls.only_host(), "new-host");
         // The request is logged before the call, so the host is named even
         // though the call that follows it failed.
-        logs.clone()
-            .flush()
-            .expect("flushing the in-memory log capture succeeds");
-        let logs = logs.contents();
         assert!(logs.contains("Onboarding of new-host requested"), "{logs}");
     }
 
