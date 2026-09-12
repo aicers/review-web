@@ -3632,6 +3632,18 @@ type CsvColumnExtraConfig {
 	columnN: [Boolean!]
 }
 
+"""
+Result of requesting customer data deletion.
+"""
+enum CustomerDataDeletionRequestStatus {
+	ACCEPTED
+	ALREADY_COMPLETED
+	DELETION_IN_PROGRESS
+	BLOCKED_BY_ANOTHER_DELETION
+	BLOCKED_BY_SHUTDOWN
+	NO_TARGET
+}
+
 type DataSource {
 	"""
 	The ID of the data source.
@@ -5972,6 +5984,7 @@ type Mutation {
 	Updates the given cluster.
 	"""
 	updateCluster(model: ID!, id: ID!, category: ID, qualifier: ID, status: ID): ID!
+	deleteCustomerData(customerId: ID!): CustomerDataDeletionRequestStatus!
 	"""
 	Inserts a new data source, returning the ID of the new data source.
 	"""

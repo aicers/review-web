@@ -4,7 +4,7 @@ use review_database::{self as database, event::Direction};
 use tracing::warn;
 
 use super::super::{
-    BoxedAgentManager, get_store,
+    SharedAgentManager, get_store,
     install_state::{self, Lifecycle},
 };
 
@@ -91,7 +91,7 @@ fn listed_rows(ctx: &Context<'_>) -> Result<Vec<ListedRow>> {
 ///
 /// A failure is this element's alone: it is logged, and the element carries
 /// port `0` and no address under a name composed here as a label only.
-async fn endpoint(agent_manager: &BoxedAgentManager, row: ListedRow) -> DataStoreEndpoint {
+async fn endpoint(agent_manager: &SharedAgentManager, row: ListedRow) -> DataStoreEndpoint {
     let ListedRow { hostname, instance } = row;
     match agent_manager
         .data_store_read_endpoint(&hostname, instance)
@@ -121,7 +121,7 @@ pub(super) async fn load(ctx: &Context<'_>) -> Result<Vec<DataStoreEndpoint>> {
     if rows.is_empty() {
         return Ok(Vec::new());
     }
-    let agent_manager = ctx.data::<BoxedAgentManager>()?;
+    let agent_manager = ctx.data::<SharedAgentManager>()?;
     let mut endpoints = join_all(rows.into_iter().map(|row| endpoint(agent_manager, row))).await;
     endpoints.sort_unstable_by(|a, b| a.server_name.cmp(&b.server_name));
     Ok(endpoints)
@@ -143,7 +143,7 @@ mod tests {
     use crate::{
         backend::DataStoreReadEndpoint,
         graphql::{
-            AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema,
+            AgentManager, SamplingPolicy, SharedAgentManager, TestSchema,
             customer::NetworksTargetAgentLookupKeysPair,
         },
     };
@@ -174,7 +174,7 @@ mod tests {
     impl EndpointStub {
         fn boxed(
             answers: &[(&str, u32, DataStoreReadEndpoint)],
-        ) -> (BoxedAgentManager, Arc<EndpointReads>) {
+        ) -> (SharedAgentManager, Arc<EndpointReads>) {
             let reads = Arc::<EndpointReads>::default();
             let stub = Self {
                 reads: Arc::clone(&reads),
@@ -185,12 +185,19 @@ mod tests {
                     })
                     .collect(),
             };
-            (Box::new(stub), reads)
+            (Arc::new(stub), reads)
         }
     }
 
     #[async_trait::async_trait]
     impl AgentManager for EndpointStub {
+        async fn request_customer_data_deletion(
+            &self,
+            _targets: &[crate::customer_data_deletion::CustomerDataDeletionTarget],
+        ) -> Result<(), anyhow::Error> {
+            unimplemented!("this stub answers the endpoint read only")
+        }
+
         async fn data_store_read_endpoint(
             &self,
             hostname: &str,

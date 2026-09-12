@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use review_database::{Iterable, event::Direction};
 use tracing::warn;
 
-use super::{BoxedAgentManager, Role, RoleGuard};
+use super::{Role, RoleGuard, SharedAgentManager};
 use crate::graphql::query_with_constraints;
 
 #[derive(Default)]
@@ -72,7 +72,7 @@ impl TorExitNodeMutation {
         // The table is already written, and a Hog that misses this push pulls
         // the list at its next setup, so a failed send is not the caller's
         // failure.
-        let agent_manager = ctx.data::<BoxedAgentManager>()?;
+        let agent_manager = ctx.data::<SharedAgentManager>()?;
         if let Err(e) = agent_manager.broadcast_tor_exit_node_list().await {
             warn!("cannot broadcast the Tor exit node list: {e:#}");
         }
@@ -135,7 +135,7 @@ mod tests {
     use async_trait::async_trait;
 
     use crate::graphql::{
-        AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema,
+        AgentManager, SamplingPolicy, SharedAgentManager, TestSchema,
         customer::NetworksTargetAgentLookupKeysPair,
     };
 
@@ -150,13 +150,13 @@ mod tests {
     }
 
     impl BroadcastAgentManager {
-        fn boxed(fail: bool) -> (BoxedAgentManager, Arc<AtomicUsize>) {
+        fn boxed(fail: bool) -> (SharedAgentManager, Arc<AtomicUsize>) {
             let broadcasts = Arc::new(AtomicUsize::new(0));
             let manager = Self {
                 broadcasts: Arc::clone(&broadcasts),
                 fail,
             };
-            (Box::new(manager), broadcasts)
+            (Arc::new(manager), broadcasts)
         }
     }
 
@@ -192,6 +192,7 @@ mod tests {
             }
         }
         unreachable {
+            fn request_customer_data_deletion(&self, _targets: &[crate::customer_data_deletion::CustomerDataDeletionTarget]) -> ();
             fn send_agent_specific_internal_networks(&self, _networks: &[NetworksTargetAgentLookupKeysPair]) -> Vec<String>;
             fn send_agent_specific_allow_networks(&self, _networks: &[NetworksTargetAgentLookupKeysPair]) -> Vec<String>;
             fn send_agent_specific_block_networks(&self, _networks: &[NetworksTargetAgentLookupKeysPair]) -> Vec<String>;

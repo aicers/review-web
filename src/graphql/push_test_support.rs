@@ -15,7 +15,7 @@ use review_database::{
 use tokio::sync::Notify;
 
 use super::{
-    AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema,
+    AgentManager, SamplingPolicy, SharedAgentManager, TestSchema,
     customer::NetworksTargetAgentLookupKeysPair,
 };
 
@@ -105,21 +105,21 @@ pub(super) struct RecordingAgentManager {
 }
 
 impl RecordingAgentManager {
-    pub(super) fn boxed() -> (BoxedAgentManager, Pushes) {
+    pub(super) fn boxed() -> (SharedAgentManager, Pushes) {
         Self::boxed_with(false, None)
     }
 
     fn boxed_with(
         failing: bool,
         pause: Option<(PushKind, Arc<Pause>)>,
-    ) -> (BoxedAgentManager, Pushes) {
+    ) -> (SharedAgentManager, Pushes) {
         let pushes = Pushes::default();
         let manager = Self {
             pushes: pushes.clone(),
             failing,
             pause: Mutex::new(pause),
         };
-        (Box::new(manager), pushes)
+        (Arc::new(manager), pushes)
     }
 
     fn record(
@@ -156,6 +156,13 @@ impl RecordingAgentManager {
 
 #[async_trait]
 impl AgentManager for RecordingAgentManager {
+    async fn request_customer_data_deletion(
+        &self,
+        _targets: &[crate::customer_data_deletion::CustomerDataDeletionTarget],
+    ) -> Result<(), anyhow::Error> {
+        anyhow::bail!("not expected to be called")
+    }
+
     async fn send_agent_specific_internal_networks(
         &self,
         networks: &[NetworksTargetAgentLookupKeysPair],
