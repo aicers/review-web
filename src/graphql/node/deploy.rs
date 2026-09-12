@@ -1741,6 +1741,16 @@ mod tests {
         assert!(logs.contains("Onboarding of new-host requested"), "{logs}");
         assert!(!logs.contains(JOIN_TOKEN), "{logs}");
         assert!(!logs.contains("<redacted>"), "{logs}");
+        // The request line is the only one: the outcome is left to the
+        // operation id the response carries, so a success emits nothing in
+        // addition to what a failure already logged.
+        assert_eq!(
+            logs.lines()
+                .filter(|line| line.contains("new-host"))
+                .count(),
+            1,
+            "{logs}"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
