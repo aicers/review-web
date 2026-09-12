@@ -663,10 +663,16 @@ impl DeployMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn onboard_host(&self, ctx: &Context<'_>, host: String) -> Result<HostOnboardingTicket> {
         let onboarder = ctx.data::<BoxedHostOnboarder>()?;
+        // Logged before the call, for the same reason as in `install_service`,
+        // and the reason weighs most here: this is the only one of the five
+        // that mints a bootroot identity and the only one with no customer
+        // scoping, so a refused attempt is the record an audit comes looking
+        // for. The token does not exist yet at this point, which is how the
+        // line stays free of it.
+        info_with_username!(ctx, "Onboarding of {host} requested");
         let (ticket, operation_id): (BackendHostOnboardingTicket, OperationId) =
             onboarder.onboard_host(&host).await?;
         let (token, command, expires_at) = ticket.into_parts();
-        info_with_username!(ctx, "Host onboarding token issued for {host}");
         Ok(HostOnboardingTicket {
             operation_id: operation_id.into_inner(),
             token: token.expose(),
@@ -1732,17 +1738,27 @@ mod tests {
             .flush()
             .expect("flushing the in-memory log capture succeeds");
         let logs = logs.contents();
-        assert!(logs.contains("token issued for new-host"), "{logs}");
+        assert!(logs.contains("Onboarding of new-host requested"), "{logs}");
         assert!(!logs.contains(JOIN_TOKEN), "{logs}");
         assert!(!logs.contains("<redacted>"), "{logs}");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn onboarding_errors_are_ordinary_graphql_errors() {
         let (deployer, _) = RecordingDeployer::applying();
         let (onboarder, calls) = RecordingOnboarder::boxed(OnboardAnswer::Fail);
         let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
-        let response = execute_without_store(&schema, &onboard_mutation("new-host")).await;
+        let logs = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .finish();
+
+        let response = {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            execute_without_store(&schema, &onboard_mutation("new-host")).await
+        };
 
         assert_eq!(response.errors.len(), 1);
         assert_eq!(
@@ -1751,6 +1767,13 @@ mod tests {
         );
         assert_eq!(calls.count(), 1);
         assert_eq!(calls.only_host(), "new-host");
+        // The request is logged before the call, so the host is named even
+        // though the call that follows it failed.
+        logs.clone()
+            .flush()
+            .expect("flushing the in-memory log capture succeeds");
+        let logs = logs.contents();
+        assert!(logs.contains("Onboarding of new-host requested"), "{logs}");
     }
 
     #[tokio::test]
