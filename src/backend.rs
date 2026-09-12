@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::{
     collections::{BTreeSet, HashMap},
     fmt,
@@ -19,11 +20,19 @@ use review_database::{BuildSelector, ListenerBinding, ListenerTransport, PortOwn
 pub use review_protocol::types::ResourceUsage;
 use review_protocol::types::node::{BootstrapMaterial, DeliveryMode, FailurePolicy, PackageState};
 
+#[cfg(feature = "auth-mtls")]
+use crate::customer_data_deletion::CustomerDataDeletionTarget;
 use crate::graphql::customer::NetworksTargetAgentLookupKeysPair;
 pub use crate::graphql::{ParsedCertificate, SamplingPolicy};
 
 #[async_trait]
 pub trait AgentManager: Send + Sync {
+    #[cfg(feature = "auth-mtls")]
+    async fn request_customer_data_deletion(
+        &self,
+        targets: &[CustomerDataDeletionTarget],
+    ) -> Result<(), anyhow::Error>;
+
     async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
         Err(anyhow!("Not supported"))
     }
@@ -105,6 +114,9 @@ pub trait AgentManager: Send + Sync {
         Err(anyhow!("Not supported"))
     }
 }
+
+/// An agent manager that can be owned by background tasks.
+pub type SharedAgentManager = Arc<dyn AgentManager>;
 
 pub trait CertManager: Send + Sync {
     /// Returns the certificate path.

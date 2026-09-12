@@ -10,7 +10,7 @@ use review_protocol::types::ResourceUsage;
 use tracing::info;
 
 use super::{
-    super::{BoxedAgentManager, Role, RoleGuard, customer_access},
+    super::{Role, RoleGuard, SharedAgentManager, customer_access},
     NodeStatus, NodeStatusQuery, NodeStatusTotalCount, matches_manager_hostname,
 };
 use crate::graphql::query_with_constraints;
@@ -72,7 +72,7 @@ async fn load(
         (node_list, has_previous, has_next)
     };
 
-    let agent_manager = ctx.data::<BoxedAgentManager>()?;
+    let agent_manager = ctx.data::<SharedAgentManager>()?;
 
     let mut connection =
         Connection::with_additional_fields(has_previous, has_next, NodeStatusTotalCount);
@@ -99,7 +99,7 @@ async fn load(
 
 // Returns the resource usage and ping time of the given hostname.
 async fn fetch_resource_usage_and_ping(
-    agent_manager: &BoxedAgentManager,
+    agent_manager: &SharedAgentManager,
     hostname: &str,
 ) -> (Option<ResourceUsage>, Option<Duration>) {
     (
@@ -111,12 +111,13 @@ async fn fetch_resource_usage_and_ping(
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     use assert_json_diff::assert_json_include;
     use serde_json::json;
 
     use super::super::test_support::{MockAgentManager, insert_active_node, insert_apps, put_node};
-    use crate::graphql::{BoxedAgentManager, Role, TestSchema};
+    use crate::graphql::{Role, SharedAgentManager, TestSchema};
 
     #[tokio::test]
     async fn unreachable_manager_host_has_no_resource_usage_or_ping() {
@@ -167,7 +168,7 @@ mod tests {
             &mut online_apps_by_host_id,
         );
 
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id,
         });
 
@@ -433,7 +434,7 @@ mod tests {
             &mut online_apps_by_host_id,
         );
 
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id,
         });
 
@@ -607,7 +608,7 @@ mod tests {
         insert_apps("allowed-host", &["sensor"], &mut online_apps_by_host_id);
         insert_apps("customer2-host", &["sensor"], &mut online_apps_by_host_id);
 
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id,
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -648,7 +649,7 @@ mod tests {
         insert_apps("allowed-host", &["sensor"], &mut online_apps_by_host_id);
         insert_apps("forbidden-host", &["sensor"], &mut online_apps_by_host_id);
 
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id,
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -690,7 +691,7 @@ mod tests {
         let mut online_apps_by_host_id = HashMap::new();
         insert_apps("forbidden-host", &["sensor"], &mut online_apps_by_host_id);
 
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id,
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
