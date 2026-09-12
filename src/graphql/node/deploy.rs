@@ -663,10 +663,16 @@ impl DeployMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn onboard_host(&self, ctx: &Context<'_>, host: String) -> Result<HostOnboardingTicket> {
         let onboarder = ctx.data::<BoxedHostOnboarder>()?;
+        // Logged before the call, for the same reason as in `install_service`,
+        // and the reason weighs most here: this is the only one of the five
+        // that mints a bootroot identity and the only one with no customer
+        // scoping, so a refused attempt is the record an audit comes looking
+        // for. The token does not exist yet at this point, which is how the
+        // line stays free of it.
+        info_with_username!(ctx, "Onboarding of {host} requested");
         let (ticket, operation_id): (BackendHostOnboardingTicket, OperationId) =
             onboarder.onboard_host(&host).await?;
         let (token, command, expires_at) = ticket.into_parts();
-        info_with_username!(ctx, "Host onboarding token issued for {host}");
         Ok(HostOnboardingTicket {
             operation_id: operation_id.into_inner(),
             token: token.expose(),
@@ -1276,6 +1282,27 @@ mod tests {
         }
     }
 
+    /// Runs `f` under an INFO-level subscriber writing into a fresh capture and
+    /// returns its output next to the captured text. The subscriber is set on
+    /// the calling thread alone, so the caller must be a `current_thread` test.
+    /// Nothing buffers on the way: `LogCapture` appends each formatted event to
+    /// the shared buffer as it is written, so the text is complete on return.
+    async fn capturing_logs<F: Future>(f: F) -> (F::Output, String) {
+        let logs = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .finish();
+
+        let output = {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            f.await
+        };
+
+        (output, logs.contents())
+    }
+
     const INSTALL_SELECTION: &str = "__typename
         ... on InstallServiceSuccess { operationId disposition }
         ... on PortAllocationConflict {
@@ -1688,17 +1715,8 @@ mod tests {
         let (deployer, _) = RecordingDeployer::applying();
         let (onboarder, calls) = RecordingOnboarder::boxed(OnboardAnswer::Succeed);
         let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
-        let logs = LogCapture::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(logs.clone())
-            .with_max_level(tracing::Level::INFO)
-            .with_ansi(false)
-            .finish();
-
-        let response = {
-            let _guard = tracing::subscriber::set_default(subscriber);
-            execute_without_store(&schema, &onboard_mutation("new-host")).await
-        };
+        let mutation = onboard_mutation("new-host");
+        let (response, logs) = capturing_logs(execute_without_store(&schema, &mutation)).await;
 
         assert!(response.errors.is_empty(), "{:?}", response.errors);
         let data = response.data.into_json().unwrap();
@@ -1728,21 +1746,28 @@ mod tests {
         let debug = calls.only_ticket_debug();
         assert!(debug.contains("<redacted>"), "{debug}");
         assert!(!debug.contains(JOIN_TOKEN), "{debug}");
-        logs.clone()
-            .flush()
-            .expect("flushing the in-memory log capture succeeds");
-        let logs = logs.contents();
-        assert!(logs.contains("token issued for new-host"), "{logs}");
+        assert!(logs.contains("Onboarding of new-host requested"), "{logs}");
         assert!(!logs.contains(JOIN_TOKEN), "{logs}");
         assert!(!logs.contains("<redacted>"), "{logs}");
+        // The request line is the only one: the outcome is left to the
+        // operation id the response carries, so a success emits nothing in
+        // addition to what a failure already logged.
+        assert_eq!(
+            logs.lines()
+                .filter(|line| line.contains("new-host"))
+                .count(),
+            1,
+            "{logs}"
+        );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn onboarding_errors_are_ordinary_graphql_errors() {
         let (deployer, _) = RecordingDeployer::applying();
         let (onboarder, calls) = RecordingOnboarder::boxed(OnboardAnswer::Fail);
         let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
-        let response = execute_without_store(&schema, &onboard_mutation("new-host")).await;
+        let mutation = onboard_mutation("new-host");
+        let (response, logs) = capturing_logs(execute_without_store(&schema, &mutation)).await;
 
         assert_eq!(response.errors.len(), 1);
         assert_eq!(
@@ -1751,6 +1776,9 @@ mod tests {
         );
         assert_eq!(calls.count(), 1);
         assert_eq!(calls.only_host(), "new-host");
+        // The request is logged before the call, so the host is named even
+        // though the call that follows it failed.
+        assert!(logs.contains("Onboarding of new-host requested"), "{logs}");
     }
 
     #[tokio::test]
