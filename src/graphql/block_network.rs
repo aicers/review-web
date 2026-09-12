@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use super::{
-    BoxedAgentManager, Role, RoleGuard,
+    Role, RoleGuard, SharedAgentManager,
     customer::{HostNetworkGroup, HostNetworkGroupInput, NetworksTargetAgentLookupKeysPair},
 };
 use crate::graphql::{
@@ -461,7 +461,7 @@ async fn apply_block_networks(
     ctx: &Context<'_>,
     networks: &[NetworksTargetAgentLookupKeysPair],
 ) -> Result<()> {
-    let agent_manager = ctx.data::<BoxedAgentManager>()?;
+    let agent_manager = ctx.data::<SharedAgentManager>()?;
     agent_manager
         .send_agent_specific_block_networks(networks)
         .await?;
