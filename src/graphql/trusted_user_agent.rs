@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use database::{Iterable, event::Direction};
 use review_database::{self as database, Store};
 
-use super::{BoxedAgentManager, Role, RoleGuard};
+use super::{Role, RoleGuard, SharedAgentManager};
 use crate::graphql::query_with_constraints;
 
 #[derive(Default)]
@@ -72,7 +72,7 @@ impl UserAgentMutation {
             get_trusted_user_agent_list(&store)?
         };
 
-        let agent_manager = ctx.data::<BoxedAgentManager>()?;
+        let agent_manager = ctx.data::<SharedAgentManager>()?;
         agent_manager
             .broadcast_trusted_user_agent_list(&list)
             .await?;
@@ -112,7 +112,7 @@ impl UserAgentMutation {
             (removed, count, list)
         };
 
-        let agent_manager = ctx.data::<BoxedAgentManager>()?;
+        let agent_manager = ctx.data::<SharedAgentManager>()?;
         agent_manager
             .broadcast_trusted_user_agent_list(&list)
             .await?;
@@ -144,7 +144,7 @@ impl UserAgentMutation {
             get_trusted_user_agent_list(&store)?
         };
 
-        let agent_manager = ctx.data::<BoxedAgentManager>()?;
+        let agent_manager = ctx.data::<SharedAgentManager>()?;
         agent_manager
             .broadcast_trusted_user_agent_list(&list)
             .await?;

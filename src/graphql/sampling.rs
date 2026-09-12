@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use review_database::{Iterable, Store, event::Direction};
 use serde::{Deserialize, Serialize};
 
-use super::{BoxedAgentManager, IpAddress, Role, RoleGuard};
+use super::{IpAddress, Role, RoleGuard, SharedAgentManager};
 use crate::graphql::customer_access::hostname_customer_id_map;
 use crate::graphql::query_with_constraints;
 
@@ -410,7 +410,7 @@ impl SamplingPolicyMutation {
         };
 
         if immutable {
-            let agents = ctx.data::<BoxedAgentManager>()?;
+            let agents = ctx.data::<SharedAgentManager>()?;
             let policies = load_immutable(ctx).await?;
             if let Err(e) = agents.broadcast_crusher_sampling_policy(&policies).await {
                 // Change policy to mutable so that user can retry

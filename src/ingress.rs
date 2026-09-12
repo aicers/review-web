@@ -7,9 +7,9 @@
 //! read.
 //!
 //! The pieces every ingress route needs are module-level rather than folded
-//! into a handler: the byte-counting adapter [`capped_stream`], and
-//! [`authenticate`], which turns whichever credential the build's feature
-//! configuration uses into an [`IngressActor`]. A route added here calls them
+//! into a handler: the byte-counting adapter `capped_stream`, and
+//! `authenticate`, which turns whichever credential the build's feature
+//! configuration uses into an `IngressActor`. A route added here calls them
 //! rather than carrying a second copy.
 //!
 //! What the tier check here guarantees is about this **route**, not about the

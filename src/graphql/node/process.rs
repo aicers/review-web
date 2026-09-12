@@ -1,7 +1,7 @@
 use async_graphql::{Context, Object, Result};
 
 use super::{
-    super::{BoxedAgentManager, Role, RoleGuard},
+    super::{Role, RoleGuard, SharedAgentManager},
     Process, ProcessListQuery,
 };
 
@@ -11,7 +11,7 @@ impl ProcessListQuery {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn process_list(&self, ctx: &Context<'_>, hostname: String) -> Result<Vec<Process>> {
-        let agents = ctx.data::<BoxedAgentManager>()?;
+        let agents = ctx.data::<SharedAgentManager>()?;
         let review_hostname = roxy::hostname();
 
         let processes = if !review_hostname.is_empty() && review_hostname == hostname {
