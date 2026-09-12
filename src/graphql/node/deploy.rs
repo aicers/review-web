@@ -614,6 +614,7 @@ impl DeployMutation {
     }
 
     /// Updates a control-plane component and returns the operation to poll.
+    ///
     /// Core components have no instance dimension. Registry existence and a
     /// singleton component's fixed host are review's answers, reached through
     /// the one backend call rather than checked against a second source here.
