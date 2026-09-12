@@ -11,6 +11,10 @@ mod category;
 mod cert;
 mod cluster;
 mod core_component;
+#[cfg(feature = "auth-mtls")]
+mod customer_data_deletion {
+    pub use crate::customer_data_deletion::CustomerDataDeletionMutation;
+}
 pub mod customer;
 pub mod customer_access;
 mod data_source;
@@ -83,17 +87,19 @@ pub use self::sampling::{
 };
 #[cfg(feature = "auth-jwt")]
 use crate::auth::{ProductionTokenSigner, TokenSigner};
+pub(crate) use crate::backend::SharedAgentManager;
 use crate::backend::{AgentManager, CertManager, HostOnboarder, PackageDeployer};
 #[cfg(test)]
 use crate::backend::{
     BindAddrInput, BuildId, DeployError, DeployOutcome, HostOnboardingTicket, JoinToken,
     OperationId,
 };
+#[cfg(feature = "auth-mtls")]
+use crate::customer_data_deletion::CustomerDataDeletionTaskManager;
 
 /// GraphQL schema type.
 pub type Schema = async_graphql::Schema<Query, Mutation, Subscription>;
 
-type BoxedAgentManager = Box<dyn AgentManager>;
 type BoxedPackageDeployer = Box<dyn PackageDeployer>;
 type BoxedHostOnboarder = Box<dyn HostOnboarder>;
 
@@ -101,6 +107,7 @@ type BoxedHostOnboarder = Box<dyn HostOnboarder>;
 ///
 /// The store is stored in `async_graphql::Context` and passed to every
 /// GraphQL API function.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn schema<B, D, O>(
     store: Arc<RwLock<Store>>,
     agent_manager: B,
@@ -109,13 +116,16 @@ pub(super) fn schema<B, D, O>(
     ip_locator: Option<Arc<ip2location::DB>>,
     cert_manager: Arc<dyn CertManager>,
     tls_reload_handle: Arc<Notify>,
+    #[cfg(feature = "auth-mtls")] customer_data_deletion_manager: Arc<
+        CustomerDataDeletionTaskManager,
+    >,
 ) -> Schema
 where
     B: AgentManager + 'static,
     D: PackageDeployer + 'static,
     O: HostOnboarder + 'static,
 {
-    let agent_manager: BoxedAgentManager = Box::new(agent_manager);
+    let agent_manager: SharedAgentManager = Arc::new(agent_manager);
     let package_deployer: BoxedPackageDeployer = Box::new(package_deployer);
     let host_onboarder: BoxedHostOnboarder = Box::new(host_onboarder);
     let mut builder = Schema::build(
@@ -130,6 +140,10 @@ where
     .data(cert_manager)
     .data(tls_reload_handle)
     .extension(install_state::LatestBuildMemoExtension);
+    #[cfg(feature = "auth-mtls")]
+    {
+        builder = builder.data(customer_data_deletion_manager);
+    }
     #[cfg(feature = "auth-jwt")]
     {
         builder = builder.data(Arc::new(ProductionTokenSigner) as Arc<dyn TokenSigner>);
@@ -268,6 +282,7 @@ struct SubMutationOneA(
     cert::CertMutation,
     cluster::ClusterMutation,
     customer::CustomerMutation,
+    customer_data_deletion::CustomerDataDeletionMutation,
     data_source::DataSourceMutation,
     db_management::DbManagementMutation,
 );
@@ -899,7 +914,7 @@ pub(crate) enum RoleGuard {
 pub struct CustomerIds(pub Option<Vec<u32>>);
 
 impl RoleGuard {
-    fn new(role: database::Role) -> Self {
+    pub(crate) fn new(role: database::Role) -> Self {
         Self::Role(role)
     }
 }
@@ -993,6 +1008,14 @@ struct MockAgentManager {}
 #[cfg(test)]
 #[async_trait::async_trait]
 impl AgentManager for MockAgentManager {
+    #[cfg(feature = "auth-mtls")]
+    async fn request_customer_data_deletion(
+        &self,
+        _targets: &[crate::customer_data_deletion::CustomerDataDeletionTarget],
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+
     async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -1484,12 +1507,12 @@ const TEST_SCOPED_USERNAME: &str = "scoped-user";
 #[cfg(test)]
 impl TestSchema {
     async fn new() -> Self {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         Self::new_with_params(agent_manager, None, "testuser").await
     }
 
     async fn new_with_event_country_locator(locator: Arc<ip2location::DB>) -> Self {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         Self::new_with_params_and_event_country_locator(
             agent_manager,
             None,
@@ -1500,7 +1523,7 @@ impl TestSchema {
     }
 
     async fn new_with_params(
-        agent_manager: BoxedAgentManager,
+        agent_manager: SharedAgentManager,
         test_addr: Option<SocketAddr>,
         username: &str,
     ) -> Self {
@@ -1514,12 +1537,12 @@ impl TestSchema {
     /// so a test that exercises it substitutes a stub here rather than taking
     /// the default one's answers.
     async fn new_with_package_deployer(package_deployer: BoxedPackageDeployer) -> Self {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         Self::new_with_all(agent_manager, package_deployer, None, "testuser", None).await
     }
 
     async fn new_with_params_and_event_country_locator(
-        agent_manager: BoxedAgentManager,
+        agent_manager: SharedAgentManager,
         test_addr: Option<SocketAddr>,
         username: &str,
         event_country_locator: Option<Arc<ip2location::DB>>,
@@ -1535,7 +1558,7 @@ impl TestSchema {
     }
 
     async fn new_with_all(
-        agent_manager: BoxedAgentManager,
+        agent_manager: SharedAgentManager,
         package_deployer: BoxedPackageDeployer,
         test_addr: Option<SocketAddr>,
         username: &str,
@@ -1562,6 +1585,8 @@ impl TestSchema {
         .data(store.clone())
         .data(username.to_string())
         .extension(install_state::LatestBuildMemoExtension);
+        #[cfg(feature = "auth-mtls")]
+        let builder = builder.data(Arc::new(CustomerDataDeletionTaskManager::default()));
         #[cfg(feature = "auth-jwt")]
         let builder = builder.data(Arc::new(ProductionTokenSigner) as Arc<dyn TokenSigner>);
         let schema = builder.finish();
@@ -1818,6 +1843,18 @@ impl TestSchema {
 #[cfg(test)]
 mod tests {
     use super::{AgentManager, Direction, MockPackageDeployer, OpaqueCursor, TestSchema, database};
+
+    #[cfg(feature = "auth-jwt")]
+    #[test]
+    fn jwt_schema_does_not_expose_customer_data_deletion() {
+        let schema = async_graphql::Schema::build(
+            super::Query::default(),
+            super::Mutation::default(),
+            super::Subscription::default(),
+        )
+        .finish();
+        assert!(!schema.sdl().contains("deleteCustomerData"));
+    }
 
     #[derive(Clone, Debug)]
     struct MockRow {

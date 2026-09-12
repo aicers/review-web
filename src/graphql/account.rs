@@ -1719,7 +1719,7 @@ mod tests {
     use serde_json::json;
 
     use crate::graphql::{
-        BoxedAgentManager, MockAgentManager, RoleGuard, TestSchema,
+        MockAgentManager, RoleGuard, SharedAgentManager, TestSchema,
         account::{initial_credential, parse_review_admin},
     };
 
@@ -2031,7 +2031,7 @@ mod tests {
 
     #[tokio::test]
     async fn my_account() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         let schema = TestSchema::new_with_params(agent_manager, None, "username").await;
 
         let res = schema
@@ -2085,7 +2085,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_accounts() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         let schema = TestSchema::new_with_params(agent_manager, None, "admin").await;
         seed_admin_account(&schema);
         let res = schema
@@ -2153,7 +2153,7 @@ mod tests {
 
     #[tokio::test]
     async fn prevent_admin_self_deletion() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         let schema = TestSchema::new_with_params(agent_manager, None, "admin").await;
         seed_admin_account(&schema);
 
@@ -2177,7 +2177,7 @@ mod tests {
 
     #[tokio::test]
     async fn prevent_user_self_deletion() {
-        let schema = TestSchema::new_with_params(Box::new(MockAgentManager {}), None, "user").await;
+        let schema = TestSchema::new_with_params(Arc::new(MockAgentManager {}), None, "user").await;
 
         // Try to delete self - should fail
         let res = schema
@@ -3261,7 +3261,7 @@ mod tests {
 
     #[tokio::test]
     async fn allow_access_from() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         let test_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
 
         let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "user1").await;
@@ -3299,7 +3299,7 @@ mod tests {
 
     #[tokio::test]
     async fn not_allow_access_from() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         let test_addr: SocketAddr = "127.0.0.2:8080".parse().unwrap();
 
         let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "user1").await;
@@ -3337,7 +3337,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_ip_allow_access_from() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         let test_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
 
         let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "user1").await;
@@ -3366,7 +3366,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_language() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         let schema = TestSchema::new_with_params(agent_manager, None, "username").await;
 
         let res = schema
@@ -3613,7 +3613,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_theme() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         let schema = TestSchema::new_with_params(agent_manager, None, "username").await;
 
         let res = schema
@@ -3812,7 +3812,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_my_account_success() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // Create a test account
@@ -3879,7 +3879,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_my_account_partial_updates() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // Create a test account
@@ -3934,7 +3934,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_my_account_no_fields_provided() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // Create a test account
@@ -3972,7 +3972,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_my_account_wrong_old_password() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // Create a test account
@@ -4015,7 +4015,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_my_account_same_old_new_password() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // Create a test account
@@ -4058,7 +4058,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_my_account_language_theme_null_values() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
         // Create a test account with null language and theme

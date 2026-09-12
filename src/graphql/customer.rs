@@ -15,7 +15,7 @@ use tracing::error;
 use tracing::info;
 
 use super::node::{SEMI_SUPERVISED_AGENT, agent_lookup_key_service_token};
-use super::{BoxedAgentManager, Role, RoleGuard, agent_lookup_keys_by_customer_id};
+use super::{Role, RoleGuard, SharedAgentManager, agent_lookup_keys_by_customer_id};
 use crate::error_with_username;
 use crate::graphql::query_with_constraints;
 use crate::info_with_username;
@@ -677,7 +677,7 @@ pub async fn send_agent_specific_customer_networks(
     ctx: &Context<'_>,
     networks: &[NetworksTargetAgentLookupKeysPair],
 ) -> Result<Vec<String>> {
-    let agent_manager = ctx.data::<BoxedAgentManager>()?;
+    let agent_manager = ctx.data::<SharedAgentManager>()?;
     agent_manager
         .send_agent_specific_internal_networks(networks)
         .await
