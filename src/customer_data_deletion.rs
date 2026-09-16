@@ -15,7 +15,10 @@ use review_database::{
 use tokio::{sync::Mutex, task::JoinHandle};
 use tracing::error;
 
-use crate::{backend::SharedAgentManager, graphql::RoleGuard};
+use crate::{
+    backend::SharedAgentManager,
+    graphql::{RoleGuard, agent_lookup_key_service_token},
+};
 
 /// A remote service that must delete data belonging to a customer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -157,6 +160,8 @@ async fn request_deletion(
 
     let (jobs, existing) = {
         let store = read_store(&store)?;
+        #[cfg(test)]
+        tests::checkpoint(&store, tests::Stage::ScanJobs, customer_id)?;
         let jobs = store
             .customer_data_deletion_map()
             .iter(Direction::Forward, None)
@@ -203,20 +208,18 @@ async fn request_deletion(
                 result.error = None;
             }
         }
-        read_store(&store)?
-            .customer_data_deletion_map()
-            .put(&job)
-            .context("persisting customer data deletion retry")?;
+        persist_request(&store, &job, "persisting customer data deletion retry")?;
         plan
     } else {
         let Some(plan) = collect_initial_plan(&store, customer_id)? else {
             return Ok(CustomerDataDeletionRequestStatus::NoTarget);
         };
         let job = initial_job(&plan, timestamp_nanos()?);
-        read_store(&store)?
-            .customer_data_deletion_map()
-            .put(&job)
-            .context("persisting initial customer data deletion job")?;
+        persist_request(
+            &store,
+            &job,
+            "persisting initial customer data deletion job",
+        )?;
         plan
     };
 
@@ -225,6 +228,17 @@ async fn request_deletion(
     // task-manager mutex decides the ordering against shutdown.
     state.active = Some((customer_id, supervisor));
     Ok(CustomerDataDeletionRequestStatus::Accepted)
+}
+
+fn persist_request(
+    store: &RwLock<Store>,
+    job: &CustomerDataDeletionJob,
+    context: &'static str,
+) -> anyhow::Result<()> {
+    let store = read_store(store)?;
+    #[cfg(test)]
+    tests::checkpoint(&store, tests::Stage::PersistRequest, job.customer_id)?;
+    store.customer_data_deletion_map().put(job).context(context)
 }
 
 fn timestamp_nanos() -> anyhow::Result<i64> {
@@ -244,7 +258,7 @@ fn service_fqdn(service: &str, host_fqdn: &str) -> String {
 }
 
 fn agent_has_service(key: &str, service: &str) -> bool {
-    key.split('.').any(|segment| segment == service)
+    agent_lookup_key_service_token(key) == Some(service)
 }
 
 fn collect_initial_plan(
@@ -252,6 +266,8 @@ fn collect_initial_plan(
     customer_id: u32,
 ) -> anyhow::Result<Option<CustomerDataDeletionExecutionPlan>> {
     let store = read_store(store)?;
+    #[cfg(test)]
+    tests::checkpoint(&store, tests::Stage::CollectNodes, customer_id)?;
     let nodes = store
         .node_map()
         .iter(Direction::Forward, None)
@@ -490,6 +506,12 @@ async fn run_review_worker_and_persist(
 ) {
     let worker_store = Arc::clone(&store);
     let outcome = tokio::task::spawn_blocking(move || {
+        #[cfg(test)]
+        tests::checkpoint(
+            &*read_store(&worker_store)?,
+            tests::Stage::Worker,
+            customer_id,
+        )?;
         delete_review_data(&worker_store, customer_id, &targets)
     })
     .await;
@@ -518,21 +540,39 @@ fn delete_review_data(
     targets: &ReviewDeletionTargets,
 ) -> anyhow::Result<()> {
     let store = read_store(store)?;
+    #[cfg(test)]
+    tests::checkpoint(&store, tests::Stage::Events, customer_id).with_context(|| {
+        format!(
+            "deleting customer events for {:?}",
+            targets.event_service_fqdns
+        )
+    })?;
     store
         .events()
         .remove_by_sensors(&targets.event_service_fqdns)
-        .context("deleting customer events")?;
+        .with_context(|| {
+            format!(
+                "deleting customer events for {:?}",
+                targets.event_service_fqdns
+            )
+        })?;
+    #[cfg(test)]
+    tests::checkpoint(&store, tests::Stage::Hosts, customer_id)?;
     store
         .hosts_map()
         .remove_by_customer_id(customer_id)
         .with_context(|| format!("deleting hosts for customer {customer_id}"))?;
     for host_fqdn in &targets.host_fqdns {
+        #[cfg(test)]
+        tests::checkpoint(&store, tests::Stage::TrafficFilters, customer_id)?;
         store
             .traffic_filter_map()
             .remove(host_fqdn)
             .with_context(|| format!("deleting traffic filter rules for {host_fqdn}"))?;
     }
     for node_id in &targets.node_ids {
+        #[cfg(test)]
+        tests::checkpoint(&store, tests::Stage::Nodes, customer_id)?;
         if store.node_map().get_by_id(*node_id)?.is_none() {
             continue;
         }
@@ -556,6 +596,8 @@ fn persist_review_terminal(
     error_message: Option<String>,
 ) -> anyhow::Result<()> {
     let store = read_store(store)?;
+    #[cfg(test)]
+    tests::checkpoint(&store, tests::Stage::PersistTerminal, customer_id)?;
     let job = store
         .customer_data_deletion_map()
         .get(customer_id)?
@@ -674,6 +716,10 @@ mod tests {
     use crate::backend::{AgentManager, Process, ResourceUsage};
     use crate::graphql::{NetworksTargetAgentLookupKeysPair, SamplingPolicy};
 
+    mod coverage;
+
+    pub(super) use coverage::{Stage, checkpoint};
+
     static TEST_DB_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     struct TestStore {
@@ -713,6 +759,8 @@ mod tests {
     struct RecordingAgentManager {
         targets: std::sync::Mutex<Vec<CustomerDataDeletionTarget>>,
         fail_delivery: bool,
+        delivery_gate: Option<Arc<tokio::sync::Semaphore>>,
+        delivery_started: tokio::sync::Notify,
     }
 
     #[async_trait]
@@ -722,6 +770,10 @@ mod tests {
             targets: &[CustomerDataDeletionTarget],
         ) -> anyhow::Result<()> {
             self.targets.lock().unwrap().extend_from_slice(targets);
+            self.delivery_started.notify_one();
+            if let Some(gate) = &self.delivery_gate {
+                gate.acquire().await.unwrap().forget();
+            }
             if self.fail_delivery {
                 bail!("delivery failed");
             }
@@ -888,12 +940,18 @@ mod tests {
         let manager = CustomerDataDeletionTaskManager::default();
         let completed = Arc::new(AtomicBool::new(false));
         let task_completed = Arc::clone(&completed);
+        let (release, wait) = tokio::sync::oneshot::channel();
         let supervisor = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            wait.await.unwrap();
             task_completed.store(true, Ordering::SeqCst);
         });
         manager.state.lock().await.active = Some((11, supervisor));
-        manager.shutdown_and_wait().await;
+        let shutdown = manager.shutdown_and_wait();
+        tokio::pin!(shutdown);
+        assert!(futures::poll!(&mut shutdown).is_pending());
+        assert!(!completed.load(Ordering::SeqCst));
+        release.send(()).unwrap();
+        shutdown.await;
         assert!(completed.load(Ordering::SeqCst));
         let state = manager.state.lock().await;
         assert!(state.shutting_down);
@@ -904,20 +962,26 @@ mod tests {
     async fn mutation_rejects_non_admin_before_reading_state() {
         let test_store = TestStore::new();
         let manager = Arc::new(CustomerDataDeletionTaskManager::default());
-        manager.state.lock().await.shutting_down = true;
-        let schema = test_schema(
-            &test_store,
-            Arc::new(RecordingAgentManager::default()),
-            manager,
-        );
-        let response = schema
-            .execute(
-                Request::new(r#"mutation { deleteCustomerData(customerId: "1") }"#)
-                    .data(RoleGuard::Role(Role::SecurityAdministrator))
-                    .data(SocketAddr::from(([127, 0, 0, 1], 1))),
-            )
-            .await;
-        assert_eq!(response.errors.len(), 1);
+        put_active_node(&test_store, 1, "protected.example");
+        let agent_manager = Arc::new(RecordingAgentManager::default());
+        let shared: SharedAgentManager = agent_manager.clone();
+        let schema = test_schema(&test_store, shared, Arc::clone(&manager));
+        for role in [
+            Role::SecurityAdministrator,
+            Role::SecurityManager,
+            Role::SecurityMonitor,
+        ] {
+            let response = schema
+                .execute(
+                    Request::new(r#"mutation { deleteCustomerData(customerId: "1") }"#)
+                        .data(RoleGuard::Role(role))
+                        .data(SocketAddr::from(([127, 0, 0, 1], 1))),
+                )
+                .await;
+            assert_eq!(response.errors.len(), 1);
+            assert!(manager.state.lock().await.active.is_none());
+            assert!(agent_manager.targets.lock().unwrap().is_empty());
+        }
         assert!(
             read_store(&test_store.store)
                 .unwrap()
@@ -1275,6 +1339,7 @@ mod tests {
             Arc::new(RecordingAgentManager {
                 targets: std::sync::Mutex::new(Vec::new()),
                 fail_delivery: true,
+                ..RecordingAgentManager::default()
             }),
             &manager,
         )
