@@ -101,7 +101,10 @@ where
     if let Some(ip_locator) = ip_locator {
         builder = builder.data(ip_locator);
     }
-    builder.finish()
+    // Introspection would hand the full schema to any unauthenticated caller,
+    // and no client needs it at runtime: the web front end reads the schema at
+    // build time instead.
+    builder.disable_introspection().finish()
 }
 
 /// A set of queries defined in the schema.

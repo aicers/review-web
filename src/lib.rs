@@ -18,15 +18,12 @@ use std::{
     sync::Arc,
 };
 
-use async_graphql::{
-    Data,
-    http::{GraphQLPlaygroundConfig, playground_source},
-};
+use async_graphql::Data;
 use async_graphql_axum::{GraphQLProtocol, GraphQLRequest, GraphQLResponse, GraphQLWebSocket};
 use axum::{
     Json, Router,
     extract::{ConnectInfo, Extension, WebSocketUpgrade},
-    response::{Html, IntoResponse, Response},
+    response::{IntoResponse, Response},
     routing::{get, get_service},
 };
 use axum_extra::{
@@ -134,10 +131,6 @@ where
 
             let router = Router::new()
                 .route("/graphql", get(graphql_ws_handler).post(graphql_handler))
-                .route(
-                    "/graphql/playground",
-                    get(graphql_playground).post(graphql_handler),
-                )
                 .fallback_service(static_files.layer(TraceLayer::new_for_http()))
                 .layer(Extension(schema.clone()))
                 .layer(Extension(store.clone()));
@@ -350,13 +343,6 @@ async fn graceful_shutdown(handle: axum_server::Handle, notify: Arc<Notify>) {
 
     notify.notified().await;
     handle.graceful_shutdown(Some(Duration::from_secs(1)));
-}
-
-#[allow(clippy::unused_async)]
-async fn graphql_playground() -> Result<impl IntoResponse, Error> {
-    Ok(Html(playground_source(
-        GraphQLPlaygroundConfig::new("/graphql").subscription_endpoint("/graphql"),
-    )))
 }
 
 fn is_local(addr: SocketAddr) -> bool {
