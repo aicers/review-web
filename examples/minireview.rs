@@ -326,6 +326,26 @@ async fn main() -> Result<()> {
     }
 }
 
+/// Reads the private key at `path` and returns its DER encoding, trying the
+/// PKCS#1, PKCS#8 and SEC1 PEM formats in turn.
+fn read_private_key_der(path: &Path) -> Result<Vec<u8>> {
+    use rustls_pemfile::{ec_private_keys, pkcs8_private_keys, rsa_private_keys};
+
+    let pem = fs::read(path)
+        .with_context(|| format!("cannot read private key {}", path.display()))?;
+
+    if let Some(key) = rsa_private_keys(&mut &*pem).flatten().next() {
+        return Ok(key.secret_pkcs1_der().to_vec());
+    }
+    if let Some(key) = pkcs8_private_keys(&mut &*pem).flatten().next() {
+        return Ok(key.secret_pkcs8_der().to_vec());
+    }
+    if let Some(key) = ec_private_keys(&mut &*pem).flatten().next() {
+        return Ok(key.secret_sec1_der().to_vec());
+    }
+    bail!("no supported private key found in {}", path.display())
+}
+
 fn run(config: &Config) -> Result<Arc<Notify>> {
     migrate_data_dir(config.data_dir(), config.backup_dir()).context("migration failed")?;
 
@@ -347,6 +367,14 @@ fn run(config: &Config) -> Result<Arc<Notify>> {
         // Ignores the error if the initial admin password is already set.
         let _ = set_initial_admin_password(&store);
     }
+
+    // Sign session tokens with the server's private key, exactly as the real
+    // manager does. Without this the JWT secret stays empty, which both signs
+    // every session token with an empty HMAC key and makes the RS256 Aimer
+    // token fail on every sign-in.
+    #[cfg(feature = "auth-jwt")]
+    review_web::auth::update_jwt_secret(read_private_key_der(&config.key)?)?;
+
     let store = Arc::new(RwLock::new(store));
 
     let agent_manager = Manager {};
