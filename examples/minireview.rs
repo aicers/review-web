@@ -150,7 +150,10 @@ impl AgentManager for Manager {
 }
 
 const DEFAULT_DATABASE_URL: &str = "postgres://review@localhost/review";
-const DEFAULT_SERVER: &str = "localhost";
+// Must parse as a `SocketAddr`; the previous "localhost" never did. Binds
+// every interface, matching what every real deployment config sets and
+// what a management server, whose purpose is to be reachable, needs.
+const DEFAULT_GRAPHQL_SRV_ADDR: &str = "0.0.0.0:8442";
 const DEFAULT_LOG_PATH: &str = "/data/logs/apps";
 
 pub struct Config {
@@ -200,7 +203,7 @@ impl Config {
         let builder = config::Config::builder()
             .set_default("database_url", DEFAULT_DATABASE_URL)
             .context("cannot set the default database URL")?
-            .set_default("graphql_srv_addr", DEFAULT_SERVER)
+            .set_default("graphql_srv_addr", DEFAULT_GRAPHQL_SRV_ADDR)
             .context("cannot set the default GraphQL server address")?
             .set_default("cert", env::current_dir()?.join("cert.pem").to_str())
             .context("cannot set the default certificate file name")?
