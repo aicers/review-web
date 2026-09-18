@@ -909,7 +909,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "test_user",
-                        password: "test_password",
+                        password: "QTestpasword7#z",
                         role: "SECURITY_MONITOR",
                         name: "Test User",
                         department: "IT",

@@ -1,3 +1,4 @@
+mod password_policy;
 mod username_validation;
 
 use std::{
@@ -19,6 +20,7 @@ use review_database::{
 use serde::Serialize;
 use tracing::info;
 
+use self::password_policy::validate_password_strength;
 use self::username_validation::validate_and_normalize_username;
 use super::{IpAddress, RoleGuard, cluster::try_id_args_into_ints};
 use crate::graphql::query_with_constraints;
@@ -320,6 +322,7 @@ impl AccountMutation {
         // Validate and normalize the username
         let normalized_username = validate_and_normalize_username(&username)
             .map_err(|e| format!("Invalid username: {e}"))?;
+        validate_password_strength(&password)?;
 
         let customer_ids = try_id_args_into_ints::<u32>(customer_ids)?;
         let store = crate::graphql::get_store(ctx)?;
@@ -378,6 +381,7 @@ impl AccountMutation {
                 if account.verify_password(&password) {
                     return Err("new password cannot be the same as the current password".into());
                 }
+                validate_password_strength(&password)?;
                 account.update_password(&password)?;
                 account.reset_last_signin_time();
                 map.put(&account)?;
@@ -524,6 +528,7 @@ impl AccountMutation {
             if account.verify_password(new_password) {
                 return Err("new password cannot be the same as the current password".into());
             }
+            validate_password_strength(new_password)?;
             info_with_username!(ctx, "Password change requested");
         }
 
@@ -960,6 +965,8 @@ impl AccountMutation {
             if password_update.old == password_update.new {
                 return Err("new password cannot be the same as the current password".into());
             }
+
+            validate_password_strength(&password_update.new)?;
         }
 
         // Validate username exists
@@ -1199,6 +1206,7 @@ fn validate_update_new_password(password: &str, new_password: &str, username: &s
         info!("Password is the same as the previous one for {username}");
         return Err("password is the same as the previous one".into());
     }
+    validate_password_strength(new_password)?;
     Ok(())
 }
 
@@ -1594,7 +1602,7 @@ mod tests {
                 r#"mutation {
                 insertAccount(
                     username: "user1",
-                    password: "pw1",
+                    password: "Qx0#Ab7cD",
                     role: "SECURITY_ADMINISTRATOR",
                     name: "User One",
                     department: "Test"
@@ -1609,7 +1617,7 @@ mod tests {
                 r#"mutation {
                 insertAccount(
                     username: "user2",
-                    password: "pw2",
+                    password: "Qx0#Ab7cE",
                     role: "SECURITY_ADMINISTRATOR",
                     name: "User Two",
                     department: "Test"
@@ -1624,7 +1632,7 @@ mod tests {
                 r#"mutation {
                 insertAccount(
                     username: "user3",
-                    password: "pw3",
+                    password: "Qx0#Ab7cF",
                     role: "SECURITY_ADMINISTRATOR",
                     name: "User Three",
                     department: "Test"
@@ -1639,7 +1647,7 @@ mod tests {
                 r#"mutation {
                 insertAccount(
                     username: "user4",
-                    password: "pw4",
+                    password: "Qx0#Ab7cG",
                     role: "SECURITY_ADMINISTRATOR",
                     name: "User Four",
                     department: "Test"
@@ -1852,7 +1860,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "username",
-                        password: "password",
+                        password: "QPasword7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "John Doe",
                         department: "Security",
@@ -1914,7 +1922,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "user1",
-                        password: "Ahh9booH",
+                        password: "QAh9boH7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "John Doe",
                         department: "Security"
@@ -2028,7 +2036,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "TestUser1",
-                        password: "Ahh9booH",
+                        password: "QAh9boH7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Test User",
                         department: "Security"
@@ -2068,7 +2076,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "testuser2",
-                        password: "Ahh9booH",
+                        password: "QAh9boH7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Test User 2",
                         department: "Security"
@@ -2510,7 +2518,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "user1",
-                        password: "Ahh9booH",
+                        password: "QAh9boH7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "John Doe",
                         department: "Security",
@@ -2526,7 +2534,7 @@ mod tests {
         let res = schema
             .execute_with_guard(
                 r#"mutation {
-                resetAdminPassword(username: "user1", password: "not admin")
+                resetAdminPassword(username: "user1", password: "QNotadmin7#z")
             }"#,
                 RoleGuard::Local,
             )
@@ -2549,7 +2557,7 @@ mod tests {
         let res = schema
             .execute_with_guard(
                 r#"mutation {
-                resetAdminPassword(username: "admin", password: "Reset-password1!")
+                resetAdminPassword(username: "admin", password: "QResetpasword17#z")
             }"#,
                 RoleGuard::Local,
             )
@@ -2563,7 +2571,7 @@ mod tests {
         let res = schema
             .execute_with_guard(
                 r#"mutation {
-                resetAdminPassword(username: "admin", password: "not local")
+                resetAdminPassword(username: "admin", password: "QNotlocal7#z")
             }"#,
                 RoleGuard::Role(Role::SystemAdministrator),
             )
@@ -2584,7 +2592,7 @@ mod tests {
         let res = schema
             .execute_with_guard(
                 r#"mutation {
-            resetAdminPassword(username: "user", password: "user not existed")
+            resetAdminPassword(username: "user", password: "QUsernotexisted7#z")
         }"#,
                 RoleGuard::Local,
             )
@@ -2605,7 +2613,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "sysadmin2",
-                        password: "password",
+                        password: "QPasword7#z",
                         role: "SYSTEM_ADMINISTRATOR",
                         name: "John Doe",
                         department: "Security",
@@ -2623,7 +2631,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "secadmin1",
-                        password: "password",
+                        password: "QPasword7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "John Doe",
                         department: "Security",
@@ -2643,7 +2651,7 @@ mod tests {
                 r#"mutation {
                 insertAccount(
                     username: "secadmin2",
-                    password: "password",
+                    password: "QPasword7#z",
                     role: "SECURITY_ADMINISTRATOR",
                     name: "John Doe",
                     department: "Security",
@@ -2665,7 +2673,7 @@ mod tests {
                 r#"mutation {
                 insertAccount(
                     username: "secmgr1",
-                    password: "password",
+                    password: "QPasword7#z",
                     role: "SECURITY_MANAGER",
                     name: "John Doe",
                     department: "Security",
@@ -2685,7 +2693,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "secmgr2",
-                        password: "password",
+                        password: "QPasword7#z",
                         role: "SECURITY_MANAGER",
                         name: "John Doe",
                         department: "Security",
@@ -2706,7 +2714,7 @@ mod tests {
                 r#"mutation {
                 insertAccount(
                     username: "secmon1",
-                    password: "password",
+                    password: "QPasword7#z",
                     role: "SECURITY_MONITOR",
                     name: "John Doe",
                     department: "Security",
@@ -2726,7 +2734,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "secmon2",
-                        password: "password",
+                        password: "QPasword7#z",
                         role: "SECURITY_MONITOR",
                         name: "John Doe",
                         department: "Security",
@@ -2753,7 +2761,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "username",
-                        password: "password",
+                        password: "QPasword7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "John Doe",
                         department: "Security Admin",
@@ -2795,7 +2803,7 @@ mod tests {
                 mutation {
                     updateAccount(
                         username: "username",
-                        password: "newpassword",
+                        password: "QNewpasword7#z",
                         role: {
                             old: "SECURITY_ADMINISTRATOR",
                             new: "SECURITY_MONITOR"
@@ -2855,7 +2863,7 @@ mod tests {
                 mutation {
                     updateAccount(
                         username: "username",
-                        password: "anotherpassword",
+                        password: "QAnotherpasword7#z",
                         role: {
                             old: "SECURITY_MONITOR",
                             new: "SECURITY_MANAGER"
@@ -2977,7 +2985,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "user1",
-                        password: "pw1",
+                        password: "Qx0#Ab7cD",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "User One",
                         department: "Test",
@@ -2994,7 +3002,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
-                    signIn(username: "user1", password: "pw1") {
+                    signIn(username: "user1", password: "Qx0#Ab7cD") {
                         reviewToken
                     }
                 }"#,
@@ -3022,7 +3030,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
-                    signIn(username: "user1", password: "pw1") {
+                    signIn(username: "user1", password: "Qx0#Ab7cD") {
                         reviewToken
                     }
                 }"#,
@@ -3035,7 +3043,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
-                    signIn(username: "user1", password: "pw1") {
+                    signIn(username: "user1", password: "Qx0#Ab7cD") {
                         reviewToken
                     }
                 }"#,
@@ -3055,7 +3063,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "user1",
-                        password: "pw1",
+                        password: "Qx0#Ab7cD",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "User One",
                         department: "Test",
@@ -3072,7 +3080,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
-                    signIn(username: "user1", password: "pw1") {
+                    signIn(username: "user1", password: "Qx0#Ab7cD") {
                         reviewToken
                     }
                 }"#,
@@ -3093,7 +3101,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "user1",
-                        password: "pw1",
+                        password: "Qx0#Ab7cD",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "User One",
                         department: "Test",
@@ -3110,7 +3118,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
-                    signIn(username: "user1", password: "pw1") {
+                    signIn(username: "user1", password: "Qx0#Ab7cD") {
                         reviewToken
                     }
                 }"#,
@@ -3131,7 +3139,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "user1",
-                        password: "pw1",
+                        password: "Qx0#Ab7cD",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "User One",
                         department: "Test",
@@ -3159,7 +3167,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "username",
-                        password: "password",
+                        password: "QPasword7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "John Doe",
                         department: "Security",
@@ -3237,7 +3245,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "user2",
-                        password: "pw2",
+                        password: "Qx0#Ab7cE",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "User One",
                         department: "Test",
@@ -3250,7 +3258,7 @@ mod tests {
         assert_eq!(res.data.to_string(), r#"{insertAccount: "user2"}"#);
 
         let query = r#"mutation {
-                    signIn(username: "user2", password: "pw2") {
+                    signIn(username: "user2", password: "Qx0#Ab7cE") {
                         reviewToken
                     }
               }"#;
@@ -3276,7 +3284,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "user3",
-                        password: "pw3",
+                        password: "Qx0#Ab7cF",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "User One",
                         department: "Test",
@@ -3291,7 +3299,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
-                    signIn(username: "user3", password: "pw3") {
+                    signIn(username: "user3", password: "Qx0#Ab7cF") {
                         reviewToken
                     }
                 }"#,
@@ -3306,7 +3314,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
-                    signInWithNewPassword(username: "user3", password: "pw3") {
+                    signInWithNewPassword(username: "user3", password: "Qx0#Ab7cF") {
                         reviewToken
                     }
                 }"#,
@@ -3320,7 +3328,7 @@ mod tests {
         );
 
         let query = r#"mutation {
-                    signInWithNewPassword(username: "user1", password: "pw1", newPassword: "pw2") {
+                    signInWithNewPassword(username: "user1", password: "Qx0#Ab7cD", newPassword: "Qx0#Ab7cE") {
                         reviewToken
                     }
               }"#;
@@ -3333,7 +3341,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
-                    signInWithNewPassword(username: "user3", password: "pw3", newPassword: "pw3") {
+                    signInWithNewPassword(username: "user3", password: "Qx0#Ab7cF", newPassword: "Qx0#Ab7cF") {
                         reviewToken
                     }
                 }"#,
@@ -3347,7 +3355,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
-                    signInWithNewPassword(username: "user3", password: "pw3", newPassword: "pw4") {
+                    signInWithNewPassword(username: "user3", password: "Qx0#Ab7cF", newPassword: "Qx0#Ab7cG") {
                         reviewToken
                     }
                 }"#,
@@ -3358,7 +3366,7 @@ mod tests {
         let store = schema.store();
         let map = store.account_map();
         let account = map.get("user3").unwrap().unwrap();
-        assert!(account.verify_password("pw4"));
+        assert!(account.verify_password("Qx0#Ab7cG"));
     }
 
     #[tokio::test]
@@ -3369,7 +3377,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "user2",
-                        password: "pw2",
+                        password: "Qx0#Ab7cE",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "User One",
                         department: "Test",
@@ -3384,7 +3392,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
-                    signIn(username: "user2", password: "pw3") {
+                    signIn(username: "user2", password: "Qx0#Ab7cF") {
                         reviewToken
                     }
                 }"#,
@@ -3407,7 +3415,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "username",
-                        password: "password",
+                        password: "QPasword7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "John Doe",
                         department: "Security",
@@ -3490,7 +3498,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
-                        password: "oldpassword",
+                        password: "QOldpasword7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Test User",
                         department: "Security",
@@ -3507,7 +3515,7 @@ mod tests {
                 r#"mutation {
                     updateAccount(
                         username: "testuser",
-                        password: "oldpassword"
+                        password: "QOldpasword7#z"
                     )
                 }"#,
             )
@@ -3525,7 +3533,7 @@ mod tests {
                 r#"mutation {
                     updateAccount(
                         username: "testuser",
-                        password: "newpassword"
+                        password: "QNewpasword7#z"
                     )
                 }"#,
             )
@@ -3539,7 +3547,7 @@ mod tests {
                 r#"mutation {
                     updateAccount(
                         username: "testuser",
-                        password: "differentpassword"
+                        password: "QDiferentpasword7#z"
                     )
                 }"#,
             )
@@ -3551,8 +3559,8 @@ mod tests {
         let store = schema.store();
         let map = store.account_map();
         let account = map.get("testuser").unwrap().unwrap();
-        assert!(account.verify_password("differentpassword"));
-        assert!(!account.verify_password("oldpassword"));
+        assert!(account.verify_password("QDiferentpasword7#z"));
+        assert!(!account.verify_password("QOldpasword7#z"));
     }
 
     #[tokio::test]
@@ -3581,7 +3589,7 @@ mod tests {
         let res = schema
             .execute_with_guard(
                 r#"mutation {
-                    resetAdminPassword(username: "admin", password: "newadminpassword")
+                    resetAdminPassword(username: "admin", password: "QNewadminpasword7#z")
                 }"#,
                 RoleGuard::Local,
             )
@@ -3593,7 +3601,7 @@ mod tests {
         let store = schema.store();
         let map = store.account_map();
         let account = map.get("admin").unwrap().unwrap();
-        assert!(account.verify_password("newadminpassword"));
+        assert!(account.verify_password("QNewadminpasword7#z"));
         assert!(!account.verify_password("adminpassword"));
 
         restore_review_admin(original_review_admin);
@@ -3610,7 +3618,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
-                        password: "initialpassword",
+                        password: "QInitialpasword7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Initial Name",
                         department: "Initial Department",
@@ -3629,8 +3637,8 @@ mod tests {
                 r#"mutation {
                     updateMyAccount(
                         password: {
-                            old: "initialpassword",
-                            new: "newpassword"
+                            old: "QInitialpasword7#z",
+                            new: "QNewpasword7#z"
                         },
                         name: {
                             old: "Initial Name",
@@ -3659,7 +3667,7 @@ mod tests {
         let store = schema.store();
         let map = store.account_map();
         let account = map.get("testuser").unwrap().unwrap();
-        assert!(account.verify_password("newpassword"));
+        assert!(account.verify_password("QNewpasword7#z"));
         assert_eq!(account.name, "Updated Name");
         assert_eq!(account.department, "Updated Department");
         assert_eq!(account.language, Some("ko-KR".to_string()));
@@ -3677,7 +3685,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
-                        password: "password",
+                        password: "QPasword7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Test User",
                         department: "Security",
@@ -3714,7 +3722,7 @@ mod tests {
         let store = schema.store();
         let map = store.account_map();
         let account = map.get("testuser").unwrap().unwrap();
-        assert!(account.verify_password("password")); // Password unchanged
+        assert!(account.verify_password("QPasword7#z")); // Password unchanged
         assert_eq!(account.name, "New Name");
         assert_eq!(account.department, "Engineering");
         assert_eq!(account.language, Some("en-US".to_string())); // Language unchanged
@@ -3732,7 +3740,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
-                        password: "password",
+                        password: "QPasword7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Test User",
                         department: "Security",
@@ -3770,7 +3778,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
-                        password: "correctpassword",
+                        password: "QCorectpasword7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Test User",
                         department: "Security",
@@ -3788,7 +3796,7 @@ mod tests {
                     updateMyAccount(
                         password: {
                             old: "wrongpassword",
-                            new: "newpassword"
+                            new: "QNewpasword7#z"
                         }
                     )
                 }"#,
@@ -3813,7 +3821,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
-                        password: "samepassword",
+                        password: "QSamepasword7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Test User",
                         department: "Security",
@@ -3830,8 +3838,8 @@ mod tests {
                 r#"mutation {
                     updateMyAccount(
                         password: {
-                            old: "samepassword",
-                            new: "samepassword"
+                            old: "QSamepasword7#z",
+                            new: "QSamepasword7#z"
                         }
                     )
                 }"#,
@@ -3856,7 +3864,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
-                        password: "password",
+                        password: "QPasword7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Test User",
                         department: "Security",
@@ -3937,7 +3945,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
-                        password: "password123",
+                        password: "QPasword1237#z",
                         role: "SECURITY_MANAGER",
                         name: "Test User",
                         department: "Testing",
@@ -3953,7 +3961,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
-                    signIn(username: "testuser", password: "password123") {
+                    signIn(username: "testuser", password: "QPasword1237#z") {
                         reviewToken
                     }
                 }"#,
@@ -4051,7 +4059,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "inactiveuser",
-                        password: "password123",
+                        password: "QPasword1237#z",
                         role: "SECURITY_MONITOR",
                         name: "Inactive User",
                         department: "Testing",
@@ -4103,7 +4111,7 @@ mod tests {
             r#"mutation {
                 insertAccount(
                     username: "user1",
-                    password: "password123",
+                    password: "QPasword1237#z",
                     role: "SECURITY_MONITOR",
                     name: "User One",
                     department: "Security",
@@ -4113,7 +4121,7 @@ mod tests {
             r#"mutation {
                 insertAccount(
                     username: "user2",
-                    password: "password456",
+                    password: "QPasword4568%k",
                     role: "SECURITY_ADMINISTRATOR",
                     name: "User Two",
                     department: "Admin",
@@ -4199,7 +4207,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
-                        password: "password123",
+                        password: "QPasword1237#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Test User",
                         department: "Test"
@@ -4218,7 +4226,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
-                        password: "password123",
+                        password: "QPasword1237#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Test User",
                         department: "Test"
@@ -4241,7 +4249,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "newsysadmin",
-                        password: "password123",
+                        password: "QPasword1237#z",
                         role: "SYSTEM_ADMINISTRATOR",
                         name: "New System Admin",
                         department: "IT"
@@ -4263,7 +4271,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "toremove",
-                        password: "password123",
+                        password: "QPasword1237#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "To Remove",
                         department: "Test"
@@ -4305,7 +4313,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "exactremove",
-                        password: "password123",
+                        password: "QPasword1237#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Exact Remove",
                         department: "Test"
@@ -4368,7 +4376,7 @@ mod tests {
         // 2. First Password Change (Success)
         let res = schema.execute_as_system_admin(
                 r#"mutation {
-                    signInWithNewPassword(username: "admin", password: "admin", newPassword: "password2") {
+                    signInWithNewPassword(username: "admin", password: "admin", newPassword: "QPasword27#z") {
                         reviewToken
                     }
                 }"#,
@@ -4376,13 +4384,13 @@ mod tests {
             .await;
         assert!(res.is_ok());
         let account = account_map.get("admin").unwrap().unwrap();
-        assert!(account.verify_password("password2"));
+        assert!(account.verify_password("QPasword27#z"));
 
         // 3. Admin Password Reset
         let res = schema
             .execute_with_guard(
                 r#"mutation {
-                resetAdminPassword(username: "admin", password: "newpassword")
+                resetAdminPassword(username: "admin", password: "QNewpasword7#z")
             }"#,
                 RoleGuard::Local,
             )
@@ -4393,7 +4401,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
-                    signIn(username: "admin", password: "newpassword") {
+                    signIn(username: "admin", password: "QNewpasword7#z") {
                         reviewToken
                     }
                 }"#,
@@ -4407,7 +4415,7 @@ mod tests {
         // 5. Second Password Change (Success)
         let res = schema.execute_as_system_admin(
                 r#"mutation {
-                    signInWithNewPassword(username: "admin", password: "newpassword", newPassword: "finalpassword") {
+                    signInWithNewPassword(username: "admin", password: "QNewpasword7#z", newPassword: "QFinalpasword7#z") {
                         reviewToken
                     }
                 }"#,
@@ -4415,7 +4423,7 @@ mod tests {
             .await;
         assert!(res.is_ok());
         let account = account_map.get("admin").unwrap().unwrap();
-        assert!(account.verify_password("finalpassword"));
+        assert!(account.verify_password("QFinalpasword7#z"));
         restore_review_admin(original_review_admin);
     }
 
@@ -4432,7 +4440,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "testuser",
-                        password: "oldpassword",
+                        password: "QOldpasword7#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Test User",
                         department: "Test Dept",
@@ -4447,7 +4455,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
-                    signIn(username: "testuser", password: "oldpassword") {
+                    signIn(username: "testuser", password: "QOldpasword7#z") {
                         reviewToken
                     }
                 }"#,
@@ -4461,7 +4469,7 @@ mod tests {
         // 2. First Password Change (Success)
         let res = schema.execute_as_system_admin(
                 r#"mutation {
-                    signInWithNewPassword(username: "testuser", password: "oldpassword", newPassword: "password2") {
+                    signInWithNewPassword(username: "testuser", password: "QOldpasword7#z", newPassword: "QPasword27#z") {
                         reviewToken
                     }
                 }"#,
@@ -4469,7 +4477,7 @@ mod tests {
             .await;
         assert!(res.is_ok());
         let account = account_map.get("testuser").unwrap().unwrap();
-        assert!(account.verify_password("password2"));
+        assert!(account.verify_password("QPasword27#z"));
 
         // 3. Update the user's password.
         let res = schema
@@ -4477,7 +4485,7 @@ mod tests {
                 r#"mutation {
                     updateAccount(
                         username: "testuser",
-                        password: "newpassword"
+                        password: "QNewpasword7#z"
                     )
                 }"#,
             )
@@ -4488,7 +4496,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r#"mutation {
-                    signIn(username: "testuser", password: "newpassword") {
+                    signIn(username: "testuser", password: "QNewpasword7#z") {
                         reviewToken
                     }
                 }"#,
@@ -4502,7 +4510,7 @@ mod tests {
         // 5. Second Password Change (Success)
         let res = schema.execute_as_system_admin(
                 r#"mutation {
-                    signInWithNewPassword(username: "testuser", password: "newpassword", newPassword: "finalpassword") {
+                    signInWithNewPassword(username: "testuser", password: "QNewpasword7#z", newPassword: "QFinalpasword7#z") {
                         reviewToken
                     }
                 }"#,
@@ -4510,7 +4518,7 @@ mod tests {
             .await;
         assert!(res.is_ok());
         let account = account_map.get("testuser").unwrap().unwrap();
-        assert!(account.verify_password("finalpassword"));
+        assert!(account.verify_password("QFinalpasword7#z"));
     }
 
     #[tokio::test]
@@ -4523,7 +4531,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "lockeduser",
-                        password: "password123",
+                        password: "QPasword1237#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Locked User",
                         department: "Test"
@@ -4583,7 +4591,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "expiredlock",
-                        password: "password123",
+                        password: "QPasword1237#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Expired Lock",
                         department: "Test"
@@ -4624,7 +4632,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "notlocked",
-                        password: "password123",
+                        password: "QPasword1237#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Not Locked",
                         department: "Test"
@@ -4666,7 +4674,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "testunlock",
-                        password: "password123",
+                        password: "QPasword1237#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Test User",
                         department: "Test"
@@ -4700,7 +4708,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "suspendeduser",
-                        password: "password123",
+                        password: "QPasword1237#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Suspended User",
                         department: "Test"
@@ -4743,7 +4751,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "notsuspended",
-                        password: "password123",
+                        password: "QPasword1237#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Not Suspended",
                         department: "Test"
@@ -4786,7 +4794,7 @@ mod tests {
                 r#"mutation {
                     insertAccount(
                         username: "testunsuspend",
-                        password: "password123",
+                        password: "QPasword1237#z",
                         role: "SECURITY_ADMINISTRATOR",
                         name: "Test User",
                         department: "Test"

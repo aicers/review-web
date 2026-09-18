@@ -29,6 +29,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 review-database = { git = "https://github.com/aicers/review-database.git", tag = "0.43.0" }
 roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.5.0" }
+passwords = { version = "3", features = ["common-password"] }
 rustls = { version = "0.23", default-features = false, features = [
   "ring",
   "std",
