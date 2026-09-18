@@ -1146,7 +1146,7 @@ impl EventTotalCount {
         } else {
             events.iter_forward()
         };
-        let last = latest(self.end, None)?;
+        let last = latest(self.end)?;
 
         let mut count = 0;
         for item in iter {
@@ -1554,22 +1554,28 @@ async fn load(
     let mut filter = from_filter_input(ctx, &store, filter)?;
     filter.moderate_kinds();
     let db = store.events();
-    let (events, has_previous, has_next) = if empty_time_range(start, end)? {
-        (Vec::new(), false, false)
-    } else if let Some(last) = last {
-        let iter = db.iter_from(latest(end, before)?, Direction::Reverse);
-        let to = earliest(start, after)?;
-        let (events, has_more) = iter_to_events(ctx, iter, to, cmp::Ordering::is_ge, last, &filter)
-            .map_err(|e| format!("{e}"))?;
-        (events.into_iter().rev().collect(), has_more, false)
+    let bounds = if empty_time_range(start, end)? {
+        None
     } else {
-        let first = first.unwrap_or(DEFAULT_CONNECTION_SIZE);
-        let iter = db.iter_from(earliest(start, after)?, Direction::Forward);
-        let to = latest(end, before)?;
-        let (events, has_more) =
-            iter_to_events(ctx, iter, to, cmp::Ordering::is_le, first, &filter)
-                .map_err(|e| format!("{e}"))?;
-        (events, false, has_more)
+        event_range(start, end, after.as_deref(), before.as_deref())?
+    };
+    let (events, has_previous, has_next) = if let Some((earliest, latest)) = bounds {
+        if let Some(last) = last {
+            let iter = db.iter_from(latest, Direction::Reverse);
+            let (events, has_more) =
+                iter_to_events(ctx, iter, earliest, cmp::Ordering::is_ge, last, &filter)
+                    .map_err(|e| format!("{e}"))?;
+            (events.into_iter().rev().collect(), has_more, false)
+        } else {
+            let first = first.unwrap_or(DEFAULT_CONNECTION_SIZE);
+            let iter = db.iter_from(earliest, Direction::Forward);
+            let (events, has_more) =
+                iter_to_events(ctx, iter, latest, cmp::Ordering::is_le, first, &filter)
+                    .map_err(|e| format!("{e}"))?;
+            (events, false, has_more)
+        }
+    } else {
+        (Vec::new(), false, false)
     };
 
     let mut connection = Connection::with_additional_fields(
@@ -1624,8 +1630,8 @@ async fn load_triage_list(
     }
     let count = count.unwrap_or(DEFAULT_TRIAGE_LIST_COUNT);
 
-    let start_key = earliest(start, None)?;
-    let end_key = latest(end, None)?;
+    let start_key = earliest(start)?;
+    let end_key = latest(end)?;
     let db = store.events();
 
     let iter = db.iter_from(start_key, Direction::Forward);
@@ -1751,44 +1757,58 @@ fn event_priority(event: &database::Event) -> u8 {
     }
 }
 
-fn earliest(start: Option<Timestamp>, after: Option<String>) -> Result<i128> {
-    let earliest = if let Some(start) = start {
-        let start = event_key_prefix(start)?;
-        if let Some(after) = after {
-            cmp::max(start, earliest_after(&after)?)
-        } else {
-            start
-        }
-    } else if let Some(after) = after {
-        earliest_after(&after)?
-    } else {
-        i128::MIN
-    };
-    Ok(earliest)
+fn earliest(start: Option<Timestamp>) -> Result<i128> {
+    start
+        .map(event_key_prefix)
+        .transpose()
+        .map(|start| start.unwrap_or(i128::MIN))
 }
 
-fn latest(end: Option<Timestamp>, before: Option<String>) -> Result<i128> {
-    let latest = if let Some(end) = end {
-        let end = event_key_prefix(end)?;
-        let end = end.saturating_sub(1);
-        if let Some(before) = before {
-            cmp::min(end, latest_before(&before)?)
-        } else {
-            end
-        }
-    } else if let Some(before) = before {
-        latest_before(&before)?
+fn latest(end: Option<Timestamp>) -> Result<i128> {
+    if let Some(end) = end {
+        Ok(event_key_prefix(end)?.saturating_sub(1))
+    } else {
+        Ok(i128::MAX)
+    }
+}
+
+fn event_range(
+    start: Option<Timestamp>,
+    end: Option<Timestamp>,
+    after: Option<&str>,
+    before: Option<&str>,
+) -> Result<Option<(i128, i128)>> {
+    let mut earliest = earliest(start)?;
+    if let Some(after) = after {
+        let Some(after) = earliest_after(after)? else {
+            return Ok(None);
+        };
+        earliest = cmp::max(earliest, after);
+    }
+
+    let mut latest = if let Some(end) = end {
+        let Some(end) = event_key_prefix(end)?.checked_sub(1) else {
+            return Ok(None);
+        };
+        end
     } else {
         i128::MAX
     };
-    Ok(latest)
+    if let Some(before) = before {
+        let Some(before) = latest_before(before)? else {
+            return Ok(None);
+        };
+        latest = cmp::min(latest, before);
+    }
+
+    Ok((earliest <= latest).then_some((earliest, latest)))
 }
 
 fn empty_time_range(start: Option<Timestamp>, end: Option<Timestamp>) -> Result<bool> {
     let Some(end) = end else {
         return Ok(false);
     };
-    Ok(earliest(start, None)? >= event_key_prefix(end)?)
+    Ok(earliest(start)? >= event_key_prefix(end)?)
 }
 
 fn timestamp_nanos(timestamp: Timestamp) -> Result<i64> {
@@ -1800,24 +1820,18 @@ fn event_key_prefix(timestamp: Timestamp) -> Result<i128> {
     Ok(i128::from(timestamp_nanos(timestamp)?) << 64)
 }
 
-fn earliest_after(after: &str) -> Result<i128> {
+fn earliest_after(after: &str) -> Result<Option<i128>> {
     let after = after
         .parse::<i128>()
         .map_err(|_| "invalid cursor `after`")?;
-    if after == i128::MAX {
-        return Ok(i128::MAX);
-    }
-    Ok(after + 1)
+    Ok(after.checked_add(1))
 }
 
-fn latest_before(before: &str) -> Result<i128> {
+fn latest_before(before: &str) -> Result<Option<i128>> {
     let before = before
         .parse::<i128>()
         .map_err(|_| "invalid cursor `before`")?;
-    if before == i128::MIN {
-        return Ok(i128::MIN);
-    }
-    Ok(before - 1)
+    Ok(before.checked_sub(1))
 }
 
 fn iter_to_events(
@@ -1980,39 +1994,44 @@ async fn load_with_triage(
     let mut event_filter = from_filter_input(ctx, &store, &list_filter)?;
     event_filter.moderate_kinds();
     let db = store.events();
-    let (events, has_previous, has_next) = if empty_time_range(start, end)? {
-        (Vec::new(), false, false)
-    } else if let Some(last) = last {
-        let iter = db.iter_from(latest(end, before)?, Direction::Reverse);
-        let to = earliest(start, after)?;
-        let (events, has_more) = iter_to_events_with_triage(
-            ctx,
-            iter,
-            to,
-            cmp::Ordering::is_ge,
-            last,
-            &event_filter,
-            policies,
-            exclusions,
-        )
-        .map_err(|e| format!("{e}"))?;
-        (events.into_iter().rev().collect(), has_more, false)
+    let bounds = if empty_time_range(start, end)? {
+        None
     } else {
-        let first = first.unwrap_or(DEFAULT_CONNECTION_SIZE);
-        let iter = db.iter_from(earliest(start, after)?, Direction::Forward);
-        let to = latest(end, before)?;
-        let (events, has_more) = iter_to_events_with_triage(
-            ctx,
-            iter,
-            to,
-            cmp::Ordering::is_le,
-            first,
-            &event_filter,
-            policies,
-            exclusions,
-        )
-        .map_err(|e| format!("{e}"))?;
-        (events, false, has_more)
+        event_range(start, end, after.as_deref(), before.as_deref())?
+    };
+    let (events, has_previous, has_next) = if let Some((earliest, latest)) = bounds {
+        if let Some(last) = last {
+            let iter = db.iter_from(latest, Direction::Reverse);
+            let (events, has_more) = iter_to_events_with_triage(
+                ctx,
+                iter,
+                earliest,
+                cmp::Ordering::is_ge,
+                last,
+                &event_filter,
+                policies,
+                exclusions,
+            )
+            .map_err(|e| format!("{e}"))?;
+            (events.into_iter().rev().collect(), has_more, false)
+        } else {
+            let first = first.unwrap_or(DEFAULT_CONNECTION_SIZE);
+            let iter = db.iter_from(earliest, Direction::Forward);
+            let (events, has_more) = iter_to_events_with_triage(
+                ctx,
+                iter,
+                latest,
+                cmp::Ordering::is_le,
+                first,
+                &event_filter,
+                policies,
+                exclusions,
+            )
+            .map_err(|e| format!("{e}"))?;
+            (events, false, has_more)
+        }
+    } else {
+        (Vec::new(), false, false)
     };
 
     let mut connection = Connection::with_additional_fields(
@@ -2101,6 +2120,26 @@ mod tests {
     };
 
     use crate::graphql::{Role, TestSchema};
+
+    async fn connection_page(
+        schema: &TestSchema,
+        field: &str,
+        arguments: &str,
+    ) -> serde_json::Value {
+        let output = schema
+            .execute_as_system_admin(&format!(
+                r"{{ {field}({arguments}) {{
+                    edges {{ cursor node {{
+                        ... on DnsCovertChannel {{ time triageScores {{ policyId }} }}
+                    }} }}
+                    pageInfo {{ hasNextPage hasPreviousPage }}
+                    totalCount
+                }} }}"
+            ))
+            .await;
+        assert!(output.errors.is_empty(), "{:?}", output.errors);
+        output.data.into_json().expect("valid GraphQL JSON")[field].clone()
+    }
 
     /// Creates an event message at `timestamp` with the given sensor and
     /// destination `IPv4` addresses.
@@ -2347,36 +2386,28 @@ mod tests {
         let minimum = Timestamp::from_nanosecond(i128::from(i64::MIN))
             .expect("i64 nanoseconds must fit in jiff");
 
-        assert_eq!(super::latest(Some(epoch), None).unwrap(), -1);
-        assert_eq!(super::latest(Some(minimum), None).unwrap(), i128::MIN);
-        assert_eq!(super::latest(None, None).unwrap(), i128::MAX);
+        assert_eq!(super::latest(Some(epoch)).unwrap(), -1);
+        assert_eq!(super::latest(Some(minimum)).unwrap(), i128::MIN);
+        assert_eq!(super::latest(None).unwrap(), i128::MAX);
         assert_eq!(
-            super::latest(Some(negative), None).unwrap(),
+            super::latest(Some(negative)).unwrap(),
             -((1_i128 << 64) + 1)
         );
-        assert_eq!(
-            super::latest(Some(positive), None).unwrap(),
-            (1_i128 << 64) - 1
-        );
+        assert_eq!(super::latest(Some(positive)).unwrap(), (1_i128 << 64) - 1);
     }
 
     #[test]
     fn event_cursor_bounds_cover_the_signed_key_range() {
-        assert_eq!(super::earliest(None, None).unwrap(), i128::MIN);
-        assert_eq!(super::earliest_after("-1").unwrap(), 0);
-        assert_eq!(
-            super::earliest_after(&i128::MAX.to_string()).unwrap(),
-            i128::MAX
-        );
-        assert_eq!(super::latest_before("1").unwrap(), 0);
-        assert_eq!(super::latest_before("0").unwrap(), -1);
-        assert_eq!(
-            super::latest_before(&i128::MIN.to_string()).unwrap(),
-            i128::MIN
-        );
+        assert_eq!(super::earliest(None).unwrap(), i128::MIN);
+        assert_eq!(super::earliest_after("-1").unwrap(), Some(0));
+        assert_eq!(super::earliest_after(&i128::MAX.to_string()).unwrap(), None);
+        assert_eq!(super::latest_before("1").unwrap(), Some(0));
+        assert_eq!(super::latest_before("0").unwrap(), Some(-1));
+        assert_eq!(super::latest_before(&i128::MIN.to_string()).unwrap(), None);
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn unbounded_event_list_paginates_across_the_unix_epoch() {
         let schema = TestSchema::new().await;
         let before_epoch = Timestamp::from_nanosecond(-1).expect("valid timestamp");
@@ -2384,50 +2415,141 @@ mod tests {
         let after_epoch = Timestamp::from_nanosecond(1).expect("valid timestamp");
         let store = schema.store();
         let events = store.events();
+        let mut keys = Vec::new();
         for (timestamp, source, destination) in
             [(before_epoch, 1, 2), (epoch, 3, 4), (after_epoch, 5, 6)]
         {
-            events
-                .put(&event_message_at_timestamp(
-                    timestamp,
-                    source,
-                    destination,
-                    Some(EventCategory::CommandAndControl),
-                    "sensor1",
-                ))
-                .expect("event timestamp must be stored");
+            keys.push(
+                events
+                    .put(&event_message_at_timestamp(
+                        timestamp,
+                        source,
+                        destination,
+                        Some(EventCategory::CommandAndControl),
+                        "sensor1",
+                    ))
+                    .expect("event timestamp must be stored"),
+            );
         }
         drop(store);
 
-        let output = schema
-            .execute_as_system_admin(&format!(
-                r#"{{
-                    all: eventList(filter: {{}}, first: 10) {{
-                        edges {{ cursor node {{ ... on DnsCovertChannel {{ time }} }} }}
-                    }}
-                    beforeEpoch: eventList(filter: {{}}, before: "0", first: 10) {{
-                        edges {{ cursor }}
-                    }}
-                    afterMaximum: eventList(
-                        filter: {{}}
-                        after: "{}"
-                        first: 10
-                    ) {{ edges {{ cursor }} }}
-                    beforeMinimum: eventList(
-                        filter: {{}}
-                        before: "{}"
-                        last: 10
-                    ) {{ edges {{ cursor }} }}
-                }}"#,
-                i128::MAX,
-                i128::MIN
-            ))
+        let expected: Vec<String> = keys.iter().map(ToString::to_string).collect();
+        let mut after = None;
+        let mut forward = Vec::new();
+        for (index, expected_cursor) in expected.iter().enumerate() {
+            let cursor_argument = after
+                .as_ref()
+                .map_or_else(String::new, |cursor| format!(r#", after: "{cursor}""#));
+            let page = connection_page(
+                &schema,
+                "eventList",
+                &format!("filter: {{}}, first: 1{cursor_argument}"),
+            )
             .await;
-        assert!(output.errors.is_empty(), "{:?}", output.errors);
-        assert_eq!(
-            output.data.to_string(),
-            r#"{all: {edges: [{cursor: "-18446744073709551616", node: {time: "1969-12-31T23:59:59.999999999Z"}}, {cursor: "0", node: {time: "1970-01-01T00:00:00Z"}}, {cursor: "18446744073709551616", node: {time: "1970-01-01T00:00:00.000000001Z"}}]}, beforeEpoch: {edges: [{cursor: "-18446744073709551616"}]}, afterMaximum: {edges: []}, beforeMinimum: {edges: []}}"#
-        );
+            assert_eq!(page["totalCount"], "3");
+            assert_eq!(page["pageInfo"]["hasNextPage"], index < expected.len() - 1);
+            assert_eq!(page["pageInfo"]["hasPreviousPage"], false);
+            let cursor = page["edges"][0]["cursor"]
+                .as_str()
+                .expect("page must contain a cursor")
+                .to_string();
+            assert_eq!(&cursor, expected_cursor);
+            forward.push(cursor.clone());
+            after = Some(cursor);
+        }
+        assert_eq!(forward, expected);
+
+        let mut before = None;
+        let mut backward = Vec::new();
+        for (index, expected_cursor) in expected.iter().rev().enumerate() {
+            let cursor_argument = before
+                .as_ref()
+                .map_or_else(String::new, |cursor| format!(r#", before: "{cursor}""#));
+            let page = connection_page(
+                &schema,
+                "eventList",
+                &format!("filter: {{}}, last: 1{cursor_argument}"),
+            )
+            .await;
+            assert_eq!(page["totalCount"], "3");
+            assert_eq!(page["pageInfo"]["hasNextPage"], false);
+            assert_eq!(
+                page["pageInfo"]["hasPreviousPage"],
+                index < expected.len() - 1
+            );
+            let cursor = page["edges"][0]["cursor"]
+                .as_str()
+                .expect("page must contain a cursor")
+                .to_string();
+            assert_eq!(&cursor, expected_cursor);
+            backward.push(cursor.clone());
+            before = Some(cursor);
+        }
+        backward.reverse();
+        assert_eq!(backward, expected);
+
+        let triage = r#"triage: {
+            policies: [{
+                id: 7
+                packetAttr: []
+                confidence: [{
+                    threatCategory: COMMAND_AND_CONTROL
+                    threatKind: "dns covert channel"
+                    confidence: 0.0
+                    weight: 1.0
+                }]
+                response: [{ minimumScore: 0.0, kind: MANUAL }]
+            }]
+            exclusions: [{
+                ipAddress: { hosts: ["0.0.0.4"], networks: [], ranges: [] }
+            }]
+        }"#;
+        let expected_with_triage = vec![expected[0].clone(), expected[2].clone()];
+        let mut after = None;
+        let mut with_triage = Vec::new();
+        for (index, expected_cursor) in expected_with_triage.iter().enumerate() {
+            let cursor_argument = after
+                .as_ref()
+                .map_or_else(String::new, |cursor| format!(r#", after: "{cursor}""#));
+            let page = connection_page(
+                &schema,
+                "eventListWithTriage",
+                &format!("filter: {{}}, {triage}, first: 1{cursor_argument}"),
+            )
+            .await;
+            assert_eq!(page["totalCount"], "2");
+            assert_eq!(
+                page["pageInfo"]["hasNextPage"],
+                index < expected_with_triage.len() - 1
+            );
+            assert_eq!(page["pageInfo"]["hasPreviousPage"], false);
+            assert_eq!(page["edges"][0]["node"]["triageScores"][0]["policyId"], "7");
+            let cursor = page["edges"][0]["cursor"]
+                .as_str()
+                .expect("page must contain a cursor")
+                .to_string();
+            assert_eq!(&cursor, expected_cursor);
+            with_triage.push(cursor.clone());
+            after = Some(cursor);
+        }
+        assert_eq!(with_triage, expected_with_triage);
+
+        for (arguments, field) in [
+            (
+                format!(r#"filter: {{}}, after: "{}", first: 1"#, i128::MAX),
+                "eventList",
+            ),
+            (
+                format!(r#"filter: {{}}, before: "{}", last: 1"#, i128::MIN),
+                "eventList",
+            ),
+        ] {
+            let page = connection_page(&schema, field, &arguments).await;
+            assert_eq!(page["edges"], serde_json::json!([]));
+            assert_eq!(page["totalCount"], "3");
+            assert_eq!(page["pageInfo"]["hasNextPage"], false);
+            assert_eq!(page["pageInfo"]["hasPreviousPage"], false);
+        }
     }
 
     #[tokio::test]
@@ -2438,7 +2560,7 @@ mod tests {
         let before_epoch = Timestamp::from_nanosecond(-1).expect("valid timestamp");
         let store = schema.store();
         let events = store.events();
-        events
+        let minimum_key = events
             .put(&event_message_at_timestamp(
                 minimum,
                 1,
@@ -2447,6 +2569,7 @@ mod tests {
                 "sensor1",
             ))
             .expect("event timestamp must be stored");
+        assert_eq!(minimum_key, i128::MIN);
         events
             .put(&event_message_at_timestamp(
                 before_epoch,
@@ -2467,13 +2590,19 @@ mod tests {
                     }}
                     eventCountsByCategory(filter: {{ end: "{minimum}" }}, first: 10) {{ counts }}
                     eventFrequencySeries(filter: {{ end: "{minimum}" }}, period: 1)
-                }}"#
+                    beforeMinimum: eventList(
+                        filter: {{}}
+                        before: "{}"
+                        last: 10
+                    ) {{ edges {{ cursor }} totalCount }}
+                }}"#,
+                i128::MIN
             ))
             .await;
         assert!(output.errors.is_empty(), "{:?}", output.errors);
         assert_eq!(
             output.data.to_string(),
-            r#"{eventList: {edges: [], totalCount: "0"}, eventTriageList: [], eventCountsByCategory: {counts: []}, eventFrequencySeries: []}"#
+            r#"{eventList: {edges: [], totalCount: "0"}, eventTriageList: [], eventCountsByCategory: {counts: []}, eventFrequencySeries: [], beforeMinimum: {edges: [], totalCount: "2"}}"#
         );
 
         let epoch_output = schema
