@@ -1,3 +1,7 @@
+// The GraphQL schema nests deeply enough to exceed the default recursion
+// limit during macro expansion.
+#![recursion_limit = "256"]
+
 use std::sync::RwLock;
 use std::{
     collections::HashMap,
