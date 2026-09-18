@@ -9,9 +9,9 @@ async-graphql = { version = "7", features = ["chrono", "jiff", "string_number"] 
 async-graphql-axum = "7"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["macros", "tokio", "ws"] }
-axum-server = { version = "0.7.3", features = ["tls-rustls-no-provider"] }
-axum-extra = { version = "0.10", features = ["typed-header"] }
-base64 = "0.22"
+axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
+axum-extra = { version = "0.12", features = ["typed-header"] }
+base64 = "0.23"
 bincode = "1"
 chrono = { version = "0.4.42", default-features = false, features = [
   "serde",
@@ -21,12 +21,12 @@ futures-util = "0.3"
 http = "1"
 ip2location = "0.6.0"
 ipnet = { version = "2", features = ["serde"] }
-itertools = "0.14"
+itertools = "0.15"
 jiff = "0.2"
-jsonwebtoken = "9"
+jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
 num-traits = "0.2"
-reqwest = { version = "0.12", default-features = false, features = [
-  "rustls-tls-native-roots",
+reqwest = { version = "0.13", default-features = false, features = [
+  "rustls-no-provider",
 ] }
 review-database = { git = "https://github.com/aicers/review-database.git", rev = "698254e" }
 review-protocol = { git = "https://github.com/aicers/review-protocol.git", rev = "32ed9b0" }
@@ -40,13 +40,13 @@ rustls-pemfile = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 simple_asn1 = "0.6"
-strum = "0.27"
-strum_macros = "0.27"
+strum = "0.28"
+strum_macros = "0.28"
 thiserror = "2"
 tokio = "1"
 tokio-rustls = "0.26"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["fs", "trace"] }
+tower-http = { version = "0.7", features = ["fs", "trace"] }
 tracing = "0.1"
 vinum = { git = "https://github.com/vinesystems/vinum.git", tag = "1.0.3" }
 x509-parser = "0.18"
@@ -58,7 +58,7 @@ futures = "0.3"
 rcgen = "0.14"
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "signal", "sync"] }
-tokio-tungstenite = "0.28"
+tokio-tungstenite = "0.30"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
