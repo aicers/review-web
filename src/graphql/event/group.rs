@@ -242,9 +242,15 @@ impl EventGroupQuery {
         let start = earliest(start, None)?;
         let end = latest(end, None)?;
         let db = store.events();
-        let period = i128::from(period * 1_000_000_000) << 64;
+        let period = i128::from(period)
+            .checked_mul(1_000_000_000)
+            .and_then(|period| period.checked_mul(1_i128 << 64))
+            .ok_or("period too large")?;
         let mut series = Vec::new();
-        let mut cur_end = start + period - 1;
+        let mut cur_end = start
+            .checked_add(period)
+            .and_then(|end| end.checked_sub(1))
+            .ok_or("period too large")?;
         let mut freq = 0;
         for item in db.iter_from(start, Direction::Forward) {
             let (key, event) = match item {
@@ -260,14 +266,20 @@ impl EventGroupQuery {
             while key > cur_end {
                 series.push(freq);
                 freq = 0;
-                cur_end += period;
+                cur_end = cur_end.checked_add(period).ok_or("period too large")?;
             }
             if event.matches(&filter)?.0 {
                 freq += 1;
             }
         }
         series.push(freq);
-        let Ok(len) = usize::try_from((end - start + period) / period) else {
+        let Some(range) = end
+            .checked_sub(start)
+            .and_then(|range| range.checked_add(period))
+        else {
+            return Err("period too large".into());
+        };
+        let Ok(len) = usize::try_from(range / period) else {
             return Err("period too short".into());
         };
         series.resize(len, 0);
@@ -638,6 +650,25 @@ mod tests {
 
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
         assert_eq!(res.data.to_string(), r"{eventFrequencySeries: [1, 0]}");
+    }
+
+    #[tokio::test]
+    async fn event_frequency_series_rejects_an_unrepresentable_period() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r"{{
+                    eventFrequencySeries(
+                        filter: {{}}
+                        period: {}
+                    )
+                }}",
+                i64::MAX
+            ))
+            .await;
+
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "period too large");
     }
 
     #[tokio::test]

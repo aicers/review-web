@@ -943,12 +943,20 @@ fn fill_vacant_time_slots(series: &[TimeCount]) -> Vec<TimeCount> {
     if series.len() <= 2 {
         return series.to_vec();
     }
-    let mut min_diff = series[1].0 - series[0].0;
+    let Some(mut min_diff) = series[1].0.checked_sub(series[0].0) else {
+        return series.to_vec();
+    };
     for index in 2..series.len() {
-        let diff = series[index].0 - series[index - 1].0;
+        let Some(diff) = series[index].0.checked_sub(series[index - 1].0) else {
+            return series.to_vec();
+        };
         if diff < min_diff {
             min_diff = diff;
         }
+    }
+    let min_diff_seconds = min_diff / A_BILLION;
+    if min_diff_seconds <= 0 {
+        return series.to_vec();
     }
 
     for (index, element) in series.iter().enumerate() {
@@ -956,11 +964,19 @@ fn fill_vacant_time_slots(series: &[TimeCount]) -> Vec<TimeCount> {
             filled_series.push(*element);
             continue;
         }
-        let min_diff_seconds = min_diff / A_BILLION;
-        let time_diff = ((element.0 - series[index - 1].0) / A_BILLION) / min_diff_seconds;
+        let Some(diff) = element.0.checked_sub(series[index - 1].0) else {
+            return series.to_vec();
+        };
+        let time_diff = (diff / A_BILLION) / min_diff_seconds;
         if time_diff > 1 {
             for d in 1..time_diff {
-                filled_series.push((series[index - 1].0 + d * min_diff_seconds, 0));
+                let Some(timestamp) = d
+                    .checked_mul(min_diff_seconds)
+                    .and_then(|offset| series[index - 1].0.checked_add(offset))
+                else {
+                    return series.to_vec();
+                };
+                filled_series.push((timestamp, 0));
             }
         }
         filled_series.push(*element);
@@ -1817,7 +1833,24 @@ impl TestSchema {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentManager, Direction, MockPackageDeployer, OpaqueCursor, TestSchema, database};
+    use super::{
+        AgentManager, Direction, MockPackageDeployer, OpaqueCursor, TestSchema, database,
+        fill_vacant_time_slots,
+    };
+
+    #[test]
+    fn leaves_subsecond_time_slots_unchanged() {
+        let series = [(0, 1), (500_000_000, 2), (1_500_000_000, 3)];
+
+        assert_eq!(fill_vacant_time_slots(&series), series);
+    }
+
+    #[test]
+    fn leaves_duplicate_time_slots_unchanged() {
+        let series = [(0, 1), (0, 2), (1_000_000_000, 3)];
+
+        assert_eq!(fill_vacant_time_slots(&series), series);
+    }
 
     #[derive(Clone, Debug)]
     struct MockRow {
