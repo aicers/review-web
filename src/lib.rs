@@ -47,7 +47,9 @@ use serde_json::json;
 use tokio::{sync::Notify, task::JoinHandle};
 #[cfg(feature = "auth-mtls")]
 use tower::Service;
-use tower_http::{services::ServeDir, trace::TraceLayer};
+use tower_http::{
+    services::ServeDir, set_header::SetResponseHeaderLayer, trace::TraceLayer,
+};
 use tracing::error;
 #[cfg(feature = "auth-jwt")]
 use tracing::warn;
@@ -142,6 +144,7 @@ where
                 }
                 router
             };
+            let router = security_headers(router);
 
             let handle = Handle::new();
             let notify_shutdown = Arc::new(Notify::new());
@@ -336,6 +339,41 @@ where
             Ok((tls, service))
         })
     }
+}
+
+/// Content Security Policy for the web UI.
+///
+/// The front end is a Trunk-built WebAssembly app: it instantiates a `.wasm`
+/// module (needs `wasm-unsafe-eval`) from a Trunk-injected inline bootstrap
+/// script and Yew sets element styles inline (both need `unsafe-inline`),
+/// and it talks to its own origin over HTTPS and
+/// WebSocket (`connect-src 'self'`). Everything else is denied.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+
+/// Applies a fixed set of security response headers to every response.
+fn security_headers<S>(router: Router<S>) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    use axum::http::{HeaderName, HeaderValue, header};
+
+    let headers: [(HeaderName, &'static str); 5] = [
+        (header::X_FRAME_OPTIONS, "DENY"),
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (header::REFERRER_POLICY, "no-referrer"),
+        (
+            header::STRICT_TRANSPORT_SECURITY,
+            "max-age=31536000; includeSubDomains",
+        ),
+        (header::CONTENT_SECURITY_POLICY, CONTENT_SECURITY_POLICY),
+    ];
+
+    headers.into_iter().fold(router, |router, (name, value)| {
+        router.layer(SetResponseHeaderLayer::overriding(
+            name,
+            HeaderValue::from_static(value),
+        ))
+    })
 }
 
 async fn graceful_shutdown(handle: axum_server::Handle, notify: Arc<Notify>) {
