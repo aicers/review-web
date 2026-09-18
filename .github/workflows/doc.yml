@@ -29,7 +29,7 @@ jobs:
       - name: Create the root index
         run: echo "<meta http-equiv=\"refresh\" content=\"0; url=review_web\">" > target/doc/index.html
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: ./target/doc
 
