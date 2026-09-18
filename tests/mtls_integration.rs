@@ -9,6 +9,7 @@ mod mtls_integration {
 
     use anyhow::Context;
     use async_trait::async_trait;
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use chrono::{Duration as ChronoDuration, Utc};
     use futures::StreamExt;
     use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
@@ -61,35 +62,6 @@ mod mtls_integration {
     const ERR_MTLS_REQUIRED: &str = "mTLS is required";
     const WS_RECV_TIMEOUT: Duration = Duration::from_secs(5);
     static INSTALL_CRYPTO_PROVIDER: Once = Once::new();
-    // Fixed RSA private key used only to produce an RS256 JWT for alg-mismatch tests.
-    const RSA_PRIVATE_KEY_PEM: &str = r"-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDL3Xrm3ySgvLcF
-NcrMRfz9SN/DtjLfQzCU9kJWFXP42tcTrvFiOtZJoNzolSHLsc5QSXjlob5geTni
-IO9Ter6tlNoaHxcFGlG8PCp2v8KRjHqUfctuW588tAKkPrO0pIkQpY119U/dSM/3
-lNU7MNMjIgBKVqJX/kLMyqgFxbKNKZ+VFvbW5okDW3dth0QkGo2tyLQRmxv9lgHi
-fE4/rmhR1ZrPlMhOj0fT/PZJGVdWl6+AxMmMulVby/EOWDupNGDhV3KnPlzesM0B
-hFWeiRj4KpjJR2tk/YLIxhlxPBEf+7qSmIDc9oslpjmZ/GzPIjLdN62oskhw5874
-0STjvcgZAgMBAAECggEAIecReQL7aaKwkhR9xwZNmgaMNdUfNStMkT05z2yOZoBo
-O50AhfwwZjqy+hfQ8Lm/THFHgnKpQQxv8JfXDQww2ReTxLvOXXogxRvBWRGvRvq0
-aOzZj577hoIOHWfTBVPGeob5lTgIQc3JzgvJgSgvuJw/LZ2mLll5nOqH0jvsI1bQ
-VA54E71dV1kwe29MedHM76WRC0Y47OFuVHQfgPuiRl8ItpmuOkkvuN5UvOrcp09E
-6xm8RGuG8UzfwxkppVxltjcSSue6jLFcCDMRmMtj4958YQa+fWWMHPEI5ow4lz5F
-WZEWobWe7M2Ar1qXTRZIoCQmd6L7B7tAOggnWIUlLQKBgQDyy/czT+RzAqO7dQhK
-Cxjr83uw/liYDpTV7P8z1gYwnsMPvaRQtqDVuXJ+yww4nE0KwRdXFimGeVjSI55B
-llbYBjQ1GYEDICWUfMFl8V0+jGRdg5S9ph6xFtFSBCtlDEcExKdz6Nk8FE47EaHq
-zTgd3G9cXHE9yVzuLA3NX5iTxQKBgQDW84nBI2qcG5ygSrxkDzF5AsshoFb/t8YT
-Ebq3NGkLPZ7aNn8Yk17nmBIDVXLCxrgSuJqPKzlPKWP8jyIV91vbOqMSqdZ5GRcF
-iNQchqHT8ZZ8BOsgyoOfhGVaef+xOk6tjUouOXos0RprFxDZScVaI3ydtl3VyyOl
-LyY1q6FkRQKBgH7hJ+WgsnmHv5iOqC5JblSfgNwVjqanuA+zMgocpk9yJ+1p5Rxo
-09PcfYDVCyXqSDh+f3v7EOg9MbVe96y+q9NoKpA1K74+ZmUabNahM2EkbK6RvID+
-9rsEeY6qryK3L8XGHtvrqtpCoj8sD7lsVQ8FywwxItxvBilQzEWu10UhAoGBAIm+
-ZN9Un8PL2fHKErGYHt7qEFvLERUrog2kRd+TAWGHql0xoP6RqbaFd72VK0Zv65Nr
-ovft/fqhjoZQ/snOyplRGSEjnuHZVyxfw3VIPTnBTerJiBdqTzCQuhZhqZ3bvIFw
-0kGO6aEAmopXrJ9hq8sYhInYTIdtdrkq3rRz+Kd1AoGAWYvxWQwFNoEjiL9LbMuS
-PmV8OpeHDzsyUuOvrwtAP2OPJNWCoHEYP1pUx0QIrJ3tFYMjY1sFPszwiPpRWoVf
-HjWmrn5yIWqDPDXNy8gnGe1eOPX1lUJZHgHPcuSuRZFocd6cK/OUVKyWAv4yFjJd
-xvcNsYaYqk6sRk/INvcaN2E=
------END PRIVATE KEY-----";
 
     struct StaticCertManager {
         cert_path: PathBuf,
@@ -488,6 +460,23 @@ xvcNsYaYqk6sRk/INvcaN2E=
         )
     }
 
+    fn context_jwt_with_alg_header(
+        alg: Algorithm,
+        customer_ids: Option<Vec<u32>>,
+        role: &str,
+    ) -> anyhow::Result<String> {
+        let exp = (Utc::now() + ChronoDuration::minutes(5)).timestamp();
+        let claims = ContextClaims {
+            role,
+            customer_ids,
+            exp,
+        };
+        let header = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&Header::new(alg))?);
+        let claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims)?);
+        let signature = URL_SAFE_NO_PAD.encode(b"placeholder signature");
+        Ok(format!("{header}.{claims}.{signature}"))
+    }
+
     struct TestServer {
         url: String,
         upload_url: String,
@@ -723,13 +712,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
         let server = start_test_server()?;
         let (client, _client_key) =
             build_client_with_identity(&server.issuer, &server.ca_cert, SERVICE_DNS)?;
-        let token = sign_context_jwt_with_key(
-            &EncodingKey::from_rsa_pem(RSA_PRIVATE_KEY_PEM.as_bytes())
-                .context("parse RSA private key")?,
-            Algorithm::RS256,
-            Some(vec![CUSTOMER_ID]),
-            ROLE,
-        )?;
+        let token = context_jwt_with_alg_header(Algorithm::RS256, Some(vec![CUSTOMER_ID]), ROLE)?;
 
         let response = send_graphql_request(&client, &server.url, Some(&token)).await?;
         assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
