@@ -161,7 +161,7 @@ pub fn decode_token(token: &str) -> anyhow::Result<Claims> {
     let jwt_secret = JWT_SECRET
         .read()
         .map_err(|e| AuthError::ReadJwtSecret(e.to_string()))?;
-    let mut validation = Validation::default();
+    let mut validation = Validation::new(jsonwebtoken::Algorithm::HS256);
     validation.validate_exp = false; // Disable expiration validation
     let token_data = decode::<Claims>(token, &DecodingKey::from_secret(&jwt_secret), &validation)?;
     Ok(token_data.claims)

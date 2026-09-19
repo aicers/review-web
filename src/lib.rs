@@ -480,7 +480,7 @@ where
     }
 }
 
-async fn graceful_shutdown(handle: axum_server::Handle, notify: Arc<Notify>) {
+async fn graceful_shutdown(handle: axum_server::Handle<SocketAddr>, notify: Arc<Notify>) {
     use std::time::Duration;
 
     notify.notified().await;
