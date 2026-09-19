@@ -2,6 +2,8 @@
 pub mod archive;
 pub mod auth;
 pub mod backend;
+#[cfg(feature = "auth-mtls")]
+pub mod customer_data_deletion;
 pub mod graphql;
 pub mod ingress;
 
@@ -219,6 +221,9 @@ pub fn serve<A, D, O>(
     agent_manager: A,
     package_deployer: D,
     host_onboarder: O,
+    #[cfg(feature = "auth-mtls")] customer_data_deletion_manager: Arc<
+        customer_data_deletion::CustomerDataDeletionTaskManager,
+    >,
 ) -> Arc<Notify>
 where
     A: AgentManager + 'static,
@@ -236,6 +241,8 @@ where
         ip_locator,
         config.cert_manager.clone(),
         config.tls_reload_handle.clone(),
+        #[cfg(feature = "auth-mtls")]
+        customer_data_deletion_manager,
     );
     let web_srv_shutdown_handle = Arc::new(Notify::new());
     let shutdown_handle = web_srv_shutdown_handle.clone();

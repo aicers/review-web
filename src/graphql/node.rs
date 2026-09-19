@@ -968,11 +968,13 @@ pub fn agent_lookup_key_service_token(agent_lookup_key: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use serde_json::json;
 
     use super::test_support::{MockAgentManager, insert_active_node, update_account_customers};
     use crate::graphql::{
-        BoxedAgentManager, CustomerIds, Role, RoleGuard, TestSchema,
+        CustomerIds, Role, RoleGuard, SharedAgentManager, TestSchema,
         agent_lookup_key_service_token, gen_agent_lookup_key,
     };
 
@@ -1007,7 +1009,7 @@ mod tests {
     }
 
     async fn new_schema() -> TestSchema {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: std::collections::HashMap::default(),
         });
         TestSchema::new_with_params(agent_manager, None, "testuser").await

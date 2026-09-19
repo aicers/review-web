@@ -7,7 +7,7 @@ use database::{Iterable, event::Direction};
 use review_database as database;
 use tracing::info;
 
-use super::{AgentManager, BoxedAgentManager, Role, RoleGuard};
+use super::{Role, RoleGuard, SharedAgentManager};
 use crate::graphql::query_with_constraints;
 use crate::info_with_username;
 
@@ -64,7 +64,7 @@ impl TrustedDomainMutation {
             entry.name
         };
 
-        let agent_manager = ctx.data::<BoxedAgentManager>()?;
+        let agent_manager = ctx.data::<SharedAgentManager>()?;
         agent_manager.broadcast_trusted_domains().await?;
         info_with_username!(ctx, "Trusted domain {} has been registered", entry_name);
         Ok(entry_name)
@@ -88,7 +88,7 @@ impl TrustedDomainMutation {
             (old.name, new.name)
         };
 
-        let agent_manager = ctx.data::<BoxedAgentManager>()?;
+        let agent_manager = ctx.data::<SharedAgentManager>()?;
         agent_manager.broadcast_trusted_domains().await?;
         info_with_username!(
             ctx,
@@ -134,7 +134,7 @@ impl TrustedDomainMutation {
             (removed, count)
         };
 
-        let agent_manager = ctx.data::<Box<dyn AgentManager>>()?;
+        let agent_manager = ctx.data::<SharedAgentManager>()?;
         agent_manager.broadcast_trusted_domains().await?;
 
         if removed.len() < count {
@@ -204,8 +204,9 @@ async fn load(
 #[cfg(test)]
 mod tests {
     use std::net::SocketAddr;
+    use std::sync::Arc;
 
-    use crate::graphql::{BoxedAgentManager, MockAgentManager, TestSchema};
+    use crate::graphql::{MockAgentManager, SharedAgentManager, TestSchema};
 
     #[tokio::test]
     async fn trusted_domain_list() {
@@ -275,7 +276,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_trusted_domain() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         let test_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
         let schema = TestSchema::new_with_params(agent_manager, Some(test_addr), "testuser").await;
         let insert_query = r#"

@@ -145,6 +145,14 @@ struct Manager;
 
 #[async_trait]
 impl AgentManager for Manager {
+    #[cfg(feature = "auth-mtls")]
+    async fn request_customer_data_deletion(
+        &self,
+        _targets: &[web::customer_data_deletion::CustomerDataDeletionTarget],
+    ) -> Result<(), Error> {
+        bail!("Not supported")
+    }
+
     async fn broadcast_trusted_domains(&self) -> Result<(), Error> {
         bail!("Not supported")
     }
@@ -609,6 +617,8 @@ fn run(config: &Config) -> Result<Arc<Notify>> {
         agent_manager,
         Deployer,
         Onboarder,
+        #[cfg(feature = "auth-mtls")]
+        Arc::new(web::customer_data_deletion::CustomerDataDeletionTaskManager::default()),
     );
 
     Ok(web_srv_shutdown_handle)

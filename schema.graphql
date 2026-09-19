@@ -3785,6 +3785,18 @@ type CustomerConnection {
 }
 
 """
+Result of requesting customer data deletion.
+"""
+enum CustomerDataDeletionRequestStatus {
+	ACCEPTED
+	ALREADY_COMPLETED
+	DELETION_IN_PROGRESS
+	BLOCKED_BY_ANOTHER_DELETION
+	BLOCKED_BY_SHUTDOWN
+	NO_TARGET
+}
+
+"""
 An edge in a connection.
 """
 type CustomerEdge {
@@ -6180,6 +6192,7 @@ type Mutation {
 	Updates the given customer.
 	"""
 	updateCustomer(id: ID!, old: CustomerUpdateInput!, new: CustomerUpdateInput!): ID!
+	deleteCustomerData(customerId: ID!): CustomerDataDeletionRequestStatus!
 	"""
 	Inserts a new data source, returning the ID of the new data source.
 	"""

@@ -20,7 +20,7 @@ use tracing::info;
 
 use super::{
     super::{
-        BoxedAgentManager, BoxedHostOnboarder, BoxedPackageDeployer, Role, RoleGuard,
+        BoxedHostOnboarder, BoxedPackageDeployer, Role, RoleGuard, SharedAgentManager,
         customer_access,
     },
     DeployMutation,
@@ -398,7 +398,7 @@ async fn check_rollback_support(
     if !matches!(on_failure, FailurePolicy::Rollback) {
         return Ok(None);
     }
-    let agents = ctx.data::<BoxedAgentManager>()?;
+    let agents = ctx.data::<SharedAgentManager>()?;
     if agents
         .capabilities(host)
         .await?
@@ -717,9 +717,8 @@ mod tests {
             OperationId, PackageDeployer,
         },
         graphql::{
-            BoxedAgentManager, BoxedHostOnboarder, BoxedPackageDeployer, Mutation,
-            NetworksTargetAgentLookupKeysPair, Query, RoleGuard, SamplingPolicy, Schema,
-            Subscription, TestSchema,
+            BoxedHostOnboarder, BoxedPackageDeployer, Mutation, NetworksTargetAgentLookupKeysPair,
+            Query, RoleGuard, SamplingPolicy, Schema, SharedAgentManager, Subscription, TestSchema,
         },
     };
 
@@ -1159,23 +1158,33 @@ mod tests {
     }
 
     impl CapabilityStub {
-        fn boxed(advertised: Advertised) -> (BoxedAgentManager, Arc<CapabilityReads>) {
+        fn boxed(advertised: Advertised) -> (SharedAgentManager, Arc<CapabilityReads>) {
             let reads = Arc::<CapabilityReads>::default();
             let stub = Self {
                 reads: Arc::clone(&reads),
                 advertised,
             };
-            (Box::new(stub), reads)
+            (Arc::new(stub), reads)
         }
 
         /// A host advertising exactly `tags`.
-        fn advertising(tags: &'static [&'static str]) -> (BoxedAgentManager, Arc<CapabilityReads>) {
+        fn advertising(
+            tags: &'static [&'static str],
+        ) -> (SharedAgentManager, Arc<CapabilityReads>) {
             Self::boxed(Advertised::Tags(tags))
         }
     }
 
     #[async_trait::async_trait]
     impl AgentManager for CapabilityStub {
+        #[cfg(feature = "auth-mtls")]
+        async fn request_customer_data_deletion(
+            &self,
+            _targets: &[crate::customer_data_deletion::CustomerDataDeletionTarget],
+        ) -> Result<(), anyhow::Error> {
+            unimplemented!()
+        }
+
         async fn capabilities(
             &self,
             hostname: &str,
