@@ -22,8 +22,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   an IP location database.
 - Event country filters and country-based aggregations now use the country codes
   stored with each event, so they no longer require an IP location database at
-  query time. The `ZZ` and `XX` placeholders are ordinary filter values and
-  aggregation buckets.
+  query time. Country-based aggregations count each distinct country code stored
+  in an event once, including codes from every originator and responder. The
+  `ZZ` and `XX` placeholders are ordinary filter values and aggregation buckets.
 - Changed the public `serve` function to accept
   `Option<Arc<ip2location::DB>>` instead of `Option<ip2location::DB>`. This is a
   breaking API change for callers that initialize the server.
