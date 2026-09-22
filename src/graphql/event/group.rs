@@ -398,7 +398,10 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use chrono::{DateTime, NaiveDate, Utc};
-    use review_database::{EventCategory, EventKind, EventMessage, event::DnsEventFields};
+    use review_database::{
+        EventCategory, EventKind, EventMessage,
+        event::{DnsEventFields, ExternalDdosFields, MultiHostPortScanFields},
+    };
 
     use super::super::tests::{
         event_country_locator, jiff_timestamp, schema_with_country_filter_events,
@@ -563,7 +566,9 @@ mod tests {
             .unwrap();
 
         // The first event contributes US and KR. The second contributes US
-        // once because its originator and responder have the same code.
+        // once because its originator and responder have the same code. The
+        // third starts with US on both sides, so KR must come from a later
+        // responder. Repeated codes within and across sides count only once.
         db.put(&event_message_at(
             ts,
             u32::from(Ipv4Addr::new(1, 0, 0, 1)),
@@ -575,6 +580,31 @@ mod tests {
             u32::from(Ipv4Addr::new(1, 0, 0, 2)),
             u32::from(Ipv4Addr::new(1, 0, 0, 3)),
         ))
+        .unwrap();
+        let multi_host_fields = MultiHostPortScanFields {
+            sensor: "sensor1".to_string(),
+            orig_addr: Ipv4Addr::new(1, 0, 0, 4).into(),
+            resp_port: 443,
+            resp_addrs: vec![
+                Ipv4Addr::new(1, 0, 0, 5).into(),
+                Ipv4Addr::new(2, 0, 0, 2).into(),
+                Ipv4Addr::new(2, 0, 0, 3).into(),
+            ],
+            proto: 6,
+            first_event_start_time: (ts + chrono::Duration::seconds(2))
+                .timestamp_nanos_opt()
+                .unwrap(),
+            last_event_start_time: (ts + chrono::Duration::seconds(2))
+                .timestamp_nanos_opt()
+                .unwrap(),
+            confidence: 0.8,
+            category: Some(EventCategory::CommandAndControl),
+        };
+        db.put(&EventMessage {
+            time: jiff_timestamp(ts + chrono::Duration::seconds(2)),
+            kind: EventKind::MultiHostPortScan,
+            fields: bincode::serialize(&multi_host_fields).expect("serializable"),
+        })
         .unwrap();
         drop(store);
 
@@ -592,7 +622,85 @@ mod tests {
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
         assert_eq!(
             res.data.to_string(),
-            r#"{eventCountsByCountry: {values: ["US", "KR"], counts: [2, 1]}}"#
+            r#"{eventCountsByCountry: {values: ["US", "KR"], counts: [3, 2]}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn event_counts_by_country_includes_later_originators() {
+        let (_locator_dir, locator) = event_country_locator();
+        let schema = TestSchema::new_with_event_country_locator(locator).await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+
+        // Both first endpoints are US. Only later originators carry KR, and
+        // the repeated KR and the US on both sides must each count once.
+        let fields = ExternalDdosFields {
+            sensor: "sensor1".to_string(),
+            orig_addrs: vec![
+                Ipv4Addr::new(1, 0, 0, 1).into(),
+                Ipv4Addr::new(2, 0, 0, 1).into(),
+                Ipv4Addr::new(2, 0, 0, 2).into(),
+            ],
+            resp_addr: Ipv4Addr::new(1, 0, 0, 2).into(),
+            proto: 17,
+            first_event_start_time: ts.timestamp_nanos_opt().unwrap(),
+            last_event_start_time: ts.timestamp_nanos_opt().unwrap(),
+            confidence: 0.8,
+            category: Some(EventCategory::Impact),
+        };
+        db.put(&EventMessage {
+            time: jiff_timestamp(ts),
+            kind: EventKind::ExternalDdos,
+            fields: bincode::serialize(&fields).expect("serializable"),
+        })
+        .unwrap();
+        db.put(&event_message_at(
+            ts + chrono::Duration::seconds(1),
+            u32::from(Ipv4Addr::new(1, 0, 0, 3)),
+            u32::from(Ipv4Addr::new(1, 0, 0, 4)),
+        ))
+        .unwrap();
+        drop(store);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"{
+                    all: eventCountsByCountry(filter: {}, first: 10) {
+                        values
+                        counts
+                    }
+                    matchingLaterOriginator: eventCountsByCountry(
+                        filter: { countries: ["KR"] }, first: 10
+                    ) {
+                        counts
+                    }
+                    limited: eventCountsByCountry(filter: {}, first: 1) {
+                        values
+                        counts
+                    }
+                    noMatches: eventCountsByCountry(
+                        filter: { countries: ["JP"] }, first: 10
+                    ) {
+                        values
+                        counts
+                    }
+                }"#,
+            )
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        // The filtered event contributes two equally sized buckets. Checking
+        // only their counts avoids imposing an order on tied country names.
+        assert_eq!(
+            res.data.to_string(),
+            r#"{all: {values: ["US", "KR"], counts: [2, 1]}, matchingLaterOriginator: {counts: [1, 1]}, limited: {values: ["US"], counts: [2]}, noMatches: {values: [], counts: []}}"#
         );
     }
 
