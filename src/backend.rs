@@ -292,9 +292,10 @@ impl OperationId {
     }
 
     /// Borrows the key for rendering.
-    // The resolvers that render an operation id land in sibling issues; the
-    // reader is declared here so review can build the type and this crate can
-    // read it back, which the tests below exercise in both directions.
+    // The resolvers that render an operation id all consume it through
+    // `into_inner`, so nothing outside the tests below borrows one. The reader
+    // stays because review builds the type and this crate reads it back, which
+    // those tests exercise in both directions.
     #[allow(dead_code)]
     #[must_use]
     pub(crate) fn as_str(&self) -> &str {
@@ -374,10 +375,6 @@ impl JoinToken {
     ///
     /// It consumes rather than borrows so that a call site reads as a
     /// deliberate one-time disclosure and cannot leave a copy behind.
-    // The one GraphQL field that discloses the token lands in a sibling issue;
-    // the reader is declared here with the type, and the tests below exercise
-    // it.
-    #[allow(dead_code)]
     #[must_use]
     pub(crate) fn expose(self) -> String {
         self.0
@@ -421,8 +418,6 @@ impl HostOnboardingTicket {
 
     /// Consumes the ticket and yields its three parts, so a resolver moves the
     /// token out rather than borrowing around it.
-    // Declared here for the same reason as `JoinToken::expose`.
-    #[allow(dead_code)]
     #[must_use]
     pub(crate) fn into_parts(self) -> (JoinToken, String, jiff::Timestamp) {
         (self.token, self.command, self.expires_at)
