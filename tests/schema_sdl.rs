@@ -35,6 +35,17 @@ fn committed_sdl_matches_rendered_schema() {
     assert!(rendered_sdl() == COMMITTED_SDL, "{REGENERATE}");
 }
 
+/// Category counts preserve the nullable uncategorized bucket without making
+/// the count at the corresponding index nullable.
+#[test]
+fn category_counter_keeps_nullable_values_and_non_null_counts() {
+    let sdl = rendered_sdl();
+    let counter = definition(&sdl, "type U8EventCounter {");
+
+    assert!(counter.contains("\n\tvalues: [Int]!\n"), "{REGENERATE}");
+    assert!(counter.contains("\n\tcounts: [Int!]!\n"), "{REGENERATE}");
+}
+
 /// Neither `DeliveryMode` nor `BootstrapMaterial` may reach GraphQL.
 ///
 /// `BootstrapMaterial` carries `wrapped_secret_id`, a live single-use
