@@ -25,6 +25,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   query time. Country-based aggregations count each distinct country code stored
   in an event once, including codes from every originator and responder. The
   `ZZ` and `XX` placeholders are ordinary filter values and aggregation buckets.
+- Category-based event aggregations now count previously omitted events without
+  a category in a separate bucket. `U8EventCounter.values` changes from
+  `[Int!]!` to `[Int]!`; the `null` value and its count share the same array
+  index. This is a breaking schema change; clients must handle nullable
+  category values.
 - Changed the public `serve` function to accept
   `Option<Arc<ip2location::DB>>` instead of `Option<ip2location::DB>`. This is a
   breaking API change for callers that initialize the server.

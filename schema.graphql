@@ -7664,7 +7664,8 @@ type Query {
 	eventListWithTriage(filter: EventStandardFilterInput!, triage: EventTriageInput, after: String, before: String, first: Int, last: Int): EventConnection!
 	"""
 	The number of events for each category, with timestamp on or after
-	`start` and before `end`.
+	`start` and before `end`. An uncategorized event is counted in a bucket
+	whose value is `null`.
 	"""
 	eventCountsByCategory(filter: EventListFilterInput!, first: Int!): U8EventCounter!
 	"""
@@ -9501,7 +9502,7 @@ type TrustedUserAgentEdge {
 }
 
 type U8EventCounter {
-	values: [Int!]!
+	values: [Int]!
 	counts: [Int!]!
 }
 
