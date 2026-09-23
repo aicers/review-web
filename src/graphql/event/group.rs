@@ -20,7 +20,8 @@ pub(in crate::graphql) struct EventGroupQuery;
 #[Object]
 impl EventGroupQuery {
     /// The number of events for each category, with timestamp on or after
-    /// `start` and before `end`.
+    /// `start` and before `end`. An uncategorized event is counted in a bucket
+    /// whose value is `null`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -30,9 +31,12 @@ impl EventGroupQuery {
         ctx: &Context<'_>,
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] first: i32,
-    ) -> Result<EventCounts<u8>> {
+    ) -> Result<EventCounts<Option<u8>>> {
         let (values, counts) = count_events(ctx, &filter, Event::count_category, first).await?;
-        let values = values.into_iter().filter_map(|v| v.to_u8()).collect();
+        let values = values
+            .into_iter()
+            .map(|category| category.and_then(|value| value.to_u8()))
+            .collect();
         Ok(EventCounts { values, counts })
     }
 
@@ -277,7 +281,7 @@ impl EventGroupQuery {
 
 #[derive(SimpleObject)]
 #[graphql(concrete(name = "StringEventCounter", params(String)))]
-#[graphql(concrete(name = "U8EventCounter", params(u8)))]
+#[graphql(concrete(name = "U8EventCounter", params("Option<u8>")))]
 #[graphql(concrete(name = "ThreatLevelEventCounter", params(ThreatLevel)))]
 struct EventCounts<T: OutputType> {
     values: Vec<T>,
@@ -411,6 +415,15 @@ mod tests {
     /// Creates an event message at `timestamp` with the given source and
     /// destination `IPv4` addresses.
     fn event_message_at(timestamp: DateTime<Utc>, src: u32, dst: u32) -> EventMessage {
+        event_message_with_category(timestamp, src, dst, Some(EventCategory::CommandAndControl))
+    }
+
+    fn event_message_with_category(
+        timestamp: DateTime<Utc>,
+        src: u32,
+        dst: u32,
+        category: Option<EventCategory>,
+    ) -> EventMessage {
         let fields = DnsEventFields {
             sensor: "sensor1".to_string(),
             start_time: timestamp.timestamp_nanos_opt().unwrap(),
@@ -437,13 +450,95 @@ mod tests {
             ra_flag: false,
             ttl: Vec::new(),
             confidence: 0.8,
-            category: Some(EventCategory::CommandAndControl),
+            category,
         };
         EventMessage {
             time: jiff_timestamp(timestamp),
             kind: EventKind::DnsCovertChannel,
             fields: bincode::serialize(&fields).expect("serializable"),
         }
+    }
+
+    #[tokio::test]
+    async fn event_counts_by_category_preserves_uncategorized_bucket() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+
+        for offset in 0..3 {
+            db.put(&event_message_with_category(
+                ts + chrono::Duration::seconds(offset),
+                1,
+                2,
+                None,
+            ))
+            .unwrap();
+        }
+        for offset in 3..5 {
+            db.put(&event_message_with_category(
+                ts + chrono::Duration::seconds(offset),
+                3,
+                4,
+                Some(EventCategory::InitialAccess),
+            ))
+            .unwrap();
+        }
+        drop(store);
+
+        let res = schema
+            .execute_as_system_admin(
+                r"{
+                    all: eventCountsByCategory(filter: {}, first: 10) {
+                        values
+                        counts
+                    }
+                    uncategorized: eventCountsByCategory(
+                        filter: { categories: [null] }
+                        first: 10
+                    ) {
+                        values
+                        counts
+                    }
+                    categorized: eventCountsByCategory(
+                        filter: { categories: [2] }
+                        first: 10
+                    ) {
+                        values
+                        counts
+                    }
+                    mixed: eventCountsByCategory(
+                        filter: { categories: [2, null] }
+                        first: 10
+                    ) {
+                        values
+                        counts
+                    }
+                    limited: eventCountsByCategory(filter: {}, first: 1) {
+                        values
+                        counts
+                    }
+                    noMatches: eventCountsByCategory(
+                        filter: { categories: [3] }
+                        first: 10
+                    ) {
+                        values
+                        counts
+                    }
+                }",
+            )
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            "{all: {values: [null, 2], counts: [3, 2]}, uncategorized: {values: [null], counts: [3]}, categorized: {values: [2], counts: [2]}, mixed: {values: [null, 2], counts: [3, 2]}, limited: {values: [null], counts: [3]}, noMatches: {values: [], counts: []}}"
+        );
     }
 
     #[tokio::test]
