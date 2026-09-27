@@ -145,6 +145,9 @@ pub(crate) struct HostOnboardingTicket {
     command: String,
     /// The granted absolute deadline at which the token expires.
     expires_at: jiff::Timestamp,
+    /// The product namespace the operator passes to the host's join command
+    /// as `--namespace`. It is not secret and is not part of `command`.
+    namespace: String,
 }
 
 /// The request key already names an attempt submitted with a different
@@ -672,12 +675,13 @@ impl DeployMutation {
         info_with_username!(ctx, "Onboarding of {host} requested");
         let (ticket, operation_id): (BackendHostOnboardingTicket, OperationId) =
             onboarder.onboard_host(&host).await?;
-        let (token, command, expires_at) = ticket.into_parts();
+        let (token, command, expires_at, namespace) = ticket.into_parts();
         Ok(HostOnboardingTicket {
             operation_id: operation_id.into_inner(),
             token: token.expose(),
             command,
             expires_at,
+            namespace,
         })
     }
 }
@@ -735,6 +739,9 @@ mod tests {
     const JOIN_TOKEN: &str = "one-time-token-that-must-stay-secret";
     const ONBOARD_COMMAND: &str = "roxyd join --token-file /run/review/token";
     const EXPIRES_AT_SECOND: i64 = 1_700_000_123;
+    /// Deliberately not a value this crate could have produced itself, so a
+    /// resolver that composed or defaulted a namespace would not match it.
+    const ONBOARD_NAMESPACE: &str = "onboarder-supplied-namespace";
 
     /// The key a `RequestKeyReused` refusal carries. It is deliberately not
     /// [`REQUEST_KEY`], so a resolver that rendered its own argument instead of
@@ -1102,6 +1109,7 @@ mod tests {
                         JoinToken::new(JOIN_TOKEN.to_string()),
                         ONBOARD_COMMAND.to_string(),
                         jiff::Timestamp::from_second(EXPIRES_AT_SECOND)?,
+                        ONBOARD_NAMESPACE.to_string(),
                     );
                     self.calls
                         .ticket_debug
@@ -1350,7 +1358,7 @@ mod tests {
 
     fn onboard_mutation(host: &str) -> String {
         format!(
-            r#"mutation {{ onboardHost(host: "{host}") {{ operationId token command expiresAt }} }}"#
+            r#"mutation {{ onboardHost(host: "{host}") {{ operationId token command expiresAt namespace }} }}"#
         )
     }
 
@@ -1738,14 +1746,18 @@ mod tests {
                     "token": JOIN_TOKEN,
                     "command": ONBOARD_COMMAND,
                     "expiresAt": "2023-11-14T22:15:23Z",
+                    "namespace": ONBOARD_NAMESPACE,
                 }
             })
         );
         assert_eq!(calls.count(), 1);
         assert_eq!(calls.only_host(), "new-host");
         let debug = calls.only_ticket_debug();
-        assert!(debug.contains("<redacted>"), "{debug}");
+        assert!(debug.contains("JoinToken(<redacted>)"), "{debug}");
         assert!(!debug.contains(JOIN_TOKEN), "{debug}");
+        // The namespace is not secret, so the ticket's `Debug` prints it; what
+        // it must not do is take the token's redaction with it.
+        assert!(debug.contains(ONBOARD_NAMESPACE), "{debug}");
         assert!(logs.contains("Onboarding of new-host requested"), "{logs}");
         assert!(!logs.contains(JOIN_TOKEN), "{logs}");
         assert!(!logs.contains("<redacted>"), "{logs}");
@@ -1759,6 +1771,23 @@ mod tests {
             1,
             "{logs}"
         );
+    }
+
+    /// The namespace is the onboarder's to supply: the resolver passes it
+    /// through as it arrived, and neither folds it into `command` nor
+    /// substitutes a value of its own.
+    #[tokio::test(flavor = "current_thread")]
+    async fn onboarding_passes_the_namespace_through_unchanged() {
+        let (deployer, _) = RecordingDeployer::applying();
+        let (onboarder, calls) = RecordingOnboarder::boxed(OnboardAnswer::Succeed);
+        let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+        let response = execute_without_store(&schema, &onboard_mutation("new-host")).await;
+
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        let data = response.data.into_json().unwrap();
+        assert_eq!(data["onboardHost"]["namespace"], ONBOARD_NAMESPACE);
+        assert_eq!(data["onboardHost"]["command"], ONBOARD_COMMAND);
+        assert_eq!(calls.count(), 1);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -3090,6 +3119,7 @@ mod tests {
                 "token: String!",
                 "command: String!",
                 "expiresAt: DateTime!",
+                "namespace: String!",
             ]
         );
     }

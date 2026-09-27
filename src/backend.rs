@@ -405,27 +405,48 @@ pub struct HostOnboardingTicket {
     command: String,
     /// The granted absolute deadline the ticket stops being usable at.
     expires_at: jiff::Timestamp,
+    /// The product namespace the host passes as `roxyd join --namespace`,
+    /// which every managed path on it derives from.
+    ///
+    /// It is not secret and is an ordinary field: `Debug` prints it. It is
+    /// supplied as the deployment configures it, never composed or defaulted
+    /// here, and it is not folded into `command`, so the operator is shown it
+    /// as its own value.
+    namespace: String,
 }
 
 impl HostOnboardingTicket {
-    /// Creates a ticket from the token, the command that consumes it and the
-    /// deadline it stops being usable at.
+    /// Creates a ticket from the token, the command that consumes it, the
+    /// deadline it stops being usable at and the product namespace the host
+    /// joins under.
     #[must_use]
-    pub fn new(token: JoinToken, command: String, expires_at: jiff::Timestamp) -> Self {
+    pub fn new(
+        token: JoinToken,
+        command: String,
+        expires_at: jiff::Timestamp,
+        namespace: String,
+    ) -> Self {
         Self {
             token,
             command,
             expires_at,
+            namespace,
         }
     }
 
-    /// Consumes the ticket and yields its three parts, so a resolver moves the
+    /// Returns the product namespace the host joins under.
+    #[must_use]
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// Consumes the ticket and yields its four parts, so a resolver moves the
     /// token out rather than borrowing around it.
     // Declared here for the same reason as `JoinToken::expose`.
     #[allow(dead_code)]
     #[must_use]
-    pub(crate) fn into_parts(self) -> (JoinToken, String, jiff::Timestamp) {
-        (self.token, self.command, self.expires_at)
+    pub(crate) fn into_parts(self) -> (JoinToken, String, jiff::Timestamp, String) {
+        (self.token, self.command, self.expires_at, self.namespace)
     }
 }
 
@@ -955,6 +976,7 @@ mod tests {
     };
 
     const TOKEN: &str = "s3cret-join-token";
+    const NAMESPACE: &str = "clumit-security";
 
     #[test]
     fn module_package_ids_are_the_five_modules() {
@@ -1005,12 +1027,36 @@ mod tests {
             JoinToken::new(TOKEN.to_string()),
             "roxyd join --token <token>".to_string(),
             expires_at,
+            NAMESPACE.to_string(),
         );
+        assert_eq!(ticket.namespace(), NAMESPACE);
 
-        let (token, command, deadline) = ticket.into_parts();
+        let (token, command, deadline, namespace) = ticket.into_parts();
         assert_eq!(token.expose(), TOKEN);
         assert_eq!(command, "roxyd join --token <token>");
         assert_eq!(deadline, expires_at);
+        assert_eq!(namespace, NAMESPACE);
+    }
+
+    /// Widening the ticket did not widen what its `Debug` discloses: the
+    /// token is still redacted through `JoinToken`'s own `Debug`, while the
+    /// namespace, which is not secret, is printed as the ordinary field it is.
+    #[test]
+    fn debug_of_the_ticket_redacts_the_token_and_prints_the_namespace() {
+        let ticket = HostOnboardingTicket::new(
+            JoinToken::new(TOKEN.to_string()),
+            "roxyd join --token <token>".to_string(),
+            jiff::Timestamp::from_second(1_700_000_000).unwrap(),
+            NAMESPACE.to_string(),
+        );
+        let rendered = format!("{ticket:?}");
+
+        assert!(rendered.contains("JoinToken(<redacted>)"), "{rendered}");
+        assert!(!rendered.contains(TOKEN), "{rendered}");
+        assert!(
+            rendered.contains(&format!("namespace: {NAMESPACE:?}")),
+            "{rendered}"
+        );
     }
 
     /// A derived `Debug` on an enclosing struct must not be able to print the

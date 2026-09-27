@@ -6,7 +6,9 @@
 //! as one, which a `#[cfg(test)]` module inside the crate is not: the readers
 //! on `OperationId`, `JoinToken` and `HostOnboardingTicket` are `pub(crate)`
 //! and are unreachable here on purpose, so the crate's own unit tests cover
-//! that direction and this file covers the construction side.
+//! that direction and this file covers the construction side. The one
+//! exception is the ticket's namespace, which is not secret and has an
+//! ordinary `pub` accessor.
 
 use std::{net::SocketAddr, sync::Mutex};
 
@@ -29,6 +31,7 @@ use review_web::backend::{
 };
 
 const TOKEN: &str = "s3cret-join-token";
+const NAMESPACE: &str = "clumit-security";
 const ACCEPTED_PACKAGE_ID: &str = "piglet";
 const REQUEST_KEY: &str = "b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e";
 
@@ -194,6 +197,7 @@ impl HostOnboarder for OutsideOnboarder {
                 JoinToken::new(TOKEN.to_string()),
                 format!("roxyd join --host {host} --token <token>"),
                 jiff::Timestamp::from_second(1_700_000_000)?,
+                NAMESPACE.to_string(),
             ),
             OperationId::new(REQUEST_KEY.to_string()),
         ))
@@ -400,7 +404,8 @@ async fn both_delivery_modes_are_namable_and_there_is_no_third() {
     }
 }
 
-/// The ticket's token stays redacted in `Debug` when another crate renders it.
+/// The ticket's token stays redacted in `Debug` when another crate renders it,
+/// while its namespace, which is not secret, is readable and printed.
 #[tokio::test]
 async fn the_onboarding_ticket_redacts_its_token() {
     let (ticket, operation_id) = OutsideOnboarder
@@ -410,7 +415,9 @@ async fn the_onboarding_ticket_redacts_its_token() {
 
     let rendered = format!("{ticket:?}");
     assert!(!rendered.contains(TOKEN), "{rendered}");
-    assert!(rendered.contains("<redacted>"), "{rendered}");
+    assert!(rendered.contains("JoinToken(<redacted>)"), "{rendered}");
+    assert!(rendered.contains(NAMESPACE), "{rendered}");
+    assert_eq!(ticket.namespace(), NAMESPACE);
     assert_eq!(operation_id.to_string(), REQUEST_KEY);
 }
 

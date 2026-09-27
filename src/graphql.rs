@@ -1378,6 +1378,7 @@ impl HostOnboarder for MockHostOnboarder {
                 JoinToken::new("s3cret-join-token".to_string()),
                 "roxyd join --token <token>".to_string(),
                 jiff::Timestamp::from_second(1_700_000_000)?,
+                "clumit-security".to_string(),
             ),
             OperationId::new("99999999-8888-4777-8666-555555555555".to_string()),
         ))
@@ -2095,7 +2096,7 @@ mod tests {
             async fn onboarding_command(&self, ctx: &Context<'_>) -> Result<String> {
                 let onboarder = ctx.data::<BoxedHostOnboarder>()?;
                 let (ticket, _operation_id) = onboarder.onboard_host("host1").await?;
-                let (_token, command, _expires_at) = ticket.into_parts();
+                let (_token, command, _expires_at, _namespace) = ticket.into_parts();
                 Ok(command)
             }
         }
