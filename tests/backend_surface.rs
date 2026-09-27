@@ -34,6 +34,7 @@ const TOKEN: &str = "s3cret-join-token";
 const NAMESPACE: &str = "clumit-security";
 const ACCEPTED_PACKAGE_ID: &str = "piglet";
 const REQUEST_KEY: &str = "b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e";
+const BOOTSTRAP_ARTIFACT: &[u8] = br#"{"registration_id":"giganto"}"#;
 
 /// An implementer living outside the crate, exactly as `aicers/review` will.
 struct OutsideDeployer {
@@ -171,6 +172,7 @@ impl PackageDeployer for OutsideDeployer {
             wrapped_secret_id: "wrapped".to_string(),
             ca_anchor: vec![0x30, 0x82],
             expires_at: jiff::Timestamp::from_second(1_700_000_000)?,
+            bootstrap_artifact: BOOTSTRAP_ARTIFACT.to_vec(),
         })
     }
 
@@ -401,6 +403,7 @@ async fn both_delivery_modes_are_namable_and_there_is_no_third() {
             .await
             .expect("the stub mints material");
         assert_eq!(material.role_id, expected);
+        assert_eq!(material.bootstrap_artifact, BOOTSTRAP_ARTIFACT);
     }
 }
 
