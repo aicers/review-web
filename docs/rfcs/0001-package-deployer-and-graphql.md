@@ -1303,7 +1303,7 @@ supersedes.
     a bare host's only trust root is the release binary it hash-pinned, and a
     per-deployment key a manager generates cannot be inside a binary built
     before it existed. `aicers/review`
-    `docs/rfcs/0001-d2-5-registrar-and-onboarding.md` §4d (lines 549–572 at
+    `docs/rfcs/0001-d2-5-registrar-and-onboarding.md` §4d (lines 549–573 at
     `07f52e46`) records the same decision on review's side, and review
     supplies the value from its `deployment_namespace()` accessor.
 
