@@ -544,8 +544,9 @@ New mutations:
   not only in the UI — a resumed operation or a non-UI caller reaches this path
   with the default already set, so a UI-only check would not hold.
 - **`onboardHost(host)`** — issue a join token (review commands the registrar,
-  D2 §4d); returns the one-time token/one-liner for the UI (RFC-E §6). The
-  pending host + its expiry/cancel cleanup are review-side (D2 §4d).
+  D2 §4d); returns the one-time token/one-liner for the UI (RFC-E §6), and the
+  product namespace the host joins under, as a field of its own (§9, decision
+  22). The pending host + its expiry/cancel cleanup are review-side (D2 §4d).
 - **`buildSelector`** input = one of `{ version: String }` **or**
   `{ commit: String }` (the GraphQL form of the trait's `BuildSelector`;
   exactly one field set — reject both/neither at the resolver). It is passed
@@ -1287,3 +1288,44 @@ supersedes.
     mutations this surface grows later rather than being re-derived from four
     examples and one exception. Stated in §5a; implemented for `onboardHost`
     in #961.
+
+22. **The onboarding ticket carries the product namespace, as a plain
+    field.** A host joins with `roxyd join --namespace <ns>`, and the value is
+    neither optional nor discoverable there: every managed path derives from
+    it, and a bare host has no source for it. `aicers/roxyd`
+    `docs/rfcs/0002-roxyd-v2-install-apply.md` (lines 231–251 at `f21570c7`)
+    settles the channel: the value is displayed by the same authenticated UI
+    session that displays the binary's `sha256sum -c` line, because join
+    steps 1 and 1b need it while the wrapped material is not consumed until
+    step 2, and unwrapping early to reach it would spend a single-use token
+    before host preflight. The same passage withdraws an earlier draft that
+    carried the namespace as a signed claim on an envelope around the token:
+    a bare host's only trust root is the release binary it hash-pinned, and a
+    per-deployment key a manager generates cannot be inside a binary built
+    before it existed. `aicers/review`
+    `docs/rfcs/0001-d2-5-registrar-and-onboarding.md` §4d (lines 549–573 at
+    `07f52e46`) records the same decision on review's side, and review
+    supplies the value from its `deployment_namespace()` accessor.
+
+    So `HostOnboardingTicket` in `backend` gains `namespace: String` beside
+    `token`, `command` and `expires_at`, and the GraphQL `HostOnboardingTicket`
+    gains `namespace: String!`, which the resolver passes through from the
+    backend ticket. `HostOnboarder::onboard_host` keeps its signature;
+    `onboardHost` keeps its argument, its return type and its
+    `SystemAdministrator` guard. The value is **not secret** and gets none of
+    `JoinToken`'s discipline — no consuming accessor, no redacted `Debug`, no
+    withheld `Clone` — because that would present it as credential material
+    and invite back the envelope design that was withdrawn. It is **not
+    interpolated into `command`**, so the UI can show it as its own labelled
+    value. This repository **neither composes nor defaults** it: it is
+    deployment-constant configuration `aicers/bootler` renders at install,
+    and a wrong namespace lays files under the wrong tree on the joining host,
+    so a default here would be worse than an error.
+
+    **`ServerConfig` was considered as the source and rejected**, because no
+    resolver can reach it. `ServerConfig`'s values reach axum routes as
+    extensions, the way `package_upload_max_bytes` reaches the upload route,
+    and none is placed on the GraphQL schema context, whereas the
+    `HostOnboarder` already is and the `onboardHost` resolver already reads
+    it. Sourcing the namespace from `ServerConfig` would have meant plumbing
+    a new datum onto the schema context for a value that already has a path.

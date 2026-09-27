@@ -5172,6 +5172,11 @@ type HostOnboardingTicket {
 	The granted absolute deadline at which the token expires.
 	"""
 	expiresAt: DateTime!
+	"""
+	The product namespace the operator passes to the host's join command
+	as `--namespace`. It is not secret and is not part of `command`.
+	"""
+	namespace: String!
 }
 
 """

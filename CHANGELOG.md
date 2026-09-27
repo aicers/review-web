@@ -179,7 +179,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   package-ids, carry the same `onFailure` policy and rollback capability gate
   as the module mutations, and return the operation id and deployment
   disposition, while onboarding returns the operation id together with the
-  one-time join token, command and granted expiry.
+  one-time join token, command, granted expiry and the product namespace the
+  host joins under.
 
 ### Fixed
 
