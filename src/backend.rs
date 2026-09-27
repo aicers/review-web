@@ -171,12 +171,12 @@ pub(crate) const CORE_PACKAGE_IDS: [&str; 3] = ["review", "aice-web-next", "roxy
 // neither pinned upstream defines it. The surfaces checked, at the exact
 // revisions this crate pins in `Cargo.toml`:
 //
-// - `review-database` at `698254e` — the `pub use` surface of its `lib.rs`,
+// - `review-database` at `c9b9924` — the `pub use` surface of its `lib.rs`,
 //   its three public modules `types`, `event` and `backup`, which together
 //   are every name this crate can import from it, and behind the re-exports
 //   the private `tables::operation_attempt` and `tables::port_allocation`
 //   modules that hold the deployment types.
-// - `review-protocol` at `32ed9b0` — the `types::node` module, which carries
+// - `review-protocol` at `d536008` — the `types::node` module, which carries
 //   the package (`NodePackageRequest`/`NodePackageResponse`/
 //   `NodePackageError`) and enrollment (`NodeEnrollRequest`/
 //   `NodeEnrollResponse`/`NodeEnrollError`) surfaces, and the rest of its
@@ -223,7 +223,8 @@ pub(crate) const CORE_PACKAGE_IDS: [&str; 3] = ["review", "aice-web-next", "roxy
 //   imports. `NodeEnrollRequest::Register` does cover new-host onboarding as
 //   well as a per-service install, but what it returns is the wrapped
 //   credential the *enrolling target* consumes to obtain its certificate —
-//   `role_id`, `wrapped_secret_id`, `ca_anchor`, `expires_at` — travelling
+//   `role_id`, `wrapped_secret_id`, `ca_anchor`, `expires_at`, and
+//   bootroot's own `bootstrap_artifact` carried verbatim — travelling
 //   agent-to-registrar. What these two types carry is the other half: the
 //   one-time secret an *operator* is handed for a host that cannot yet speak
 //   the protocol, and the command they paste on it. No type in either tree
