@@ -1350,6 +1350,7 @@ impl PackageDeployer for MockPackageDeployer {
             wrapped_secret_id: "wrapped".to_string(),
             ca_anchor: vec![0x30, 0x82],
             expires_at: jiff::Timestamp::from_second(1_700_000_000)?,
+            bootstrap_artifact: br#"{"registration_id":"giganto"}"#.to_vec(),
         })
     }
 
