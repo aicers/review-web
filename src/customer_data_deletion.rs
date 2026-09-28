@@ -126,19 +126,19 @@ impl CustomerDataDeletionMutation {
             .as_str()
             .parse::<u32>()
             .map_err(|_| async_graphql::Error::new("invalid customer ID"))?;
-        let task_manager = Arc::clone(ctx.data::<Arc<CustomerDataDeletionTaskManager>>()?);
-        let store = Arc::clone(ctx.data::<Arc<RwLock<Store>>>()?);
-        let agent_manager = Arc::clone(ctx.data::<SharedAgentManager>()?);
-        request_deletion(customer_id, store, agent_manager, &task_manager)
+        let task_manager = ctx.data::<Arc<CustomerDataDeletionTaskManager>>()?;
+        let store = ctx.data::<Arc<RwLock<Store>>>()?;
+        let agent_manager = ctx.data::<SharedAgentManager>()?;
+        request_deletion(customer_id, store, agent_manager, task_manager)
             .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))
+            .map_err(|error| async_graphql::Error::new(format!("{error:#}")))
     }
 }
 
 async fn request_deletion(
     customer_id: u32,
-    store: Arc<RwLock<Store>>,
-    agent_manager: SharedAgentManager,
+    store: &Arc<RwLock<Store>>,
+    agent_manager: &SharedAgentManager,
     task_manager: &Arc<CustomerDataDeletionTaskManager>,
 ) -> anyhow::Result<CustomerDataDeletionRequestStatus> {
     let mut state = task_manager.state.lock().await;
@@ -158,28 +158,30 @@ async fn request_deletion(
         _ = state.active.take();
     }
 
-    let (jobs, existing) = {
-        let store = read_store(&store)?;
+    let (blocked_by_another_deletion, existing) = {
+        let store = read_store(store)?;
         #[cfg(test)]
         tests::checkpoint(&store, tests::Stage::ScanJobs, customer_id)?;
-        let jobs = store
+        let mut blocked_by_another_deletion = false;
+        let mut existing = None;
+        for job in store
             .customer_data_deletion_map()
             .iter(Direction::Forward, None)
-            .collect::<anyhow::Result<Vec<_>>>()
-            .context("scanning customer data deletion jobs")?;
-        let existing = jobs
-            .iter()
-            .find(|job| job.customer_id == customer_id)
-            .cloned();
-        (jobs, existing)
-    };
-    if jobs.iter().any(|job| {
-        job.customer_id != customer_id
-            && job
+        {
+            let job = job.context("scanning customer data deletion jobs")?;
+            if job.customer_id == customer_id {
+                existing = Some(job);
+            } else if job
                 .service_results
                 .iter()
                 .any(|result| result.status == CustomerDataDeletionStatus::InProgress)
-    }) {
+            {
+                blocked_by_another_deletion = true;
+            }
+        }
+        (blocked_by_another_deletion, existing)
+    };
+    if blocked_by_another_deletion {
         return Ok(CustomerDataDeletionRequestStatus::BlockedByAnotherDeletion);
     }
 
@@ -199,7 +201,7 @@ async fn request_deletion(
             return Ok(CustomerDataDeletionRequestStatus::DeletionInProgress);
         }
         let requested_at = timestamp_nanos()?;
-        let plan = retry_plan(&store, &job)?;
+        let plan = retry_plan(store, &job)?;
         for result in &mut job.service_results {
             if result.status == CustomerDataDeletionStatus::Failed {
                 result.status = CustomerDataDeletionStatus::InProgress;
@@ -208,22 +210,22 @@ async fn request_deletion(
                 result.error = None;
             }
         }
-        persist_request(&store, &job, "persisting customer data deletion retry")?;
+        persist_request(store, &job, "persisting customer data deletion retry")?;
         plan
     } else {
-        let Some(plan) = collect_initial_plan(&store, customer_id)? else {
+        let Some(plan) = collect_initial_plan(store, customer_id)? else {
             return Ok(CustomerDataDeletionRequestStatus::NoTarget);
         };
         let job = initial_job(&plan, timestamp_nanos()?);
-        persist_request(
-            &store,
-            &job,
-            "persisting initial customer data deletion job",
-        )?;
+        persist_request(store, &job, "persisting initial customer data deletion job")?;
         plan
     };
 
-    let supervisor = tokio::spawn(run_supervisor(store, agent_manager, plan));
+    let supervisor = tokio::spawn(run_supervisor(
+        Arc::clone(store),
+        Arc::clone(agent_manager),
+        plan,
+    ));
     // There is deliberately no await between spawn and registration. The
     // task-manager mutex decides the ordering against shutdown.
     state.active = Some((customer_id, supervisor));
@@ -268,22 +270,35 @@ fn collect_initial_plan(
     let store = read_store(store)?;
     #[cfg(test)]
     tests::checkpoint(&store, tests::Stage::CollectNodes, customer_id)?;
-    let nodes = store
-        .node_map()
-        .iter(Direction::Forward, None)
-        .collect::<anyhow::Result<Vec<_>>>()
-        .context("collecting customer deletion nodes")?;
     let mut node_ids = Vec::new();
     let mut host_fqdns = Vec::new();
     let mut event_service_fqdns = Vec::new();
     let mut remote_targets = Vec::new();
-    for node in nodes {
+    for node in store.node_map().iter(Direction::Forward, None) {
+        let node = node.context("collecting customer deletion nodes")?;
         let Some(profile) = node.profile.as_ref() else {
             continue;
         };
         if profile.customer_id != customer_id {
             continue;
         }
+        let node_id = node.id;
+        let Some((node, missing_agents, missing_external_services)) = store
+            .node_map()
+            .get_by_id(node_id)
+            .with_context(|| format!("retrieving customer deletion node {node_id}"))?
+        else {
+            bail!("customer deletion node {node_id} no longer exists");
+        };
+        if !missing_agents.is_empty() || !missing_external_services.is_empty() {
+            bail!(
+                "retrieving connected records for node {node_id} failed (agents: {missing_agents:?}, external services: {missing_external_services:?})"
+            );
+        }
+        let profile = node
+            .profile
+            .as_ref()
+            .ok_or_else(|| anyhow!("customer deletion node {node_id} no longer has a profile"))?;
         node_ids.push(node.id);
         host_fqdns.push(profile.hostname.clone());
         for agent in &node.agents {
@@ -391,35 +406,36 @@ fn plan_from_results(
     job: &CustomerDataDeletionJob,
     selected_status: CustomerDataDeletionStatus,
 ) -> anyhow::Result<CustomerDataDeletionExecutionPlan> {
-    let selected: Vec<_> = job
+    let mut review_targets = None;
+    let mut remote_targets = Vec::new();
+    for result in job
         .service_results
         .iter()
         .filter(|result| result.status == selected_status)
-        .collect();
-    let review = selected
-        .iter()
-        .find(|result| result.service == CustomerDataDeletionService::Review);
-    let review_targets = review
-        .map(|result| restore_review_targets(store, job.customer_id, &result.host_fqdns))
-        .transpose()?;
-    let mut remote_targets = Vec::new();
-    for result in selected {
+    {
         let service = match result.service {
-            CustomerDataDeletionService::Sensor => Some("piglet"),
-            CustomerDataDeletionService::SemiSupervised => Some("hog"),
-            CustomerDataDeletionService::Review => None,
+            CustomerDataDeletionService::Review => {
+                if review_targets.is_none() {
+                    review_targets = Some(restore_review_targets(
+                        store,
+                        job.customer_id,
+                        &result.host_fqdns,
+                    )?);
+                }
+                continue;
+            }
+            CustomerDataDeletionService::Sensor => "piglet",
+            CustomerDataDeletionService::SemiSupervised => "hog",
         };
-        if let Some(service) = service {
-            let host_fqdn = result
-                .host_fqdns
-                .first()
-                .ok_or_else(|| anyhow!("remote deletion result has no host FQDN"))?;
-            remote_targets.push(CustomerDataDeletionTarget::new(
-                job.customer_id,
-                host_fqdn.clone(),
-                service_fqdn(service, host_fqdn),
-            ));
-        }
+        let host_fqdn = result
+            .host_fqdns
+            .first()
+            .ok_or_else(|| anyhow!("remote deletion result has no host FQDN"))?;
+        remote_targets.push(CustomerDataDeletionTarget::new(
+            job.customer_id,
+            host_fqdn.clone(),
+            service_fqdn(service, host_fqdn),
+        ));
     }
     remote_targets.sort_unstable_by(|a, b| a.target_service_key.cmp(&b.target_service_key));
     remote_targets.dedup_by(|a, b| a.target_service_key == b.target_service_key);
@@ -479,17 +495,21 @@ async fn run_supervisor(
             .request_customer_data_deletion(&plan.remote_targets)
             .await
     {
+        let error_message = format!(
+            "Review deletion not started because remote deletion delivery failed: {delivery_error:#}"
+        );
         if plan.review_targets.is_some()
             && let Err(persist_error) = persist_review_terminal(
                 &store,
                 plan.customer_id,
                 CustomerDataDeletionStatus::Failed,
-                Some(format!(
-                    "Review deletion not started because remote deletion delivery failed: {delivery_error}"
-                )),
+                Some(&error_message),
             )
         {
-            error!(customer_id = plan.customer_id, %persist_error, "failed to persist Review deletion result");
+            error!(
+                customer_id = plan.customer_id,
+                "failed to persist Review deletion result: {persist_error:#}"
+            );
         }
         return;
     }
@@ -519,7 +539,7 @@ async fn run_review_worker_and_persist(
         Ok(Ok(())) => (CustomerDataDeletionStatus::Succeeded, None),
         Ok(Err(worker_error)) => (
             CustomerDataDeletionStatus::Failed,
-            Some(worker_error.to_string()),
+            Some(format!("{worker_error:#}")),
         ),
         Err(join_error) => (
             CustomerDataDeletionStatus::Failed,
@@ -528,9 +548,13 @@ async fn run_review_worker_and_persist(
             )),
         ),
     };
-    if let Err(persist_error) = persist_review_terminal(&store, customer_id, status, error_message)
+    if let Err(persist_error) =
+        persist_review_terminal(&store, customer_id, status, error_message.as_deref())
     {
-        error!(customer_id, %persist_error, "failed to persist Review deletion result");
+        error!(
+            customer_id,
+            "failed to persist Review deletion result: {persist_error:#}"
+        );
     }
 }
 
@@ -580,20 +604,101 @@ fn delete_review_data(
             .node_map()
             .remove(*node_id)
             .with_context(|| format!("deleting node {node_id}"))?;
-        if !invalid_agents.is_empty() || !invalid_external_services.is_empty() {
-            bail!(
-                "deleting connected records for node {node_id} failed (agents: {invalid_agents:?}, external services: {invalid_external_services:?})"
-            );
-        }
+        #[cfg(test)]
+        let (invalid_agents, invalid_external_services) =
+            tests::injected_associated_deletion_failures(&store, *node_id)
+                .unwrap_or((invalid_agents, invalid_external_services));
+        retry_failed_associated_deletions(
+            &store,
+            *node_id,
+            &invalid_agents,
+            &invalid_external_services,
+        )?;
     }
     Ok(())
+}
+
+fn retry_failed_associated_deletions(
+    store: &Store,
+    node_id: u32,
+    invalid_agents: &[String],
+    invalid_external_services: &[String],
+) -> anyhow::Result<()> {
+    let mut failed_agents = Vec::new();
+    for agent_key in invalid_agents {
+        let result = retry_agent_deletion(store, node_id, agent_key);
+        if let Err(error) = result {
+            error!(
+                node_id,
+                agent_key, "retrying connected agent deletion failed: {error:#}"
+            );
+            failed_agents.push(format!("{agent_key}: {error:#}"));
+        }
+    }
+
+    let mut failed_external_services = Vec::new();
+    for external_service_key in invalid_external_services {
+        let result = retry_external_service_deletion(store, node_id, external_service_key);
+        if let Err(error) = result {
+            error!(
+                node_id,
+                external_service_key,
+                "retrying connected external service deletion failed: {error:#}"
+            );
+            failed_external_services.push(format!("{external_service_key}: {error:#}"));
+        }
+    }
+
+    if failed_agents.is_empty() && failed_external_services.is_empty() {
+        return Ok(());
+    }
+    bail!(
+        "deleting connected records for node {node_id} failed after retry (agents: {failed_agents:?}, external services: {failed_external_services:?})"
+    )
+}
+
+fn retry_agent_deletion(store: &Store, node_id: u32, agent_key: &str) -> anyhow::Result<()> {
+    #[cfg(test)]
+    tests::checkpoint(store, tests::Stage::RetryAgent, node_id)?;
+    store.agents_map().delete(node_id, agent_key)
+}
+
+fn retry_external_service_deletion(
+    store: &Store,
+    node_id: u32,
+    external_service_key: &str,
+) -> anyhow::Result<()> {
+    #[cfg(test)]
+    tests::checkpoint(store, tests::Stage::RetryExternalService, node_id)?;
+    store
+        .external_service_map()
+        .delete(node_id, external_service_key)
 }
 
 fn persist_review_terminal(
     store: &RwLock<Store>,
     customer_id: u32,
     status: CustomerDataDeletionStatus,
-    error_message: Option<String>,
+    error_message: Option<&str>,
+) -> anyhow::Result<()> {
+    let completed_at = timestamp_nanos()?;
+    let mut last_error = None;
+    for _ in 0..2 {
+        match persist_review_terminal_once(store, customer_id, status, completed_at, error_message)
+        {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.expect("two terminal persistence attempts always produce an error"))
+}
+
+fn persist_review_terminal_once(
+    store: &RwLock<Store>,
+    customer_id: u32,
+    status: CustomerDataDeletionStatus,
+    completed_at: i64,
+    error_message: Option<&str>,
 ) -> anyhow::Result<()> {
     let store = read_store(store)?;
     #[cfg(test)]
@@ -608,8 +713,8 @@ fn persist_review_terminal(
         .find(|result| result.service == CustomerDataDeletionService::Review)
         .ok_or_else(|| anyhow!("customer deletion job {customer_id} has no Review result"))?;
     review_result.status = status;
-    review_result.completed_at = Some(timestamp_nanos()?);
-    review_result.error = error_message;
+    review_result.completed_at = Some(completed_at);
+    review_result.error = error_message.map(str::to_owned);
     store
         .customer_data_deletion_map()
         .update_service(customer_id, &review_result)
@@ -626,17 +731,26 @@ pub async fn recover_customer_data_deletion_on_startup(
     store: Arc<RwLock<Store>>,
     task_manager: Arc<CustomerDataDeletionTaskManager>,
 ) -> anyhow::Result<Vec<CustomerDataDeletionTarget>> {
-    let jobs = read_store(&store)?
-        .customer_data_deletion_map()
-        .iter(Direction::Forward, None)
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let mut plans = jobs
-        .iter()
-        .filter(|job| {
-            job.service_results
+    let jobs = {
+        let store_guard = read_store(&store)?;
+        let mut jobs = Vec::new();
+        for job in store_guard
+            .customer_data_deletion_map()
+            .iter(Direction::Forward, None)
+        {
+            let job = job.context("scanning customer data deletion jobs for recovery")?;
+            if job
+                .service_results
                 .iter()
                 .any(|result| result.status == CustomerDataDeletionStatus::InProgress)
-        })
+            {
+                jobs.push(job);
+            }
+        }
+        jobs
+    };
+    let mut plans = jobs
+        .iter()
         .map(|job| plan_from_results(&store, job, CustomerDataDeletionStatus::InProgress))
         .collect::<anyhow::Result<Vec<_>>>()?;
     plans.sort_unstable_by_key(|plan| plan.customer_id);
@@ -648,10 +762,10 @@ pub async fn recover_customer_data_deletion_on_startup(
             "multiple customer deletion jobs require startup recovery"
         );
     }
-    let remote_targets = plans
-        .iter()
-        .flat_map(|plan| plan.remote_targets.iter().cloned())
-        .collect();
+    let mut remote_targets = Vec::new();
+    for plan in &mut plans {
+        remote_targets.append(&mut plan.remote_targets);
+    }
     let review_plans: Vec<_> = plans
         .into_iter()
         .filter(|plan| plan.review_targets.is_some())
@@ -703,22 +817,22 @@ pub async fn recover_customer_data_deletion_on_startup(
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeSet, HashMap};
-    use std::net::SocketAddr;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Duration;
 
     use async_graphql::{EmptySubscription, Request, Schema};
     use async_trait::async_trait;
     use ipnet::IpNet;
-    use review_database::{Agent, AgentStatus, Node, NodeProfile};
+    use review_database::{
+        Agent, AgentStatus, EventCategory, ExternalService, ExternalServiceKind,
+        ExternalServiceStatus, Node, NodeProfile,
+        event::{DnsEventFields, Event, EventKind, EventMessage},
+    };
 
     use super::*;
     use crate::backend::{AgentManager, Process, ResourceUsage};
     use crate::graphql::{NetworksTargetAgentLookupKeysPair, SamplingPolicy};
-
-    mod coverage;
-
-    pub(super) use coverage::{Stage, checkpoint};
 
     static TEST_DB_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -902,6 +1016,14 @@ mod tests {
             None,
         )
         .unwrap();
+        let external_service = ExternalService::new(
+            0,
+            "001.giganto".to_string(),
+            ExternalServiceKind::DataStore,
+            ExternalServiceStatus::Enabled,
+            None,
+        )
+        .unwrap();
         let node = Node {
             id: 0,
             name: hostname.to_string(),
@@ -913,7 +1035,7 @@ mod tests {
             }),
             profile_draft: None,
             agents: vec![sensor, semi_supervised, duplicate_sensor_instance],
-            external_services: Vec::new(),
+            external_services: vec![external_service],
             creation_time: Utc::now(),
         };
         read_store(&test_store.store)
@@ -921,6 +1043,46 @@ mod tests {
             .node_map()
             .put(&node)
             .unwrap()
+    }
+
+    fn put_dns_event(test_store: &TestStore, sensor: &str, second: i64) {
+        let fields = DnsEventFields {
+            sensor: sensor.to_string(),
+            orig_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            orig_port: 10_000,
+            resp_addr: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
+            resp_port: 53,
+            proto: 17,
+            start_time: second * 1_000_000_000,
+            duration: 0,
+            orig_pkts: 0,
+            resp_pkts: 0,
+            orig_l2_bytes: 0,
+            resp_l2_bytes: 0,
+            query: "example.com".to_string(),
+            answer: vec!["127.0.0.1".to_string()],
+            trans_id: 1,
+            rtt: 1,
+            qclass: 0,
+            qtype: 0,
+            rcode: 0,
+            aa_flag: false,
+            tc_flag: false,
+            rd_flag: false,
+            ra_flag: false,
+            ttl: vec![1],
+            confidence: 0.8,
+            category: Some(EventCategory::CommandAndControl),
+        };
+        read_store(&test_store.store)
+            .unwrap()
+            .events()
+            .put(&EventMessage {
+                time: jiff::Timestamp::from_second(second).unwrap(),
+                kind: EventKind::DnsCovertChannel,
+                fields: bincode::serialize(&fields).unwrap(),
+            })
+            .unwrap();
     }
 
     #[test]
@@ -1060,14 +1222,9 @@ mod tests {
         let agent_manager = Arc::new(RecordingAgentManager::default());
         let shared_agent_manager: SharedAgentManager = agent_manager.clone();
         let task_manager = Arc::new(CustomerDataDeletionTaskManager::default());
-        let status = request_deletion(
-            42,
-            Arc::clone(&test_store.store),
-            shared_agent_manager,
-            &task_manager,
-        )
-        .await
-        .unwrap();
+        let status = request_deletion(42, &test_store.store, &shared_agent_manager, &task_manager)
+            .await
+            .unwrap();
         assert_eq!(status, CustomerDataDeletionRequestStatus::Accepted);
         task_manager.shutdown_and_wait().await;
 
@@ -1121,10 +1278,11 @@ mod tests {
                     .unwrap();
             }
         }
+        let agent_manager: SharedAgentManager = Arc::new(RecordingAgentManager::default());
         let status = request_deletion(
             1,
-            Arc::clone(&test_store.store),
-            Arc::new(RecordingAgentManager::default()),
+            &test_store.store,
+            &agent_manager,
             &Arc::new(CustomerDataDeletionTaskManager::default()),
         )
         .await
@@ -1266,14 +1424,9 @@ mod tests {
         let manager = Arc::new(CustomerDataDeletionTaskManager::default());
         let agent_manager: SharedAgentManager = Arc::new(RecordingAgentManager::default());
         assert_eq!(
-            request_deletion(
-                1,
-                Arc::clone(&test_store.store),
-                Arc::clone(&agent_manager),
-                &manager,
-            )
-            .await
-            .unwrap(),
+            request_deletion(1, &test_store.store, &agent_manager, &manager,)
+                .await
+                .unwrap(),
             CustomerDataDeletionRequestStatus::AlreadyCompleted
         );
         {
@@ -1290,7 +1443,7 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(
-            request_deletion(2, Arc::clone(&test_store.store), agent_manager, &manager,)
+            request_deletion(2, &test_store.store, &agent_manager, &manager)
                 .await
                 .unwrap(),
             CustomerDataDeletionRequestStatus::DeletionInProgress
@@ -1308,18 +1461,13 @@ mod tests {
         manager.state.lock().await.active = Some((3, supervisor));
         let agent_manager: SharedAgentManager = Arc::new(RecordingAgentManager::default());
         assert_eq!(
-            request_deletion(
-                3,
-                Arc::clone(&test_store.store),
-                Arc::clone(&agent_manager),
-                &manager,
-            )
-            .await
-            .unwrap(),
+            request_deletion(3, &test_store.store, &agent_manager, &manager,)
+                .await
+                .unwrap(),
             CustomerDataDeletionRequestStatus::DeletionInProgress
         );
         assert_eq!(
-            request_deletion(4, Arc::clone(&test_store.store), agent_manager, &manager)
+            request_deletion(4, &test_store.store, &agent_manager, &manager)
                 .await
                 .unwrap(),
             CustomerDataDeletionRequestStatus::BlockedByAnotherDeletion
@@ -1333,18 +1481,14 @@ mod tests {
         let test_store = TestStore::new();
         let node_id = put_active_node(&test_store, 55, "failure.example");
         let manager = Arc::new(CustomerDataDeletionTaskManager::default());
-        let status = request_deletion(
-            55,
-            Arc::clone(&test_store.store),
-            Arc::new(RecordingAgentManager {
-                targets: std::sync::Mutex::new(Vec::new()),
-                fail_delivery: true,
-                ..RecordingAgentManager::default()
-            }),
-            &manager,
-        )
-        .await
-        .unwrap();
+        let agent_manager: SharedAgentManager = Arc::new(RecordingAgentManager {
+            targets: std::sync::Mutex::new(Vec::new()),
+            fail_delivery: true,
+            ..RecordingAgentManager::default()
+        });
+        let status = request_deletion(55, &test_store.store, &agent_manager, &manager)
+            .await
+            .unwrap();
         assert_eq!(status, CustomerDataDeletionRequestStatus::Accepted);
         manager.shutdown_and_wait().await;
         let store = read_store(&test_store.store).unwrap();
@@ -1390,14 +1534,9 @@ mod tests {
         let shared_agent_manager: SharedAgentManager = agent_manager.clone();
         let manager = Arc::new(CustomerDataDeletionTaskManager::default());
         assert_eq!(
-            request_deletion(
-                77,
-                Arc::clone(&test_store.store),
-                shared_agent_manager,
-                &manager,
-            )
-            .await
-            .unwrap(),
+            request_deletion(77, &test_store.store, &shared_agent_manager, &manager,)
+                .await
+                .unwrap(),
             CustomerDataDeletionRequestStatus::Accepted
         );
         manager.shutdown_and_wait().await;
@@ -1423,5 +1562,1333 @@ mod tests {
         assert!(retried.requested_at > 123);
         assert_eq!(retried.completed_at, None);
         assert_eq!(retried.error, None);
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) enum Stage {
+        ScanJobs,
+        CollectNodes,
+        PersistRequest,
+        Worker,
+        Events,
+        Hosts,
+        TrafficFilters,
+        Nodes,
+        RetryAgent,
+        RetryExternalService,
+        PersistTerminal,
+    }
+
+    type Hook = Arc<dyn Fn(Stage, u32) -> anyhow::Result<()> + Send + Sync>;
+    static HOOK: std::sync::Mutex<Option<(usize, Hook)>> = std::sync::Mutex::new(None);
+    type AssociatedFailures = (usize, u32, Vec<String>, Vec<String>);
+    static ASSOCIATED_FAILURES: std::sync::Mutex<Option<AssociatedFailures>> =
+        std::sync::Mutex::new(None);
+
+    // Hooks are scoped to a particular Store, never to a thread: the worker runs
+    // on Tokio's blocking pool. Other modules' concurrently running tests cannot
+    // hit this Store's hook, and a guard clears it even after a failed assertion.
+    struct HookGuard;
+
+    impl HookGuard {
+        fn install(store: &RwLock<Store>, hook: Hook) -> Self {
+            let address = std::ptr::from_ref(&*read_store(store).unwrap()).addr();
+            *HOOK.lock().unwrap() = Some((address, hook));
+            Self
+        }
+    }
+
+    impl Drop for HookGuard {
+        fn drop(&mut self) {
+            *HOOK.lock().unwrap() = None;
+        }
+    }
+
+    struct AssociatedFailureGuard;
+
+    impl AssociatedFailureGuard {
+        fn install(
+            store: &RwLock<Store>,
+            node_id: u32,
+            agents: Vec<String>,
+            external_services: Vec<String>,
+        ) -> Self {
+            let address = std::ptr::from_ref(&*read_store(store).unwrap()).addr();
+            *ASSOCIATED_FAILURES.lock().unwrap() =
+                Some((address, node_id, agents, external_services));
+            Self
+        }
+    }
+
+    impl Drop for AssociatedFailureGuard {
+        fn drop(&mut self) {
+            *ASSOCIATED_FAILURES.lock().unwrap() = None;
+        }
+    }
+
+    pub(super) fn injected_associated_deletion_failures(
+        store: &Store,
+        node_id: u32,
+    ) -> Option<(Vec<String>, Vec<String>)> {
+        ASSOCIATED_FAILURES.lock().unwrap().as_ref().and_then(
+            |(address, injected_node_id, agents, external_services)| {
+                (*address == std::ptr::from_ref(store).addr() && *injected_node_id == node_id)
+                    .then(|| (agents.clone(), external_services.clone()))
+            },
+        )
+    }
+
+    pub(crate) fn checkpoint(store: &Store, stage: Stage, customer_id: u32) -> anyhow::Result<()> {
+        let hook = HOOK.lock().unwrap().as_ref().and_then(|(address, hook)| {
+            (*address == std::ptr::from_ref(store).addr()).then(|| Arc::clone(hook))
+        });
+        if let Some(hook) = hook {
+            hook(stage, customer_id)?;
+        }
+        Ok(())
+    }
+
+    fn job(store: &RwLock<Store>, customer_id: u32) -> CustomerDataDeletionJob {
+        read_store(store)
+            .unwrap()
+            .customer_data_deletion_map()
+            .get(customer_id)
+            .unwrap()
+            .unwrap()
+    }
+
+    fn put_job(
+        store: &RwLock<Store>,
+        customer_id: u32,
+        results: Vec<CustomerDataDeletionServiceResult>,
+    ) {
+        read_store(store)
+            .unwrap()
+            .customer_data_deletion_map()
+            .put(&CustomerDataDeletionJob {
+                customer_id,
+                service_results: results,
+            })
+            .unwrap();
+    }
+
+    fn terminal_result(
+        service: CustomerDataDeletionService,
+        host: &str,
+        status: CustomerDataDeletionStatus,
+    ) -> CustomerDataDeletionServiceResult {
+        CustomerDataDeletionServiceResult {
+            status,
+            completed_at: Some(456),
+            error: (status == CustomerDataDeletionStatus::Failed)
+                .then(|| "old failure".to_string()),
+            ..pending_result(service, &[host])
+        }
+    }
+
+    #[test]
+    fn only_the_service_segment_matches() {
+        for service in ["piglet", "reproduce"] {
+            assert!(agent_has_service(&format!("001.{service}"), service));
+            assert!(agent_has_service(
+                &format!("001.{service}.node.example"),
+                service
+            ));
+            for key in [
+                format!("{service}.hog.node.example"),
+                format!("001.hog.{service}.example"),
+                format!("001.not-{service}.example"),
+                service.to_string(),
+            ] {
+                assert!(!agent_has_service(&key, service), "{key}");
+            }
+        }
+    }
+
+    #[test]
+    fn initial_and_retry_plans_are_sorted_and_deduplicated() {
+        let test_store = TestStore::new();
+        let z = put_active_node(&test_store, 1, "z.example");
+        let a = put_active_node(&test_store, 1, "a.example");
+        put_active_node(&test_store, 2, "unrelated.example");
+        let plan = collect_initial_plan(&test_store.store, 1).unwrap().unwrap();
+        let review = plan.review_targets.as_ref().unwrap();
+        assert_eq!(review.node_ids, [z, a]);
+        assert_eq!(review.host_fqdns, ["a.example", "z.example"]);
+        assert_eq!(
+            review.event_service_fqdns,
+            ["piglet.a.example", "piglet.z.example"]
+        );
+        let initial = initial_job(&plan, 123);
+        assert_eq!(initial.service_results.len(), 5);
+        assert!(initial.service_results.iter().all(|r| r.requested_at == 123
+            && r.completed_at.is_none()
+            && r.error.is_none()
+            && r.status == CustomerDataDeletionStatus::InProgress));
+        assert_eq!(
+            plan.remote_targets
+                .iter()
+                .map(CustomerDataDeletionTarget::target_service_key)
+                .collect::<Vec<_>>(),
+            [
+                "hog.a.example",
+                "hog.z.example",
+                "piglet.a.example",
+                "piglet.z.example"
+            ]
+        );
+
+        let mut failed = initial;
+        for result in &mut failed.service_results {
+            result.status = CustomerDataDeletionStatus::Failed;
+        }
+        failed
+            .service_results
+            .push(failed.service_results.last().unwrap().clone());
+        failed.service_results.first_mut().unwrap().host_fqdns =
+            vec!["z.example".into(), "a.example".into(), "z.example".into()];
+        let retry = retry_plan(&test_store.store, &failed).unwrap();
+        assert_eq!(retry.remote_targets, plan.remote_targets);
+        let review = retry.review_targets.unwrap();
+        assert_eq!(review.node_ids, [z, a]);
+        assert_eq!(review.host_fqdns, ["a.example", "z.example"]);
+        assert_eq!(
+            review.event_service_fqdns,
+            [
+                "piglet.a.example",
+                "piglet.z.example",
+                "reproduce.a.example",
+                "reproduce.z.example"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_start_failures_return_graphql_errors_without_starting_work() {
+        let test_store = TestStore::new();
+        put_active_node(&test_store, 1, "one.example");
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let agent = Arc::new(RecordingAgentManager::default());
+        let shared: SharedAgentManager = agent.clone();
+        let schema = test_schema(&test_store, shared, Arc::clone(&manager));
+        for stage in [Stage::ScanJobs, Stage::CollectNodes, Stage::PersistRequest] {
+            let _hook = HookGuard::install(
+                &test_store.store,
+                Arc::new(move |at, _| {
+                    if at == stage {
+                        bail!("injected {stage:?} failure");
+                    }
+                    Ok(())
+                }),
+            );
+            let response = schema
+                .execute(
+                    Request::new(r#"mutation { deleteCustomerData(customerId: "1") }"#)
+                        .data(RoleGuard::Role(Role::SystemAdministrator)),
+                )
+                .await;
+            assert_eq!(response.errors.len(), 1);
+            assert!(
+                response
+                    .errors
+                    .first()
+                    .unwrap()
+                    .message
+                    .contains(&format!("{stage:?}"))
+            );
+            assert!(manager.state.lock().await.active.is_none());
+            assert!(agent.targets.lock().unwrap().is_empty());
+            assert!(
+                read_store(&test_store.store)
+                    .unwrap()
+                    .customer_data_deletion_map()
+                    .get(1)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        let failed = terminal_result(
+            CustomerDataDeletionService::Sensor,
+            "one.example",
+            CustomerDataDeletionStatus::Failed,
+        );
+        put_job(&test_store.store, 1, vec![failed]);
+        let before = job(&test_store.store, 1);
+        let _hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(|stage, _| {
+                if stage == Stage::PersistRequest {
+                    bail!("retry persistence failed");
+                }
+                Ok(())
+            }),
+        );
+        let response = schema
+            .execute(
+                Request::new(r#"mutation { deleteCustomerData(customerId: "1") }"#)
+                    .data(RoleGuard::Role(Role::SystemAdministrator)),
+            )
+            .await;
+        assert_eq!(response.errors.len(), 1);
+        assert!(manager.state.lock().await.active.is_none());
+        assert!(agent.targets.lock().unwrap().is_empty());
+        assert_eq!(job(&test_store.store, 1), before);
+    }
+
+    #[tokio::test]
+    async fn delivery_finishes_before_local_work_for_initial_and_retry_requests() {
+        let test_store = TestStore::new();
+        for (customer_id, retry, fail) in [
+            (1, false, false),
+            (2, true, false),
+            (3, false, true),
+            (4, true, true),
+        ] {
+            // Complete earlier remote results so they do not block the next customer.
+            for previous in 1..customer_id {
+                put_job(
+                    &test_store.store,
+                    previous,
+                    vec![terminal_result(
+                        CustomerDataDeletionService::Review,
+                        "done",
+                        CustomerDataDeletionStatus::Succeeded,
+                    )],
+                );
+            }
+            let node = put_active_node(&test_store, customer_id, &format!("{customer_id}.example"));
+            if retry {
+                let plan = collect_initial_plan(&test_store.store, customer_id)
+                    .unwrap()
+                    .unwrap();
+                let mut persisted = initial_job(&plan, 123);
+                for result in &mut persisted.service_results {
+                    result.status = CustomerDataDeletionStatus::Failed;
+                }
+                put_job(&test_store.store, customer_id, persisted.service_results);
+            }
+            let gate = Arc::new(tokio::sync::Semaphore::new(0));
+            let agent = Arc::new(RecordingAgentManager {
+                fail_delivery: fail,
+                delivery_gate: Some(Arc::clone(&gate)),
+                ..RecordingAgentManager::default()
+            });
+            let shared: SharedAgentManager = agent.clone();
+            let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+            assert_eq!(
+                request_deletion(customer_id, &test_store.store, &shared, &manager)
+                    .await
+                    .unwrap(),
+                CustomerDataDeletionRequestStatus::Accepted
+            );
+            agent.delivery_started.notified().await;
+            assert_eq!(agent.targets.lock().unwrap().len(), 2);
+            assert!(
+                read_store(&test_store.store)
+                    .unwrap()
+                    .node_map()
+                    .get_by_id(node)
+                    .unwrap()
+                    .is_some()
+            );
+            let before = job(&test_store.store, customer_id);
+            assert!(
+                before
+                    .service_results
+                    .iter()
+                    .all(|r| r.status == CustomerDataDeletionStatus::InProgress)
+            );
+            // Shutdown must await the outer delivery supervisor, even though no
+            // blocking worker exists yet.
+            let shutdown = manager.shutdown_and_wait();
+            tokio::pin!(shutdown);
+            assert!(futures::poll!(&mut shutdown).is_pending());
+            gate.add_permits(1);
+            shutdown.await;
+            let after = job(&test_store.store, customer_id);
+            let review = after.service_results.first().unwrap();
+            assert_eq!(
+                review.requested_at,
+                before.service_results.first().unwrap().requested_at
+            );
+            assert!(review.completed_at.is_some());
+            assert_eq!(
+                review.status,
+                if fail {
+                    CustomerDataDeletionStatus::Failed
+                } else {
+                    CustomerDataDeletionStatus::Succeeded
+                }
+            );
+            assert_eq!(
+                read_store(&test_store.store)
+                    .unwrap()
+                    .node_map()
+                    .get_by_id(node)
+                    .unwrap()
+                    .is_some(),
+                fail
+            );
+            assert!(
+                after
+                    .service_results
+                    .iter()
+                    .skip(1)
+                    .all(|r| r.status == CustomerDataDeletionStatus::InProgress)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn worker_errors_and_panics_persist_failure_without_changing_requested_at() {
+        let test_store = TestStore::new();
+        for panic_worker in [false, true] {
+            put_job(
+                &test_store.store,
+                1,
+                vec![pending_result(
+                    CustomerDataDeletionService::Review,
+                    &["one.example"],
+                )],
+            );
+            let _hook = HookGuard::install(
+                &test_store.store,
+                Arc::new(move |stage, _| {
+                    if stage == Stage::Worker {
+                        assert!(!panic_worker, "injected worker panic");
+                        bail!("injected deletion failure");
+                    }
+                    Ok(())
+                }),
+            );
+            let targets =
+                restore_review_targets(&test_store.store, 1, &["one.example".into()]).unwrap();
+            run_review_worker_and_persist(Arc::clone(&test_store.store), 1, targets).await;
+            let result = job(&test_store.store, 1).service_results.remove(0);
+            assert_eq!(result.status, CustomerDataDeletionStatus::Failed);
+            assert_eq!(result.requested_at, 123);
+            assert!(result.completed_at.is_some());
+            assert!(result.error.unwrap().contains(if panic_worker {
+                "failed to join"
+            } else {
+                "injected deletion failure"
+            }));
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn deletion_stops_at_each_failed_boundary_and_retry_finishes() {
+        const STAGES: [Stage; 4] = [
+            Stage::Events,
+            Stage::Hosts,
+            Stage::TrafficFilters,
+            Stage::Nodes,
+        ];
+        let test_store = TestStore::new();
+        for (index, fail_stage) in STAGES.into_iter().enumerate() {
+            let node = put_active_node(&test_store, 1, "one.example");
+            let target_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+            put_dns_event(
+                &test_store,
+                "piglet.one.example",
+                i64::try_from(index * 2 + 10).unwrap(),
+            );
+            put_dns_event(
+                &test_store,
+                "piglet.one.example.extra",
+                i64::try_from(index * 2 + 11).unwrap(),
+            );
+            {
+                let store = read_store(&test_store.store).unwrap();
+                store
+                    .hosts_map()
+                    .update_opened_ports(
+                        1,
+                        &HashMap::from([(target_ip, HashMap::from([((80, 6), 1)]))]),
+                    )
+                    .unwrap();
+                store
+                    .traffic_filter_map()
+                    .add_rules(
+                        "one.example",
+                        "10.0.0.0/24".parse().unwrap(),
+                        None,
+                        None,
+                        None,
+                    )
+                    .unwrap();
+            }
+            put_job(
+                &test_store.store,
+                1,
+                vec![pending_result(
+                    CustomerDataDeletionService::Review,
+                    &["one.example"],
+                )],
+            );
+            let visited = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let calls = Arc::clone(&visited);
+            let hook = HookGuard::install(
+                &test_store.store,
+                Arc::new(move |stage, _| {
+                    if STAGES.contains(&stage) {
+                        calls.lock().unwrap().push(stage);
+                    }
+                    if stage == fail_stage {
+                        bail!("injected RocksDB boundary error");
+                    }
+                    Ok(())
+                }),
+            );
+            let targets =
+                restore_review_targets(&test_store.store, 1, &["one.example".into()]).unwrap();
+            run_review_worker_and_persist(Arc::clone(&test_store.store), 1, targets).await;
+            let expected: Vec<_> = STAGES
+                .into_iter()
+                .take_while(|s| *s != fail_stage)
+                .chain([fail_stage])
+                .collect();
+            assert_eq!(*visited.lock().unwrap(), expected);
+            let failed = job(&test_store.store, 1);
+            assert_eq!(
+                failed.service_results.first().unwrap().status,
+                CustomerDataDeletionStatus::Failed
+            );
+            if fail_stage == Stage::Events {
+                let error = failed
+                    .service_results
+                    .first()
+                    .unwrap()
+                    .error
+                    .as_ref()
+                    .unwrap();
+                assert!(error.contains("events"));
+                assert!(error.contains("piglet.one.example"));
+                assert!(error.contains("reproduce.one.example"));
+                assert!(error.contains("injected RocksDB boundary error"));
+            }
+            {
+                let store = read_store(&test_store.store).unwrap();
+                let target_event_exists = store.events().iter_forward().any(|entry| {
+                    matches!(
+                        entry.unwrap().1,
+                        Event::DnsCovertChannel(event)
+                            if event.sensor == "piglet.one.example"
+                    )
+                });
+                assert_eq!(target_event_exists, fail_stage == Stage::Events);
+                assert_eq!(
+                    store.hosts_map().get(1, target_ip).unwrap().is_some(),
+                    matches!(fail_stage, Stage::Events | Stage::Hosts)
+                );
+                assert_eq!(
+                    store
+                        .traffic_filter_map()
+                        .get("one.example")
+                        .unwrap()
+                        .is_some(),
+                    matches!(
+                        fail_stage,
+                        Stage::Events | Stage::Hosts | Stage::TrafficFilters
+                    )
+                );
+                assert!(store.node_map().get_by_id(node).unwrap().is_some());
+                assert!(
+                    store
+                        .agents_map()
+                        .get(node, "001.piglet")
+                        .unwrap()
+                        .is_some()
+                );
+                assert!(
+                    store
+                        .external_service_map()
+                        .get(node, "001.giganto")
+                        .unwrap()
+                        .is_some()
+                );
+            }
+            drop(hook);
+            let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+            let agent = Arc::new(RecordingAgentManager::default());
+            let shared: SharedAgentManager = agent.clone();
+            assert_eq!(
+                request_deletion(1, &test_store.store, &shared, &manager)
+                    .await
+                    .unwrap(),
+                CustomerDataDeletionRequestStatus::Accepted
+            );
+            manager.shutdown_and_wait().await;
+            assert_eq!(
+                job(&test_store.store, 1)
+                    .service_results
+                    .first()
+                    .unwrap()
+                    .status,
+                CustomerDataDeletionStatus::Succeeded
+            );
+            assert!(agent.targets.lock().unwrap().is_empty());
+            let store = read_store(&test_store.store).unwrap();
+            assert!(store.hosts_map().get(1, target_ip).unwrap().is_none());
+            assert!(
+                store
+                    .traffic_filter_map()
+                    .get("one.example")
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(store.node_map().get_by_id(node).unwrap().is_none());
+            assert!(
+                store
+                    .agents_map()
+                    .get(node, "001.piglet")
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                store
+                    .external_service_map()
+                    .get(node, "001.giganto")
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(store.events().iter_forward().all(|entry| {
+                !matches!(
+                    entry.unwrap().1,
+                    Event::DnsCovertChannel(event) if event.sensor == "piglet.one.example"
+                )
+            }));
+            assert!(store.events().iter_forward().any(|entry| {
+                matches!(
+                    entry.unwrap().1,
+                    Event::DnsCovertChannel(event)
+                        if event.sensor == "piglet.one.example.extra"
+                )
+            }));
+            drop(store);
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn retry_and_recovery_use_persisted_keys_after_node_deletion() {
+        let test_store = TestStore::new();
+        let agent_manager: SharedAgentManager = Arc::new(RecordingAgentManager::default());
+
+        for (customer_id, hostname, ip, retry) in [
+            (
+                1,
+                "retry.example",
+                IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+                true,
+            ),
+            (
+                2,
+                "recovery.example",
+                IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+                false,
+            ),
+        ] {
+            let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+            let node_id = put_active_node(&test_store, customer_id, hostname);
+            let mut review = pending_result(CustomerDataDeletionService::Review, &[hostname]);
+            if retry {
+                review.status = CustomerDataDeletionStatus::Failed;
+                review.completed_at = Some(456);
+                review.error = Some("previous failure".to_string());
+            }
+            put_job(&test_store.store, customer_id, vec![review]);
+            put_dns_event(
+                &test_store,
+                &format!("piglet.{hostname}"),
+                i64::from(customer_id),
+            );
+            {
+                let store = read_store(&test_store.store).unwrap();
+                store
+                    .hosts_map()
+                    .update_opened_ports(
+                        customer_id,
+                        &HashMap::from([(ip, HashMap::from([((80, 6), 1)]))]),
+                    )
+                    .unwrap();
+                store
+                    .traffic_filter_map()
+                    .add_rules(hostname, "10.0.0.0/24".parse().unwrap(), None, None, None)
+                    .unwrap();
+                store.node_map().remove(node_id).unwrap();
+            }
+
+            if retry {
+                assert_eq!(
+                    request_deletion(customer_id, &test_store.store, &agent_manager, &manager,)
+                        .await
+                        .unwrap(),
+                    CustomerDataDeletionRequestStatus::Accepted
+                );
+                manager.shutdown_and_wait().await;
+            } else {
+                assert!(
+                    recover_customer_data_deletion_on_startup(
+                        Arc::clone(&test_store.store),
+                        Arc::clone(&manager),
+                    )
+                    .await
+                    .unwrap()
+                    .is_empty()
+                );
+                loop {
+                    if manager
+                        .state
+                        .lock()
+                        .await
+                        .active
+                        .as_ref()
+                        .unwrap()
+                        .1
+                        .is_finished()
+                    {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+                manager.shutdown_and_wait().await;
+            }
+
+            let store = read_store(&test_store.store).unwrap();
+            assert!(
+                store.hosts_map().get(customer_id, ip).unwrap().is_none(),
+                "customer {customer_id} host remains"
+            );
+            assert!(store.traffic_filter_map().get(hostname).unwrap().is_none());
+            assert!(store.events().iter_forward().all(|entry| {
+                !matches!(
+                    entry.unwrap().1,
+                    Event::DnsCovertChannel(event)
+                        if event.sensor == format!("piglet.{hostname}")
+                )
+            }));
+            assert_eq!(
+                job(&test_store.store, customer_id)
+                    .service_results
+                    .first()
+                    .unwrap()
+                    .status,
+                CustomerDataDeletionStatus::Succeeded
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn recovery_continues_after_worker_and_terminal_persistence_failures() {
+        let test_store = TestStore::new();
+        for customer_id in [4, 3, 2, 1] {
+            put_job(
+                &test_store.store,
+                customer_id,
+                vec![pending_result(
+                    CustomerDataDeletionService::Review,
+                    &[&format!("{customer_id}.example")],
+                )],
+            );
+        }
+        let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let calls = Arc::clone(&order);
+        let _hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(move |stage, customer| {
+                if stage == Stage::Worker {
+                    calls.lock().unwrap().push(customer);
+                    if customer == 1 {
+                        bail!("deletion failed");
+                    }
+                    assert_ne!(customer, 2, "worker panicked");
+                }
+                if stage == Stage::PersistTerminal && customer == 3 {
+                    bail!("terminal persistence failed");
+                }
+                Ok(())
+            }),
+        );
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        assert!(
+            recover_customer_data_deletion_on_startup(
+                Arc::clone(&test_store.store),
+                Arc::clone(&manager)
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+        // Keep the outer handle registered while waiting for it.
+        loop {
+            if manager
+                .state
+                .lock()
+                .await
+                .active
+                .as_ref()
+                .unwrap()
+                .1
+                .is_finished()
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        manager.shutdown_and_wait().await;
+        assert_eq!(*order.lock().unwrap(), [1, 2, 3, 4]);
+        for (customer_id, status) in [
+            (1, CustomerDataDeletionStatus::Failed),
+            (2, CustomerDataDeletionStatus::Failed),
+            (3, CustomerDataDeletionStatus::InProgress),
+            (4, CustomerDataDeletionStatus::Succeeded),
+        ] {
+            let result = job(&test_store.store, customer_id)
+                .service_results
+                .remove(0);
+            assert_eq!(result.status, status);
+            assert_eq!(result.requested_at, 123);
+            assert_eq!(result.completed_at.is_none(), customer_id == 3);
+        }
+    }
+
+    #[tokio::test]
+    async fn recovery_returns_all_remote_targets_before_sequential_workers_finish() {
+        let test_store = TestStore::new();
+        for customer_id in [20, 10] {
+            let host = format!("{customer_id}.example");
+            put_job(
+                &test_store.store,
+                customer_id,
+                vec![
+                    pending_result(CustomerDataDeletionService::Review, &[&host]),
+                    pending_result(CustomerDataDeletionService::Sensor, &[&host]),
+                ],
+            );
+        }
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let (release, releases) = std::sync::mpsc::channel();
+        let releases = std::sync::Mutex::new(releases);
+        let _hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(move |stage, customer| {
+                if stage == Stage::Worker {
+                    started.send(customer).unwrap();
+                    releases.lock().unwrap().recv().unwrap();
+                }
+                Ok(())
+            }),
+        );
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let targets = recover_customer_data_deletion_on_startup(
+            Arc::clone(&test_store.store),
+            Arc::clone(&manager),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            targets
+                .iter()
+                .map(CustomerDataDeletionTarget::customer_id)
+                .collect::<Vec<_>>(),
+            [10, 20]
+        );
+        assert_eq!(
+            targets
+                .iter()
+                .map(CustomerDataDeletionTarget::target_service_key)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            2
+        );
+        let outer_id = manager.state.lock().await.active.as_ref().unwrap().1.id();
+        assert_eq!(starts.recv().await, Some(10));
+        assert_eq!(manager.state.lock().await.active.as_ref().unwrap().0, 10);
+        assert!(starts.try_recv().is_err());
+        assert_eq!(
+            job(&test_store.store, 20)
+                .service_results
+                .first()
+                .unwrap()
+                .status,
+            CustomerDataDeletionStatus::InProgress
+        );
+        release.send(()).unwrap();
+        assert_eq!(starts.recv().await, Some(20));
+        {
+            let state = manager.state.lock().await;
+            let (customer, handle) = state.active.as_ref().unwrap();
+            assert_eq!(*customer, 20);
+            assert_eq!(handle.id(), outer_id);
+        }
+        assert_eq!(
+            job(&test_store.store, 10)
+                .service_results
+                .first()
+                .unwrap()
+                .status,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        release.send(()).unwrap();
+        manager.shutdown_and_wait().await;
+        assert_eq!(
+            job(&test_store.store, 20)
+                .service_results
+                .first()
+                .unwrap()
+                .status,
+            CustomerDataDeletionStatus::Succeeded
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_finishes_current_recovery_and_leaves_queued_jobs_pending() {
+        let test_store = TestStore::new();
+        for customer_id in [1, 2] {
+            put_job(
+                &test_store.store,
+                customer_id,
+                vec![pending_result(
+                    CustomerDataDeletionService::Review,
+                    &[&format!("{customer_id}.example")],
+                )],
+            );
+        }
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let (release, releases) = std::sync::mpsc::channel();
+        let releases = std::sync::Mutex::new(releases);
+        let _hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(move |stage, customer| {
+                if stage == Stage::Worker {
+                    started.send(customer).unwrap();
+                    releases.lock().unwrap().recv().unwrap();
+                }
+                Ok(())
+            }),
+        );
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        recover_customer_data_deletion_on_startup(
+            Arc::clone(&test_store.store),
+            Arc::clone(&manager),
+        )
+        .await
+        .unwrap();
+        assert_eq!(starts.recv().await, Some(1));
+        let shutdown = manager.shutdown_and_wait();
+        tokio::pin!(shutdown);
+        assert!(futures::poll!(&mut shutdown).is_pending());
+        assert!(manager.state.lock().await.shutting_down);
+        release.send(()).unwrap();
+        shutdown.await;
+        assert!(starts.try_recv().is_err());
+        assert_eq!(
+            job(&test_store.store, 1)
+                .service_results
+                .first()
+                .unwrap()
+                .status,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        assert_eq!(
+            job(&test_store.store, 2).service_results.first().unwrap(),
+            &pending_result(CustomerDataDeletionService::Review, &["2.example"])
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_winning_the_mutex_prevents_request_registration() {
+        let test_store = TestStore::new();
+        put_active_node(&test_store, 1, "one.example");
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let agent = Arc::new(RecordingAgentManager::default());
+        let shared: SharedAgentManager = agent.clone();
+        let state = manager.state.lock().await;
+        let shutdown = manager.shutdown_and_wait();
+        tokio::pin!(shutdown);
+        assert!(futures::poll!(&mut shutdown).is_pending());
+        let request = request_deletion(1, &test_store.store, &shared, &manager);
+        tokio::pin!(request);
+        assert!(futures::poll!(&mut request).is_pending());
+        drop(state);
+        shutdown.await;
+        assert_eq!(
+            request.await.unwrap(),
+            CustomerDataDeletionRequestStatus::BlockedByShutdown
+        );
+        assert!(manager.state.lock().await.active.is_none());
+        assert!(agent.targets.lock().unwrap().is_empty());
+        assert!(
+            read_store(&test_store.store)
+                .unwrap()
+                .customer_data_deletion_map()
+                .get(1)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_associated_records_abort_before_persisting_or_spawning() {
+        let test_store = TestStore::new();
+        let node_id = put_active_node(&test_store, 1, "one.example");
+        read_store(&test_store.store)
+            .unwrap()
+            .agents_map()
+            .delete(node_id, "001.piglet")
+            .unwrap();
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let agent_manager: SharedAgentManager = Arc::new(RecordingAgentManager::default());
+
+        let error = request_deletion(1, &test_store.store, &agent_manager, &manager)
+            .await
+            .unwrap_err();
+
+        let error = format!("{error:#}");
+        assert!(error.contains("connected records"));
+        assert!(error.contains("001.piglet"));
+        assert!(manager.state.lock().await.active.is_none());
+        assert!(
+            read_store(&test_store.store)
+                .unwrap()
+                .customer_data_deletion_map()
+                .get(1)
+                .unwrap()
+                .is_none()
+        );
+
+        let node_id = put_active_node(&test_store, 2, "two.example");
+        read_store(&test_store.store)
+            .unwrap()
+            .external_service_map()
+            .delete(node_id, "001.giganto")
+            .unwrap();
+        let error = request_deletion(2, &test_store.store, &agent_manager, &manager)
+            .await
+            .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("connected records"));
+        assert!(error.contains("001.giganto"));
+        assert!(manager.state.lock().await.active.is_none());
+        assert!(
+            read_store(&test_store.store)
+                .unwrap()
+                .customer_data_deletion_map()
+                .get(2)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn terminal_persistence_retries_once_and_preserves_final_values() {
+        let test_store = TestStore::new();
+        put_job(
+            &test_store.store,
+            1,
+            vec![pending_result(
+                CustomerDataDeletionService::Review,
+                &["one.example"],
+            )],
+        );
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let hook_attempts = Arc::clone(&attempts);
+        let _hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(move |stage, _| {
+                if stage == Stage::PersistTerminal
+                    && hook_attempts.fetch_add(1, Ordering::SeqCst) == 0
+                {
+                    bail!("first persistence attempt failed: database unavailable");
+                }
+                Ok(())
+            }),
+        );
+
+        persist_review_terminal(
+            &test_store.store,
+            1,
+            CustomerDataDeletionStatus::Failed,
+            Some("deletion failed: underlying database error"),
+        )
+        .unwrap();
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        let result = job(&test_store.store, 1).service_results.remove(0);
+        assert_eq!(result.requested_at, 123);
+        assert_eq!(result.status, CustomerDataDeletionStatus::Failed);
+        assert_eq!(
+            result.error.as_deref(),
+            Some("deletion failed: underlying database error")
+        );
+        assert!(result.completed_at.is_some());
+    }
+
+    #[test]
+    fn terminal_persistence_stops_after_two_failures() {
+        let test_store = TestStore::new();
+        put_job(
+            &test_store.store,
+            1,
+            vec![pending_result(
+                CustomerDataDeletionService::Review,
+                &["one.example"],
+            )],
+        );
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let hook_attempts = Arc::clone(&attempts);
+        let _hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(move |stage, _| {
+                if stage == Stage::PersistTerminal {
+                    hook_attempts.fetch_add(1, Ordering::SeqCst);
+                    bail!("database unavailable");
+                }
+                Ok(())
+            }),
+        );
+
+        assert!(
+            persist_review_terminal(
+                &test_store.store,
+                1,
+                CustomerDataDeletionStatus::Succeeded,
+                None,
+            )
+            .is_err()
+        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            job(&test_store.store, 1).service_results.remove(0),
+            pending_result(CustomerDataDeletionService::Review, &["one.example"])
+        );
+    }
+
+    #[test]
+    fn associated_record_retries_attempt_every_key_and_report_only_final_failures() {
+        let test_store = TestStore::new();
+        let agent_attempts = Arc::new(AtomicUsize::new(0));
+        let service_attempts = Arc::new(AtomicUsize::new(0));
+        let hook_agent_attempts = Arc::clone(&agent_attempts);
+        let hook_service_attempts = Arc::clone(&service_attempts);
+        let _hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(move |stage, _| match stage {
+                Stage::RetryAgent => {
+                    let attempt = hook_agent_attempts.fetch_add(1, Ordering::SeqCst);
+                    if attempt != 1 {
+                        bail!("agent retry {attempt} failed");
+                    }
+                    Ok(())
+                }
+                Stage::RetryExternalService => {
+                    let attempt = hook_service_attempts.fetch_add(1, Ordering::SeqCst);
+                    if attempt == 1 {
+                        bail!("external service retry failed");
+                    }
+                    Ok(())
+                }
+                _ => Ok(()),
+            }),
+        );
+        let store = read_store(&test_store.store).unwrap();
+        let error = retry_failed_associated_deletions(
+            &store,
+            9,
+            &["agent-a".into(), "agent-b".into(), "agent-c".into()],
+            &["service-a".into(), "service-b".into()],
+        )
+        .unwrap_err();
+        drop(store);
+
+        assert_eq!(agent_attempts.load(Ordering::SeqCst), 3);
+        assert_eq!(service_attempts.load(Ordering::SeqCst), 2);
+        let error = format!("{error:#}");
+        assert!(error.contains("agent-a"));
+        assert!(!error.contains("agent-b"));
+        assert!(error.contains("agent-c"));
+        assert!(!error.contains("service-a"));
+        assert!(error.contains("service-b"));
+    }
+
+    #[test]
+    fn final_associated_record_failures_stop_before_the_next_node() {
+        let test_store = TestStore::new();
+        let first_node = put_active_node(&test_store, 1, "a.example");
+        let second_node = put_active_node(&test_store, 1, "b.example");
+        let _failures = AssociatedFailureGuard::install(
+            &test_store.store,
+            first_node,
+            vec!["agent-a".into(), "agent-b".into()],
+            vec!["service-a".into(), "service-b".into()],
+        );
+        let agent_attempts = Arc::new(AtomicUsize::new(0));
+        let service_attempts = Arc::new(AtomicUsize::new(0));
+        let hook_agent_attempts = Arc::clone(&agent_attempts);
+        let hook_service_attempts = Arc::clone(&service_attempts);
+        let _hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(move |stage, _| match stage {
+                Stage::RetryAgent => {
+                    if hook_agent_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                        bail!("agent retry failed");
+                    }
+                    Ok(())
+                }
+                Stage::RetryExternalService => {
+                    hook_service_attempts.fetch_add(1, Ordering::SeqCst);
+                    bail!("external service retry failed")
+                }
+                _ => Ok(()),
+            }),
+        );
+
+        let error = delete_review_data(
+            &test_store.store,
+            1,
+            &ReviewDeletionTargets {
+                node_ids: vec![first_node, second_node],
+                host_fqdns: Vec::new(),
+                event_service_fqdns: Vec::new(),
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(agent_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(service_attempts.load(Ordering::SeqCst), 2);
+        let error = format!("{error:#}");
+        assert!(error.contains("agent-a"));
+        assert!(!error.contains("agent-b"));
+        assert!(error.contains("service-a"));
+        assert!(error.contains("service-b"));
+        let store = read_store(&test_store.store).unwrap();
+        assert!(store.node_map().get_by_id(first_node).unwrap().is_none());
+        assert!(store.node_map().get_by_id(second_node).unwrap().is_some());
+        assert!(
+            store
+                .agents_map()
+                .get(second_node, "001.piglet")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            store
+                .external_service_map()
+                .get(second_node, "001.giganto")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn local_deletion_removes_exact_customer_data_and_is_idempotent() {
+        let test_store = TestStore::new();
+        let target_node = put_active_node(&test_store, 1, "one.example");
+        let other_node = put_active_node(&test_store, 2, "other.example");
+        put_dns_event(&test_store, "piglet.one.example", 1);
+        put_dns_event(&test_store, "piglet.one.example.extra", 2);
+        put_dns_event(&test_store, "piglet.other.example", 3);
+        let target_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let other_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+        {
+            let store = read_store(&test_store.store).unwrap();
+            store
+                .hosts_map()
+                .update_opened_ports(
+                    1,
+                    &HashMap::from([(target_ip, HashMap::from([((80, 6), 1)]))]),
+                )
+                .unwrap();
+            store
+                .hosts_map()
+                .update_opened_ports(
+                    2,
+                    &HashMap::from([(other_ip, HashMap::from([((443, 6), 1)]))]),
+                )
+                .unwrap();
+            for hostname in ["one.example", "one.example.extra", "other.example"] {
+                store
+                    .traffic_filter_map()
+                    .add_rules(hostname, "10.0.0.0/24".parse().unwrap(), None, None, None)
+                    .unwrap();
+            }
+        }
+        let plan = collect_initial_plan(&test_store.store, 1).unwrap().unwrap();
+        let targets = plan.review_targets.unwrap();
+
+        delete_review_data(&test_store.store, 1, &targets).unwrap();
+        delete_review_data(&test_store.store, 1, &targets).unwrap();
+
+        let store = read_store(&test_store.store).unwrap();
+        assert!(store.hosts_map().get(1, target_ip).unwrap().is_none());
+        assert!(store.hosts_map().get(2, other_ip).unwrap().is_some());
+        assert!(
+            store
+                .traffic_filter_map()
+                .get("one.example")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .traffic_filter_map()
+                .get("one.example.extra")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            store
+                .traffic_filter_map()
+                .get("other.example")
+                .unwrap()
+                .is_some()
+        );
+        assert!(store.node_map().get_by_id(target_node).unwrap().is_none());
+        assert!(store.node_map().get_by_id(other_node).unwrap().is_some());
+        for agent_key in ["001.piglet", "001.hog", "002.piglet"] {
+            assert!(
+                store
+                    .agents_map()
+                    .get(target_node, agent_key)
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                store
+                    .agents_map()
+                    .get(other_node, agent_key)
+                    .unwrap()
+                    .is_some()
+            );
+        }
+        assert!(
+            store
+                .external_service_map()
+                .get(target_node, "001.giganto")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .external_service_map()
+                .get(other_node, "001.giganto")
+                .unwrap()
+                .is_some()
+        );
+        let sensors = store
+            .events()
+            .iter_forward()
+            .map(|entry| match entry.unwrap().1 {
+                Event::DnsCovertChannel(event) => event.sensor,
+                _ => panic!("expected DNS event"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            sensors,
+            ["piglet.one.example.extra", "piglet.other.example"]
+        );
     }
 }
