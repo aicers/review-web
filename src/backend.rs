@@ -171,7 +171,7 @@ pub(crate) const CORE_PACKAGE_IDS: [&str; 3] = ["review", "aice-web-next", "roxy
 // neither pinned upstream defines it. The surfaces checked, at the exact
 // revisions this crate pins in `Cargo.toml`:
 //
-// - `review-database` at `c9b9924` — the `pub use` surface of its `lib.rs`,
+// - `review-database` at `b426f7d` — the `pub use` surface of its `lib.rs`,
 //   its three public modules `types`, `event` and `backup`, which together
 //   are every name this crate can import from it, and behind the re-exports
 //   the private `tables::operation_attempt` and `tables::port_allocation`
