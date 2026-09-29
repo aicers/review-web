@@ -20,6 +20,8 @@ use crate::{
     graphql::{RoleGuard, agent_lookup_key_service_token},
 };
 
+const TERMINAL_STATUS_UPDATE_ATTEMPTS: usize = 2;
+
 /// A remote service that must delete data belonging to a customer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CustomerDataDeletionTarget {
@@ -158,11 +160,10 @@ async fn request_deletion(
         _ = state.active.take();
     }
 
-    let (blocked_by_another_deletion, existing) = {
+    let existing = {
         let store = read_store(store)?;
         #[cfg(test)]
         tests::checkpoint(&store, tests::Stage::ScanJobs, customer_id)?;
-        let mut blocked_by_another_deletion = false;
         let mut existing = None;
         for job in store
             .customer_data_deletion_map()
@@ -176,14 +177,11 @@ async fn request_deletion(
                 .iter()
                 .any(|result| result.status == CustomerDataDeletionStatus::InProgress)
             {
-                blocked_by_another_deletion = true;
+                return Ok(CustomerDataDeletionRequestStatus::BlockedByAnotherDeletion);
             }
         }
-        (blocked_by_another_deletion, existing)
+        existing
     };
-    if blocked_by_another_deletion {
-        return Ok(CustomerDataDeletionRequestStatus::BlockedByAnotherDeletion);
-    }
 
     let plan = if let Some(mut job) = existing {
         if job
@@ -274,19 +272,25 @@ fn collect_initial_plan(
     let mut host_fqdns = Vec::new();
     let mut event_service_fqdns = Vec::new();
     let mut remote_targets = Vec::new();
-    for node in store.node_map().iter(Direction::Forward, None) {
-        let node = node.context("collecting customer deletion nodes")?;
-        let Some(profile) = node.profile.as_ref() else {
+
+    let node_map = store.node_map();
+    for candidate in store.node_map().iter(Direction::Forward, None) {
+        let candidate = candidate.context("collecting customer deletion nodes")?;
+        let Some(profile) = candidate.profile.as_ref() else {
             continue;
         };
         if profile.customer_id != customer_id {
             continue;
         }
-        let node_id = node.id;
-        let Some((node, missing_agents, missing_external_services)) = store
-            .node_map()
-            .get_by_id(node_id)
-            .with_context(|| format!("retrieving customer deletion node {node_id}"))?
+        let node_id = candidate.id;
+
+        // The node_map iterator silently skips missing or unreadable Agent and
+        // ExternalService records. Re-read the target Node to propagate lookup
+        // errors and reject missing associations before persisting the job.
+        let Some((node, missing_agents, missing_external_services)) =
+            node_map
+                .get_by_id(node_id)
+                .with_context(|| format!("retrieving customer deletion node {node_id}"))?
         else {
             bail!("customer deletion node {node_id} no longer exists");
         };
@@ -415,13 +419,18 @@ fn plan_from_results(
     {
         let service = match result.service {
             CustomerDataDeletionService::Review => {
-                if review_targets.is_none() {
-                    review_targets = Some(restore_review_targets(
-                        store,
-                        job.customer_id,
-                        &result.host_fqdns,
-                    )?);
+                if review_targets.is_some() {
+                    bail!(
+                        "customer deletion job {} has duplicate Review results",
+                        job.customer_id
+                    );
                 }
+
+                review_targets = Some(restore_review_targets(
+                    store,
+                    job.customer_id,
+                    &result.host_fqdns,
+                )?);
                 continue;
             }
             CustomerDataDeletionService::Sensor => "piglet",
@@ -683,7 +692,7 @@ fn persist_review_terminal(
 ) -> anyhow::Result<()> {
     let completed_at = timestamp_nanos()?;
     let mut last_error = None;
-    for _ in 0..2 {
+    for _ in 1..=TERMINAL_STATUS_UPDATE_ATTEMPTS {
         match persist_review_terminal_once(store, customer_id, status, completed_at, error_message)
         {
             Ok(()) => return Ok(()),
@@ -776,7 +785,7 @@ pub async fn recover_customer_data_deletion_on_startup(
 
     let mut state = task_manager.state.lock().await;
     if state.shutting_down {
-        return Ok(remote_targets);
+        bail!("cannot start customer data deletion recovery during shutdown");
     }
     if state
         .active
