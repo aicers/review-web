@@ -4946,4 +4946,58 @@ mod tests {
         #[cfg(feature = "auth-jwt")]
         assert_eq!(recorded(&calls), vec!["001.giganto@node1.example.com"]);
     }
+
+    #[tokio::test]
+    async fn apply_agent_config_explicit_key_resolves_to_the_first_entry() {
+        let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_node_with_services(
+            &schema.store(),
+            "shared-key-node",
+            0,
+            GIGANTO_HOST,
+            vec![make_agent(
+                "shared",
+                review_database::AgentKind::SemiSupervised,
+                Some("test = 'toml'"),
+            )],
+            vec![make_external_service(
+                "shared",
+                review_database::ExternalServiceKind::DataStore,
+                None,
+            )],
+        );
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0", agentKeys: ["shared"]) {
+                        attempts { agentKey succeeded error }
+                        skipped { agentKey reason }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(
+            recorded(&calls),
+            vec![test_agent_lookup_key("shared", GIGANTO_HOST)]
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "applyAgentConfig": {
+                    "attempts": [
+                        { "agentKey": "shared", "succeeded": true, "error": null }
+                    ],
+                    "skipped": []
+                }
+            })
+        );
+    }
 }
