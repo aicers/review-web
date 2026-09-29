@@ -33,6 +33,7 @@ mod mtls_integration {
             TrustActivation, TrustIngestError, TrustManager,
         },
         ingress::PACKAGE_UPLOAD_PATH,
+        maintenance::{MAINTENANCE_ERROR_CODE, MaintenanceGate},
     };
     use serde::Serialize;
     use serde_json::json;
@@ -42,6 +43,8 @@ mod mtls_integration {
     const ROLE: &str = "System Administrator";
     const CUSTOMER_ID: u32 = 1;
     const GRAPHQL_QUERY: &str = "{__typename}";
+    const GRAPHQL_MUTATION: &str =
+        r#"mutation { applyAgentConfig(nodeId: "0") { attempts { agentKey } } }"#;
     const LOCALHOST_IP: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
     const NON_ADMIN_ROLE: &str = "Security Administrator";
     const EXPECTED_SERVICE: &str = "web-app";
@@ -494,6 +497,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
         shutdown: Arc<tokio::sync::Notify>,
         ca_cert: Certificate,
         issuer: Issuer<'static, KeyPair>,
+        maintenance_gate: MaintenanceGate,
         _temp_root: tempfile::TempDir,
         _cert_dir: tempfile::TempDir,
         _store_dir: tempfile::TempDir,
@@ -535,6 +539,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
         let store =
             Store::new(store_dir.path(), backup_dir.path(), None).context("create store")?;
         let store = Arc::new(RwLock::new(store));
+        let maintenance_gate = MaintenanceGate::new();
 
         let config = ServerConfig {
             addr: SocketAddr::new(addr_ip, port),
@@ -552,6 +557,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
             package_upload_max_bytes: PACKAGE_UPLOAD_MAX_BYTES,
             trust_manager: Arc::new(StubTrustManager),
             trust_generation_max_bytes: TRUST_GENERATION_MAX_BYTES,
+            maintenance_gate: maintenance_gate.clone(),
         };
 
         let shutdown = review_web::serve(
@@ -569,6 +575,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
             shutdown,
             ca_cert,
             issuer,
+            maintenance_gate,
             _temp_root: temp_root,
             _cert_dir: cert_dir,
             _store_dir: store_dir,
@@ -612,7 +619,16 @@ xvcNsYaYqk6sRk/INvcaN2E=
         url: &str,
         token: Option<&str>,
     ) -> anyhow::Result<reqwest::Response> {
-        let request_body = serde_json::to_vec(&json!({ "query": GRAPHQL_QUERY }))
+        send_graphql_document(client, url, token, GRAPHQL_QUERY).await
+    }
+
+    async fn send_graphql_document(
+        client: &reqwest::Client,
+        url: &str,
+        token: Option<&str>,
+        document: &str,
+    ) -> anyhow::Result<reqwest::Response> {
+        let request_body = serde_json::to_vec(&json!({ "query": document }))
             .context("serialize GraphQL request")?;
         let mut last_err = None;
         for _ in 0..20 {
@@ -688,6 +704,56 @@ xvcNsYaYqk6sRk/INvcaN2E=
             .and_then(|value| value.as_str())
             .context("read __typename")?;
         assert_eq!(typename, "Query");
+        server.shutdown.notify_one();
+        server.shutdown.notified().await;
+        Ok(())
+    }
+
+    async fn response_json(response: reqwest::Response) -> anyhow::Result<serde_json::Value> {
+        serde_json::from_str(&response.text().await.context("read response body")?)
+            .context("parse response JSON")
+    }
+
+    #[tokio::test]
+    async fn mtls_mutation_during_maintenance_answers_503() -> anyhow::Result<()> {
+        let server = start_test_server()?;
+        let (client, client_key) =
+            build_client_with_identity(&server.issuer, &server.ca_cert, SERVICE_DNS)?;
+        let token = sign_context_jwt(client_key.serialize_der().as_slice())?;
+
+        server.maintenance_gate.close().await;
+        let response =
+            send_graphql_document(&client, &server.url, Some(&token), GRAPHQL_MUTATION).await?;
+        assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+        let body = response_json(response).await?;
+        assert_eq!(body["data"], serde_json::Value::Null);
+        assert_eq!(
+            body["errors"][0]["extensions"]["code"],
+            MAINTENANCE_ERROR_CODE
+        );
+
+        let response = send_graphql_request(&client, &server.url, Some(&token)).await?;
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let body = response_json(response).await?;
+        assert_eq!(body["data"]["__typename"], "Query");
+
+        server.maintenance_gate.open().await;
+        let response =
+            send_graphql_document(&client, &server.url, Some(&token), GRAPHQL_MUTATION).await?;
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let body = response_json(response).await?;
+        let errors = body["errors"].as_array().context("read errors")?;
+        assert!(
+            !errors.is_empty(),
+            "the node lookup fails on an empty store"
+        );
+        assert!(
+            errors
+                .iter()
+                .all(|error| error["extensions"]["code"] != MAINTENANCE_ERROR_CODE),
+            "unexpected refusal: {body}"
+        );
+
         server.shutdown.notify_one();
         server.shutdown.notified().await;
         Ok(())
@@ -985,6 +1051,64 @@ xvcNsYaYqk6sRk/INvcaN2E=
         let data_msg = recv_ws_message(&mut ws).await?;
         let data_msg: serde_json::Value = serde_json::from_str(data_msg.to_text()?)?;
         assert_eq!(data_msg["type"], "data");
+        assert_eq!(data_msg["payload"]["data"]["__typename"], "Query");
+
+        ws.close(None).await?;
+        server.shutdown.notify_one();
+        server.shutdown.notified().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mtls_ws_mutation_during_maintenance_is_refused() -> anyhow::Result<()> {
+        use futures::SinkExt;
+        use tokio_tungstenite::tungstenite::Message;
+
+        let server = start_test_server()?;
+        let (mut ws, client_key) = connect_ws(&server, SERVICE_DNS).await?;
+
+        let token = sign_context_jwt(client_key.serialize_der().as_slice())?;
+        let init = json!({
+            "type": "connection_init",
+            "payload": { "Authorization": format!("Bearer {token}") }
+        });
+        ws.send(Message::Text(init.to_string().into())).await?;
+        let ack = recv_ws_message(&mut ws).await?;
+        let ack: serde_json::Value = serde_json::from_str(ack.to_text()?)?;
+        assert_eq!(ack["type"], "connection_ack");
+
+        server.maintenance_gate.close().await;
+        let start = json!({
+            "type": "start",
+            "id": "1",
+            "payload": { "query": GRAPHQL_MUTATION }
+        });
+        ws.send(Message::Text(start.to_string().into())).await?;
+
+        let data_msg = recv_ws_message(&mut ws).await?;
+        let data_msg: serde_json::Value = serde_json::from_str(data_msg.to_text()?)?;
+        assert_eq!(data_msg["type"], "data");
+        assert_eq!(data_msg["id"], "1");
+        assert_eq!(data_msg["payload"]["data"], serde_json::Value::Null);
+        assert_eq!(
+            data_msg["payload"]["errors"][0]["extensions"]["code"],
+            MAINTENANCE_ERROR_CODE
+        );
+        let complete = recv_ws_message(&mut ws).await?;
+        let complete: serde_json::Value = serde_json::from_str(complete.to_text()?)?;
+        assert_eq!(complete["type"], "complete");
+        assert_eq!(complete["id"], "1");
+
+        let start = json!({
+            "type": "start",
+            "id": "2",
+            "payload": { "query": GRAPHQL_QUERY }
+        });
+        ws.send(Message::Text(start.to_string().into())).await?;
+        let data_msg = recv_ws_message(&mut ws).await?;
+        let data_msg: serde_json::Value = serde_json::from_str(data_msg.to_text()?)?;
+        assert_eq!(data_msg["type"], "data");
+        assert_eq!(data_msg["id"], "2");
         assert_eq!(data_msg["payload"]["data"]["__typename"], "Query");
 
         ws.close(None).await?;

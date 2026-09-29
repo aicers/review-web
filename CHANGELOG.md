@@ -47,6 +47,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `ServerConfig`, which carry the trust-generation receiver and the route's
   independent maximum body size. This is a breaking API change for callers
   that build a `ServerConfig`.
+- Added the required `maintenance_gate` field to `ServerConfig`. This is a
+  breaking API change for callers that build a `ServerConfig`.
 - Added the `Conflict` variant to the public `Error` enum, rendered as `409`.
   This is a breaking API change for callers that match on it exhaustively.
 - Added the required `capabilities` method to the public `AgentManager` trait,
@@ -181,6 +183,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   disposition, while onboarding returns the operation id together with the
   one-time join token, command, granted expiry and the product namespace the
   host joins under.
+- Added `maintenance::MaintenanceGate`. While an embedding application holds
+  the gate closed, every GraphQL mutation is refused before it runs with the
+  error code `MAINTENANCE`, answered over HTTP with status 503; queries and
+  subscriptions still run. Closing the gate waits for the mutations already
+  running to finish.
 
 ### Fixed
 
