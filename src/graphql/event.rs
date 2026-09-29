@@ -2416,9 +2416,14 @@ mod tests {
         let store = schema.store();
         let events = store.events();
         let mut keys = Vec::new();
-        for (timestamp, source, destination) in
-            [(before_epoch, 1, 2), (epoch, 3, 4), (after_epoch, 5, 6)]
-        {
+        for (timestamp, source, destination) in [
+            (before_epoch, 1, 2),
+            (before_epoch, 7, 8),
+            (epoch, 3, 4),
+            (epoch, 9, 10),
+            (after_epoch, 5, 6),
+            (after_epoch, 11, 12),
+        ] {
             keys.push(
                 events
                     .put(&event_message_at_timestamp(
@@ -2433,6 +2438,7 @@ mod tests {
         }
         drop(store);
 
+        keys.sort_unstable();
         let expected: Vec<String> = keys.iter().map(ToString::to_string).collect();
         let mut after = None;
         let mut forward = Vec::new();
@@ -2446,7 +2452,7 @@ mod tests {
                 &format!("filter: {{}}, first: 1{cursor_argument}"),
             )
             .await;
-            assert_eq!(page["totalCount"], "3");
+            assert_eq!(page["totalCount"], "6");
             assert_eq!(page["pageInfo"]["hasNextPage"], index < expected.len() - 1);
             assert_eq!(page["pageInfo"]["hasPreviousPage"], false);
             let cursor = page["edges"][0]["cursor"]
@@ -2471,7 +2477,7 @@ mod tests {
                 &format!("filter: {{}}, last: 1{cursor_argument}"),
             )
             .await;
-            assert_eq!(page["totalCount"], "3");
+            assert_eq!(page["totalCount"], "6");
             assert_eq!(page["pageInfo"]["hasNextPage"], false);
             assert_eq!(
                 page["pageInfo"]["hasPreviousPage"],
@@ -2504,7 +2510,12 @@ mod tests {
                 ipAddress: { hosts: ["0.0.0.4"], networks: [], ranges: [] }
             }]
         }"#;
-        let expected_with_triage = vec![expected[0].clone(), expected[2].clone()];
+        let expected_with_triage = expected
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != 2)
+            .map(|(_, cursor)| cursor.clone())
+            .collect::<Vec<_>>();
         let mut after = None;
         let mut with_triage = Vec::new();
         for (index, expected_cursor) in expected_with_triage.iter().enumerate() {
@@ -2517,7 +2528,7 @@ mod tests {
                 &format!("filter: {{}}, {triage}, first: 1{cursor_argument}"),
             )
             .await;
-            assert_eq!(page["totalCount"], "2");
+            assert_eq!(page["totalCount"], "5");
             assert_eq!(
                 page["pageInfo"]["hasNextPage"],
                 index < expected_with_triage.len() - 1
@@ -2546,7 +2557,7 @@ mod tests {
                 &format!("filter: {{}}, {triage}, last: 1{cursor_argument}"),
             )
             .await;
-            assert_eq!(page["totalCount"], "2");
+            assert_eq!(page["totalCount"], "5");
             assert_eq!(page["pageInfo"]["hasNextPage"], false);
             assert_eq!(
                 page["pageInfo"]["hasPreviousPage"],
@@ -2568,12 +2579,12 @@ mod tests {
             (
                 format!(r#"filter: {{}}, after: "{}", first: 1"#, i128::MAX),
                 "eventList",
-                "3",
+                "6",
             ),
             (
                 format!(r#"filter: {{}}, before: "{}", last: 1"#, i128::MIN),
                 "eventList",
-                "3",
+                "6",
             ),
             (
                 format!(
@@ -2581,7 +2592,7 @@ mod tests {
                     i128::MAX
                 ),
                 "eventListWithTriage",
-                "2",
+                "5",
             ),
             (
                 format!(
@@ -2589,7 +2600,7 @@ mod tests {
                     i128::MIN
                 ),
                 "eventListWithTriage",
-                "2",
+                "5",
             ),
         ] {
             let page = connection_page(&schema, field, &arguments).await;
@@ -2597,6 +2608,46 @@ mod tests {
             assert_eq!(page["totalCount"], total_count);
             assert_eq!(page["pageInfo"]["hasNextPage"], false);
             assert_eq!(page["pageInfo"]["hasPreviousPage"], false);
+        }
+
+        for (field, triage_argument, total_count) in
+            [("eventList", "", "6"), ("eventListWithTriage", triage, "5")]
+        {
+            let page = connection_page(
+                &schema,
+                field,
+                &format!(r#"filter: {{}}, {triage_argument} before: "0", last: 1"#),
+            )
+            .await;
+            assert_eq!(page["edges"][0]["cursor"], expected[1]);
+            assert_eq!(page["totalCount"], total_count);
+        }
+
+        let range = format!(r#"{{ start: "{epoch}", end: "{after_epoch}" }}"#);
+        for (cursor, argument, expected_cursors) in [
+            (&expected[1], "after", vec![&expected[2], &expected[3]]),
+            (&expected[4], "after", vec![]),
+            (&expected[2], "before", vec![]),
+            (&expected[5], "before", vec![&expected[2], &expected[3]]),
+        ] {
+            let page = connection_page(
+                &schema,
+                "eventList",
+                &format!(r#"filter: {range}, {argument}: "{cursor}", first: 10"#),
+            )
+            .await;
+            let cursors = page["edges"]
+                .as_array()
+                .expect("connection edges must be an array")
+                .iter()
+                .map(|edge| {
+                    edge["cursor"]
+                        .as_str()
+                        .expect("edge cursor must be a string")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(cursors, expected_cursors);
+            assert_eq!(page["totalCount"], "2");
         }
     }
 
@@ -2754,6 +2805,162 @@ mod tests {
         assert_eq!(
             output.data.to_string(),
             r#"{eventTriageList: [{time: "1969-12-31T23:59:59.999999998Z"}], eventCountsByCategory: {counts: [1]}, eventCountsByNetwork: {values: ["0"], counts: [1]}, eventFrequencySeries: [1]}"#
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn grouped_event_queries_cross_the_unix_epoch() {
+        let schema = TestSchema::new().await;
+        let start = Timestamp::from_nanosecond(-2_000_000_000).unwrap();
+        let epoch = Timestamp::UNIX_EPOCH;
+        let positive = Timestamp::from_nanosecond(2_000_000_000).unwrap();
+        let end = Timestamp::from_nanosecond(4_000_000_000).unwrap();
+        let store = schema.store();
+        let events = store.events();
+        for (time, kind, category, source) in [
+            (
+                start,
+                EventKind::DnsCovertChannel,
+                EventCategory::CommandAndControl,
+                1,
+            ),
+            (
+                epoch,
+                EventKind::LockyRansomware,
+                EventCategory::CommandAndControl,
+                3,
+            ),
+            (
+                positive,
+                EventKind::DnsCovertChannel,
+                EventCategory::InitialAccess,
+                5,
+            ),
+            (
+                end,
+                EventKind::DnsCovertChannel,
+                EventCategory::InitialAccess,
+                7,
+            ),
+        ] {
+            let mut message =
+                event_message_at_timestamp(time, source, 2, Some(category), "sensor1");
+            message.kind = kind;
+            events.put(&message).expect("event must be stored");
+        }
+        let policy_id = store
+            .triage_policy_map()
+            .put(database::TriagePolicy {
+                id: 0,
+                name: "Cross-epoch policy".to_string(),
+                triage_exclusion_id: Vec::new(),
+                packet_attr: Vec::new(),
+                confidence: vec![
+                    database::Confidence {
+                        threat_category: Some(EventCategory::CommandAndControl),
+                        threat_kind: "dns covert channel".to_string(),
+                        confidence: 0.0,
+                        weight: Some(0.9),
+                    },
+                    database::Confidence {
+                        threat_category: Some(EventCategory::CommandAndControl),
+                        threat_kind: "locky ransomware".to_string(),
+                        confidence: 0.0,
+                        weight: Some(0.9),
+                    },
+                    database::Confidence {
+                        threat_category: Some(EventCategory::InitialAccess),
+                        threat_kind: "dns covert channel".to_string(),
+                        confidence: 0.0,
+                        weight: Some(0.5),
+                    },
+                ],
+                response: vec![database::Response {
+                    minimum_score: 0.3,
+                    kind: database::ResponseKind::Manual,
+                }],
+                creation_time: DateTime::from_timestamp(0, 0).unwrap(),
+                customer_id: None,
+            })
+            .expect("triage policy must be stored");
+        drop(store);
+
+        let network = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNetwork(
+                        name: "cross-epoch"
+                        description: ""
+                        networks: { hosts: ["0.0.0.2"], networks: [], ranges: [] }
+                        tagIds: []
+                    )
+                }"#,
+            )
+            .await;
+        assert!(network.errors.is_empty(), "{:?}", network.errors);
+
+        let output = schema
+            .execute_as_system_admin(&format!(
+                r#"{{
+                    eventTriageList(
+                        filter: {{ start: "{start}", end: "{end}", triagePolicies: ["{policy_id}"] }}
+                        count: 10
+                    ) {{
+                        __typename
+                        ... on DnsCovertChannel {{ time triageScores {{ score }} }}
+                        ... on LockyRansomware {{ time triageScores {{ score }} }}
+                    }}
+                    eventCountsByCategory(
+                        filter: {{ start: "{start}", end: "{end}" }}
+                        first: 10
+                    ) {{ counts }}
+                    eventCountsByNetwork(
+                        filter: {{ start: "{start}", end: "{end}" }}
+                        first: 10
+                    ) {{ values counts }}
+                    eventFrequencySeries(
+                        filter: {{ start: "{start}", end: "{end}" }}
+                        period: 1
+                    )
+                }}"#
+            ))
+            .await;
+        assert!(output.errors.is_empty(), "{:?}", output.errors);
+        let data = output.data.into_json().expect("valid GraphQL JSON");
+        let triage = data["eventTriageList"]
+            .as_array()
+            .expect("triage list must be an array");
+        assert_eq!(triage.len(), 3);
+        assert_eq!(triage[0]["__typename"], "DnsCovertChannel");
+        assert_eq!(triage[0]["time"], start.to_string());
+        assert_eq!(triage[1]["__typename"], "LockyRansomware");
+        assert_eq!(triage[1]["time"], epoch.to_string());
+        assert_eq!(triage[2]["__typename"], "DnsCovertChannel");
+        assert_eq!(triage[2]["time"], positive.to_string());
+        assert_eq!(
+            triage[0]["triageScores"][0]["score"],
+            triage[1]["triageScores"][0]["score"]
+        );
+        assert!(
+            triage[1]["triageScores"][0]["score"].as_f64().unwrap()
+                > triage[2]["triageScores"][0]["score"].as_f64().unwrap()
+        );
+        assert_eq!(
+            data["eventCountsByCategory"]["counts"],
+            serde_json::json!([2, 1])
+        );
+        assert_eq!(
+            data["eventCountsByNetwork"]["values"],
+            serde_json::json!(["0"])
+        );
+        assert_eq!(
+            data["eventCountsByNetwork"]["counts"],
+            serde_json::json!([3])
+        );
+        assert_eq!(
+            data["eventFrequencySeries"],
+            serde_json::json!([1, 0, 1, 0, 1, 0])
         );
     }
 
