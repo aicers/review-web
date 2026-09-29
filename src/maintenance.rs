@@ -48,11 +48,28 @@ impl MaintenanceGate {
         Self::default()
     }
 
-    /// Closes the gate and returns once every mutation admitted before it has
+    /// Closes the gate and returns once every mutation admitted ahead of it has
     /// finished.
     ///
-    /// Once the returned future has first been polled, a document containing a
-    /// mutation is no longer admitted. Closing a closed gate admits nothing new
+    /// This call requests the gate's write lock, and a mutation is admitted by
+    /// the read guard it requests on the same lock as its execution starts.
+    /// The lock grants requests in the order they entered its fair queue, so
+    /// whether a mutation is admitted depends on where its read request stands
+    /// relative to this call's write request, not on when the returned future
+    /// is first polled:
+    ///
+    /// - A read request queued after this call's write request waits behind it
+    ///   for the whole drain, and its mutation is then refused, unless a later
+    ///   [`Self::open`] queued ahead of that read request opens the gate first.
+    /// - A read request queued ahead of it may still admit its mutation, even
+    ///   after the returned future has been polled: it may be waiting behind an
+    ///   earlier write request, such as a pending [`Self::open`], that opens the
+    ///   gate before this call's write request is granted. Such a mutation is
+    ///   part of the drain, and this call does not return until it has
+    ///   finished.
+    ///
+    /// Closing a gate that stays closed until this call's write request is
+    /// granted, with no [`Self::open`] queued ahead of it, admits nothing new
     /// and returns without waiting on any mutation, since none was admitted.
     ///
     /// The drain waits as long as the slowest admitted mutation takes, with no
@@ -60,9 +77,6 @@ impl MaintenanceGate {
     /// A mutation received over a WebSocket makes progress only while its
     /// connection's send loop runs, so a client that stops reading its socket
     /// can stall an admitted mutation, and this call with it.
-    ///
-    /// A mutation that arrives while this call waits is not admitted ahead of
-    /// it: it waits for the whole drain and is then refused.
     ///
     /// Dropping the returned future before it completes leaves the gate either
     /// as it was, if the drain had not finished, or closed, if it had; never
@@ -516,5 +530,50 @@ mod tests {
 
         assert_refused(&mutation.await.unwrap());
         assert_eq!(h.counter.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn mutation_queued_behind_open_and_ahead_of_close_is_admitted_and_drained() {
+        let validation = Arc::new(Blocker::default());
+        let h = harness_with(|builder| builder.extension(HeldValidation(validation.clone())));
+
+        // The first mutation holds admission.
+        let (running_entered, running_release) = h.blocker.arm();
+        let running = tokio::spawn({
+            let schema = h.schema.clone();
+            async move { schema.execute(MUTATION).await }
+        });
+        running_entered.await.unwrap();
+
+        // The second mutation is parsed, then held before its execution.
+        let (parsed_entered, parsed_release) = validation.arm();
+        let mut parsed = pin!(h.schema.execute(MUTATION));
+        assert!(parsed.as_mut().now_or_never().is_none());
+        parsed_entered.await.unwrap();
+
+        let mut open = pin!(h.gate.open());
+        assert!(open.as_mut().now_or_never().is_none());
+
+        // Its execution read queues behind `open`, and `close` behind the read.
+        let (admitted_entered, admitted_release) = h.blocker.arm();
+        parsed_release.send(()).unwrap();
+        assert!(parsed.as_mut().now_or_never().is_none());
+        let mut close = pin!(h.gate.close());
+        assert!(close.as_mut().now_or_never().is_none());
+
+        running_release.send(()).unwrap();
+        assert_succeeded(&running.await.unwrap());
+        open.await;
+
+        // `close` was polled first, yet the queued mutation is admitted.
+        assert!(parsed.as_mut().now_or_never().is_none());
+        admitted_entered.await.unwrap();
+        assert!(close.as_mut().now_or_never().is_none());
+
+        admitted_release.send(()).unwrap();
+        assert_succeeded(&parsed.await);
+        close.await;
+        assert_refused(&h.schema.execute(MUTATION).await);
+        assert_eq!(h.counter.load(Ordering::SeqCst), 2);
     }
 }
