@@ -48,11 +48,27 @@ impl MaintenanceGate {
         Self::default()
     }
 
-    /// Closes the gate and returns once every mutation admitted before it has
+    /// Closes the gate and returns once every mutation admitted ahead of it has
     /// finished.
     ///
-    /// Once the returned future has first been polled, a document containing a
-    /// mutation is no longer admitted. Closing a closed gate admits nothing new
+    /// This call requests the gate's write lock, and a mutation is admitted by
+    /// the read guard it requests on the same lock as its execution starts.
+    /// The lock grants requests in the order they entered its fair queue, so
+    /// whether a mutation is admitted depends on where its read request stands
+    /// relative to this call's write request, not on when the returned future
+    /// is first polled:
+    ///
+    /// - A read request queued after this call's write request waits behind it
+    ///   for the whole drain, and its mutation is then refused.
+    /// - A read request queued ahead of it may still admit its mutation, even
+    ///   after the returned future has been polled: it may be waiting behind an
+    ///   earlier write request, such as a pending [`Self::open`], that opens the
+    ///   gate before this call's write request is granted. Such a mutation is
+    ///   part of the drain, and this call does not return until it has
+    ///   finished.
+    ///
+    /// Closing a gate that stays closed until this call's write request is
+    /// granted, with no [`Self::open`] queued ahead of it, admits nothing new
     /// and returns without waiting on any mutation, since none was admitted.
     ///
     /// The drain waits as long as the slowest admitted mutation takes, with no
@@ -60,9 +76,6 @@ impl MaintenanceGate {
     /// A mutation received over a WebSocket makes progress only while its
     /// connection's send loop runs, so a client that stops reading its socket
     /// can stall an admitted mutation, and this call with it.
-    ///
-    /// A mutation that arrives while this call waits is not admitted ahead of
-    /// it: it waits for the whole drain and is then refused.
     ///
     /// Dropping the returned future before it completes leaves the gate either
     /// as it was, if the drain had not finished, or closed, if it had; never
