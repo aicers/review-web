@@ -367,7 +367,7 @@ impl HostOnboarder for Onboarder {
 }
 
 const DEFAULT_DATABASE_URL: &str = "postgres://review@localhost/review";
-const DEFAULT_SERVER: &str = "localhost";
+const DEFAULT_GRAPHQL_SRV_ADDR: &str = "127.0.0.1:8442";
 const DEFAULT_LOG_PATH: &str = "/data/logs/apps";
 
 pub struct Config {
@@ -417,7 +417,7 @@ impl Config {
         let builder = config::Config::builder()
             .set_default("database_url", DEFAULT_DATABASE_URL)
             .context("cannot set the default database URL")?
-            .set_default("graphql_srv_addr", DEFAULT_SERVER)
+            .set_default("graphql_srv_addr", DEFAULT_GRAPHQL_SRV_ADDR)
             .context("cannot set the default GraphQL server address")?
             .set_default("cert", env::current_dir()?.join("cert.pem").to_str())
             .context("cannot set the default certificate file name")?
