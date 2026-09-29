@@ -89,6 +89,7 @@ use crate::backend::{
     BindAddrInput, BuildId, DeployError, DeployOutcome, HostOnboardingTicket, JoinToken,
     OperationId,
 };
+use crate::maintenance::{MaintenanceExtension, MaintenanceGate};
 
 /// GraphQL schema type.
 pub type Schema = async_graphql::Schema<Query, Mutation, Subscription>;
@@ -101,6 +102,10 @@ type BoxedHostOnboarder = Box<dyn HostOnboarder>;
 ///
 /// The store is stored in `async_graphql::Context` and passed to every
 /// GraphQL API function.
+// Each argument is a distinct piece of the schema's context supplied by
+// `serve`; grouping them into a struct would only restate `serve`'s own
+// parameters and `ServerConfig`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn schema<B, D, O>(
     store: Arc<RwLock<Store>>,
     agent_manager: B,
@@ -109,6 +114,7 @@ pub(super) fn schema<B, D, O>(
     ip_locator: Option<Arc<ip2location::DB>>,
     cert_manager: Arc<dyn CertManager>,
     tls_reload_handle: Arc<Notify>,
+    maintenance_gate: MaintenanceGate,
 ) -> Schema
 where
     B: AgentManager + 'static,
@@ -129,7 +135,8 @@ where
     .data(host_onboarder)
     .data(cert_manager)
     .data(tls_reload_handle)
-    .extension(install_state::LatestBuildMemoExtension);
+    .extension(install_state::LatestBuildMemoExtension)
+    .extension(MaintenanceExtension::new(maintenance_gate));
     #[cfg(feature = "auth-jwt")]
     {
         builder = builder.data(Arc::new(ProductionTokenSigner) as Arc<dyn TokenSigner>);
@@ -1563,7 +1570,8 @@ impl TestSchema {
         .data(Box::new(MockHostOnboarder {}) as Box<dyn HostOnboarder>)
         .data(store.clone())
         .data(username.to_string())
-        .extension(install_state::LatestBuildMemoExtension);
+        .extension(install_state::LatestBuildMemoExtension)
+        .extension(MaintenanceExtension::new(MaintenanceGate::new()));
         #[cfg(feature = "auth-jwt")]
         let builder = builder.data(Arc::new(ProductionTokenSigner) as Arc<dyn TokenSigner>);
         let schema = builder.finish();

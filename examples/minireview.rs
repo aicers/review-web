@@ -37,6 +37,7 @@ use review_web::{
     graphql::{
         Process, ResourceUsage, SamplingPolicy, customer::NetworksTargetAgentLookupKeysPair,
     },
+    maintenance::MaintenanceGate,
 };
 use serde::Deserialize;
 use tokio::signal::unix::{SignalKind, signal};
@@ -601,6 +602,7 @@ fn run(config: &Config) -> Result<Arc<Notify>> {
         package_upload_max_bytes: DEFAULT_PACKAGE_UPLOAD_MAX_BYTES,
         trust_manager: Arc::new(TrustStore),
         trust_generation_max_bytes: DEFAULT_TRUST_GENERATION_MAX_BYTES,
+        maintenance_gate: MaintenanceGate::new(),
     };
     let web_srv_shutdown_handle = web::serve(
         web_config,

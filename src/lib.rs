@@ -4,6 +4,7 @@ pub mod auth;
 pub mod backend;
 pub mod graphql;
 pub mod ingress;
+pub mod maintenance;
 
 #[cfg(all(feature = "auth-mtls", feature = "auth-jwt"))]
 compile_error!("features \"auth-mtls\" and \"auth-jwt\" are mutually exclusive");
@@ -193,6 +194,15 @@ pub struct ServerConfig {
     /// exactly this many bytes is accepted and one byte more is refused
     /// mid-stream with `413`.
     pub trust_generation_max_bytes: u64,
+    /// The gate the embedding application closes during a pending `Rollback`
+    /// update.
+    ///
+    /// While it is closed, every GraphQL document containing a mutation is
+    /// refused before it runs with the error code
+    /// [`maintenance::MAINTENANCE_ERROR_CODE`], answered over HTTP with `503`;
+    /// queries and subscriptions still run. The application keeps a clone of
+    /// the gate to close and open it.
+    pub maintenance_gate: maintenance::MaintenanceGate,
 }
 
 /// Runs a web server.
@@ -236,6 +246,7 @@ where
         ip_locator,
         config.cert_manager.clone(),
         config.tls_reload_handle.clone(),
+        config.maintenance_gate.clone(),
     );
     let web_srv_shutdown_handle = Arc::new(Notify::new());
     let shutdown_handle = web_srv_shutdown_handle.clone();
@@ -509,7 +520,7 @@ async fn graphql_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
     request: GraphQLRequest,
-) -> Result<GraphQLResponse, Error> {
+) -> Result<Response, Error> {
     let request = request.into_inner();
     match auth {
         Ok(auth) => {
@@ -519,19 +530,23 @@ async fn graphql_handler(
                     .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
                 validate_token(&store, auth.token())?
             };
-            Ok(schema
-                .execute(request.data(username).data(RoleGuard::Role(role)))
-                .await
-                .into())
+            Ok(graphql_http_response(
+                schema
+                    .execute(request.data(username).data(RoleGuard::Role(role)))
+                    .await,
+            ))
         }
         Err(_e) => {
             if is_local(addr) {
-                Ok(schema
-                    .execute(request.data(RoleGuard::Local).data(addr))
-                    .await
-                    .into())
+                Ok(graphql_http_response(
+                    schema
+                        .execute(request.data(RoleGuard::Local).data(addr))
+                        .await,
+                ))
             } else {
-                Ok(schema.execute(request.data(addr)).await.into())
+                Ok(graphql_http_response(
+                    schema.execute(request.data(addr)).await,
+                ))
             }
         }
     }
@@ -545,7 +560,7 @@ async fn graphql_handler(
     peer: Option<Extension<Arc<TlsPeerInfo>>>,
     auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
     request: GraphQLRequest,
-) -> Result<GraphQLResponse, Error> {
+) -> Result<Response, Error> {
     let request = request.into_inner();
     let peer = peer
         .map(|Extension(p)| p)
@@ -557,15 +572,34 @@ async fn graphql_handler(
 
     let auth = auth?;
     let (role, customer_ids) = validate_context_jwt(auth.token(), cert)?;
-    Ok(schema
-        .execute(
-            request
-                .data(RoleGuard::Role(role))
-                .data(CustomerIds(customer_ids))
-                .data(identity),
+    Ok(graphql_http_response(
+        schema
+            .execute(
+                request
+                    .data(RoleGuard::Role(role))
+                    .data(CustomerIds(customer_ids))
+                    .data(identity),
+            )
+            .await,
+    ))
+}
+
+/// Converts a GraphQL response into an HTTP response.
+///
+/// A GraphQL error is otherwise answered with `200`, which some callers read
+/// as success, so a mutation refused under a closed maintenance gate is
+/// answered with `503` instead. The body is the GraphQL response either way,
+/// so the caller also sees the error's code.
+fn graphql_http_response(response: async_graphql::Response) -> Response {
+    if response.errors.iter().any(maintenance::is_refusal) {
+        (
+            http::StatusCode::SERVICE_UNAVAILABLE,
+            GraphQLResponse::from(response),
         )
-        .await
-        .into())
+            .into_response()
+    } else {
+        GraphQLResponse::from(response).into_response()
+    }
 }
 
 #[cfg(feature = "auth-jwt")]
@@ -917,4 +951,52 @@ macro_rules! warn_with_username {
     (username: $username:expr, $($arg:tt)+) => {{
         warn!("user={} {}", $username, format!($($arg)+));
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    use async_graphql::{ErrorExtensionValues, ServerError};
+    use http::StatusCode;
+
+    use super::*;
+
+    async fn status_and_body(response: async_graphql::Response) -> (StatusCode, serde_json::Value) {
+        let response = graphql_http_response(response);
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    fn error_with_code(code: &str) -> ServerError {
+        let mut extensions = ErrorExtensionValues::default();
+        extensions.set("code", code);
+        let mut error = ServerError::new("refused", None);
+        error.extensions = Some(extensions);
+        error
+    }
+
+    #[tokio::test]
+    async fn maintenance_refusal_answers_503() {
+        let refused = async_graphql::Response::from_errors(vec![error_with_code(
+            maintenance::MAINTENANCE_ERROR_CODE,
+        )]);
+        let (status, body) = status_and_body(refused).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["data"], serde_json::Value::Null);
+        assert_eq!(
+            body["errors"][0]["extensions"]["code"],
+            maintenance::MAINTENANCE_ERROR_CODE
+        );
+
+        let unrelated =
+            async_graphql::Response::from_errors(vec![error_with_code("NOT_MAINTENANCE")]);
+        let (status, _) = status_and_body(unrelated).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let succeeded = async_graphql::Response::new(async_graphql::Value::Null);
+        let (status, _) = status_and_body(succeeded).await;
+        assert_eq!(status, StatusCode::OK);
+    }
 }

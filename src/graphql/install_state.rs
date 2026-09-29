@@ -1832,6 +1832,7 @@ mod tests {
             None,
             Arc::new(StubCertManager),
             Arc::new(Notify::new()),
+            crate::maintenance::MaintenanceGate::new(),
         );
 
         let res = schema
