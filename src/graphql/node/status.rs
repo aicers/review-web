@@ -740,7 +740,7 @@ mod tests {
             &mut online_apps_by_host_id,
         );
 
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id,
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
