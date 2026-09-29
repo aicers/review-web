@@ -183,7 +183,7 @@ async fn request_deletion(
         existing
     };
 
-    let plan = if let Some(mut job) = existing {
+    let plan = if let Some(job) = existing {
         if job
             .service_results
             .iter()
@@ -200,7 +200,8 @@ async fn request_deletion(
         }
         let requested_at = timestamp_nanos()?;
         let plan = retry_plan(store, &job)?;
-        for result in &mut job.service_results {
+        let mut updated_job = job.clone();
+        for result in &mut updated_job.service_results {
             if result.status == CustomerDataDeletionStatus::Failed {
                 result.status = CustomerDataDeletionStatus::InProgress;
                 result.requested_at = requested_at;
@@ -208,14 +209,14 @@ async fn request_deletion(
                 result.error = None;
             }
         }
-        persist_request(store, &job, "persisting customer data deletion retry")?;
+        persist_retry_request(store, &job, &updated_job)?;
         plan
     } else {
         let Some(plan) = collect_initial_plan(store, customer_id)? else {
             return Ok(CustomerDataDeletionRequestStatus::NoTarget);
         };
         let job = initial_job(&plan, timestamp_nanos()?);
-        persist_request(store, &job, "persisting initial customer data deletion job")?;
+        persist_request(store, &job)?;
         plan
     };
 
@@ -230,15 +231,34 @@ async fn request_deletion(
     Ok(CustomerDataDeletionRequestStatus::Accepted)
 }
 
-fn persist_request(
-    store: &RwLock<Store>,
-    job: &CustomerDataDeletionJob,
-    context: &'static str,
-) -> anyhow::Result<()> {
+fn persist_request(store: &RwLock<Store>, job: &CustomerDataDeletionJob) -> anyhow::Result<()> {
     let store = read_store(store)?;
     #[cfg(test)]
     tests::checkpoint(&store, tests::Stage::PersistRequest, job.customer_id)?;
-    store.customer_data_deletion_map().put(job).context(context)
+    store
+        .customer_data_deletion_map()
+        .put(job)
+        .context("persisting initial customer data deletion job")
+}
+
+fn persist_retry_request(
+    store: &RwLock<Store>,
+    old: &CustomerDataDeletionJob,
+    new: &CustomerDataDeletionJob,
+) -> anyhow::Result<()> {
+    let store = read_store(store)?;
+    #[cfg(test)]
+    tests::checkpoint(&store, tests::Stage::PersistRequest, old.customer_id)?;
+    // Preserve service reports received after the job was read.
+    store
+        .customer_data_deletion_map()
+        .update(old, new)
+        .with_context(|| {
+            format!(
+                "persisting customer data deletion retry for customer {}",
+                old.customer_id
+            )
+        })
 }
 
 fn timestamp_nanos() -> anyhow::Result<i64> {
@@ -1351,7 +1371,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(targets.is_empty());
+        assert_eq!(targets, []);
         assert!(manager.state.lock().await.active.is_none());
     }
 
@@ -1571,6 +1591,111 @@ mod tests {
         assert!(retried.requested_at > 123);
         assert_eq!(retried.completed_at, None);
         assert_eq!(retried.error, None);
+    }
+
+    #[tokio::test]
+    async fn retry_preserves_a_service_report_received_before_persistence() {
+        let test_store = TestStore::new();
+        let node_id = put_active_node(&test_store, 1, "retry.example");
+        put_job(
+            &test_store.store,
+            1,
+            vec![
+                terminal_result(
+                    CustomerDataDeletionService::Review,
+                    "retry.example",
+                    CustomerDataDeletionStatus::Failed,
+                ),
+                terminal_result(
+                    CustomerDataDeletionService::Sensor,
+                    "retry.example",
+                    CustomerDataDeletionStatus::Failed,
+                ),
+                terminal_result(
+                    CustomerDataDeletionService::SemiSupervised,
+                    "retry.example",
+                    CustomerDataDeletionStatus::Succeeded,
+                ),
+            ],
+        );
+        let mut expected = job(&test_store.store, 1);
+        let reported = expected.service_results.get_mut(1).unwrap();
+        reported.status = CustomerDataDeletionStatus::Succeeded;
+        reported.completed_at = Some(789);
+        reported.error = None;
+        let reported = reported.clone();
+        let hook_store = Arc::clone(&test_store.store);
+        // Deliver a late success after lookup but before the conditional write.
+        let hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(move |stage, customer_id| {
+                if stage == Stage::PersistRequest {
+                    read_store(&hook_store)?
+                        .customer_data_deletion_map()
+                        .update_service(customer_id, &reported)?;
+                }
+                Ok(())
+            }),
+        );
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let agent = Arc::new(RecordingAgentManager::default());
+        let shared: SharedAgentManager = agent.clone();
+        let schema = test_schema(&test_store, shared, Arc::clone(&manager));
+        let response = schema
+            .execute(
+                Request::new(r#"mutation { deleteCustomerData(customerId: "1") }"#)
+                    .data(RoleGuard::Role(Role::SystemAdministrator)),
+            )
+            .await;
+
+        assert_eq!(response.errors.len(), 1);
+        let error = &response.errors.first().unwrap().message;
+        assert!(error.contains("persisting customer data deletion retry for customer 1"));
+        assert!(error.contains("old value mismatch"));
+        assert_eq!(job(&test_store.store, 1), expected);
+        assert!(manager.state.lock().await.active.is_none());
+        assert!(agent.targets.lock().unwrap().is_empty());
+        assert!(
+            read_store(&test_store.store)
+                .unwrap()
+                .node_map()
+                .get_by_id(node_id)
+                .unwrap()
+                .is_some()
+        );
+        drop(hook);
+
+        // An explicit retry uses the latest job and leaves successful services unchanged.
+        let response = schema
+            .execute(
+                Request::new(r#"mutation { deleteCustomerData(customerId: "1") }"#)
+                    .data(RoleGuard::Role(Role::SystemAdministrator)),
+            )
+            .await;
+        assert_eq!(response.errors, []);
+        assert_eq!(response.data.to_string(), "{deleteCustomerData: ACCEPTED}");
+        manager.shutdown_and_wait().await;
+        let after = job(&test_store.store, 1);
+        assert_eq!(
+            after.service_results.first().unwrap().status,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        assert!(
+            after
+                .service_results
+                .iter()
+                .skip(1)
+                .eq(expected.service_results.iter().skip(1))
+        );
+        assert!(agent.targets.lock().unwrap().is_empty());
+        assert!(
+            read_store(&test_store.store)
+                .unwrap()
+                .node_map()
+                .get_by_id(node_id)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2238,14 +2363,14 @@ mod tests {
                 );
                 manager.shutdown_and_wait().await;
             } else {
-                assert!(
+                assert_eq!(
                     recover_customer_data_deletion_on_startup(
                         Arc::clone(&test_store.store),
                         Arc::clone(&manager),
                     )
                     .await
-                    .unwrap()
-                    .is_empty()
+                    .unwrap(),
+                    []
                 );
                 loop {
                     if manager
@@ -2321,14 +2446,14 @@ mod tests {
             }),
         );
         let manager = Arc::new(CustomerDataDeletionTaskManager::default());
-        assert!(
+        assert_eq!(
             recover_customer_data_deletion_on_startup(
                 Arc::clone(&test_store.store),
                 Arc::clone(&manager)
             )
             .await
-            .unwrap()
-            .is_empty()
+            .unwrap(),
+            []
         );
         // Keep the outer handle registered while waiting for it.
         loop {

@@ -4,6 +4,14 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added the `deleteCustomerData` GraphQL mutation for system administrators in
+  mTLS deployments, with persisted per-service progress, failed-service retries,
+  startup recovery, and shutdown waiting for customer data deletion.
+
 ## [0.35.0] - 2026-10-01
 
 ### Changed
@@ -86,9 +94,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
-- Added the `deleteCustomerData` GraphQL mutation for system administrators in
-  mTLS deployments, with persisted per-service progress, failed-service retries,
-  startup recovery, and shutdown waiting for customer data deletion.
 - Added DCE/RPC as a supported raw event kind for packet-attribute triage
   policies.
 - Added the `schema_sdl` example for generating `schema.graphql` SDL with the
@@ -1891,6 +1896,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.35.0...HEAD
 [0.35.0]: https://github.com/aicers/review-web/compare/0.34.0...0.35.0
 [0.34.0]: https://github.com/aicers/review-web/compare/0.33.0...0.34.0
 [0.33.0]: https://github.com/aicers/review-web/compare/0.32.0...0.33.0
