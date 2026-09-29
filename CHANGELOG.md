@@ -75,6 +75,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `samplingWindowStartTime` / `samplingWindowEndTime`, the boundaries of the
   anomaly sampling window used for detection. This is a breaking schema
   change; clients must migrate to the new field names.
+- `applyAgentConfig` now also applies the configuration of the node's Giganto
+  (`DATA_STORE`) external services, by asking the `AgentManager` to apply each
+  service's stored draft through `update_config` under the same lookup key an
+  agent would have. A Giganto service with no draft is skipped as
+  `NOT_CONFIGURED`; one with an empty draft is attempted. A failed attempt's
+  `error` now includes the cause chain the manager reports.
 
 ### Added
 

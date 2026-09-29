@@ -93,6 +93,10 @@ pub trait AgentManager: Send + Sync {
     async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error>;
 
     /// Notifies the agent identified by the runtime lookup key to update its configuration.
+    ///
+    /// The key may also name a Giganto external service's instance (built by
+    /// `gen_agent_lookup_key` from `ExternalService.key`), in which case the manager applies that
+    /// service's stored configuration (`ExternalService.draft`).
     async fn update_config(&self, _agent_lookup_key: &str) -> Result<(), anyhow::Error>;
 
     /// Updates the traffic filter rules for the given host.

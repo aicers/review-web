@@ -133,7 +133,8 @@ enum AgentKind {
 
 type AgentNotifyAttempt {
 	"""
-	The bare agent key (matching `Agent.key`).
+	The bare key of the agent (`Agent.key`) or of the Giganto external service
+	(`ExternalService.key`).
 	"""
 	agentKey: String!
 	"""
@@ -276,12 +277,12 @@ input AllowNetworkInput {
 
 type ApplyAgentConfigOutput {
 	"""
-	One entry per agent for whom a notify was attempted (current DB `config` is
-	`Some(non-empty)`).
+	One entry per agent or Giganto service for which a notify was attempted.
 	"""
 	attempts: [AgentNotifyAttempt!]!
 	"""
-	One entry per agent in the target set that was not notified, with the reason.
+	One entry per agent or Giganto service in the target set that was not notified, with the
+	reason.
 	"""
 	skipped: [SkippedAgent!]!
 }
@@ -6314,11 +6315,15 @@ type Mutation {
 	"""
 	applyNodeDraft(id: ID!, node: NodeInput!): Node!
 	"""
-	Notifies the agents of a node that their config has changed.
+	Notifies the agents and Giganto services of a node that their configuration has changed.
 	
-	Reads the current DB state of the node and, for each agent in the target set, attempts a
-	notify when the agent's current DB `config` is `Some(non-empty)`. Skips with reason
-	otherwise. The mutation performs no DB writes.
+	Reads the current DB state of the node. The target set is the node's agents followed by its
+	external services of kind `DATA_STORE` (Giganto); `TI_CONTAINER` services are never
+	targeted. An agent is notified when its current DB `config` is `Some(non-empty)`. A Giganto
+	service is notified when its `draft` is `Some`, including `Some("")`, and the manager then
+	applies that draft to the instance. Skips with reason otherwise. The resolver itself
+	performs no DB writes; the manager it notifies may update a Giganto service's row (its
+	status, and its draft when it adopts the live configuration).
 	"""
 	applyAgentConfig(nodeId: ID!, agentKeys: [String!]): ApplyAgentConfigOutput!
 	"""
@@ -8490,7 +8495,8 @@ type SensorEdge {
 
 enum SkipReason {
 	"""
-	The agent's current DB `config` is `None`.
+	The entry's stored configuration is `None`: `Agent.config`, or for a Giganto service
+	`ExternalService.draft` (a service marked for removal).
 	"""
 	NOT_CONFIGURED
 	"""
@@ -8501,7 +8507,8 @@ enum SkipReason {
 
 type SkippedAgent {
 	"""
-	The bare agent key (matching `Agent.key`).
+	The bare key of the agent (`Agent.key`) or of the Giganto external service
+	(`ExternalService.key`).
 	"""
 	agentKey: String!
 	reason: SkipReason!
