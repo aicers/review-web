@@ -19,7 +19,8 @@ use crate::{error_with_username, info_with_username, warn_with_username};
 
 #[derive(SimpleObject)]
 pub(super) struct AgentNotifyAttempt {
-    /// The bare agent key (matching `Agent.key`).
+    /// The bare key of the agent (`Agent.key`) or of the Giganto external service
+    /// (`ExternalService.key`).
     agent_key: String,
     /// `true` if the manager accepted the notify request. Does not imply that the agent has
     /// already applied the new config.
@@ -30,7 +31,8 @@ pub(super) struct AgentNotifyAttempt {
 
 #[derive(Clone, Copy, Enum, Eq, PartialEq)]
 pub(super) enum SkipReason {
-    /// The agent's current DB `config` is `None`.
+    /// The entry's stored configuration is `None`: `Agent.config`, or for a Giganto service
+    /// `ExternalService.draft` (a service marked for removal).
     NotConfigured,
     /// The agent's current DB `config` is `Some("")` (direct-setup magic-string marker).
     DirectSetup,
@@ -38,17 +40,18 @@ pub(super) enum SkipReason {
 
 #[derive(SimpleObject)]
 pub(super) struct SkippedAgent {
-    /// The bare agent key (matching `Agent.key`).
+    /// The bare key of the agent (`Agent.key`) or of the Giganto external service
+    /// (`ExternalService.key`).
     agent_key: String,
     reason: SkipReason,
 }
 
 #[derive(SimpleObject)]
 pub(super) struct ApplyAgentConfigOutput {
-    /// One entry per agent for whom a notify was attempted (current DB `config` is
-    /// `Some(non-empty)`).
+    /// One entry per agent or Giganto service for which a notify was attempted.
     attempts: Vec<AgentNotifyAttempt>,
-    /// One entry per agent in the target set that was not notified, with the reason.
+    /// One entry per agent or Giganto service in the target set that was not notified, with the
+    /// reason.
     skipped: Vec<SkippedAgent>,
 }
 
@@ -293,11 +296,15 @@ impl NodeControlMutation {
         }
     }
 
-    /// Notifies the agents of a node that their config has changed.
+    /// Notifies the agents and Giganto services of a node that their configuration has changed.
     ///
-    /// Reads the current DB state of the node and, for each agent in the target set, attempts a
-    /// notify when the agent's current DB `config` is `Some(non-empty)`. Skips with reason
-    /// otherwise. The mutation performs no DB writes.
+    /// Reads the current DB state of the node. The target set is the node's agents followed by its
+    /// external services of kind `DATA_STORE` (Giganto); `TI_CONTAINER` services are never
+    /// targeted. An agent is notified when its current DB `config` is `Some(non-empty)`. A Giganto
+    /// service is notified when its `draft` is `Some`, including `Some("")`, and the manager then
+    /// applies that draft to the instance. Skips with reason otherwise. The resolver itself
+    /// performs no DB writes; the manager it notifies may update a Giganto service's row (its
+    /// status, and its draft when it adopts the live configuration).
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_agent_config(
@@ -317,8 +324,22 @@ impl NodeControlMutation {
             return Err("Node hostname is unavailable".into());
         }
 
-        let target_agents: Vec<&review_database::Agent> = match agent_keys.as_ref() {
-            None => node.agents.iter().collect(),
+        let candidates: Vec<ApplyTarget<'_>> = node
+            .agents
+            .iter()
+            .map(ApplyTarget::agent)
+            .chain(
+                node.external_services
+                    .iter()
+                    .filter(|service| {
+                        service.kind == review_database::ExternalServiceKind::DataStore
+                    })
+                    .map(ApplyTarget::giganto),
+            )
+            .collect();
+
+        let targets: Vec<&ApplyTarget<'_>> = match agent_keys.as_ref() {
+            None => candidates.iter().collect(),
             Some(keys) if keys.is_empty() => Vec::new(),
             Some(keys) => {
                 let mut seen: HashSet<&str> = HashSet::new();
@@ -327,18 +348,21 @@ impl NodeControlMutation {
                         return Err(format!("Duplicate agent key: {key}").into());
                     }
                 }
-                let agent_index: std::collections::HashMap<&str, &review_database::Agent> =
-                    node.agents.iter().map(|a| (a.key.as_str(), a)).collect();
+                let mut candidate_index: std::collections::HashMap<&str, &ApplyTarget<'_>> =
+                    std::collections::HashMap::with_capacity(candidates.len());
+                for candidate in &candidates {
+                    candidate_index.entry(candidate.key).or_insert(candidate);
+                }
                 let mut selected = Vec::with_capacity(keys.len());
                 for key in keys {
-                    let Some(agent) = agent_index.get(key.as_str()) else {
+                    let Some(candidate) = candidate_index.get(key.as_str()) else {
                         return Err(format!(
                             "Agent key {key} does not belong to node {}",
                             node_id.as_str()
                         )
                         .into());
                     };
-                    selected.push(*agent);
+                    selected.push(*candidate);
                 }
                 selected
             }
@@ -348,28 +372,28 @@ impl NodeControlMutation {
         let mut attempts = Vec::new();
         let mut skipped = Vec::new();
 
-        for agent in target_agents {
-            match agent.config.as_ref() {
+        for target in targets {
+            match target.config {
                 None => skipped.push(SkippedAgent {
-                    agent_key: agent.key.clone(),
+                    agent_key: target.key.to_string(),
                     reason: SkipReason::NotConfigured,
                 }),
-                Some(config) if config.as_ref().is_empty() => skipped.push(SkippedAgent {
-                    agent_key: agent.key.clone(),
+                Some("") if target.empty_is_direct_setup => skipped.push(SkippedAgent {
+                    agent_key: target.key.to_string(),
                     reason: SkipReason::DirectSetup,
                 }),
                 Some(_) => {
-                    let agent_lookup_key = gen_agent_lookup_key(&agent.key, hostname);
+                    let agent_lookup_key = gen_agent_lookup_key(target.key, hostname);
                     match agent_manager.update_config(agent_lookup_key.as_str()).await {
                         Ok(()) => attempts.push(AgentNotifyAttempt {
-                            agent_key: agent.key.clone(),
+                            agent_key: target.key.to_string(),
                             succeeded: true,
                             error: None,
                         }),
                         Err(e) => attempts.push(AgentNotifyAttempt {
-                            agent_key: agent.key.clone(),
+                            agent_key: target.key.to_string(),
                             succeeded: false,
-                            error: Some(e.to_string()),
+                            error: Some(format!("{e:#}")),
                         }),
                     }
                 }
@@ -377,6 +401,36 @@ impl NodeControlMutation {
         }
 
         Ok(ApplyAgentConfigOutput { attempts, skipped })
+    }
+}
+
+/// An entry `applyAgentConfig` may notify: an agent, or a Giganto (`DATA_STORE`) external service.
+struct ApplyTarget<'a> {
+    /// `Agent.key` or `ExternalService.key`.
+    key: &'a str,
+    /// `Agent.config`, or `ExternalService.draft` for a Giganto service.
+    config: Option<&'a str>,
+    /// Whether `Some("")` means the entry is configured outside `REview`. It does for an agent; for
+    /// a Giganto service an empty draft is an installed but not yet configured instance, which the
+    /// manager adopts the live configuration into.
+    empty_is_direct_setup: bool,
+}
+
+impl<'a> ApplyTarget<'a> {
+    fn agent(agent: &'a review_database::Agent) -> Self {
+        Self {
+            key: &agent.key,
+            config: agent.config.as_ref().map(AsRef::as_ref),
+            empty_is_direct_setup: true,
+        }
+    }
+
+    fn giganto(service: &'a review_database::ExternalService) -> Self {
+        Self {
+            key: &service.key,
+            config: service.draft.as_ref().map(AsRef::as_ref),
+            empty_is_direct_setup: false,
+        }
     }
 }
 
@@ -566,7 +620,11 @@ async fn send_customer_change(
 #[cfg(test)]
 #[allow(clippy::await_holding_lock)]
 mod tests {
-    use std::{collections::HashMap, time::Duration};
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
     use assert_json_diff::assert_json_eq;
     use async_trait::async_trait;
@@ -3410,6 +3468,17 @@ mod tests {
         hostname: &str,
         agents: Vec<review_database::Agent>,
     ) -> u32 {
+        put_node_with_services(store, name, customer_id, hostname, agents, vec![])
+    }
+
+    fn put_node_with_services(
+        store: &review_database::Store,
+        name: &str,
+        customer_id: u32,
+        hostname: &str,
+        agents: Vec<review_database::Agent>,
+        external_services: Vec<review_database::ExternalService>,
+    ) -> u32 {
         let node = review_database::Node {
             id: u32::MAX,
             name: name.to_string(),
@@ -3425,10 +3494,25 @@ mod tests {
                 hostname: hostname.to_string(),
             }),
             agents,
-            external_services: vec![],
+            external_services,
             creation_time: chrono::Utc::now(),
         };
         store.node_map().put(&node).expect("insert node")
+    }
+
+    fn make_external_service(
+        key: &str,
+        kind: review_database::ExternalServiceKind,
+        draft: Option<&str>,
+    ) -> review_database::ExternalService {
+        review_database::ExternalService::new(
+            u32::MAX,
+            key.to_string(),
+            kind,
+            review_database::ExternalServiceStatus::Unknown,
+            draft.map(str::to_owned),
+        )
+        .expect("valid toml draft")
     }
 
     fn make_agent(
@@ -4417,5 +4501,449 @@ mod tests {
             "Expected no errors: {:?}",
             res.errors
         );
+    }
+
+    /// An `AgentManager` that records every `update_config` key, and fails the keys in `failing`
+    /// the way `REview` reports a Giganto apply failure.
+    struct RecordingAgentManager {
+        calls: Arc<Mutex<Vec<String>>>,
+        failing: Vec<String>,
+    }
+
+    impl RecordingAgentManager {
+        fn boxed(failing: Vec<String>) -> (BoxedAgentManager, Arc<Mutex<Vec<String>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let manager = Self {
+                calls: Arc::clone(&calls),
+                failing,
+            };
+            (Box::new(manager), calls)
+        }
+    }
+
+    #[async_trait]
+    impl AgentManager for RecordingAgentManager {
+        async fn send_agent_specific_internal_networks(
+            &self,
+            _networks: &[NetworksTargetAgentLookupKeysPair],
+        ) -> Result<Vec<String>, anyhow::Error> {
+            anyhow::bail!("not expected to be called")
+        }
+
+        async fn send_agent_specific_allow_networks(
+            &self,
+            _networks: &[NetworksTargetAgentLookupKeysPair],
+        ) -> Result<Vec<String>, anyhow::Error> {
+            anyhow::bail!("not expected to be called")
+        }
+
+        async fn send_agent_specific_block_networks(
+            &self,
+            _networks: &[NetworksTargetAgentLookupKeysPair],
+        ) -> Result<Vec<String>, anyhow::Error> {
+            anyhow::bail!("not expected to be called")
+        }
+
+        async fn online_apps_by_host_id(
+            &self,
+        ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error> {
+            Ok(HashMap::new())
+        }
+
+        async fn broadcast_crusher_sampling_policy(
+            &self,
+            _sampling_policies: &[SamplingPolicy],
+        ) -> Result<(), anyhow::Error> {
+            anyhow::bail!("not expected to be called")
+        }
+
+        async fn capabilities(
+            &self,
+            hostname: &str,
+        ) -> Result<std::collections::BTreeSet<String>, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn get_process_list(
+            &self,
+            hostname: &str,
+        ) -> Result<Vec<roxy::Process>, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn get_resource_usage(
+            &self,
+            hostname: &str,
+        ) -> Result<roxy::ResourceUsage, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn halt(&self, _hostname: &str) -> Result<(), anyhow::Error> {
+            anyhow::bail!("not expected to be called")
+        }
+
+        async fn ping(&self, hostname: &str) -> Result<Duration, anyhow::Error> {
+            anyhow::bail!("{hostname} is unreachable")
+        }
+
+        async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error> {
+            anyhow::bail!("not expected to be called")
+        }
+
+        async fn update_config(&self, agent_lookup_key: &str) -> Result<(), anyhow::Error> {
+            self.calls
+                .lock()
+                .expect("no test thread panics while holding the lock")
+                .push(agent_lookup_key.to_string());
+            if self.failing.iter().any(|key| key == agent_lookup_key) {
+                Err(anyhow::anyhow!("listener mismatch").context(format!(
+                    "cannot apply the stored configuration to {agent_lookup_key}"
+                )))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    const GIGANTO_HOST: &str = "node1.example.com";
+
+    /// Stores the node of `apply_agent_config_includes_giganto_services`: agent `001.hog` with a
+    /// config, and Giganto services `001.giganto` (non-empty draft) and `002.giganto` (empty
+    /// draft).
+    fn put_giganto_node(store: &review_database::Store) -> u32 {
+        put_node_with_services(
+            store,
+            "giganto-node",
+            0,
+            GIGANTO_HOST,
+            vec![make_agent(
+                "001.hog",
+                review_database::AgentKind::SemiSupervised,
+                Some("test = 'toml'"),
+            )],
+            vec![
+                make_external_service(
+                    "001.giganto",
+                    review_database::ExternalServiceKind::DataStore,
+                    Some("retention = \"30d\""),
+                ),
+                make_external_service(
+                    "002.giganto",
+                    review_database::ExternalServiceKind::DataStore,
+                    Some(""),
+                ),
+            ],
+        )
+    }
+
+    fn recorded(calls: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
+        calls
+            .lock()
+            .expect("no test thread panics while holding the lock")
+            .clone()
+    }
+
+    #[tokio::test]
+    async fn apply_agent_config_includes_giganto_services() {
+        let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_giganto_node(&schema.store());
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0", agentKeys: null) {
+                        attempts { agentKey succeeded error }
+                        skipped { agentKey reason }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(
+            recorded(&calls),
+            vec![
+                test_agent_lookup_key("001.hog", GIGANTO_HOST),
+                test_agent_lookup_key("001.giganto", GIGANTO_HOST),
+                test_agent_lookup_key("002.giganto", GIGANTO_HOST),
+            ]
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "applyAgentConfig": {
+                    "attempts": [
+                        { "agentKey": "001.hog", "succeeded": true, "error": null },
+                        { "agentKey": "001.giganto", "succeeded": true, "error": null },
+                        { "agentKey": "002.giganto", "succeeded": true, "error": null }
+                    ],
+                    "skipped": []
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_agent_config_skips_giganto_without_draft() {
+        let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_node_with_services(
+            &schema.store(),
+            "giganto-node",
+            0,
+            GIGANTO_HOST,
+            vec![],
+            vec![make_external_service(
+                "001.giganto",
+                review_database::ExternalServiceKind::DataStore,
+                None,
+            )],
+        );
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0") {
+                        attempts { agentKey succeeded error }
+                        skipped { agentKey reason }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert!(recorded(&calls).is_empty());
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "applyAgentConfig": {
+                    "attempts": [],
+                    "skipped": [
+                        { "agentKey": "001.giganto", "reason": "NOT_CONFIGURED" }
+                    ]
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_agent_config_ignores_ti_container() {
+        let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_node_with_services(
+            &schema.store(),
+            "ti-node",
+            0,
+            GIGANTO_HOST,
+            vec![],
+            vec![make_external_service(
+                "tivan",
+                review_database::ExternalServiceKind::TiContainer,
+                Some("test = 'toml'"),
+            )],
+        );
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0") {
+                        attempts { agentKey succeeded error }
+                        skipped { agentKey reason }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert!(recorded(&calls).is_empty());
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({ "applyAgentConfig": { "attempts": [], "skipped": [] } })
+        );
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0", agentKeys: ["tivan"]) {
+                        attempts { agentKey }
+                        skipped { agentKey }
+                    }
+                }"#,
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(
+            res.errors[0].message,
+            "Agent key tivan does not belong to node 0"
+        );
+        assert!(recorded(&calls).is_empty());
+    }
+
+    #[tokio::test]
+    async fn apply_agent_config_explicit_giganto_key() {
+        let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_giganto_node(&schema.store());
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0", agentKeys: ["002.giganto"]) {
+                        attempts { agentKey succeeded error }
+                        skipped { agentKey reason }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(
+            recorded(&calls),
+            vec![test_agent_lookup_key("002.giganto", GIGANTO_HOST)]
+        );
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "applyAgentConfig": {
+                    "attempts": [
+                        { "agentKey": "002.giganto", "succeeded": true, "error": null }
+                    ],
+                    "skipped": []
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_agent_config_explicit_keys_keep_caller_order_across_kinds() {
+        let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_giganto_node(&schema.store());
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0", agentKeys: ["002.giganto", "001.hog"]) {
+                        attempts { agentKey }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(
+            recorded(&calls),
+            vec![
+                test_agent_lookup_key("002.giganto", GIGANTO_HOST),
+                test_agent_lookup_key("001.hog", GIGANTO_HOST),
+            ]
+        );
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0", agentKeys: ["001.giganto", "001.giganto"]) {
+                        attempts { agentKey }
+                    }
+                }"#,
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Duplicate agent key: 001.giganto");
+        assert_eq!(recorded(&calls).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn apply_agent_config_reports_the_giganto_cause_chain() {
+        let failing_key = test_agent_lookup_key("001.giganto", GIGANTO_HOST);
+        let (agent_manager, calls) = RecordingAgentManager::boxed(vec![failing_key.clone()]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_giganto_node(&schema.store());
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0") {
+                        attempts { agentKey succeeded error }
+                        skipped { agentKey reason }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        assert_eq!(recorded(&calls).len(), 3);
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "applyAgentConfig": {
+                    "attempts": [
+                        { "agentKey": "001.hog", "succeeded": true, "error": null },
+                        {
+                            "agentKey": "001.giganto",
+                            "succeeded": false,
+                            "error": format!(
+                                "cannot apply the stored configuration to {failing_key}: \
+                                 listener mismatch"
+                            ),
+                        },
+                        { "agentKey": "002.giganto", "succeeded": true, "error": null }
+                    ],
+                    "skipped": []
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_agent_config_lookup_key_per_build() {
+        let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_giganto_node(&schema.store());
+        assert_eq!(id, 0);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyAgentConfig(nodeId: "0", agentKeys: ["001.giganto"]) {
+                        attempts { agentKey succeeded }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(
+            res.errors.is_empty(),
+            "Expected no errors: {:?}",
+            res.errors
+        );
+        #[cfg(feature = "auth-mtls")]
+        assert_eq!(recorded(&calls), vec!["001.giganto.node1.example.com"]);
+        #[cfg(feature = "auth-jwt")]
+        assert_eq!(recorded(&calls), vec!["001.giganto@node1.example.com"]);
     }
 }
