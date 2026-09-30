@@ -28,7 +28,7 @@ num-traits = "0.2"
 reqwest = { version = "0.13", default-features = false, features = [
   "rustls-no-provider",
 ] }
-review-database = { git = "https://github.com/aicers/review-database.git", rev = "b426f7d378030176d7894ceaf7a1a662adf5ec3e" }
+review-database = { git = "https://github.com/aicers/review-database.git", rev = "bd060d0d80ebf09784591fd934fe201ff7fc334d" }
 review-protocol = { git = "https://github.com/aicers/review-protocol.git", rev = "d5360085c5374057e1aea28a8b242b25eb47db27" }
 roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.6.0" }
 rustls = { version = "0.23", default-features = false, features = [
