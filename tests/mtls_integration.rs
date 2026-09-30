@@ -709,6 +709,41 @@ xvcNsYaYqk6sRk/INvcaN2E=
         Ok(())
     }
 
+    #[tokio::test]
+    async fn mtls_graphql_playground_is_unavailable() -> anyhow::Result<()> {
+        let server = start_test_server()?;
+        let (client, client_key) =
+            build_client_with_identity(&server.issuer, &server.ca_cert, SERVICE_DNS)?;
+        let token = sign_context_jwt(client_key.serialize_der().as_slice())?;
+        let url = format!("{}/playground", server.url);
+
+        // The helper retries until the server is ready, before the GET below.
+        let response = send_graphql_request(&client, &url, Some(&token)).await?;
+        // Both statuses reject the document, regardless of the static fallback.
+        assert!(matches!(
+            response.status(),
+            reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::METHOD_NOT_ALLOWED
+        ));
+        let text = response.text().await.context("read playground POST body")?;
+        if let Ok(body) = serde_json::from_str::<serde_json::Value>(&text) {
+            assert!(
+                body.get("data").is_none() && body.get("errors").is_none(),
+                "unexpected GraphQL response: {body}"
+            );
+        }
+
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .context("GET playground with a valid client certificate")?;
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+
+        server.shutdown.notify_one();
+        server.shutdown.notified().await;
+        Ok(())
+    }
+
     async fn response_json(response: reqwest::Response) -> anyhow::Result<serde_json::Value> {
         serde_json::from_str(&response.text().await.context("read response body")?)
             .context("parse response JSON")
