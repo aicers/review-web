@@ -197,6 +197,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- Fixed Event GraphQL event lists, triage results, counts, pagination, and
+  explicitly bounded frequency series that could omit or return events out of
+  chronological order when their time range spans the Unix epoch. Event lists,
+  triage results, and counts with no `start` now include pre-epoch events. An
+  `end` value equal to the Unix epoch is accepted as an exclusive bound, while
+  `before: "0"` and cursors at the signed-key limits now return the applicable
+  events or an empty result instead of an error. An `end` at the lowest
+  supported event timestamp returns an empty result.
 - Event GraphQL queries now accept the Unix epoch as an exclusive `end`
   boundary and return an empty range for the lower `i64` nanosecond boundary.
 - Triage exclusions whose IP address group mixes IPv4 and IPv6 entries no

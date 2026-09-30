@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use async_graphql::{Context, Object, OutputType, Result, SimpleObject};
+use jiff::Timestamp;
 use num_traits::ToPrimitive;
 use review_database::event::{Direction, EventFilter};
 use review_database::{Event, IndexedTable, Iterable};
@@ -234,17 +235,17 @@ impl EventGroupQuery {
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] period: i64,
     ) -> Result<Vec<usize>> {
-        let start = filter.start;
+        let start = filter.start.unwrap_or(Timestamp::UNIX_EPOCH);
         let end = filter.end;
         let store = crate::graphql::get_store(ctx)?;
         let mut filter = from_filter_input(ctx, &store, &filter)?;
         filter.moderate_kinds();
-        if empty_time_range(start, end)? {
+        if empty_time_range(Some(start), end)? {
             return Ok(Vec::new());
         }
 
-        let start = earliest(start, None)?;
-        let end = latest(end, None)?;
+        let start = earliest(Some(start))?;
+        let end = latest(end)?;
         let db = store.events();
         let period = i128::from(period * 1_000_000_000) << 64;
         let mut series = Vec::new();
@@ -305,8 +306,8 @@ async fn count_events<T>(
         return Ok((Vec::new(), Vec::new()));
     }
 
-    let start = earliest(start, None)?;
-    let end = latest(end, None)?;
+    let start = earliest(start)?;
+    let end = latest(end)?;
     let db = store.events();
     let mut counter = HashMap::new();
     for item in db.iter_from(start, Direction::Forward) {
@@ -353,8 +354,8 @@ async fn count_events_by_network(
     let network_map = store.network_map();
     let networks = load_networks(&network_map)?;
 
-    let start = earliest(start, None)?;
-    let end = latest(end, None)?;
+    let start = earliest(start)?;
+    let end = latest(end)?;
     let db = store.events();
     let mut counter = HashMap::new();
     for item in db.iter_from(start, Direction::Forward) {
@@ -539,6 +540,32 @@ mod tests {
             res.data.to_string(),
             "{all: {values: [null, 2], counts: [3, 2]}, uncategorized: {values: [null], counts: [3]}, categorized: {values: [2], counts: [2]}, mixed: {values: [null, 2], counts: [3, 2]}, limited: {values: [null], counts: [3]}, noMatches: {values: [], counts: []}}"
         );
+    }
+
+    #[tokio::test]
+    async fn event_frequency_series_without_start_begins_at_the_unix_epoch() {
+        let schema = TestSchema::new().await;
+        let epoch = DateTime::from_timestamp(0, 0).expect("the Unix epoch is valid");
+        let store = schema.store();
+        let db = store.events();
+        db.put(&event_message_at(epoch, 1, 2)).unwrap();
+        db.put(&event_message_at(
+            epoch + chrono::Duration::seconds(1),
+            3,
+            4,
+        ))
+        .unwrap();
+        drop(store);
+        let end = jiff_timestamp(epoch + chrono::Duration::seconds(2));
+
+        let output = schema
+            .execute_as_system_admin(&format!(
+                r#"{{ eventFrequencySeries(filter: {{ end: "{end}" }}, period: 1) }}"#
+            ))
+            .await;
+
+        assert!(output.errors.is_empty(), "{:?}", output.errors);
+        assert_eq!(output.data.to_string(), r"{eventFrequencySeries: [1, 1]}");
     }
 
     #[tokio::test]
