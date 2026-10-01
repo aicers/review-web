@@ -26,12 +26,15 @@ use review_protocol::types::node::{
 use review_web::backend::{
     AcceptedPackage, BindAddrInput, BuildId, DeployError, DeployOutcome, HostOnboarder,
     HostOnboardingTicket, IngressStream, IngressStreamError, JoinToken, OperationId,
-    PackageDeployer, PackageIngestError, PackageStoreReceiver, TrustActivation, TrustIngestError,
-    TrustManager,
+    PackageDeployer, PackageIngestError, PackageStoreReceiver, RunningRoxydBuild, TrustActivation,
+    TrustIngestError, TrustManager,
 };
 
 const TOKEN: &str = "s3cret-join-token";
 const NAMESPACE: &str = "clumit-security";
+const BINARY_SHA256: &str = "9b8a7f6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c3b2a19087f6e5d4c3b2a";
+const ROXYD_VERSION: &str = "1.2.3";
+const ROXYD_COMMIT: &str = "4ffc661e0b2d3c4a5f6e7d8c9b0a1f2e3d4c5b6a";
 const ACCEPTED_PACKAGE_ID: &str = "piglet";
 const REQUEST_KEY: &str = "b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e";
 const BOOTSTRAP_ARTIFACT: &[u8] = br#"{"registration_id":"giganto"}"#;
@@ -190,9 +193,17 @@ struct OutsideOnboarder;
 
 #[async_trait]
 impl HostOnboarder for OutsideOnboarder {
+    async fn running_roxyd_builds(&self) -> Result<Vec<RunningRoxydBuild>, anyhow::Error> {
+        Ok(vec![RunningRoxydBuild {
+            host: "host1".to_string(),
+            build: roxyd_build(),
+        }])
+    }
+
     async fn onboard_host(
         &self,
         host: &str,
+        _build: &BuildId,
     ) -> Result<(HostOnboardingTicket, OperationId), anyhow::Error> {
         Ok((
             HostOnboardingTicket::new(
@@ -200,9 +211,17 @@ impl HostOnboarder for OutsideOnboarder {
                 format!("roxyd join --host {host} --token <token>"),
                 jiff::Timestamp::from_second(1_700_000_000)?,
                 NAMESPACE.to_string(),
+                BINARY_SHA256.to_string(),
             ),
             OperationId::new(REQUEST_KEY.to_string()),
         ))
+    }
+}
+
+fn roxyd_build() -> BuildId {
+    BuildId {
+        version: ROXYD_VERSION.to_string(),
+        commit: ROXYD_COMMIT.to_string(),
     }
 }
 
@@ -408,11 +427,11 @@ async fn both_delivery_modes_are_namable_and_there_is_no_third() {
 }
 
 /// The ticket's token stays redacted in `Debug` when another crate renders it,
-/// while its namespace, which is not secret, is readable and printed.
+/// while its namespace and executable hash, which are not secret, are printed.
 #[tokio::test]
 async fn the_onboarding_ticket_redacts_its_token() {
     let (ticket, operation_id) = OutsideOnboarder
-        .onboard_host("host1")
+        .onboard_host("host1", &roxyd_build())
         .await
         .expect("the stub mints a ticket");
 
@@ -420,8 +439,25 @@ async fn the_onboarding_ticket_redacts_its_token() {
     assert!(!rendered.contains(TOKEN), "{rendered}");
     assert!(rendered.contains("JoinToken(<redacted>)"), "{rendered}");
     assert!(rendered.contains(NAMESPACE), "{rendered}");
+    assert!(rendered.contains(BINARY_SHA256), "{rendered}");
     assert_eq!(ticket.namespace(), NAMESPACE);
     assert_eq!(operation_id.to_string(), REQUEST_KEY);
+}
+
+/// A running build is built with a struct literal from another crate, as
+/// `aicers/review` builds it, and reads back field for field.
+#[tokio::test]
+async fn running_roxyd_builds_are_built_outside_the_crate() {
+    let running = OutsideOnboarder
+        .running_roxyd_builds()
+        .await
+        .expect("the stub lists its builds");
+
+    assert_eq!(running.len(), 1);
+    let entry = running.first().expect("the length is one");
+    assert_eq!(entry.host, "host1");
+    assert_eq!(entry.build.version, ROXYD_VERSION);
+    assert_eq!(entry.build.commit, ROXYD_COMMIT);
 }
 
 /// A receiver living outside the crate, which honours the discard contract the

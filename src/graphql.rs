@@ -87,7 +87,7 @@ use crate::backend::{AgentManager, CertManager, HostOnboarder, PackageDeployer};
 #[cfg(test)]
 use crate::backend::{
     BindAddrInput, BuildId, DeployError, DeployOutcome, HostOnboardingTicket, JoinToken,
-    OperationId,
+    OperationId, RunningRoxydBuild,
 };
 use crate::maintenance::{MaintenanceExtension, MaintenanceGate};
 
@@ -231,6 +231,7 @@ struct SubQueryTwoB(
     trusted_user_agent::UserAgentQuery,
     node::ProcessListQuery,
     node::BindAddrQuery,
+    node::OnboardingQuery,
 );
 
 /// A set of mutations defined in the schema.
@@ -1377,9 +1378,14 @@ struct MockHostOnboarder {}
 #[cfg(test)]
 #[async_trait::async_trait]
 impl HostOnboarder for MockHostOnboarder {
+    async fn running_roxyd_builds(&self) -> Result<Vec<RunningRoxydBuild>, anyhow::Error> {
+        Ok(vec![])
+    }
+
     async fn onboard_host(
         &self,
         _host: &str,
+        _build: &BuildId,
     ) -> Result<(HostOnboardingTicket, OperationId), anyhow::Error> {
         Ok((
             HostOnboardingTicket::new(
@@ -1387,6 +1393,7 @@ impl HostOnboarder for MockHostOnboarder {
                 "roxyd join --token <token>".to_string(),
                 jiff::Timestamp::from_second(1_700_000_000)?,
                 "clumit-security".to_string(),
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
             ),
             OperationId::new("99999999-8888-4777-8666-555555555555".to_string()),
         ))
@@ -2074,8 +2081,11 @@ mod tests {
     mod context {
         use async_graphql::{Context, EmptyMutation, EmptySubscription, Object, Result, Schema};
 
-        use crate::graphql::{
-            BoxedHostOnboarder, BoxedPackageDeployer, MockHostOnboarder, MockPackageDeployer,
+        use crate::{
+            backend::BuildId,
+            graphql::{
+                BoxedHostOnboarder, BoxedPackageDeployer, MockHostOnboarder, MockPackageDeployer,
+            },
         };
 
         #[derive(Default)]
@@ -2104,8 +2114,13 @@ mod tests {
             /// onboarder in the context.
             async fn onboarding_command(&self, ctx: &Context<'_>) -> Result<String> {
                 let onboarder = ctx.data::<BoxedHostOnboarder>()?;
-                let (ticket, _operation_id) = onboarder.onboard_host("host1").await?;
-                let (_token, command, _expires_at, _namespace) = ticket.into_parts();
+                let build = BuildId {
+                    version: "1.2.3".to_string(),
+                    commit: "0123456789abcdef0123456789abcdef01234567".to_string(),
+                };
+                let (ticket, _operation_id) = onboarder.onboard_host("host1", &build).await?;
+                let (_token, command, _expires_at, _namespace, _binary_sha256) =
+                    ticket.into_parts();
                 Ok(command)
             }
         }

@@ -1,4 +1,5 @@
-//! The immediate package-deployment and host-onboarding mutations.
+//! The immediate package-deployment and host-onboarding mutations, and the
+//! query that lists the roxyd builds onboarding can name.
 //!
 //! These are immediate actions and never ride the configuration draft: the
 //! resolver authorizes, validates the shape of what was submitted, makes one
@@ -23,7 +24,7 @@ use super::{
         BoxedAgentManager, BoxedHostOnboarder, BoxedPackageDeployer, Role, RoleGuard,
         customer_access,
     },
-    DeployMutation,
+    DeployMutation, OnboardingQuery,
     bind_addr::{
         BindAddrInput, HostOccupancyUnavailable, HostPortOccupied, PortAllocationConflict,
         host_occupancy_unavailable, host_port_occupied, port_allocation_conflict,
@@ -31,8 +32,9 @@ use super::{
 };
 use crate::{
     backend::{
-        self, BindAddrInput as BackendBindAddrInput, DeployError,
+        self, BindAddrInput as BackendBindAddrInput, BuildId, DeployError,
         HostOnboardingTicket as BackendHostOnboardingTicket, MODULE_PACKAGE_IDS, OperationId,
+        RunningRoxydBuild as BackendRunningRoxydBuild,
     },
     info_with_username,
 };
@@ -87,6 +89,36 @@ pub(crate) struct BuildSelectorInput {
     version: Option<String>,
     /// An exact commit.
     commit: Option<String>,
+}
+
+/// The roxyd build the new host joins with, as the operator confirmed it.
+#[derive(InputObject)]
+pub(crate) struct OnboardBuildInput {
+    /// The build's version.
+    version: String,
+    /// The commit the build was made from.
+    commit: String,
+}
+
+/// A connected host and the roxyd build it reports running.
+#[derive(SimpleObject)]
+pub(crate) struct RunningRoxydBuild {
+    /// The host that answered.
+    host: String,
+    /// The version of the roxyd build it runs.
+    version: String,
+    /// The commit that roxyd build was made from.
+    commit: String,
+}
+
+impl From<BackendRunningRoxydBuild> for RunningRoxydBuild {
+    fn from(running: BackendRunningRoxydBuild) -> Self {
+        Self {
+            host: running.host,
+            version: running.build.version,
+            commit: running.build.commit,
+        }
+    }
 }
 
 /// The install was accepted, and this is the operation to poll.
@@ -148,6 +180,9 @@ pub(crate) struct HostOnboardingTicket {
     /// The product namespace the operator passes to the host's join command
     /// as `--namespace`. It is not secret and is not part of `command`.
     namespace: String,
+    /// The SHA-256 of the build's roxyd executable, for a `sha256sum -c`
+    /// line. It is not secret.
+    binary_sha256: String,
 }
 
 /// The request key already names an attempt submitted with a different
@@ -417,6 +452,26 @@ async fn check_rollback_support(
 }
 
 #[Object]
+impl OnboardingQuery {
+    /// Returns the roxyd build each connected host reports running, offered as
+    /// copy candidates for `onboardHost`.
+    ///
+    /// It is a snapshot at read time, which `onboardHost` does not check
+    /// against.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the hosts could not be enumerated.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
+    async fn running_roxyd_builds(&self, ctx: &Context<'_>) -> Result<Vec<RunningRoxydBuild>> {
+        info_with_username!(ctx, "Running roxyd builds requested");
+        let onboarder = ctx.data::<BoxedHostOnboarder>()?;
+        let running = onboarder.running_roxyd_builds().await?;
+        Ok(running.into_iter().map(RunningRoxydBuild::from).collect())
+    }
+}
+
+#[Object]
 impl DeployMutation {
     /// Installs `target` on `host` as a newly allocated instance and returns
     /// the operation to poll.
@@ -662,9 +717,25 @@ impl DeployMutation {
         }
     }
 
-    /// Starts onboarding a host and returns its one-time ticket.
+    /// Starts onboarding a host with the roxyd build the operator confirmed
+    /// and returns its one-time ticket.
+    ///
+    /// The build is passed through unchanged, never chosen or defaulted here;
+    /// `runningRoxydBuilds` lists the builds on offer.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
-    async fn onboard_host(&self, ctx: &Context<'_>, host: String) -> Result<HostOnboardingTicket> {
+    async fn onboard_host(
+        &self,
+        ctx: &Context<'_>,
+        host: String,
+        build: OnboardBuildInput,
+    ) -> Result<HostOnboardingTicket> {
+        let OnboardBuildInput { version, commit } = build;
+        if version.is_empty() {
+            return Err("build.version is empty".into());
+        }
+        if commit.is_empty() {
+            return Err("build.commit is empty".into());
+        }
         let onboarder = ctx.data::<BoxedHostOnboarder>()?;
         // Logged before the call, for the same reason as in `install_service`,
         // and the reason weighs most here: this is the only one of the five
@@ -672,16 +743,21 @@ impl DeployMutation {
         // scoping, so a refused attempt is the record an audit comes looking
         // for. The token does not exist yet at this point, which is how the
         // line stays free of it.
-        info_with_username!(ctx, "Onboarding of {host} requested");
+        info_with_username!(
+            ctx,
+            "Onboarding of {host} with roxyd {version} ({commit}) requested"
+        );
+        let build = BuildId { version, commit };
         let (ticket, operation_id): (BackendHostOnboardingTicket, OperationId) =
-            onboarder.onboard_host(&host).await?;
-        let (token, command, expires_at, namespace) = ticket.into_parts();
+            onboarder.onboard_host(&host, &build).await?;
+        let (token, command, expires_at, namespace, binary_sha256) = ticket.into_parts();
         Ok(HostOnboardingTicket {
             operation_id: operation_id.into_inner(),
             token: token.expose(),
             command,
             expires_at,
             namespace,
+            binary_sha256,
         })
     }
 }
@@ -718,7 +794,7 @@ mod tests {
             AgentManager, BindAddrInput as BackendBindAddrInput, BuildId, CORE_PACKAGE_IDS,
             DeployError, DeployOutcome, HostOnboarder,
             HostOnboardingTicket as BackendHostOnboardingTicket, JoinToken, MODULE_PACKAGE_IDS,
-            OperationId, PackageDeployer,
+            OperationId, PackageDeployer, RunningRoxydBuild as BackendRunningRoxydBuild,
         },
         graphql::{
             BoxedAgentManager, BoxedHostOnboarder, BoxedPackageDeployer, Mutation,
@@ -742,6 +818,13 @@ mod tests {
     /// Deliberately not a value this crate could have produced itself, so a
     /// resolver that composed or defaulted a namespace would not match it.
     const ONBOARD_NAMESPACE: &str = "onboarder-supplied-namespace";
+    /// The executable hash a successful ticket carries, which the resolver
+    /// must pass through as it arrived.
+    const ONBOARD_BINARY_SHA256: &str =
+        "a3f1c2d4e5b6a7980f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a6978";
+    /// The roxyd build the existing onboarding tests submit.
+    const ONBOARD_VERSION: &str = "0.9.1";
+    const ONBOARD_COMMIT: &str = "4ffc661e0b2d3c4a5f6e7d8c9b0a1f2e3d4c5b6a";
 
     /// The key a `RequestKeyReused` refusal carries. It is deliberately not
     /// [`REQUEST_KEY`], so a resolver that rendered its own argument instead of
@@ -1052,10 +1135,18 @@ mod tests {
         Fail,
     }
 
+    /// What a [`RecordingOnboarder`] answers `running_roxyd_builds` with.
+    #[derive(Clone)]
+    enum RunningAnswer {
+        List(Vec<BackendRunningRoxydBuild>),
+        Fail,
+    }
+
     #[derive(Default)]
     struct OnboardCalls {
         count: AtomicUsize,
-        hosts: Mutex<Vec<String>>,
+        running_count: AtomicUsize,
+        calls: Mutex<Vec<(String, BuildId)>>,
         ticket_debug: Mutex<Vec<String>>,
     }
 
@@ -1064,10 +1155,14 @@ mod tests {
             self.count.load(Ordering::SeqCst)
         }
 
-        fn only_host(&self) -> String {
-            let hosts = self.hosts.lock().unwrap();
-            assert_eq!(hosts.len(), 1, "exactly one onboarding call is expected");
-            hosts.first().expect("the length is one").clone()
+        fn running_count(&self) -> usize {
+            self.running_count.load(Ordering::SeqCst)
+        }
+
+        fn only_call(&self) -> (String, BuildId) {
+            let calls = self.calls.lock().unwrap();
+            assert_eq!(calls.len(), 1, "exactly one onboarding call is expected");
+            calls.first().expect("the length is one").clone()
         }
 
         fn only_ticket_debug(&self) -> String {
@@ -1080,15 +1175,20 @@ mod tests {
     struct RecordingOnboarder {
         calls: Arc<OnboardCalls>,
         answer: OnboardAnswer,
+        running: RunningAnswer,
     }
 
     impl RecordingOnboarder {
-        fn boxed(answer: OnboardAnswer) -> (BoxedHostOnboarder, Arc<OnboardCalls>) {
+        fn boxed(
+            answer: OnboardAnswer,
+            running: RunningAnswer,
+        ) -> (BoxedHostOnboarder, Arc<OnboardCalls>) {
             let calls = Arc::<OnboardCalls>::default();
             (
                 Box::new(Self {
                     calls: Arc::clone(&calls),
                     answer,
+                    running,
                 }),
                 calls,
             )
@@ -1097,12 +1197,27 @@ mod tests {
 
     #[async_trait::async_trait]
     impl HostOnboarder for RecordingOnboarder {
+        async fn running_roxyd_builds(
+            &self,
+        ) -> Result<Vec<BackendRunningRoxydBuild>, anyhow::Error> {
+            self.calls.running_count.fetch_add(1, Ordering::SeqCst);
+            match &self.running {
+                RunningAnswer::List(list) => Ok(list.clone()),
+                RunningAnswer::Fail => anyhow::bail!("review could not list running roxyd builds"),
+            }
+        }
+
         async fn onboard_host(
             &self,
             host: &str,
+            build: &BuildId,
         ) -> Result<(BackendHostOnboardingTicket, OperationId), anyhow::Error> {
             self.calls.count.fetch_add(1, Ordering::SeqCst);
-            self.calls.hosts.lock().unwrap().push(host.to_string());
+            self.calls
+                .calls
+                .lock()
+                .unwrap()
+                .push((host.to_string(), build.clone()));
             match self.answer {
                 OnboardAnswer::Succeed => {
                     let ticket = BackendHostOnboardingTicket::new(
@@ -1110,6 +1225,7 @@ mod tests {
                         ONBOARD_COMMAND.to_string(),
                         jiff::Timestamp::from_second(EXPIRES_AT_SECOND)?,
                         ONBOARD_NAMESPACE.to_string(),
+                        ONBOARD_BINARY_SHA256.to_string(),
                     );
                     self.calls
                         .ticket_debug
@@ -1356,10 +1472,27 @@ mod tests {
         format!(r#"component: "{component}", host: "{host}", buildSelector: {{version: "0.1.0"}}"#)
     }
 
-    fn onboard_mutation(host: &str) -> String {
+    fn onboard_mutation(host: &str, version: &str, commit: &str) -> String {
         format!(
-            r#"mutation {{ onboardHost(host: "{host}") {{ operationId token command expiresAt namespace }} }}"#
+            r#"mutation {{ onboardHost(host: "{host}", build: {{version: "{version}", commit: "{commit}"}}) {{ operationId token command expiresAt namespace binarySha256 }} }}"#
         )
+    }
+
+    const RUNNING_ROXYD_BUILDS_QUERY: &str = "query { runningRoxydBuilds { host version commit } }";
+
+    /// The build the existing onboarding tests submit, as the backend
+    /// receives it.
+    fn onboard_build() -> BuildId {
+        BuildId {
+            version: ONBOARD_VERSION.to_string(),
+            commit: ONBOARD_COMMIT.to_string(),
+        }
+    }
+
+    /// The request line `onboardHost` logs for `new-host` and the build the
+    /// existing onboarding tests submit.
+    fn onboard_request_line() -> String {
+        format!("Onboarding of new-host with roxyd {ONBOARD_VERSION} ({ONBOARD_COMMIT}) requested")
     }
 
     /// A schema with no store, whose host advertises the rollback supervisor
@@ -1464,10 +1597,11 @@ mod tests {
             assert_eq!(response.errors[0].message, "Forbidden", "{role:?}");
             assert_eq!(deploy_calls.total(), 0, "{role:?}");
 
-            let (onboarder, onboard_calls) = RecordingOnboarder::boxed(OnboardAnswer::Succeed);
+            let (onboarder, onboard_calls) =
+                RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::List(vec![]));
             let response = schema
                 .execute_with_guard_and_data(
-                    &onboard_mutation("new-host"),
+                    &onboard_mutation("new-host", ONBOARD_VERSION, ONBOARD_COMMIT),
                     RoleGuard::Role(role),
                     onboarder,
                 )
@@ -1628,7 +1762,8 @@ mod tests {
             ("review", "some-other-host"),
         ] {
             let (deployer, calls) = RecordingDeployer::boxed(Answer::Fail(Failure::Other));
-            let (onboarder, _) = RecordingOnboarder::boxed(OnboardAnswer::Succeed);
+            let (onboarder, _) =
+                RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::List(vec![]));
             let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
             let query = core_update_mutation(&core_update_args(component, host));
             let response = execute_without_store(&schema, &query).await;
@@ -1721,9 +1856,10 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn onboarding_renders_the_ticket_without_logging_or_debugging_the_token() {
         let (deployer, _) = RecordingDeployer::applying();
-        let (onboarder, calls) = RecordingOnboarder::boxed(OnboardAnswer::Succeed);
+        let (onboarder, calls) =
+            RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::List(vec![]));
         let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
-        let mutation = onboard_mutation("new-host");
+        let mutation = onboard_mutation("new-host", ONBOARD_VERSION, ONBOARD_COMMIT);
         let (response, logs) = capturing_logs(execute_without_store(&schema, &mutation)).await;
 
         assert!(response.errors.is_empty(), "{:?}", response.errors);
@@ -1747,18 +1883,20 @@ mod tests {
                     "command": ONBOARD_COMMAND,
                     "expiresAt": "2023-11-14T22:15:23Z",
                     "namespace": ONBOARD_NAMESPACE,
+                    "binarySha256": ONBOARD_BINARY_SHA256,
                 }
             })
         );
         assert_eq!(calls.count(), 1);
-        assert_eq!(calls.only_host(), "new-host");
+        assert_eq!(calls.only_call(), ("new-host".to_string(), onboard_build()));
         let debug = calls.only_ticket_debug();
         assert!(debug.contains("JoinToken(<redacted>)"), "{debug}");
         assert!(!debug.contains(JOIN_TOKEN), "{debug}");
         // The namespace is not secret, so the ticket's `Debug` prints it; what
         // it must not do is take the token's redaction with it.
         assert!(debug.contains(ONBOARD_NAMESPACE), "{debug}");
-        assert!(logs.contains("Onboarding of new-host requested"), "{logs}");
+        assert!(debug.contains(ONBOARD_BINARY_SHA256), "{debug}");
+        assert!(logs.contains(&onboard_request_line()), "{logs}");
         assert!(!logs.contains(JOIN_TOKEN), "{logs}");
         assert!(!logs.contains("<redacted>"), "{logs}");
         // The request line is the only one: the outcome is left to the
@@ -1779,9 +1917,14 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn onboarding_passes_the_namespace_through_unchanged() {
         let (deployer, _) = RecordingDeployer::applying();
-        let (onboarder, calls) = RecordingOnboarder::boxed(OnboardAnswer::Succeed);
+        let (onboarder, calls) =
+            RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::List(vec![]));
         let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
-        let response = execute_without_store(&schema, &onboard_mutation("new-host")).await;
+        let response = execute_without_store(
+            &schema,
+            &onboard_mutation("new-host", ONBOARD_VERSION, ONBOARD_COMMIT),
+        )
+        .await;
 
         assert!(response.errors.is_empty(), "{:?}", response.errors);
         let data = response.data.into_json().unwrap();
@@ -1793,9 +1936,10 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn onboarding_errors_are_ordinary_graphql_errors() {
         let (deployer, _) = RecordingDeployer::applying();
-        let (onboarder, calls) = RecordingOnboarder::boxed(OnboardAnswer::Fail);
+        let (onboarder, calls) =
+            RecordingOnboarder::boxed(OnboardAnswer::Fail, RunningAnswer::List(vec![]));
         let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
-        let mutation = onboard_mutation("new-host");
+        let mutation = onboard_mutation("new-host", ONBOARD_VERSION, ONBOARD_COMMIT);
         let (response, logs) = capturing_logs(execute_without_store(&schema, &mutation)).await;
 
         assert_eq!(response.errors.len(), 1);
@@ -1804,10 +1948,189 @@ mod tests {
             "review could not mint a host ticket"
         );
         assert_eq!(calls.count(), 1);
-        assert_eq!(calls.only_host(), "new-host");
+        assert_eq!(calls.only_call(), ("new-host".to_string(), onboard_build()));
         // The request is logged before the call, so the host is named even
         // though the call that follows it failed.
-        assert!(logs.contains("Onboarding of new-host requested"), "{logs}");
+        assert!(logs.contains(&onboard_request_line()), "{logs}");
+    }
+
+    /// A host other than the one the existing onboarding tests submit, with a
+    /// build of its own, so that nothing here can pass on a fixed value.
+    const CONFIRMED_HOST: &str = "node1.example.com";
+    const CONFIRMED_VERSION: &str = "1.2.3";
+    const CONFIRMED_COMMIT: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c";
+
+    fn running_build(host: &str, version: &str, commit: &str) -> BackendRunningRoxydBuild {
+        BackendRunningRoxydBuild {
+            host: host.to_string(),
+            build: BuildId {
+                version: version.to_string(),
+                commit: commit.to_string(),
+            },
+        }
+    }
+
+    /// The list is the backend's, in the backend's order: the resolver neither
+    /// sorts nor filters it, and a backend failure is an ordinary error.
+    #[tokio::test(flavor = "current_thread")]
+    async fn running_roxyd_builds_lists_the_backend_answer() {
+        let (deployer, _) = RecordingDeployer::applying();
+        let (onboarder, calls) = RecordingOnboarder::boxed(
+            OnboardAnswer::Succeed,
+            RunningAnswer::List(vec![
+                running_build("b.example.com", "2.0.0", ONBOARD_COMMIT),
+                running_build("a.example.com", CONFIRMED_VERSION, CONFIRMED_COMMIT),
+            ]),
+        );
+        let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+        let (response, logs) =
+            capturing_logs(execute_without_store(&schema, RUNNING_ROXYD_BUILDS_QUERY)).await;
+
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        assert_json_eq!(
+            response.data.into_json().unwrap(),
+            json!({
+                "runningRoxydBuilds": [
+                    {
+                        "host": "b.example.com",
+                        "version": "2.0.0",
+                        "commit": ONBOARD_COMMIT,
+                    },
+                    {
+                        "host": "a.example.com",
+                        "version": CONFIRMED_VERSION,
+                        "commit": CONFIRMED_COMMIT,
+                    },
+                ]
+            })
+        );
+        assert_eq!(calls.running_count(), 1);
+        assert_eq!(calls.count(), 0);
+        assert!(logs.contains("Running roxyd builds requested"), "{logs}");
+
+        let (deployer, _) = RecordingDeployer::applying();
+        let (onboarder, calls) =
+            RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::Fail);
+        let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+        let response = execute_without_store(&schema, RUNNING_ROXYD_BUILDS_QUERY).await;
+
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(
+            response.errors[0].message,
+            "review could not list running roxyd builds"
+        );
+        assert_eq!(calls.running_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn running_roxyd_builds_requires_a_system_administrator() {
+        for role in [
+            Role::SecurityAdministrator,
+            Role::SecurityManager,
+            Role::SecurityMonitor,
+        ] {
+            let schema = TestSchema::new().await;
+            let (onboarder, calls) = RecordingOnboarder::boxed(
+                OnboardAnswer::Succeed,
+                RunningAnswer::List(vec![running_build(
+                    CONFIRMED_HOST,
+                    CONFIRMED_VERSION,
+                    CONFIRMED_COMMIT,
+                )]),
+            );
+            let response = schema
+                .execute_with_guard_and_data(
+                    RUNNING_ROXYD_BUILDS_QUERY,
+                    RoleGuard::Role(role),
+                    onboarder,
+                )
+                .await;
+
+            assert_eq!(response.errors.len(), 1, "{role:?}");
+            assert_eq!(response.errors[0].message, "Forbidden", "{role:?}");
+            assert_eq!(calls.running_count(), 0, "{role:?}");
+        }
+    }
+
+    /// The build reaches the backend exactly as submitted, and the hash comes
+    /// back exactly as the backend supplied it.
+    #[tokio::test]
+    async fn onboard_host_passes_the_confirmed_build() {
+        let (deployer, _) = RecordingDeployer::applying();
+        let (onboarder, calls) =
+            RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::List(vec![]));
+        let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+        let mutation = onboard_mutation(CONFIRMED_HOST, CONFIRMED_VERSION, CONFIRMED_COMMIT);
+        let response = execute_without_store(&schema, &mutation).await;
+
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        assert_eq!(
+            calls.only_call(),
+            (
+                CONFIRMED_HOST.to_string(),
+                BuildId {
+                    version: CONFIRMED_VERSION.to_string(),
+                    commit: CONFIRMED_COMMIT.to_string(),
+                }
+            )
+        );
+        assert_eq!(calls.running_count(), 0);
+        let data = response.data.into_json().unwrap();
+        assert_eq!(data["onboardHost"]["binarySha256"], ONBOARD_BINARY_SHA256);
+    }
+
+    /// An empty part is refused before anything else happens: the backend is
+    /// not called and no request line is logged.
+    #[tokio::test(flavor = "current_thread")]
+    async fn onboard_host_refuses_an_empty_build_part() {
+        for (version, commit, message) in [
+            ("", CONFIRMED_COMMIT, "build.version is empty"),
+            (CONFIRMED_VERSION, "", "build.commit is empty"),
+        ] {
+            let (deployer, _) = RecordingDeployer::applying();
+            let (onboarder, calls) =
+                RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::List(vec![]));
+            let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+            let mutation = onboard_mutation(CONFIRMED_HOST, version, commit);
+            let (response, logs) = capturing_logs(execute_without_store(&schema, &mutation)).await;
+
+            assert_eq!(response.errors.len(), 1, "{message}");
+            assert_eq!(response.errors[0].message, message);
+            assert_eq!(calls.count(), 0, "{message}");
+            assert!(!logs.contains("Onboarding of"), "{logs}");
+        }
+    }
+
+    /// The request line names the host and the submitted build, is logged
+    /// before the call so a failed call still leaves it, and carries no token.
+    #[tokio::test(flavor = "current_thread")]
+    async fn onboard_host_logs_the_build_before_the_call() {
+        let expected = format!(
+            "user=testuser Onboarding of {CONFIRMED_HOST} with roxyd {CONFIRMED_VERSION} \
+             ({CONFIRMED_COMMIT}) requested"
+        );
+        for answer in [OnboardAnswer::Succeed, OnboardAnswer::Fail] {
+            let (deployer, _) = RecordingDeployer::applying();
+            let (onboarder, calls) = RecordingOnboarder::boxed(answer, RunningAnswer::List(vec![]));
+            let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+            let mutation = onboard_mutation(CONFIRMED_HOST, CONFIRMED_VERSION, CONFIRMED_COMMIT);
+            let (_response, logs) = capturing_logs(execute_without_store(&schema, &mutation)).await;
+
+            assert_eq!(calls.count(), 1);
+            let lines: Vec<&str> = logs
+                .lines()
+                .filter(|line| line.contains("Onboarding of"))
+                .collect();
+            assert_eq!(lines.len(), 1, "{logs}");
+            assert!(
+                lines
+                    .first()
+                    .expect("the length is one")
+                    .ends_with(&expected),
+                "{logs}"
+            );
+            assert!(!logs.contains(JOIN_TOKEN), "{logs}");
+        }
     }
 
     #[tokio::test]
@@ -2856,7 +3179,8 @@ mod tests {
     #[tokio::test]
     async fn onboard_host_is_ungated() {
         let (deployer, _deploy_calls) = RecordingDeployer::applying();
-        let (onboarder, onboard_calls) = RecordingOnboarder::boxed(OnboardAnswer::Succeed);
+        let (onboarder, onboard_calls) =
+            RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::List(vec![]));
         let (agents, reads) = CapabilityStub::advertising(&[]);
         let schema = Schema::build(
             Query::default(),
@@ -2868,7 +3192,11 @@ mod tests {
         .data(agents)
         .finish();
 
-        let res = execute_without_store(&schema, &onboard_mutation("new-host")).await;
+        let res = execute_without_store(
+            &schema,
+            &onboard_mutation("new-host", ONBOARD_VERSION, ONBOARD_COMMIT),
+        )
+        .await;
 
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
         assert_eq!(onboard_calls.count(), 1);
@@ -3065,7 +3393,42 @@ mod tests {
         assert!(!core_update.contains("instance"), "{core_update}");
         assert_eq!(
             sdl_line(&sdl, "onboardHost("),
-            "onboardHost(host: String!): HostOnboardingTicket!"
+            "onboardHost(host: String!, build: OnboardBuildInput!): HostOnboardingTicket!"
+        );
+    }
+
+    /// Returns the field lines of the SDL block that opens with `header`.
+    fn sdl_block_fields(sdl: &str, header: &str) -> Vec<String> {
+        sdl.split(header)
+            .nth(1)
+            .unwrap_or_else(|| panic!("the schema declares no {header}"))
+            .split("\n}")
+            .next()
+            .expect("the block body ends")
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.contains(':'))
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// The onboarding query and the onboarding build input carry exactly the
+    /// shapes their contracts name.
+    #[test]
+    fn the_onboarding_build_types_keep_their_shapes() {
+        let sdl = rendered_sdl();
+
+        assert_eq!(
+            sdl_line(&sdl, "runningRoxydBuilds"),
+            "runningRoxydBuilds: [RunningRoxydBuild!]!"
+        );
+        assert_eq!(
+            sdl_block_fields(&sdl, "input OnboardBuildInput {"),
+            vec!["version: String!", "commit: String!"]
+        );
+        assert_eq!(
+            sdl_block_fields(&sdl, "type RunningRoxydBuild {"),
+            vec!["host: String!", "version: String!", "commit: String!"]
         );
     }
 
@@ -3120,6 +3483,7 @@ mod tests {
                 "command: String!",
                 "expiresAt: DateTime!",
                 "namespace: String!",
+                "binarySha256: String!",
             ]
         );
     }

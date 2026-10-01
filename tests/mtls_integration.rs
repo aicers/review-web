@@ -30,7 +30,7 @@ mod mtls_integration {
             AcceptedPackage, AgentManager, BindAddrInput, BuildId, CertManager, DeployError,
             DeployOutcome, HostOnboarder, HostOnboardingTicket, IngressStream, IngressStreamError,
             OperationId, PackageDeployer, PackageIngestError, PackageStoreReceiver,
-            TrustActivation, TrustIngestError, TrustManager,
+            RunningRoxydBuild, TrustActivation, TrustIngestError, TrustManager,
         },
         ingress::PACKAGE_UPLOAD_PATH,
         maintenance::{MAINTENANCE_ERROR_CODE, MaintenanceGate},
@@ -292,9 +292,14 @@ xvcNsYaYqk6sRk/INvcaN2E=
 
     #[async_trait]
     impl HostOnboarder for StubHostOnboarder {
+        async fn running_roxyd_builds(&self) -> Result<Vec<RunningRoxydBuild>, anyhow::Error> {
+            Err(anyhow::anyhow!("Not supported in mTLS integration test"))
+        }
+
         async fn onboard_host(
             &self,
             _host: &str,
+            _build: &BuildId,
         ) -> Result<(HostOnboardingTicket, OperationId), anyhow::Error> {
             Err(anyhow::anyhow!("Not supported in mTLS integration test"))
         }

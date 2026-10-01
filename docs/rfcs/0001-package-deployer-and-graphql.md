@@ -543,10 +543,20 @@ New mutations:
   than coercing it, and the gate is enforced **here at the mutation boundary**,
   not only in the UI — a resumed operation or a non-UI caller reaches this path
   with the default already set, so a UI-only check would not hold.
-- **`onboardHost(host)`** — issue a join token (review commands the registrar,
-  D2 §4d); returns the one-time token/one-liner for the UI (RFC-E §6), and the
-  product namespace the host joins under, as a field of its own (§9, decision
-  22). The pending host + its expiry/cancel cleanup are review-side (D2 §4d).
+- **`onboardHost(host, build)`** — issue a join token for the roxyd `build`
+  (`{ version, commit }`, both required and non-empty) the operator confirmed
+  (review commands the registrar, D2 §4d); returns the one-time
+  token/one-liner for the UI (RFC-E §6), the product namespace the host joins
+  under, as a field of its own (§9, decision 22), and the SHA-256 of that
+  build's roxyd executable for the operator's `sha256sum -c` line (§9,
+  decision 23). The build is passed through to review unchanged, which
+  re-verifies it in its store. The pending host + its expiry/cancel cleanup
+  are review-side (D2 §4d).
+- **`runningRoxydBuilds`** — the roxyd build each connected host reports
+  running, one entry per host that answered, as review returns it. It offers
+  the operator copy candidates for `onboardHost`'s `build`; it is a snapshot
+  at read time, which `onboardHost` does not check against (§9, decision 23).
+  `SystemAdministrator`-only and not customer-scoped, like `onboardHost`.
 - **`buildSelector`** input = one of `{ version: String }` **or**
   `{ commit: String }` (the GraphQL form of the trait's `BuildSelector`;
   exactly one field set — reject both/neither at the resolver). It is passed
@@ -1329,3 +1339,42 @@ supersedes.
     `HostOnboarder` already is and the `onboardHost` resolver already reads
     it. Sourcing the namespace from `ServerConfig` would have meant plumbing
     a new datum onto the schema context for a value that already has a path.
+
+23. **Onboarding names a roxyd build a connected host runs, confirmed by the
+    operator, and the ticket carries its executable's SHA-256.** `roxyd join`
+    requires the operator to run `sha256sum -c` on the executable before the
+    token is used, and with only a host to go on this repository could name
+    neither the build in the join command nor the hash for that check.
+
+    The builds on offer come from `runningRoxydBuilds`, which lists the build
+    each connected roxyd reports running. The store's latest build may be one
+    no host runs, whose bytes the operator then has nowhere to copy from. The
+    UI preselects the build when only one is running, the operator confirms
+    it, and `onboardHost(host, build)` passes it through the trait as
+    submitted. This repository **never chooses or defaults** a build; review
+    re-verifies that exact build in its store and returns its native
+    executable's SHA-256 (`aicers/review` D2-5/24, which amends D2-5/19). The
+    list is a copy-candidate snapshot, not a guarantee: `onboardHost` accepts
+    any build review's store holds and does not require a host to be running
+    it at issuance, since checking that would race the copy anyway.
+
+    `binarySha256` is **not secret**. Like the namespace, it is an ordinary
+    field on both tickets, printed by the backend ticket's `Debug`, and the
+    resolver passes it through without validating it.
+
+    **No download route exists.** The operator copies `/opt/roxyd/bin/roxyd`
+    from a host running that build, saves the UI's `<sha256>  roxyd` line
+    beside it and runs `sha256sum -c` before `roxyd join`. The check's exit
+    status binds the bytes to the build whatever channel carried them, so
+    this repository serves no bytes, and a host updated between the list and
+    the copy fails that check before the token is used. **No architecture is
+    asked for either**: a store build key holds one package, whose native
+    executables share one architecture, and a host of another architecture
+    cannot execute the binary, while `roxyd join`'s platform preflight
+    refuses one that runs anyway before the token is read.
+
+    This supersedes decision 22's "`HostOnboarder::onboard_host` keeps its
+    signature": the trait gains `running_roxyd_builds` and `onboard_host`
+    gains a `build` argument, and `HostOnboardingTicket::new` takes the hash
+    as a fifth parameter. `aicers/review`, the trait's implementor, adapts to
+    all three.
