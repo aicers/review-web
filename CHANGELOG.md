@@ -115,9 +115,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Added the `PackageDeployer` and `HostOnboarder` traits to the `backend`
   module, alongside the existing `AgentManager`. `PackageDeployer` installs,
   updates, removes and reads packages on a host by package-id, covering agents,
-  external services and core components alike; `HostOnboarder` brings a new
-  host under management. An application embedding this crate implements both
-  and passes them to `serve`.
+  external services and core components alike; `HostOnboarder` lists the roxyd
+  build each connected host runs and brings a new host under management with
+  the build the operator confirms. An application embedding this crate
+  implements both and passes them to `serve`.
 - Added the `recommendBindAddrs(host, target)` GraphQL query, which returns the
   addresses to offer on an install form for the next instance of a module
   package on a host. It answers with `BindAddrProposals`, carrying one
@@ -186,9 +187,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   GraphQL mutations. Core updates accept the three product-managed core
   package-ids, carry the same `onFailure` policy and rollback capability gate
   as the module mutations, and return the operation id and deployment
-  disposition, while onboarding returns the operation id together with the
-  one-time join token, command, granted expiry and the product namespace the
-  host joins under.
+  disposition, while onboarding takes the roxyd build (version and commit) the
+  host joins with, and returns the operation id together with the one-time
+  join token, command, granted expiry, the product namespace the host joins
+  under and the SHA-256 of that build's roxyd executable.
+- Added the system-administrator-only `runningRoxydBuilds` GraphQL query, which
+  lists the roxyd build each connected host reports running, for the operator
+  to choose the build a new host joins with.
 - Added `maintenance::MaintenanceGate`. While an embedding application holds
   the gate closed, every GraphQL mutation is refused before it runs with the
   error code `MAINTENANCE`, answered over HTTP with status 503; queries and

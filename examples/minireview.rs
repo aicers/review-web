@@ -31,8 +31,8 @@ use review_web::{
     backend::{
         AcceptedPackage, AgentManager, BindAddrInput, BuildId, CertManager, DeployError,
         DeployOutcome, HostOnboarder, HostOnboardingTicket, IngressStream, OperationId,
-        PackageDeployer, PackageIngestError, PackageStoreReceiver, TrustActivation,
-        TrustIngestError, TrustManager,
+        PackageDeployer, PackageIngestError, PackageStoreReceiver, RunningRoxydBuild,
+        TrustActivation, TrustIngestError, TrustManager,
     },
     graphql::{
         Process, ResourceUsage, SamplingPolicy, customer::NetworksTargetAgentLookupKeysPair,
@@ -361,7 +361,16 @@ struct Onboarder;
 
 #[async_trait]
 impl HostOnboarder for Onboarder {
-    async fn onboard_host(&self, host: &str) -> Result<(HostOnboardingTicket, OperationId), Error> {
+    /// Lists nothing: with no registrar there is no connected roxyd to ask.
+    async fn running_roxyd_builds(&self) -> Result<Vec<RunningRoxydBuild>, Error> {
+        Ok(vec![])
+    }
+
+    async fn onboard_host(
+        &self,
+        host: &str,
+        _build: &BuildId,
+    ) -> Result<(HostOnboardingTicket, OperationId), Error> {
         bail!("Host {host} cannot be onboarded without a registrar")
     }
 }

@@ -52,6 +52,10 @@ pub(super) struct ProcessListQuery;
 #[derive(Default)]
 pub(super) struct BindAddrQuery;
 
+/// The root of the queries that prepare a host's onboarding.
+#[derive(Default)]
+pub(super) struct OnboardingQuery;
+
 /// The root of the module install, update and removal mutations.
 #[derive(Default)]
 pub(super) struct DeployMutation;

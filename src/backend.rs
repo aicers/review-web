@@ -418,24 +418,32 @@ pub struct HostOnboardingTicket {
     /// here, and it is not folded into `command`, so the operator is shown it
     /// as its own value.
     namespace: String,
+    /// The SHA-256 of the build's roxyd executable, as 64 lowercase hex
+    /// digits, for the operator's `sha256sum -c` check.
+    ///
+    /// It is not secret, and it is not validated here: the implementor
+    /// supplies it from the verified package, as it supplies `namespace`.
+    binary_sha256: String,
 }
 
 impl HostOnboardingTicket {
     /// Creates a ticket from the token, the command that consumes it, the
-    /// deadline it stops being usable at and the product namespace the host
-    /// joins under.
+    /// deadline it stops being usable at, the product namespace the host
+    /// joins under and the SHA-256 of the build's roxyd executable.
     #[must_use]
     pub fn new(
         token: JoinToken,
         command: String,
         expires_at: jiff::Timestamp,
         namespace: String,
+        binary_sha256: String,
     ) -> Self {
         Self {
             token,
             command,
             expires_at,
             namespace,
+            binary_sha256,
         }
     }
 
@@ -445,14 +453,29 @@ impl HostOnboardingTicket {
         &self.namespace
     }
 
-    /// Consumes the ticket and yields its four parts, so a resolver moves the
+    /// Consumes the ticket and yields its five parts, so a resolver moves the
     /// token out rather than borrowing around it.
     // Declared here for the same reason as `JoinToken::expose`.
     #[allow(dead_code)]
     #[must_use]
-    pub(crate) fn into_parts(self) -> (JoinToken, String, jiff::Timestamp, String) {
-        (self.token, self.command, self.expires_at, self.namespace)
+    pub(crate) fn into_parts(self) -> (JoinToken, String, jiff::Timestamp, String, String) {
+        (
+            self.token,
+            self.command,
+            self.expires_at,
+            self.namespace,
+            self.binary_sha256,
+        )
     }
+}
+
+/// A connected host and the roxyd build it reports running.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunningRoxydBuild {
+    /// The host that answered.
+    pub host: String,
+    /// The roxyd build that host reports running.
+    pub build: BuildId,
 }
 
 /// Why a deployment operation could not be carried out.
@@ -959,16 +982,38 @@ pub trait TrustManager: Send + Sync {
 /// then watches, so it yields an operation id like the rest.
 #[async_trait]
 pub trait HostOnboarder: Send + Sync {
-    /// Starts onboarding `host` and returns the ticket an operator pastes on
-    /// it, paired with the operation's identity.
+    /// Returns the build every connected roxyd reports running, one entry per
+    /// host that answered, sorted by host.
+    ///
+    /// A host that did not answer, or that reports no roxyd build, is left
+    /// out. The list is a snapshot at read time, offered as copy candidates;
+    /// it is not a set [`onboard_host`](Self::onboard_host) checks against.
+    /// The implementor reads the hosts; it chooses nothing.
     ///
     /// # Errors
     ///
-    /// Returns an error if the ticket could not be minted or the operation
-    /// could not be recorded.
+    /// Returns an error if the hosts could not be enumerated.
+    async fn running_roxyd_builds(&self) -> Result<Vec<RunningRoxydBuild>, anyhow::Error>;
+
+    /// Starts onboarding `host` with the roxyd `build` and returns the ticket
+    /// an operator pastes on it, paired with the operation's identity.
+    ///
+    /// `build` is the roxyd build the operator confirmed for the host,
+    /// normally one [`running_roxyd_builds`](Self::running_roxyd_builds)
+    /// reported. The implementor re-verifies that exact build in its store,
+    /// never substitutes another and never chooses one. It does not require a
+    /// host to be running the build at issuance; the operator's
+    /// `sha256sum -c` against the ticket's `binary_sha256` is what binds the
+    /// copied bytes to it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the build cannot be served, if the ticket could
+    /// not be minted or if the operation could not be recorded.
     async fn onboard_host(
         &self,
         host: &str,
+        build: &BuildId,
     ) -> Result<(HostOnboardingTicket, OperationId), anyhow::Error>;
 }
 
@@ -982,6 +1027,7 @@ mod tests {
 
     const TOKEN: &str = "s3cret-join-token";
     const NAMESPACE: &str = "clumit-security";
+    const BINARY_SHA256: &str = "5e0c2b1f9a8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b";
 
     #[test]
     fn module_package_ids_are_the_five_modules() {
@@ -1033,14 +1079,16 @@ mod tests {
             "roxyd join --token <token>".to_string(),
             expires_at,
             NAMESPACE.to_string(),
+            BINARY_SHA256.to_string(),
         );
         assert_eq!(ticket.namespace(), NAMESPACE);
 
-        let (token, command, deadline, namespace) = ticket.into_parts();
+        let (token, command, deadline, namespace, binary_sha256) = ticket.into_parts();
         assert_eq!(token.expose(), TOKEN);
         assert_eq!(command, "roxyd join --token <token>");
         assert_eq!(deadline, expires_at);
         assert_eq!(namespace, NAMESPACE);
+        assert_eq!(binary_sha256, BINARY_SHA256);
     }
 
     /// Widening the ticket did not widen what its `Debug` discloses: the
@@ -1053,6 +1101,7 @@ mod tests {
             "roxyd join --token <token>".to_string(),
             jiff::Timestamp::from_second(1_700_000_000).unwrap(),
             NAMESPACE.to_string(),
+            BINARY_SHA256.to_string(),
         );
         let rendered = format!("{ticket:?}");
 
@@ -1060,6 +1109,10 @@ mod tests {
         assert!(!rendered.contains(TOKEN), "{rendered}");
         assert!(
             rendered.contains(&format!("namespace: {NAMESPACE:?}")),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!("binary_sha256: {BINARY_SHA256:?}")),
             "{rendered}"
         );
     }

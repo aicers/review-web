@@ -5178,6 +5178,11 @@ type HostOnboardingTicket {
 	as `--namespace`. It is not secret and is not part of `command`.
 	"""
 	namespace: String!
+	"""
+	The SHA-256 of the build's roxyd executable, for a `sha256sum -c`
+	line. It is not secret.
+	"""
+	binarySha256: String!
 }
 
 """
@@ -6498,9 +6503,13 @@ type Mutation {
 	"""
 	updateCoreComponent(component: String!, host: String!, buildSelector: BuildSelectorInput!, onFailure: FailurePolicy! = ROLLBACK): UpdateCoreComponentResult!
 	"""
-	Starts onboarding a host and returns its one-time ticket.
+	Starts onboarding a host with the roxyd build the operator confirmed
+	and returns its one-time ticket.
+	
+	The build is passed through unchanged, never chosen or defaulted here;
+	`runningRoxydBuilds` lists the builds on offer.
 	"""
-	onboardHost(host: String!): HostOnboardingTicket!
+	onboardHost(host: String!, build: OnboardBuildInput!): HostOnboardingTicket!
 	"""
 	Inserts a new triage policy, returning the ID of the new triage.
 	"""
@@ -7148,6 +7157,20 @@ type NonBrowser implements Event {
 	Learning Method
 	"""
 	learningMethod: LearningMethod!
+}
+
+"""
+The roxyd build the new host joins with, as the operator confirmed it.
+"""
+input OnboardBuildInput {
+	"""
+	The build's version.
+	"""
+	version: String!
+	"""
+	The commit the build was made from.
+	"""
+	commit: String!
 }
 
 """
@@ -7964,6 +7987,18 @@ type Query {
 	and that install is where the staleness is caught.
 	"""
 	recommendBindAddrs(host: String!, target: String!): RecommendBindAddrsResult!
+	"""
+	Returns the roxyd build each connected host reports running, offered as
+	copy candidates for `onboardHost`.
+	
+	It is a snapshot at read time, which `onboardHost` does not check
+	against.
+	
+	# Errors
+	
+	Returns an error if the hosts could not be enumerated.
+	"""
+	runningRoxydBuilds: [RunningRoxydBuild!]!
 }
 
 type RankedOutlier {
@@ -8369,6 +8404,24 @@ type RoundEdge {
 	A cursor for use in pagination
 	"""
 	cursor: String!
+}
+
+"""
+A connected host and the roxyd build it reports running.
+"""
+type RunningRoxydBuild {
+	"""
+	The host that answered.
+	"""
+	host: String!
+	"""
+	The version of the roxyd build it runs.
+	"""
+	version: String!
+	"""
+	The commit that roxyd build was made from.
+	"""
+	commit: String!
 }
 
 type SamplingPolicy {
