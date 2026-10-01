@@ -181,8 +181,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   the host and the missing capability, rather than being quietly downgraded to
   a hold; the remedy is to resubmit with `HOLD`. The capability set is read on
   each such request, and a read that fails is an ordinary GraphQL error rather
-  than a refusal. The configuration draft-to-apply mutations are unchanged: an
-  install or an update never rides the draft.
+  than a refusal. An install or an update never rides the configuration draft.
+  `updateNodeDraft`, `applyNode`, `applyNodeDraft` and `removeNodes` refuse to
+  delete an installed instance's row, change its kind, or change the hostname
+  of the node that holds it, since such an instance is removed only with
+  `removeService`.
 - Added the system-administrator-only `updateCoreComponent` and `onboardHost`
   GraphQL mutations. Core updates accept the three product-managed core
   package-ids, carry the same `onFailure` policy and rollback capability gate

@@ -17,6 +17,7 @@ use super::{
     customer_sensor_list::{Sensor, SensorTotalCount},
     gen_agent_lookup_key,
     input::{AgentDraftInput, ExternalServiceInput, NodeDraftInput},
+    installed_guard,
 };
 use crate::{graphql::query_with_constraints, info_with_username};
 
@@ -191,7 +192,9 @@ impl NodeMutation {
 
     /// Removes nodes, returning the node keys that no longer exist.
     ///
-    /// Validates all requested nodes before deleting any of them.
+    /// Validates all requested nodes before deleting any of them. Refuses the whole request when
+    /// any requested node holds an installed instance, which only `removeService` removes, or
+    /// lists a row that cannot be found.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn remove_nodes(
@@ -207,15 +210,24 @@ impl NodeMutation {
             .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID".into()))
             .collect::<Result<Vec<u32>>>()?;
 
+        let mut nodes = Vec::with_capacity(ids.len());
         for id in &ids {
             // Check customer scoping before removing
-            let Some((node, _, _)) = map.get_by_id(*id)? else {
+            let Some(entry) = map.get_by_id(*id)? else {
                 return Err("no such node".into());
             };
-            if !customer_access::can_access_node(users_customers.as_deref(), &node) {
+            if !customer_access::can_access_node(users_customers.as_deref(), &entry.0) {
                 return Err("Forbidden".into());
             }
+            nodes.push(entry);
         }
+        // Only `removeService` removes an installed instance, so a node that holds one, or whose
+        // rows cannot all be read, is not removed.
+        installed_guard::check_removal(
+            nodes
+                .iter()
+                .map(|(node, agents, services)| (node, agents.as_slice(), services.as_slice())),
+        )?;
 
         let mut removed = Vec::<String>::with_capacity(ids.len());
         for id in ids {
@@ -232,6 +244,9 @@ impl NodeMutation {
     }
 
     /// Updates the given node, returning the node ID that was updated.
+    ///
+    /// Refuses an update that would delete an installed instance's row or change its kind; such an
+    /// instance is removed only with `removeService`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn update_node_draft(
@@ -254,6 +269,7 @@ impl NodeMutation {
         let (stored, _, _) = map.get_by_id(i)?.ok_or("no such node")?;
         merge_installation_state(&stored, &mut old);
         merge_installation_state(&stored, &mut new);
+        installed_guard::check_update(i, &stored.name, &old, &new)?;
         map.update(i, &old, &new)?;
         info_with_username!(ctx, "Node {:?} has been modified", old.name);
         Ok(id)
@@ -368,7 +384,10 @@ mod tests {
     use review_database as database;
     use serde_json::json;
 
-    use super::super::test_support::{insert_active_node, update_account_customers};
+    use super::super::test_support::{
+        insert_active_node, installed_agent, installed_service, node_draft_input, put_node,
+        stored_node, update_account_customers,
+    };
     #[cfg(feature = "auth-mtls")]
     use super::agent_lookup_keys_by_customer_id;
     use crate::graphql::{Role, TestSchema};
@@ -783,6 +802,35 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
+        // REView records an installed instance only on a node with an active
+        // profile, so the profile is promoted before the install state is
+        // seeded.
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNodeDraft(
+                        id: "0"
+                        node: {
+                            name: "node"
+                            nameDraft: "node"
+                            profile: null
+                            profileDraft: {
+                                customerId: 0, description: "description", hostname: "node.example.com"
+                            }
+                            agents: [{
+                                key: "agent", kind: SENSOR, status: ENABLED,
+                                config: null, draft: "value = 'old'"
+                            }]
+                            externalServices: [{
+                                key: "service", kind: DATA_STORE, status: ENABLED, draft: "value = 'old'"
+                            }]
+                        }
+                    ) { id }
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+
         let (installed_agent, installed_service) = {
             let store = schema.store();
             let (node, _, _) = store
@@ -838,13 +886,15 @@ mod tests {
                         old: {
                             name: "node"
                             nameDraft: "node"
-                            profile: null
+                            profile: {
+                                customerId: 0, description: "description", hostname: "node.example.com"
+                            }
                             profileDraft: {
                                 customerId: 0, description: "description", hostname: "node.example.com"
                             }
                             agents: [{
                                 key: "agent", kind: SENSOR, status: ENABLED,
-                                config: null, draft: "value = 'old'"
+                                config: "value = 'old'", draft: "value = 'old'"
                             }]
                             externalServices: [{
                                 key: "service", kind: DATA_STORE, status: ENABLED, draft: "value = 'old'"
@@ -917,13 +967,15 @@ mod tests {
                         old: {
                             name: "node"
                             nameDraft: "node"
-                            profile: null
+                            profile: {
+                                customerId: 0, description: "description", hostname: "node.example.com"
+                            }
                             profileDraft: {
                                 customerId: 0, description: "description", hostname: "node.example.com"
                             }
                             agents: [{
                                 key: "agent", kind: SENSOR, status: ENABLED,
-                                config: null, draft: "value = 'new'"
+                                config: "value = 'old'", draft: "value = 'new'"
                             }]
                             externalServices: [{
                                 key: "service", kind: DATA_STORE, status: ENABLED, draft: "value = 'new'"
@@ -1036,7 +1088,9 @@ mod tests {
                         old: {
                             name: "node"
                             nameDraft: "node"
-                            profile: null
+                            profile: {
+                                customerId: 0, description: "description", hostname: "node.example.com"
+                            }
                             profileDraft: {
                                 customerId: 0, description: "description", hostname: "node.example.com"
                             }
@@ -1047,7 +1101,7 @@ mod tests {
                                 },
                                 {
                                     key: "agent", kind: SENSOR, status: ENABLED,
-                                    config: null, draft: "value = 'new'"
+                                    config: "value = 'old'", draft: "value = 'new'"
                                 }
                             ]
                             externalServices: [
@@ -1130,13 +1184,15 @@ mod tests {
                         node: {
                             name: "node"
                             nameDraft: "node"
-                            profile: null
+                            profile: {
+                                customerId: 0, description: "description", hostname: "node.example.com"
+                            }
                             profileDraft: {
                                 customerId: 0, description: "description", hostname: "node.example.com"
                             }
                             agents: [{
                                 key: "agent", kind: SENSOR, status: ENABLED,
-                                config: null, draft: "value = 'new'"
+                                config: "value = 'old'", draft: "value = 'new'"
                             }]
                             externalServices: [{
                                 key: "service", kind: DATA_STORE, status: ENABLED, draft: "value = 'new'"
@@ -3114,5 +3170,379 @@ mod tests {
         let data = res.data.into_json().unwrap();
         let edges = data["nodeList"]["edges"].as_array().unwrap();
         assert!(edges.is_empty());
+    }
+
+    const INSTALLED_HOST: &str = "host1.example.com";
+
+    /// Stores a node holding numbered agent `001.piglet` and numbered Giganto
+    /// service `002.giganto`, next to unnumbered agent `hog` and unnumbered
+    /// Giganto service `giganto`.
+    fn put_installed_node(store: &review_database::Store, name: &str) -> u32 {
+        put_installed_node_on(store, name, Some(INSTALLED_HOST))
+    }
+
+    fn put_installed_node_on(
+        store: &review_database::Store,
+        name: &str,
+        hostname: Option<&str>,
+    ) -> u32 {
+        put_node(
+            store,
+            name,
+            hostname,
+            vec![
+                installed_agent(
+                    "001.piglet",
+                    review_database::AgentKind::Sensor,
+                    Some("a = 1"),
+                    Some(1),
+                ),
+                installed_agent(
+                    "hog",
+                    review_database::AgentKind::SemiSupervised,
+                    Some("b = 1"),
+                    None,
+                ),
+            ],
+            vec![
+                installed_service(
+                    "002.giganto",
+                    review_database::ExternalServiceKind::DataStore,
+                    Some(""),
+                    Some(2),
+                ),
+                installed_service(
+                    "giganto",
+                    review_database::ExternalServiceKind::DataStore,
+                    Some("c = 1"),
+                    None,
+                ),
+            ],
+        )
+    }
+
+    async fn update_draft(
+        schema: &TestSchema,
+        id: u32,
+        old: &review_database::Node,
+        new: &str,
+    ) -> async_graphql::Response {
+        schema
+            .execute_as_system_admin(&format!(
+                "mutation {{ updateNodeDraft(id: \"{id}\", old: {}, new: {new}) }}",
+                super::super::test_support::node_input(old)
+            ))
+            .await
+    }
+
+    fn only_error(res: &async_graphql::Response) -> &str {
+        assert_eq!(res.errors.len(), 1, "expected one error: {:?}", res.errors);
+        &res.errors[0].message
+    }
+
+    #[tokio::test]
+    async fn update_node_draft_refuses_dropping_a_numbered_row() {
+        let schema = TestSchema::new().await;
+        let id = put_installed_node(&schema.store(), "installed");
+        let stored = stored_node(&schema.store(), id);
+
+        let mut new = stored.clone();
+        new.agents.retain(|a| a.key != "001.piglet");
+        let res = update_draft(&schema, id, &stored, &node_draft_input(&new, true, true)).await;
+        let err = only_error(&res);
+        assert!(err.contains("Node \"installed\" (ID 0)"), "{err}");
+        assert!(
+            err.contains("delete installed instance rows 001.piglet"),
+            "{err}"
+        );
+        assert!(err.contains("removeService"), "{err}");
+        assert_eq!(stored_node(&schema.store(), id), stored);
+
+        let mut new = stored.clone();
+        new.external_services.retain(|s| s.key != "002.giganto");
+        let res = update_draft(&schema, id, &stored, &node_draft_input(&new, true, true)).await;
+        let err = only_error(&res);
+        assert!(
+            err.contains("delete installed instance rows 002.giganto"),
+            "{err}"
+        );
+        assert_eq!(stored_node(&schema.store(), id), stored);
+    }
+
+    #[tokio::test]
+    async fn update_node_draft_refuses_omitting_a_list_with_a_numbered_row() {
+        let schema = TestSchema::new().await;
+        let id = put_installed_node(&schema.store(), "installed");
+        let stored = stored_node(&schema.store(), id);
+
+        let res = update_draft(
+            &schema,
+            id,
+            &stored,
+            &node_draft_input(&stored, false, true),
+        )
+        .await;
+        let err = only_error(&res);
+        assert!(
+            err.contains("delete installed instance rows 001.piglet"),
+            "{err}"
+        );
+        assert!(!err.contains("hog"), "{err}");
+        assert_eq!(stored_node(&schema.store(), id), stored);
+
+        let res = update_draft(
+            &schema,
+            id,
+            &stored,
+            &node_draft_input(&stored, true, false),
+        )
+        .await;
+        let err = only_error(&res);
+        assert!(
+            err.contains("delete installed instance rows 002.giganto"),
+            "{err}"
+        );
+        assert_eq!(stored_node(&schema.store(), id), stored);
+    }
+
+    #[tokio::test]
+    async fn update_node_draft_checks_each_list_on_its_own() {
+        let schema = TestSchema::new().await;
+        let id = put_node(
+            &schema.store(),
+            "service only",
+            Some(INSTALLED_HOST),
+            vec![installed_agent(
+                "hog",
+                review_database::AgentKind::SemiSupervised,
+                Some("b = 1"),
+                None,
+            )],
+            vec![installed_service(
+                "002.giganto",
+                review_database::ExternalServiceKind::DataStore,
+                Some(""),
+                Some(2),
+            )],
+        );
+        let stored = stored_node(&schema.store(), id);
+
+        let res = update_draft(
+            &schema,
+            id,
+            &stored,
+            &node_draft_input(&stored, false, true),
+        )
+        .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        let updated = stored_node(&schema.store(), id);
+        assert!(updated.agents.is_empty());
+        assert_eq!(updated.external_services, stored.external_services);
+    }
+
+    #[tokio::test]
+    async fn update_node_draft_refuses_changing_a_numbered_rows_kind() {
+        let schema = TestSchema::new().await;
+        let id = put_installed_node(&schema.store(), "installed");
+        let stored = stored_node(&schema.store(), id);
+
+        let mut new = stored.clone();
+        new.agents[0].kind = review_database::AgentKind::Unsupervised;
+        let res = update_draft(&schema, id, &stored, &node_draft_input(&new, true, true)).await;
+        let err = only_error(&res);
+        assert!(
+            err.contains("change the kind of installed instance rows 001.piglet"),
+            "{err}"
+        );
+        assert!(err.contains("removeService"), "{err}");
+        assert_eq!(stored_node(&schema.store(), id), stored);
+    }
+
+    #[tokio::test]
+    async fn update_node_draft_keeps_numbered_rows_and_deletes_unnumbered_ones() {
+        let schema = TestSchema::new().await;
+        let id = put_installed_node(&schema.store(), "installed");
+        let stored = stored_node(&schema.store(), id);
+
+        let mut new = stored.clone();
+        new.name_draft = Some("renamed".to_string());
+        new.agents.retain(|a| a.key != "hog");
+        new.external_services.retain(|s| s.key != "giganto");
+        new.agents[0].draft = Some("a = 2".to_string().try_into().expect("valid toml"));
+        let res = update_draft(&schema, id, &stored, &node_draft_input(&new, true, true)).await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+
+        let updated = stored_node(&schema.store(), id);
+        assert_eq!(updated.name_draft.as_deref(), Some("renamed"));
+        assert_eq!(updated.agents.len(), 1);
+        let agent = &updated.agents[0];
+        assert_eq!(agent.key, "001.piglet");
+        assert_eq!(agent.instance, Some(1));
+        assert_eq!(agent.installed_version, stored.agents[0].installed_version);
+        assert_eq!(
+            agent.draft.as_ref().map(AsRef::as_ref),
+            Some("a = 2"),
+            "the numbered row's draft is still editable"
+        );
+        assert_eq!(updated.external_services.len(), 1);
+        assert_eq!(updated.external_services[0].key, "002.giganto");
+        assert_eq!(updated.external_services[0].instance, Some(2));
+    }
+
+    #[tokio::test]
+    async fn update_node_draft_with_stale_old_reports_entry_changed() {
+        let schema = TestSchema::new().await;
+        let id = put_installed_node(&schema.store(), "installed");
+        let stored = stored_node(&schema.store(), id);
+
+        // `old` omits the numbered agent the store holds, so the check
+        // cannot see it, and `new` leaves it out too.
+        let mut stale = stored.clone();
+        stale.agents.retain(|a| a.key != "001.piglet");
+        let res = update_draft(&schema, id, &stale, &node_draft_input(&stale, true, true)).await;
+        assert_eq!(only_error(&res), "entry changed");
+        assert_eq!(stored_node(&schema.store(), id), stored);
+    }
+
+    #[tokio::test]
+    async fn remove_nodes_refuses_a_node_holding_a_numbered_row() {
+        let schema = TestSchema::new().await;
+        let a = put_node(
+            &schema.store(),
+            "plain",
+            Some("host0.example.com"),
+            vec![installed_agent(
+                "hog",
+                review_database::AgentKind::SemiSupervised,
+                Some("b = 1"),
+                None,
+            )],
+            vec![],
+        );
+        let b = put_installed_node(&schema.store(), "installed");
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"mutation {{ removeNodes(ids: ["{a}", "{b}"]) }}"#
+            ))
+            .await;
+        let err = only_error(&res);
+        assert!(err.contains("Node \"installed\" (ID 1)"), "{err}");
+        assert!(
+            err.contains("holds installed instance rows 001.piglet, 002.giganto"),
+            "{err}"
+        );
+        assert!(err.contains("removeService"), "{err}");
+        assert!(!err.contains("plain"), "{err}");
+        assert!(schema.store().node_map().get_by_id(a).unwrap().is_some());
+        assert!(schema.store().node_map().get_by_id(b).unwrap().is_some());
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"mutation {{ removeNodes(ids: ["{b}", "999"]) }}"#
+            ))
+            .await;
+        assert_eq!(only_error(&res), "no such node");
+
+        let res = schema
+            .execute_as_system_admin(&format!(r#"mutation {{ removeNodes(ids: ["{a}"]) }}"#))
+            .await;
+        assert_eq!(res.data.to_string(), r#"{removeNodes: ["plain"]}"#);
+        assert!(schema.store().node_map().get_by_id(a).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn remove_nodes_without_hostname_reports_inconsistent_state() {
+        let schema = TestSchema::new().await;
+        let id = put_installed_node_on(&schema.store(), "hostless", None);
+
+        let res = schema
+            .execute_as_system_admin(&format!(r#"mutation {{ removeNodes(ids: ["{id}"]) }}"#))
+            .await;
+        let err = only_error(&res);
+        assert!(
+            err.contains("001.piglet (instance 1), 002.giganto (instance 2)"),
+            "{err}"
+        );
+        assert!(err.contains("has no active hostname"), "{err}");
+        assert!(err.contains("operator must investigate"), "{err}");
+        assert!(!err.contains("removeService"), "{err}");
+        assert!(schema.store().node_map().get_by_id(id).unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn remove_nodes_refuses_a_node_with_an_unreadable_row() {
+        let schema = TestSchema::new().await;
+        let id = put_node(
+            &schema.store(),
+            "unreadable",
+            Some(INSTALLED_HOST),
+            vec![
+                installed_agent(
+                    "hog",
+                    review_database::AgentKind::SemiSupervised,
+                    Some("b = 1"),
+                    None,
+                ),
+                installed_agent(
+                    "piglet",
+                    review_database::AgentKind::Sensor,
+                    Some("a = 1"),
+                    None,
+                ),
+            ],
+            vec![],
+        );
+        schema
+            .store()
+            .agents_map()
+            .delete(id, "piglet")
+            .expect("delete the agent row behind the node's back");
+        let (_, invalid_agents, _) = schema.store().node_map().get_by_id(id).unwrap().unwrap();
+        assert_eq!(invalid_agents, vec!["piglet".to_string()]);
+
+        let res = schema
+            .execute_as_system_admin(&format!(r#"mutation {{ removeNodes(ids: ["{id}"]) }}"#))
+            .await;
+        let err = only_error(&res);
+        assert!(
+            err.contains("Node \"unreadable\" (ID 0) is not removed"),
+            "{err}"
+        );
+        assert!(err.contains("rows piglet that could not be found"), "{err}");
+        assert!(err.contains("operator must investigate"), "{err}");
+        assert!(!err.contains("removeService"), "{err}");
+        assert!(!err.contains("holds installed"), "{err}");
+        assert!(schema.store().node_map().get_by_id(id).unwrap().is_some());
+
+        // A node that also holds a numbered row gets the actionable message,
+        // listing the missing key as well.
+        let installed =
+            put_installed_node_on(&schema.store(), "installed", Some("host2.example.com"));
+        schema
+            .store()
+            .agents_map()
+            .delete(installed, "hog")
+            .expect("delete the agent row behind the node's back");
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"mutation {{ removeNodes(ids: ["{installed}"]) }}"#
+            ))
+            .await;
+        let err = only_error(&res);
+        assert!(
+            err.contains("holds installed instance rows 001.piglet"),
+            "{err}"
+        );
+        assert!(err.contains("rows hog that could not be found"), "{err}");
+        assert!(err.contains("removeService"), "{err}");
+        assert!(
+            schema
+                .store()
+                .node_map()
+                .get_by_id(installed)
+                .unwrap()
+                .is_some()
+        );
     }
 }
