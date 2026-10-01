@@ -222,8 +222,6 @@ struct SubQueryTwoA(
 struct SubQueryTwoB(
     core_component::CoreComponentQuery,
     operation_attempt::OperationAttemptQuery,
-    triage::TriagePolicyQuery,
-    triage::TriageExclusionReasonQuery,
     triage::TriageResponseQuery,
     trusted_domain::TrustedDomainQuery,
     traffic_filter::TrafficFilterQuery,
@@ -307,8 +305,6 @@ struct SubMutationTwoA(
 struct SubMutationTwoB(
     label_db::LabelDbMutation,
     node::DeployMutation,
-    triage::TriagePolicyMutation,
-    triage::TriageExclusionReasonMutation,
     triage::TriageResponseMutation,
     trusted_domain::TrustedDomainMutation,
     traffic_filter::TrafficFilterMutation,
