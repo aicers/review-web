@@ -162,6 +162,17 @@ impl From<&PacketAttrInput> for database::PacketAttr {
 mod tests {
     use crate::graphql::TestSchema;
 
+    /// A DCE/RPC packet attribute shared by the inline-policy tests, so that
+    /// only the confidence entry differs between them.
+    const DCE_RPC_PACKET_ATTR: &str = r#"[{
+        rawEventKind: DCE_RPC
+        attrName: "Presentation Context ID"
+        valueKind: U_INTEGER
+        cmpKind: EQUAL
+        firstValue: [1]
+        weight: 1.0
+    }]"#;
+
     /// Runs `eventListWithTriage` with a single inline policy built from the
     /// given `packetAttr` and `confidence` lists.
     async fn event_list_with_inline_policy(
@@ -195,19 +206,7 @@ mod tests {
         let schema = TestSchema::new().await;
 
         // Exercises the remote enum conversions used by PacketAttrInput.
-        let res = event_list_with_inline_policy(
-            &schema,
-            r#"[{
-                rawEventKind: DCE_RPC
-                attrName: "Presentation Context ID"
-                valueKind: U_INTEGER
-                cmpKind: EQUAL
-                firstValue: [1]
-                weight: 1.0
-            }]"#,
-            "[]",
-        )
-        .await;
+        let res = event_list_with_inline_policy(&schema, DCE_RPC_PACKET_ATTR, "[]").await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
     }
 
@@ -217,7 +216,7 @@ mod tests {
 
         let res = event_list_with_inline_policy(
             &schema,
-            "[]",
+            DCE_RPC_PACKET_ATTR,
             r#"[{ threatCategory: null, threatKind: "Unspecified", confidence: 0.25 }]"#,
         )
         .await;
@@ -231,7 +230,7 @@ mod tests {
         // threatKind is required even when threatCategory is null.
         let res = event_list_with_inline_policy(
             &schema,
-            "[]",
+            DCE_RPC_PACKET_ATTR,
             "[{ threatCategory: null, confidence: 0.25 }]",
         )
         .await;
