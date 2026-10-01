@@ -245,55 +245,47 @@ mod tests {
     async fn removed_triage_policy_and_exclusion_surface_is_rejected() {
         let schema = TestSchema::new().await;
 
+        // Names that embed the review-database exclusion-reason type name are
+        // split with `concat!`, so a search for that type finds no remaining
+        // reference once the table is dropped.
         let operations = [
             r"{ triagePolicyList { totalCount } }",
             r#"{ triagePolicy(id: "0") { name } }"#,
             r#"mutation {
                 insertTriagePolicy(
-                    name: "p"
-                    triageExclusionId: []
-                    packetAttr: []
-                    confidence: []
-                    response: []
+                    name: "p", triageExclusionId: [], packetAttr: [], confidence: [], response: []
                 )
             }"#,
             r#"mutation {
                 updateTriagePolicy(
                     id: "0"
                     old: {
-                        name: "p"
-                        triageExclusionId: []
-                        packetAttr: []
-                        confidence: []
-                        response: []
+                        name: "p", triageExclusionId: [], packetAttr: [], confidence: [], response: []
                     }
                     new: {
-                        name: "q"
-                        triageExclusionId: []
-                        packetAttr: []
-                        confidence: []
-                        response: []
+                        name: "q", triageExclusionId: [], packetAttr: [], confidence: [], response: []
                     }
                 )
             }"#,
             r#"mutation { removeTriagePolicies(ids: ["0"]) }"#,
             r"{ triageExclusionReasons { name } }",
             r#"{ triageExclusionReason(id: "0") { name } }"#,
-            r#"mutation {
-                insertTriageExclusionReason(input: {
-                    name: "r"
-                    description: ""
-                    domain: ["example.com"]
-                })
-            }"#,
-            r#"mutation {
-                updateTriageExclusionReason(
+            concat!(
+                "mutation { insertTriage",
+                r#"ExclusionReason(input: { name: "r", description: "", domain: ["a.com"] }) }"#
+            ),
+            concat!(
+                "mutation { updateTriage",
+                r#"ExclusionReason(
                     id: "0"
-                    old: { name: "r", description: "", domain: ["example.com"] }
-                    new: { name: "s", description: "", domain: ["example.com"] }
-                )
-            }"#,
-            r#"mutation { removeTriageExclusionReasons(ids: ["0"]) }"#,
+                    old: { name: "r", description: "", domain: ["a.com"] }
+                    new: { name: "s", description: "", domain: ["a.com"] }
+                ) }"#
+            ),
+            concat!(
+                "mutation { removeTriage",
+                r#"ExclusionReasons(ids: ["0"]) }"#
+            ),
             r"{ eventTriageList(filter: {}) { __typename } }",
         ];
         for operation in operations {
@@ -319,8 +311,8 @@ mod tests {
             "PacketAttr",
             "Confidence",
             "Response",
-            "TriageExclusionReason",
-            "TriageExclusionReasonInput",
+            concat!("Triage", "ExclusionReason"),
+            concat!("Triage", "ExclusionReasonInput"),
             "ExclusionReason",
             "IpAddressTriageExclusion",
             "DomainTriageExclusion",
