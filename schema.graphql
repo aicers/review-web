@@ -7963,8 +7963,16 @@ type Query {
 	"""
 	eventCountsByNetwork(filter: EventListFilterInput!, first: Int!): StringEventCounter!
 	"""
-	A time series of event frequencies. The period length is given in
-	seconds.
+	A dense time series for `[start, end)`, aligned to `start`, with a
+	positive `period` in seconds. Both `filter.start` and `filter.end` must
+	be explicitly provided and non-null; omitted bounds no longer default
+	to the Unix epoch or an unbounded end. Timestamps must fit signed i64
+	nanoseconds. Valid ranges with `start >= end` return an empty list.
+	Returns `ceil((end - start) / period)` buckets, including zeros and a
+	partial final bucket. Events exactly at `end` are excluded. At most
+	10,000 buckets are allowed; larger requests return an error before
+	event iteration. Provide both bounds for missing-bound errors, or
+	increase `period` or narrow the time range for bucket-limit errors.
 	"""
 	eventFrequencySeries(filter: EventListFilterInput!, period: Int!): [Int!]!
 	"""
