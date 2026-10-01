@@ -2137,7 +2137,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(
             res.errors[0]
                 .message
@@ -2167,7 +2167,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r#"mutation { removeAccounts(usernames: ["admin"]) }"#)
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(
             res.errors[0]
                 .message
@@ -2183,7 +2183,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r#"mutation { removeAccounts(usernames: ["user"]) }"#)
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(
             res.errors[0]
                 .message
@@ -2387,11 +2387,11 @@ mod tests {
         let Some(Value::String(review_token)) = sign_in_payload.get("reviewToken") else {
             panic!("missing reviewToken: {sign_in_payload:?}");
         };
-        assert!(!review_token.is_empty());
+        assert_ne!(review_token, "");
         let Some(Value::String(aimer_token)) = sign_in_payload.get("aimerToken") else {
             panic!("missing aimerToken: {sign_in_payload:?}");
         };
-        assert!(!aimer_token.is_empty());
+        assert_ne!(aimer_token, "");
 
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
@@ -2419,11 +2419,11 @@ mod tests {
         let Some(Value::String(new_review_token)) = refresh_payload.get("reviewToken") else {
             panic!("missing reviewToken: {refresh_payload:?}");
         };
-        assert!(!new_review_token.is_empty());
+        assert_ne!(new_review_token, "");
         let Some(Value::String(new_aimer_token)) = refresh_payload.get("aimerToken") else {
             panic!("missing aimerToken: {refresh_payload:?}");
         };
-        assert!(!new_aimer_token.is_empty());
+        assert_ne!(new_aimer_token, "");
         assert!(refresh_payload.contains_key("expirationTime"));
     }
 
@@ -2479,7 +2479,7 @@ mod tests {
         let Some(Value::String(aimer_token)) = payload.get("aimerToken") else {
             panic!("missing aimerToken: {payload:?}");
         };
-        assert!(!aimer_token.is_empty());
+        assert_ne!(aimer_token, "");
         assert!(payload.contains_key("expirationTime"));
     }
 
@@ -2522,7 +2522,7 @@ mod tests {
         let Some(Value::String(review_token)) = payload.get("reviewToken") else {
             panic!("missing reviewToken: {payload:?}");
         };
-        assert!(!review_token.is_empty());
+        assert_ne!(review_token, "");
         assert!(matches!(payload.get("aimerToken"), Some(Value::Null)));
 
         let res = schema
@@ -2566,7 +2566,7 @@ mod tests {
         let Some(Value::String(aimer_token)) = payload.get("aimerToken") else {
             panic!("missing aimerToken: {payload:?}");
         };
-        assert!(!aimer_token.is_empty());
+        assert_ne!(aimer_token, "");
     }
 
     #[tokio::test]
@@ -2791,7 +2791,7 @@ mod tests {
 
         // then
         assert_eq!(res.data.to_string(), r"null");
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
     }
 
     #[tokio::test]
@@ -2810,7 +2810,7 @@ mod tests {
 
         // then
         assert_eq!(res.data.to_string(), r"null");
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
     }
 
     #[tokio::test]
@@ -3727,7 +3727,7 @@ mod tests {
             )
             .await;
 
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert_eq!(
             res.errors.first().unwrap().message,
             "new password cannot be the same as the current password"
@@ -3784,7 +3784,7 @@ mod tests {
             )
             .await;
 
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert_eq!(
             res.errors.first().unwrap().message,
             "new password cannot be the same as the current password"
@@ -3963,7 +3963,7 @@ mod tests {
             )
             .await;
 
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert_eq!(
             res.errors.first().unwrap().message,
             "At least one of the optional fields must be provided to update."
@@ -4006,7 +4006,7 @@ mod tests {
             )
             .await;
 
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert_eq!(
             res.errors.first().unwrap().message,
             "incorrect current password"
@@ -4049,7 +4049,7 @@ mod tests {
             )
             .await;
 
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert_eq!(
             res.errors.first().unwrap().message,
             "new password cannot be the same as the current password"
@@ -4244,7 +4244,7 @@ mod tests {
             .await;
 
         // Should return an error
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(res.errors.first().unwrap().message.contains("not found"));
     }
 
@@ -4330,7 +4330,7 @@ mod tests {
 
         for mutation in &mutations {
             let res = schema.execute_as_system_admin(mutation).await;
-            assert!(res.errors.is_empty());
+            assert_eq!(res.errors, Vec::new());
         }
 
         // Query comprehensive user list
@@ -4353,7 +4353,7 @@ mod tests {
             )
             .await;
 
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         let Value::Object(data) = res.data else {
             panic!("unexpected response: {res:?}");
@@ -4415,7 +4415,7 @@ mod tests {
                 RoleGuard::Role(Role::SecurityAdministrator),
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert_eq!(res.errors[0].message, "Forbidden");
 
         // Test that SystemAdministrator can create accounts
@@ -4488,7 +4488,7 @@ mod tests {
                 RoleGuard::Role(Role::SecurityAdministrator),
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert_eq!(res.errors[0].message, "Forbidden");
 
         // Test that SystemAdministrator can remove accounts
@@ -4530,7 +4530,7 @@ mod tests {
                 RoleGuard::Role(Role::SecurityAdministrator),
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert_eq!(res.errors[0].message, "Forbidden");
 
         // Test that SystemAdministrator can use removeAccountsExact
@@ -4771,7 +4771,7 @@ mod tests {
             )
             .await;
 
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert_eq!(res.errors.first().unwrap().message, "User not found");
     }
 
@@ -4887,7 +4887,7 @@ mod tests {
             )
             .await;
 
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(res.errors.first().unwrap().message.contains("Forbidden"));
     }
 
@@ -5007,7 +5007,7 @@ mod tests {
             )
             .await;
 
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(res.errors.first().unwrap().message.contains("Forbidden"));
     }
 
@@ -5096,7 +5096,7 @@ mod tests {
                 }",
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(
             res.errors
                 .first()
@@ -5124,7 +5124,7 @@ mod tests {
                 RoleGuard::Role(Role::SecurityAdministrator),
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(res.errors.first().unwrap().message.contains("Forbidden"));
     }
 
@@ -5244,7 +5244,7 @@ mod tests {
                     }"#,
                 )
                 .await;
-            assert!(!res.errors.is_empty());
+            assert_ne!(res.errors, Vec::new());
         }
 
         let account = map.get("brute").unwrap().unwrap();
@@ -5300,7 +5300,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
 
         let account = map.get("sysadmin2").unwrap().unwrap();
         assert!(
@@ -5348,7 +5348,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(res.errors.first().unwrap().message.contains("suspended"));
     }
 

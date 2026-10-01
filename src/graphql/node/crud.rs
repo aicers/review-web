@@ -842,7 +842,7 @@ mod tests {
             assert_eq!(agent.installed_version, None);
             assert_eq!(agent.installed_commit, None);
             assert_eq!(agent.lifecycle, review_database::Lifecycle::NotInstalled);
-            assert!(agent.bound_addrs.is_empty());
+            assert_eq!(agent.bound_addrs.len(), 0);
             assert_eq!(agent.instance, None);
             let service = node
                 .external_services
@@ -851,7 +851,7 @@ mod tests {
             assert_eq!(service.installed_version, None);
             assert_eq!(service.installed_commit, None);
             assert_eq!(service.lifecycle, review_database::Lifecycle::NotInstalled);
-            assert!(service.bound_addrs.is_empty());
+            assert_eq!(service.bound_addrs.len(), 0);
             assert_eq!(service.instance, None);
 
             let mut installed_agent = agent.clone();
@@ -1043,7 +1043,7 @@ mod tests {
                 added_agent.lifecycle,
                 review_database::Lifecycle::NotInstalled
             );
-            assert!(added_agent.bound_addrs.is_empty());
+            assert_eq!(added_agent.bound_addrs.len(), 0);
             assert_eq!(added_agent.instance, None);
 
             let kept_service = mixed
@@ -1074,7 +1074,7 @@ mod tests {
                 added_service.lifecycle,
                 review_database::Lifecycle::NotInstalled
             );
-            assert!(added_service.bound_addrs.is_empty());
+            assert_eq!(added_service.bound_addrs.len(), 0);
             assert_eq!(added_service.instance, None);
         }
 
@@ -1771,7 +1771,7 @@ mod tests {
             .await;
 
         // assert error occurs
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
 
         // Check node state
         let res = schema
@@ -1903,7 +1903,7 @@ mod tests {
             .await;
 
         // assert error occurs
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
 
         // Check node state
         let res = schema
@@ -2344,7 +2344,7 @@ mod tests {
         );
         let data = res.data.into_json().unwrap();
         let edges = data["nodeList"]["edges"].as_array().unwrap();
-        assert!(edges.is_empty());
+        assert_eq!(edges.len(), 0);
         assert_eq!(data["nodeList"]["totalCount"], json!("0"));
     }
 
@@ -2463,7 +2463,7 @@ mod tests {
         );
         let data = res.data.into_json().unwrap();
         let edges = data["nodeList"]["edges"].as_array().unwrap();
-        assert!(edges.is_empty());
+        assert_eq!(edges.len(), 0);
         assert_eq!(data["nodeList"]["pageInfo"]["hasNextPage"], json!(false));
         assert_eq!(
             data["nodeList"]["pageInfo"]["hasPreviousPage"],
@@ -2661,7 +2661,7 @@ mod tests {
 
         let data = res.data.into_json().unwrap();
         let edges = data["nodeList"]["edges"].as_array().unwrap();
-        assert!(edges.is_empty());
+        assert_eq!(edges.len(), 0);
         assert_eq!(data["nodeList"]["totalCount"], json!("0"));
     }
 
@@ -3166,10 +3166,10 @@ mod tests {
                 Some(vec![]),
             )
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
         let data = res.data.into_json().unwrap();
         let edges = data["nodeList"]["edges"].as_array().unwrap();
-        assert!(edges.is_empty());
+        assert_eq!(edges.len(), 0);
     }
 
     const INSTALLED_HOST: &str = "host1.example.com";
@@ -3336,7 +3336,7 @@ mod tests {
         .await;
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
         let updated = stored_node(&schema.store(), id);
-        assert!(updated.agents.is_empty());
+        assert_eq!(updated.agents.len(), 0);
         assert_eq!(updated.external_services, stored.external_services);
     }
 

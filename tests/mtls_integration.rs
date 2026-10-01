@@ -1197,7 +1197,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
         )
         .await?;
         assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
-        assert!(!upload_error(response).await?.is_empty());
+        assert_ne!(upload_error(response).await?, "");
         server.shutdown.notify_one();
         server.shutdown.notified().await;
         Ok(())
@@ -1225,7 +1225,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
         )
         .await?;
         assert_eq!(response.status(), reqwest::StatusCode::PAYLOAD_TOO_LARGE);
-        assert!(!upload_error(response).await?.is_empty());
+        assert_ne!(upload_error(response).await?, "");
         server.shutdown.notify_one();
         server.shutdown.notified().await;
         Ok(())

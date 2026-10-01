@@ -3270,7 +3270,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin("{ event(id: \"not-a-number\") { id } }")
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
     }
 
     #[tokio::test]

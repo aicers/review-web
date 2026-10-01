@@ -4386,11 +4386,12 @@ mod tests {
         assert_eq!(attempts[1]["agentKey"], "002.hog");
         assert_eq!(attempts[1]["succeeded"], true);
         assert!(attempts[1]["error"].is_null());
-        assert!(
+        assert_eq!(
             data["applyAgentConfig"]["skipped"]
                 .as_array()
                 .unwrap()
-                .is_empty()
+                .len(),
+            0
         );
     }
 
@@ -4735,7 +4736,7 @@ mod tests {
             "Expected no errors: {:?}",
             res.errors
         );
-        assert!(recorded(&calls).is_empty());
+        assert_eq!(recorded(&calls).len(), 0);
         assert_json_eq!(
             res.data.into_json().unwrap(),
             json!({
@@ -4782,7 +4783,7 @@ mod tests {
             "Expected no errors: {:?}",
             res.errors
         );
-        assert!(recorded(&calls).is_empty());
+        assert_eq!(recorded(&calls).len(), 0);
         assert_json_eq!(
             res.data.into_json().unwrap(),
             json!({ "applyAgentConfig": { "attempts": [], "skipped": [] } })
@@ -4803,7 +4804,7 @@ mod tests {
             res.errors[0].message,
             "Agent key tivan does not belong to node 0"
         );
-        assert!(recorded(&calls).is_empty());
+        assert_eq!(recorded(&calls).len(), 0);
     }
 
     #[tokio::test]
@@ -5303,7 +5304,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["piglet"]
         );
-        assert!(after.external_services.is_empty());
+        assert_eq!(after.external_services.len(), 0);
     }
 
     #[tokio::test]
