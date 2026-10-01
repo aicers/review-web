@@ -5020,6 +5020,228 @@ mod tests {
         );
     }
 
+    fn http_threat_test_fields(
+        time: DateTime<Utc>,
+        orig_last_octet: u8,
+        cluster_id: Option<u32>,
+    ) -> review_database::event::HttpThreatFields {
+        review_database::event::HttpThreatFields {
+            time: jiff_timestamp(time),
+            start_time: time.timestamp_nanos_opt().unwrap(),
+            duration: 0,
+            orig_pkts: 0,
+            resp_pkts: 0,
+            orig_l2_bytes: 0,
+            resp_l2_bytes: 0,
+            sensor: "sensor1".to_string(),
+            orig_addr: Ipv4Addr::new(192, 168, 1, orig_last_octet).into(),
+            orig_port: 10001,
+            resp_addr: Ipv4Addr::new(10, 0, 0, 1).into(),
+            resp_port: 80,
+            proto: 6,
+            method: "GET".to_string(),
+            host: "http_threat.com".to_string(),
+            uri: "/malware".to_string(),
+            referer: String::new(),
+            version: "HTTP/1.1".to_string(),
+            user_agent: "Mozilla/5.0".to_string(),
+            request_len: 100,
+            response_len: 200,
+            status_code: 200,
+            status_msg: "OK".to_string(),
+            username: String::new(),
+            password: String::new(),
+            cookie: String::new(),
+            content_encoding: String::new(),
+            content_type: "text/html".to_string(),
+            cache_control: String::new(),
+            filenames: vec![],
+            mime_types: vec![],
+            body: vec![],
+            state: String::new(),
+            db_name: String::new(),
+            rule_id: 0,
+            matched_to: String::new(),
+            cluster_id,
+            attack_kind: String::new(),
+            confidence: 1.0,
+            category: Some(EventCategory::CommandAndControl),
+        }
+    }
+
+    fn dga_test_fields(time: DateTime<Utc>) -> review_database::event::DgaFields {
+        review_database::event::DgaFields {
+            start_time: time.timestamp_nanos_opt().unwrap(),
+            duration: 0,
+            orig_pkts: 0,
+            resp_pkts: 0,
+            orig_l2_bytes: 0,
+            resp_l2_bytes: 0,
+            sensor: "sensor1".to_string(),
+            orig_addr: Ipv4Addr::new(192, 168, 1, 3).into(),
+            orig_port: 10003,
+            resp_addr: Ipv4Addr::new(10, 0, 0, 2).into(),
+            resp_port: 80,
+            proto: 6,
+            host: "dga.com".to_string(),
+            method: "GET".to_string(),
+            uri: "/".to_string(),
+            referer: String::new(),
+            version: "HTTP/1.1".to_string(),
+            user_agent: "Bot".to_string(),
+            request_len: 50,
+            response_len: 50,
+            status_code: 404,
+            status_msg: "Not Found".to_string(),
+            username: String::new(),
+            password: String::new(),
+            cookie: String::new(),
+            content_encoding: String::new(),
+            content_type: String::new(),
+            cache_control: String::new(),
+            filenames: vec![],
+            mime_types: vec![],
+            body: vec![],
+            state: String::new(),
+            confidence: 0.8,
+            category: Some(EventCategory::InitialAccess),
+        }
+    }
+
+    fn non_browser_test_fields(time: DateTime<Utc>) -> review_database::event::HttpEventFields {
+        review_database::event::HttpEventFields {
+            start_time: time.timestamp_nanos_opt().unwrap(),
+            duration: 0,
+            orig_pkts: 0,
+            resp_pkts: 0,
+            orig_l2_bytes: 0,
+            resp_l2_bytes: 0,
+            sensor: "sensor1".to_string(),
+            orig_addr: Ipv4Addr::new(192, 168, 1, 4).into(),
+            orig_port: 10004,
+            resp_addr: Ipv4Addr::new(10, 0, 0, 3).into(),
+            resp_port: 8080,
+            proto: 6,
+            host: "api.com".to_string(),
+            method: "POST".to_string(),
+            uri: "/api".to_string(),
+            referer: String::new(),
+            version: "HTTP/1.1".to_string(),
+            user_agent: "curl".to_string(),
+            request_len: 20,
+            response_len: 20,
+            status_code: 200,
+            status_msg: "OK".to_string(),
+            username: String::new(),
+            password: String::new(),
+            cookie: String::new(),
+            content_encoding: String::new(),
+            content_type: "application/json".to_string(),
+            cache_control: String::new(),
+            filenames: vec![],
+            mime_types: vec![],
+            body: vec![],
+            state: String::new(),
+            confidence: 0.5,
+            category: Some(EventCategory::Discovery),
+        }
+    }
+
+    #[tokio::test]
+    async fn event_list_resolves_http_threat_dga_and_non_browser() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let base_ts = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_micro_opt(0, 0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        let at = |secs| base_ts + chrono::TimeDelta::seconds(secs);
+
+        let messages = [
+            (
+                at(0),
+                EventKind::HttpThreat,
+                bincode::serialize(&http_threat_test_fields(at(0), 1, None)),
+            ),
+            (
+                at(1),
+                EventKind::HttpThreat,
+                bincode::serialize(&http_threat_test_fields(at(1), 2, Some(1005))),
+            ),
+            (
+                at(2),
+                EventKind::DomainGenerationAlgorithm,
+                bincode::serialize(&dga_test_fields(at(2))),
+            ),
+            (
+                at(3),
+                EventKind::NonBrowser,
+                bincode::serialize(&non_browser_test_fields(at(3))),
+            ),
+        ];
+        for (time, kind, fields) in messages {
+            db.put(&EventMessage {
+                time: jiff_timestamp(time),
+                kind,
+                fields: fields.unwrap(),
+            })
+            .unwrap();
+        }
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"{
+                    eventList(filter: {
+                        start: "2024-01-01T00:00:00Z",
+                        end: "2024-01-02T00:00:00Z"
+                    }, first: 10) {
+                        edges { node {
+                            __typename
+                            ... on HttpThreat { origAddr clusterId }
+                            ... on DomainGenerationAlgorithm { origAddr }
+                            ... on NonBrowser { origAddr }
+                        } }
+                    }
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "Errors: {:?}", res.errors);
+        let json: serde_json::Value =
+            serde_json::to_value(&res.data).expect("serializable response data");
+        let nodes: Vec<&serde_json::Value> = json["eventList"]["edges"]
+            .as_array()
+            .expect("edges should be an array")
+            .iter()
+            .map(|edge| &edge["node"])
+            .collect();
+        assert_eq!(
+            nodes,
+            [
+                &serde_json::json!({
+                    "__typename": "HttpThreat",
+                    "origAddr": "192.168.1.1",
+                    "clusterId": "",
+                }),
+                &serde_json::json!({
+                    "__typename": "HttpThreat",
+                    "origAddr": "192.168.1.2",
+                    "clusterId": "1005",
+                }),
+                &serde_json::json!({
+                    "__typename": "DomainGenerationAlgorithm",
+                    "origAddr": "192.168.1.3",
+                }),
+                &serde_json::json!({
+                    "__typename": "NonBrowser",
+                    "origAddr": "192.168.1.4",
+                }),
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn event_list_unusual_destination_pattern() {
         let schema = TestSchema::new().await;
