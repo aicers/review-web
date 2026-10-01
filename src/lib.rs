@@ -20,17 +20,18 @@ use std::{
     sync::Arc,
 };
 
-use async_graphql::{
-    Data,
-    http::{GraphQLPlaygroundConfig, playground_source},
-};
+use async_graphql::Data;
+#[cfg(feature = "auth-jwt")]
+use async_graphql::http::{GraphQLPlaygroundConfig, playground_source};
 use async_graphql_axum::{GraphQLProtocol, GraphQLRequest, GraphQLResponse, GraphQLWebSocket};
 #[cfg(feature = "auth-jwt")]
 use axum::extract::ConnectInfo;
+#[cfg(feature = "auth-jwt")]
+use axum::response::Html;
 use axum::{
     Json, Router,
     extract::{Extension, WebSocketUpgrade},
-    response::{Html, IntoResponse, Response},
+    response::{IntoResponse, Response},
     routing::{get, get_service},
 };
 use axum_extra::{
@@ -267,12 +268,14 @@ where
                 &config.reverse_proxies,
             );
 
-            let router = Router::new()
-                .route("/graphql", get(graphql_ws_handler).post(graphql_handler))
-                .route(
-                    "/graphql/playground",
-                    get(graphql_playground).post(graphql_handler),
-                )
+            let router =
+                Router::new().route("/graphql", get(graphql_ws_handler).post(graphql_handler));
+            #[cfg(feature = "auth-jwt")]
+            let router = router.route(
+                "/graphql/playground",
+                get(graphql_playground).post(graphql_handler),
+            );
+            let router = router
                 .merge(ingress::router())
                 .fallback_service(static_files.layer(TraceLayer::new_for_http()))
                 .layer(Extension(schema.clone()))
@@ -498,6 +501,7 @@ async fn graceful_shutdown(handle: axum_server::Handle<SocketAddr>, notify: Arc<
     handle.graceful_shutdown(Some(Duration::from_secs(1)));
 }
 
+#[cfg(feature = "auth-jwt")]
 #[allow(clippy::unused_async)]
 async fn graphql_playground() -> Result<impl IntoResponse, Error> {
     Ok(Html(playground_source(
