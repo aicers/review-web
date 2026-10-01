@@ -6,6 +6,7 @@ mod customer_sensor_list;
 // the class binding has one comparison site for the whole crate.
 pub(super) mod deploy;
 mod input;
+mod installed_guard;
 mod process;
 mod status;
 #[cfg(test)]

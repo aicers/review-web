@@ -887,8 +887,10 @@ by the resolver.
   non-matching selector returning a typed error; `onFailure` defaults to
   `ROLLBACK`; `updateCoreComponent` takes `(component, host)`, accepts
   `review`/`aice-web-next`/`roxyd`, and **rejects `bootroot`**.
-- The existing config draft→Apply mutations are **unchanged**; version/install
-  do not ride the draft.
+- The existing config draft→Apply mutations are **unchanged**, except that
+  they, `updateNodeDraft` and `removeNodes` refuse to delete, re-kind or
+  re-host an installed (numbered) instance's row, which only `removeService`
+  removes; version/install do not ride the draft.
 - Read types expose `installedVersion` + `installedCommit` + `lifecycle` +
   `updateAvailable` **inline** on the current list/status queries; no
   `desiredVersion`; `updateAvailable` reflects the per-build comparison

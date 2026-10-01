@@ -6308,6 +6308,10 @@ type Mutation {
 	
 	Returns success as long as the database update is successful, regardless of the outcome of
 	notifying agents or broadcasting customer ID changes.
+	
+	Refuses, before any write or agent notification, an apply that would delete an installed
+	instance's row, change its kind, or change the hostname of the node that holds one; such an
+	instance is removed only with `removeService`.
 	"""
 	applyNode(id: ID!, node: NodeInput!): ID!
 	"""
@@ -6317,6 +6321,10 @@ type Mutation {
 	single atomic update, and broadcasts customer-specific networks when the node's
 	`customer_id` changes. Does not send agent-config notifications — use `applyAgentConfig`
 	for that.
+	
+	Refuses an apply that would delete an installed instance's row, change its kind, or change
+	the hostname of the node that holds one; such an instance is removed only with
+	`removeService`.
 	"""
 	applyNodeDraft(id: ID!, node: NodeInput!): Node!
 	"""
@@ -6338,11 +6346,16 @@ type Mutation {
 	"""
 	Removes nodes, returning the node keys that no longer exist.
 	
-	Validates all requested nodes before deleting any of them.
+	Validates all requested nodes before deleting any of them. Refuses the whole request when
+	any requested node holds an installed instance, which only `removeService` removes, or
+	lists a row that cannot be found.
 	"""
 	removeNodes(ids: [ID!]!): [String!]!
 	"""
 	Updates the given node, returning the node ID that was updated.
+	
+	Refuses an update that would delete an installed instance's row or change its kind; such an
+	instance is removed only with `removeService`.
 	"""
 	updateNodeDraft(id: ID!, old: NodeInput!, new: NodeDraftInput!): ID!
 	preserveOutliers(input: [PreserveOutliersInput!]!): [PreserveOutliersOutput!]!

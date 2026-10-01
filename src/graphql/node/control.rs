@@ -142,6 +142,10 @@ impl NodeControlMutation {
     ///
     /// Returns success as long as the database update is successful, regardless of the outcome of
     /// notifying agents or broadcasting customer ID changes.
+    ///
+    /// Refuses, before any write or agent notification, an apply that would delete an installed
+    /// instance's row, change its kind, or change the hostname of the node that holds one; such an
+    /// instance is removed only with `removeService`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_node(&self, ctx: &Context<'_>, id: ID, node: NodeInput) -> Result<ID> {
@@ -242,6 +246,10 @@ impl NodeControlMutation {
     /// single atomic update, and broadcasts customer-specific networks when the node's
     /// `customer_id` changes. Does not send agent-config notifications — use `applyAgentConfig`
     /// for that.
+    ///
+    /// Refuses an apply that would delete an installed instance's row, change its kind, or change
+    /// the hostname of the node that holds one; such an instance is removed only with
+    /// `removeService`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_node_draft(&self, ctx: &Context<'_>, id: ID, node: NodeInput) -> Result<Node> {
@@ -558,6 +566,9 @@ async fn update_db(
     let (stored, _, _) = map.get_by_id(i)?.ok_or("no such node")?;
     super::crud::merge_installation_state(&stored, &mut old);
     super::crud::merge_installation_state(&stored, &mut new);
+    // Checked here rather than in the callers so that `applyNode` notifies no agent of a refused
+    // apply.
+    super::installed_guard::check_update(i, &stored.name, &old, &new)?;
     Ok(map.update(i, &old, &new)?)
 }
 
@@ -632,7 +643,10 @@ mod tests {
     use review_database::AgentStatus;
     use serde_json::json;
 
-    use super::super::test_support::{insert_active_node, insert_apps, update_account_customers};
+    use super::super::test_support::{
+        insert_active_node, insert_apps, installed_agent, installed_service, node_draft_input,
+        node_input, put_node, stored_node, update_account_customers,
+    };
     use crate::graphql::{
         AgentManager, BoxedAgentManager, Role, SamplingPolicy, TestSchema,
         customer::NetworksTargetAgentLookupKeysPair, gen_agent_lookup_key,
@@ -4999,5 +5013,360 @@ mod tests {
                 }
             })
         );
+    }
+
+    const INSTALLED_HOST: &str = "host1.example.com";
+
+    /// Stores a node holding numbered agent `001.piglet` and numbered Giganto
+    /// service `002.giganto`, next to unnumbered agent `hog` and unnumbered
+    /// Giganto service `giganto`.
+    fn put_installed_node(store: &review_database::Store, hostname: Option<&str>) -> u32 {
+        put_node(
+            store,
+            "installed",
+            hostname,
+            vec![
+                installed_agent(
+                    "001.piglet",
+                    review_database::AgentKind::Sensor,
+                    Some("a = 1"),
+                    Some(1),
+                ),
+                installed_agent(
+                    "hog",
+                    review_database::AgentKind::SemiSupervised,
+                    Some("b = 1"),
+                    None,
+                ),
+            ],
+            vec![
+                installed_service(
+                    "002.giganto",
+                    review_database::ExternalServiceKind::DataStore,
+                    Some(""),
+                    Some(2),
+                ),
+                installed_service(
+                    "giganto",
+                    review_database::ExternalServiceKind::DataStore,
+                    Some("c = 1"),
+                    None,
+                ),
+            ],
+        )
+    }
+
+    fn toml(value: &str) -> review_database::AgentConfig {
+        value.to_string().try_into().expect("valid toml")
+    }
+
+    fn profile(hostname: &str) -> review_database::NodeProfile {
+        review_database::NodeProfile {
+            customer_id: 0,
+            description: "description".to_string(),
+            hostname: hostname.to_string(),
+        }
+    }
+
+    async fn apply(
+        schema: &TestSchema,
+        mutation: &str,
+        id: u32,
+        node: &review_database::Node,
+    ) -> async_graphql::Response {
+        let selection = if mutation == "applyNodeDraft" {
+            " { id }"
+        } else {
+            ""
+        };
+        schema
+            .execute_as_system_admin(&format!(
+                "mutation {{ {mutation}(id: \"{id}\", node: {}){selection} }}",
+                node_input(node)
+            ))
+            .await
+    }
+
+    fn only_error(res: &async_graphql::Response) -> &str {
+        assert_eq!(res.errors.len(), 1, "expected one error: {:?}", res.errors);
+        &res.errors[0].message
+    }
+
+    /// Edits the stored node's drafts through `updateNodeDraft`, as the node
+    /// dialog does before an apply, and returns the node it stored.
+    async fn stage(
+        schema: &TestSchema,
+        id: u32,
+        edit: impl FnOnce(&mut review_database::Node),
+    ) -> review_database::Node {
+        let stored = stored_node(&schema.store(), id);
+        let mut draft = stored.clone();
+        edit(&mut draft);
+        let res = schema
+            .execute_as_system_admin(&format!(
+                "mutation {{ updateNodeDraft(id: \"{id}\", old: {}, new: {}) }}",
+                node_input(&stored),
+                node_draft_input(&draft, true, true)
+            ))
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        stored_node(&schema.store(), id)
+    }
+
+    #[tokio::test]
+    async fn apply_node_draft_refuses_dropping_a_numbered_agent() {
+        let (agent_manager, _) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_installed_node(&schema.store(), Some(INSTALLED_HOST));
+
+        let node = stage(&schema, id, |n| {
+            n.agents[0].draft = None;
+            n.agents[1].draft = Some(toml("b = 2"));
+        })
+        .await;
+        let res = apply(&schema, "applyNodeDraft", id, &node).await;
+        let err = only_error(&res);
+        assert!(
+            err.contains("delete installed instance rows 001.piglet"),
+            "{err}"
+        );
+        assert!(err.contains("removeService"), "{err}");
+        let after = stored_node(&schema.store(), id);
+        assert_eq!(after, node);
+        assert_eq!(after.agents[0].instance, Some(1));
+    }
+
+    #[tokio::test]
+    async fn apply_node_draft_refuses_dropping_a_numbered_external_service() {
+        let (agent_manager, _) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_installed_node(&schema.store(), Some(INSTALLED_HOST));
+
+        let node = stage(&schema, id, |n| {
+            n.external_services[0].draft = None;
+        })
+        .await;
+        let res = apply(&schema, "applyNodeDraft", id, &node).await;
+        let err = only_error(&res);
+        assert!(
+            err.contains("delete installed instance rows 002.giganto"),
+            "{err}"
+        );
+        let after = stored_node(&schema.store(), id);
+        assert_eq!(after, node);
+        assert_eq!(after.external_services[0].instance, Some(2));
+    }
+
+    #[tokio::test]
+    async fn apply_node_refuses_dropping_a_numbered_agent_and_notifies_nothing() {
+        let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_installed_node(&schema.store(), Some(INSTALLED_HOST));
+
+        let node = stage(&schema, id, |n| {
+            n.agents[0].draft = None;
+            n.agents[1].draft = Some(toml("b = 2"));
+        })
+        .await;
+        let res = apply(&schema, "applyNode", id, &node).await;
+        let err = only_error(&res);
+        assert!(
+            err.contains("delete installed instance rows 001.piglet"),
+            "{err}"
+        );
+        assert!(recorded(&calls).is_empty(), "{:?}", recorded(&calls));
+        assert_eq!(stored_node(&schema.store(), id), node);
+
+        // With the numbered agent's draft restored the same apply goes
+        // through and notifies the agent whose draft changed.
+        let node = stage(&schema, id, |n| {
+            n.agents[0].draft = Some(toml("a = 1"));
+        })
+        .await;
+        let res = apply(&schema, "applyNode", id, &node).await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            recorded(&calls),
+            vec![test_agent_lookup_key("hog", INSTALLED_HOST)]
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_node_draft_refuses_changing_a_numbered_nodes_hostname() {
+        let (agent_manager, _) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_installed_node(&schema.store(), Some(INSTALLED_HOST));
+
+        for profile_draft in [Some(profile("host2.example.com")), None] {
+            let node = stage(&schema, id, |n| n.profile_draft = profile_draft).await;
+            let res = apply(&schema, "applyNodeDraft", id, &node).await;
+            let err = only_error(&res);
+            assert!(
+                err.contains(
+                    "change the active hostname of the node, which holds installed instance \
+                     rows 001.piglet, 002.giganto"
+                ),
+                "{err}"
+            );
+            assert!(err.contains("removeService"), "{err}");
+            assert_eq!(stored_node(&schema.store(), id), node);
+        }
+
+        // Other profile fields stay editable.
+        let mut described = profile(INSTALLED_HOST);
+        described.description = "moved rack".to_string();
+        let node = stage(&schema, id, |n| n.profile_draft = Some(described.clone())).await;
+        let res = apply(&schema, "applyNodeDraft", id, &node).await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(stored_node(&schema.store(), id).profile, Some(described));
+    }
+
+    #[tokio::test]
+    async fn apply_node_draft_on_numbered_node_without_hostname_reports_inconsistent_state() {
+        let (agent_manager, _) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_installed_node(&schema.store(), None);
+        let stored = stored_node(&schema.store(), id);
+
+        let set_hostname = |n: &mut review_database::Node| {
+            n.profile_draft = Some(profile(INSTALLED_HOST));
+        };
+        let drop_service = |n: &mut review_database::Node| {
+            n.profile_draft = None;
+            n.external_services[0].draft = None;
+        };
+        let edits: [&dyn Fn(&mut review_database::Node); 2] = [&set_hostname, &drop_service];
+        for edit in edits {
+            let node = stage(&schema, id, edit).await;
+            let res = apply(&schema, "applyNodeDraft", id, &node).await;
+            let err = only_error(&res);
+            assert!(
+                err.contains("001.piglet (instance 1), 002.giganto (instance 2)"),
+                "{err}"
+            );
+            assert!(err.contains("has no active hostname"), "{err}");
+            assert!(err.contains("operator must investigate"), "{err}");
+            assert!(!err.contains("removeService"), "{err}");
+            let after = stored_node(&schema.store(), id);
+            assert_eq!(after, node);
+            assert_eq!(after.profile, stored.profile);
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_node_draft_rehosts_and_drops_unnumbered_rows() {
+        let (agent_manager, _) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_node(
+            &schema.store(),
+            "plain",
+            Some(INSTALLED_HOST),
+            vec![
+                installed_agent(
+                    "hog",
+                    review_database::AgentKind::SemiSupervised,
+                    Some("b = 1"),
+                    None,
+                ),
+                installed_agent(
+                    "piglet",
+                    review_database::AgentKind::Sensor,
+                    Some("a = 1"),
+                    None,
+                ),
+            ],
+            vec![installed_service(
+                "giganto",
+                review_database::ExternalServiceKind::DataStore,
+                Some("c = 1"),
+                None,
+            )],
+        );
+
+        let node = stage(&schema, id, |n| {
+            n.profile_draft = Some(profile("host2.example.com"));
+            n.agents[0].draft = None;
+            n.agents[1].draft = Some(toml("a = 2"));
+            n.external_services[0].draft = None;
+        })
+        .await;
+        let res = apply(&schema, "applyNodeDraft", id, &node).await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+
+        let after = stored_node(&schema.store(), id);
+        assert_eq!(after.profile, Some(profile("host2.example.com")));
+        assert_eq!(
+            after
+                .agents
+                .iter()
+                .map(|a| a.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["piglet"]
+        );
+        assert!(after.external_services.is_empty());
+    }
+
+    #[tokio::test]
+    async fn apply_node_draft_keeps_numbered_rows_while_dropping_unnumbered_ones() {
+        let (agent_manager, _) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_installed_node(&schema.store(), Some(INSTALLED_HOST));
+        let stored = stored_node(&schema.store(), id);
+
+        let node = stage(&schema, id, |n| {
+            n.agents[0].draft = Some(toml("a = 2"));
+            n.agents[1].draft = None;
+            n.external_services[1].draft = None;
+        })
+        .await;
+        let res = apply(&schema, "applyNodeDraft", id, &node).await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+
+        let after = stored_node(&schema.store(), id);
+        assert_eq!(after.agents.len(), 1);
+        let agent = &after.agents[0];
+        assert_eq!(agent.key, "001.piglet");
+        assert_eq!(agent.config.as_ref().map(AsRef::as_ref), Some("a = 2"));
+        assert_eq!(agent.instance, stored.agents[0].instance);
+        assert_eq!(agent.installed_version, stored.agents[0].installed_version);
+        assert_eq!(agent.installed_commit, stored.agents[0].installed_commit);
+        assert_eq!(agent.lifecycle, stored.agents[0].lifecycle);
+        assert_eq!(
+            after
+                .external_services
+                .iter()
+                .map(|s| (s.key.as_str(), s.instance))
+                .collect::<Vec<_>>(),
+            vec![("002.giganto", Some(2))]
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_node_draft_keeps_a_numbered_agent_without_draft_when_no_agent_changed() {
+        let (agent_manager, _) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_node(
+            &schema.store(),
+            "unconfigured",
+            Some(INSTALLED_HOST),
+            vec![installed_agent(
+                "001.piglet",
+                review_database::AgentKind::Sensor,
+                None,
+                Some(1),
+            )],
+            vec![],
+        );
+        let stored = stored_node(&schema.store(), id);
+
+        let node = stage(&schema, id, |n| {
+            n.name_draft = Some("renamed".to_string());
+        })
+        .await;
+        let res = apply(&schema, "applyNodeDraft", id, &node).await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        let after = stored_node(&schema.store(), id);
+        assert_eq!(after.name, "renamed");
+        assert_eq!(after.agents, stored.agents);
     }
 }
