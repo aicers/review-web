@@ -3462,21 +3462,9 @@ mod tests {
     #[test]
     fn the_host_onboarding_ticket_has_exactly_its_declared_fields() {
         let sdl = rendered_sdl();
-        let body = sdl
-            .split("type HostOnboardingTicket {")
-            .nth(1)
-            .expect("the schema declares the ticket")
-            .split("\n}")
-            .next()
-            .expect("the ticket body ends");
-        let fields: Vec<&str> = body
-            .lines()
-            .map(str::trim)
-            .filter(|line| line.contains(':'))
-            .collect();
 
         assert_eq!(
-            fields,
+            sdl_block_fields(&sdl, "type HostOnboardingTicket {"),
             vec![
                 "operationId: String!",
                 "token: String!",
