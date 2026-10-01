@@ -309,7 +309,7 @@ mod tests {
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
         let data = res.data.into_json().unwrap();
         let edges = data["customerSensorList"]["edges"].as_array().unwrap();
-        assert!(edges.is_empty());
+        assert_eq!(edges.len(), 0);
         assert_eq!(data["customerSensorList"]["totalCount"], json!("0"));
     }
 
@@ -367,7 +367,7 @@ mod tests {
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
         let data = res.data.into_json().unwrap();
         let edges = data["customerSensorList"]["edges"].as_array().unwrap();
-        assert!(edges.is_empty());
+        assert_eq!(edges.len(), 0);
     }
 
     #[tokio::test]

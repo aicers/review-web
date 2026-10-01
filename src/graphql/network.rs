@@ -511,7 +511,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
     }
 
@@ -543,7 +543,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
         assert_eq!(res.data.to_string(), r#"{updateNetwork: "0"}"#);
     }
 
@@ -563,7 +563,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r#"mutation { removeNetworks(ids: ["0"]) }"#)
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
         assert_eq!(res.data.to_string(), r#"{removeNetworks: ["n1"]}"#);
     }
 
@@ -582,7 +582,7 @@ mod tests {
                 RoleGuard::Role(Role::SecurityAdministrator),
             )
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
     }
 
@@ -599,7 +599,7 @@ mod tests {
                 RoleGuard::Role(Role::SecurityManager),
             )
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
     }
 
@@ -914,7 +914,7 @@ mod tests {
                 Some(vec![0]),
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert_eq!(res.errors[0].message, "Forbidden");
 
         // Verify no network was created
@@ -954,7 +954,7 @@ mod tests {
                 Some(vec![0]),
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert_eq!(res.errors[0].message, "Forbidden");
     }
 

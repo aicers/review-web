@@ -1711,7 +1711,7 @@ mod tests {
             u64::try_from(CHUNKS * HUGE_CHUNK_LEN).expect("the total fits in a u64")
         );
         assert_eq!(observed.produced_when_first_chunk_seen, Some(1));
-        assert!(observed.bytes.is_empty());
+        assert_eq!(observed.bytes.len(), 0);
     }
 
     #[tokio::test]

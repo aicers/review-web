@@ -714,7 +714,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         let res = schema
             .execute_as_scoped_user(
@@ -875,7 +875,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
         let id = res.data.to_string().split('"').nth(1).unwrap().to_string();
 
         let query = format!(r"mutation {{ removeTriageResponses(ids: [{id}]) }}");

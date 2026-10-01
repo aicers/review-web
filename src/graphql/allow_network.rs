@@ -481,7 +481,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{allowNetworkList(customerIds: [0]){totalCount}}")
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
 
         let res = schema
             .execute_as_system_admin(
@@ -718,7 +718,7 @@ mod tests {
                 }",
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert_eq!(
             res.errors.first().expect("error must exist").message,
             "at least one ID value must be provided"
@@ -734,7 +734,7 @@ mod tests {
                 }",
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(
             res.errors
                 .first()
@@ -780,7 +780,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         let res = schema
             .execute_as_system_admin(
@@ -794,7 +794,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         // Scoped user with access to customer 0 only.
         // Querying their own customer succeeds.
@@ -828,7 +828,7 @@ mod tests {
                 Some(vec![0]),
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(
             res.errors
                 .first()
@@ -951,7 +951,7 @@ mod tests {
                 Some(vec![0]),
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(
             res.errors[0].message.contains("access denied"),
             "{}",
@@ -1038,7 +1038,7 @@ mod tests {
                 Some(vec![0]),
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(
             res.errors[0].message.contains("access denied"),
             "{}",
@@ -1087,7 +1087,7 @@ mod tests {
                 Some(vec![0]),
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(
             res.errors[0].message.contains("access denied"),
             "{}",
@@ -1106,7 +1106,7 @@ mod tests {
                 Some(vec![0]),
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(
             res.errors[0].message.contains("access denied"),
             "{}",

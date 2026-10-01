@@ -1122,7 +1122,7 @@ mod tests {
 
         let data = res.data.into_json().unwrap();
         let edges = data["nodeStatusList"]["edges"].as_array().unwrap();
-        assert!(edges.is_empty());
+        assert_eq!(edges.len(), 0);
         assert_eq!(data["nodeStatusList"]["totalCount"], json!("0"));
     }
 }

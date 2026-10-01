@@ -701,7 +701,7 @@ mod tests {
             pair.target_agent_lookup_keys().to_vec(),
             "piglet",
         );
-        assert!(pair.target_agent_lookup_keys().is_empty());
+        assert_eq!(pair.target_agent_lookup_keys().len(), 0);
     }
 
     #[test]
@@ -721,7 +721,7 @@ mod tests {
         assert_eq!(pair.target_agent_lookup_keys(), &agent_lookup_keys[..2]);
 
         let pair = NetworksTargetAgentLookupKeysPair::new(networks, agent_lookup_keys, "piglet");
-        assert!(pair.target_agent_lookup_keys().is_empty());
+        assert_eq!(pair.target_agent_lookup_keys().len(), 0);
     }
 
     #[tokio::test]
@@ -962,13 +962,13 @@ mod tests {
                 }"#,
             )
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         // Try to remove the customer - should fail
         let res = schema
             .execute_as_system_admin(r#"mutation { removeCustomers(ids: ["0"]) }"#)
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(
             res.errors[0]
                 .message
@@ -1015,7 +1015,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r#"mutation { removeCustomers(ids: ["0"]) }"#)
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(
             res.errors[0]
                 .message
@@ -1053,7 +1053,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r#"mutation { removeCustomers(ids: ["0"]) }"#)
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(
             res.errors[0]
                 .message
@@ -1089,7 +1089,7 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         let res = schema.execute_as_system_admin(
             "{ customer(id: \"0\") { networks { networkGroup { hosts networks ranges { start end } } } } }"
@@ -1145,7 +1145,7 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         let res = schema.execute_as_system_admin(
             "{ customer(id: \"0\") { networks { networkGroup { hosts networks ranges { start end } } } } }"
@@ -1208,7 +1208,7 @@ mod tests {
             )
             .await;
         assert!(res.is_ok());
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         let customer = schema
             .store()
@@ -1301,7 +1301,7 @@ mod tests {
             )
             .await;
         assert!(res.is_ok());
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         let customer = schema
             .store()
@@ -1347,7 +1347,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(res.errors[0].message.contains("duplicate network name"));
 
         // Verify no customer was created
@@ -1422,7 +1422,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert!(res.errors[0].message.contains("duplicate network name"));
 
         // Verify the customer still has original network (update was rejected)

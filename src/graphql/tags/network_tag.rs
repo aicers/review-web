@@ -219,12 +219,12 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "alpha")}"#)
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         let res = schema
             .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 1, name: "beta")}"#)
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         let res = schema
             .execute_as_system_admin(r"{networkTagList(customerId: 0){id name}}")
@@ -395,7 +395,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "foo")}"#)
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         let res = schema
             .execute_as_system_admin(
@@ -420,7 +420,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         let res = schema
             .execute_as_system_admin(r#"{network(id: "0") {tagIds}}"#)
@@ -449,17 +449,17 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "alpha")}"#)
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         let res = schema
             .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 1, name: "alpha")}"#)
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         let res = schema
             .execute_as_system_admin(r#"mutation {insertNetworkTag(customerId: 0, name: "beta")}"#)
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         let res = schema
             .execute_as_system_admin(r"{networkTagList(customerId: 0){id name}}")
@@ -504,7 +504,7 @@ mod tests {
                 }"#,
             )
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         let res = schema
             .execute_as_system_admin(r"{networkTagList{name}}")
@@ -554,7 +554,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{networkTagList{name}}")
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
         assert_eq!(
             res.data.to_string(),
             r#"{networkTagList: [{name: "a"}, {name: "b"}]}"#
@@ -564,7 +564,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(r"{networkTagList(customerId: 0){name}}")
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
         assert_eq!(res.data.to_string(), r#"{networkTagList: [{name: "a"}]}"#);
     }
 
@@ -720,7 +720,7 @@ mod tests {
                 Some(vec![0]),
             )
             .await;
-        assert!(res.errors.is_empty());
+        assert_eq!(res.errors, Vec::new());
 
         let res = schema
             .execute_as_system_admin(r#"{network(id: "0") {tagIds}}"#)
@@ -785,7 +785,7 @@ mod tests {
             let res = schema
                 .execute_as_scoped_user(r"{networkTagList{name}}", role, Some(vec![0]))
                 .await;
-            assert!(!res.errors.is_empty());
+            assert_ne!(res.errors, Vec::new());
             assert_eq!(res.errors[0].message, "customer ID is required");
         }
     }
@@ -818,7 +818,7 @@ mod tests {
                 Some(vec![0]),
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert_eq!(res.errors[0].message, "Forbidden");
 
         // Update for out-of-scope customer
@@ -829,7 +829,7 @@ mod tests {
                 Some(vec![0]),
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert_eq!(res.errors[0].message, "Forbidden");
 
         // Remove for out-of-scope customer
@@ -840,7 +840,7 @@ mod tests {
                 Some(vec![0]),
             )
             .await;
-        assert!(!res.errors.is_empty());
+        assert_ne!(res.errors, Vec::new());
         assert_eq!(res.errors[0].message, "Forbidden");
 
         // Verify tag is unchanged
@@ -903,7 +903,7 @@ mod tests {
                 Some(vec![0]),
             )
             .await;
-        assert!(!insert.errors.is_empty());
+        assert_ne!(insert.errors, Vec::new());
         assert_eq!(insert.errors[0].message, "Forbidden");
 
         let update = schema
@@ -913,7 +913,7 @@ mod tests {
                 Some(vec![0]),
             )
             .await;
-        assert!(!update.errors.is_empty());
+        assert_ne!(update.errors, Vec::new());
         assert_eq!(update.errors[0].message, "Forbidden");
 
         let remove = schema
@@ -923,7 +923,7 @@ mod tests {
                 Some(vec![0]),
             )
             .await;
-        assert!(!remove.errors.is_empty());
+        assert_ne!(remove.errors, Vec::new());
         assert_eq!(remove.errors[0].message, "Forbidden");
 
         // Verify tag unchanged
