@@ -1,77 +1,16 @@
-#![allow(deprecated)]
-
-mod exclusion_reason;
-mod policy;
 pub(super) mod response;
 
-use async_graphql::{Enum, ID, InputObject, Object, Result};
-use chrono::{DateTime, Utc};
-pub(crate) use exclusion_reason::{TriageExclusionReasonMutation, TriageExclusionReasonQuery};
+use async_graphql::{Enum, InputObject};
 use review_database as database;
 use serde::Deserialize;
 
 use super::{Role, RoleGuard};
 
 #[derive(Default)]
-pub(super) struct TriagePolicyQuery;
-
-#[derive(Default)]
-pub(super) struct TriagePolicyMutation;
-
-#[derive(Default)]
 pub(super) struct TriageResponseQuery;
 
 #[derive(Default)]
 pub(super) struct TriageResponseMutation;
-
-pub(super) struct TriagePolicy {
-    inner: database::TriagePolicy,
-}
-
-#[Object]
-impl TriagePolicy {
-    async fn id(&self) -> ID {
-        ID(self.inner.id.to_string())
-    }
-
-    async fn name(&self) -> &str {
-        &self.inner.name
-    }
-
-    async fn triage_exclusion_id(&self) -> Vec<ID> {
-        self.inner
-            .triage_exclusion_id
-            .iter()
-            .map(|id| ID::from(id.to_string()))
-            .collect()
-    }
-
-    async fn packet_attr(&self) -> Vec<PacketAttr<'_>> {
-        self.inner.packet_attr.iter().map(Into::into).collect()
-    }
-
-    async fn confidence(&self) -> Vec<Confidence<'_>> {
-        self.inner.confidence.iter().map(Into::into).collect()
-    }
-
-    async fn response(&self) -> Vec<Response<'_>> {
-        self.inner.response.iter().map(Into::into).collect()
-    }
-
-    async fn creation_time(&self) -> DateTime<Utc> {
-        self.inner.creation_time
-    }
-
-    async fn customer_id(&self) -> Option<ID> {
-        self.inner.customer_id.map(|id| ID::from(id.to_string()))
-    }
-}
-
-impl From<database::TriagePolicy> for TriagePolicy {
-    fn from(inner: database::TriagePolicy) -> Self {
-        Self { inner }
-    }
-}
 
 #[derive(Clone, Copy, Enum, Eq, PartialEq, Deserialize)]
 #[graphql(remote = "database::RawEventKind")]
@@ -160,97 +99,6 @@ pub enum ThreatCategory {
     ResourceDevelopment, // 2nd
 }
 
-struct PacketAttr<'a> {
-    inner: &'a database::PacketAttr,
-}
-
-#[Object]
-impl PacketAttr<'_> {
-    async fn raw_event_kind(&self) -> RawEventKind {
-        self.inner.raw_event_kind.into()
-    }
-
-    async fn attr_name(&self) -> &str {
-        &self.inner.attr_name
-    }
-
-    async fn value_kind(&self) -> ValueKind {
-        self.inner.value_kind.into()
-    }
-
-    async fn cmp_kind(&self) -> AttrCmpKind {
-        self.inner.cmp_kind.into()
-    }
-
-    async fn first_value(&self) -> &[u8] {
-        &self.inner.first_value
-    }
-
-    async fn second_value(&self) -> Option<&[u8]> {
-        self.inner.second_value.as_deref()
-    }
-
-    async fn weight(&self) -> Option<f64> {
-        self.inner.weight
-    }
-}
-
-impl<'a> From<&'a database::PacketAttr> for PacketAttr<'a> {
-    fn from(inner: &'a database::PacketAttr) -> Self {
-        Self { inner }
-    }
-}
-
-struct Confidence<'a> {
-    inner: &'a database::Confidence,
-}
-
-#[Object]
-impl Confidence<'_> {
-    async fn threat_category(&self) -> Option<ThreatCategory> {
-        self.inner.threat_category.map(Into::into)
-    }
-
-    async fn threat_kind(&self) -> &str {
-        &self.inner.threat_kind
-    }
-
-    async fn confidence(&self) -> f64 {
-        self.inner.confidence
-    }
-
-    async fn weight(&self) -> Option<f64> {
-        self.inner.weight
-    }
-}
-
-impl<'a> From<&'a database::Confidence> for Confidence<'a> {
-    fn from(inner: &'a database::Confidence) -> Self {
-        Self { inner }
-    }
-}
-
-struct Response<'a> {
-    inner: &'a database::Response,
-}
-
-#[Object]
-impl Response<'_> {
-    async fn minimum_score(&self) -> f64 {
-        self.inner.minimum_score
-    }
-
-    async fn kind(&self) -> ResponseKind {
-        self.inner.kind.into()
-    }
-}
-
-impl<'a> From<&'a database::Response> for Response<'a> {
-    fn from(inner: &'a database::Response) -> Self {
-        Self { inner }
-    }
-}
-
 #[derive(Clone, InputObject)]
 pub(super) struct PacketAttrInput {
     raw_event_kind: RawEventKind,
@@ -296,41 +144,6 @@ impl From<&ResponseInput> for database::Response {
     }
 }
 
-#[derive(Clone, InputObject)]
-pub(super) struct TriagePolicyInput {
-    pub name: String,
-    pub triage_exclusion_id: Vec<ID>,
-    pub packet_attr: Vec<PacketAttrInput>,
-    pub confidence: Vec<ConfidenceInput>,
-    pub response: Vec<ResponseInput>,
-    pub customer_id: Option<ID>,
-}
-
-impl TryFrom<TriagePolicyInput> for database::TriagePolicyUpdate {
-    type Error = anyhow::Error;
-
-    fn try_from(input: TriagePolicyInput) -> Result<Self, Self::Error> {
-        let triage_exclusion_id = input
-            .triage_exclusion_id
-            .iter()
-            .map(|id| id.as_str().parse::<u32>())
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| anyhow::anyhow!("invalid triage exclusion id"))?;
-        Ok(Self {
-            name: input.name,
-            triage_exclusion_id,
-            packet_attr: input.packet_attr.iter().map(Into::into).collect(),
-            confidence: input.confidence.iter().map(Into::into).collect(),
-            response: input.response.iter().map(Into::into).collect(),
-            customer_id: input
-                .customer_id
-                .map(|id| id.as_str().parse::<u32>())
-                .transpose()
-                .map_err(|_| anyhow::anyhow!("invalid customer id"))?,
-        })
-    }
-}
-
 impl From<&PacketAttrInput> for database::PacketAttr {
     fn from(p: &PacketAttrInput) -> Self {
         Self {
@@ -349,590 +162,181 @@ impl From<&PacketAttrInput> for database::PacketAttr {
 mod tests {
     use crate::graphql::TestSchema;
 
-    #[tokio::test]
-    async fn dce_rpc_raw_event_kind_round_trips_through_graphql() {
-        let schema = TestSchema::new().await;
-
-        // Persisting and reading the policy exercises both remote enum
-        // conversions used by PacketAttrInput and PacketAttr.
-        let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
-                    insertTriagePolicy(
-                        name: "DCE/RPC policy"
-                        triageExclusionId: []
-                        packetAttr: [{
-                            rawEventKind: DCE_RPC
-                            attrName: "Presentation Context ID"
-                            valueKind: U_INTEGER
-                            cmpKind: EQUAL
-                            firstValue: [1]
-                            weight: 1.0
-                        }]
-                        confidence: []
-                        response: []
-                    )
-                }"#,
-            )
-            .await;
-        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
-        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
-
-        let res = schema
-            .execute_as_system_admin(
-                r"{
-                    triagePolicyList(first: 10) {
-                        nodes {
-                            packetAttr {
-                                rawEventKind
-                                attrName
-                            }
-                        }
-                    }
-                }",
-            )
-            .await;
-        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
-        assert_eq!(
-            res.data.to_string(),
-            r#"{triagePolicyList: {nodes: [{packetAttr: [{rawEventKind: DCE_RPC, attrName: "Presentation Context ID"}]}]}}"#
-        );
-    }
-
-    #[tokio::test]
-    #[allow(clippy::too_many_lines)]
-    async fn test_triage_policy() {
-        let schema = TestSchema::new().await;
-
-        // Prepare triage exclusion reasons
-        let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
-                    insertTriageExclusionReason(input: {
-                        name: "Reason A"
-                        description: "reason a"
-                        ipAddress: {
-                            hosts: ["1.1.1.1"]
-                            networks: []
-                            ranges: []
-                        }
-                    })
-                }"#,
-            )
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{insertTriageExclusionReason: "0"}"#
-        );
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
-                    insertTriageExclusionReason(input: {
-                        name: "Reason B"
-                        description: "reason b"
-                        domain: ["example.com"]
-                    })
-                }"#,
-            )
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{insertTriageExclusionReason: "1"}"#
-        );
-
-        let res = schema
-            .execute_as_system_admin(r"{triagePolicyList{totalCount}}")
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{triagePolicyList: {totalCount: "0"}}"#
-        );
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
-                    insertTriagePolicy(
-                        name: "Triage 1"
-                        triageExclusionId: ["0"]
-                        packetAttr: [{
-                            rawEventKind: CONN
-                            attrName: "Packets Received"
-                            valueKind: STRING
-                            cmpKind: CONTAIN
-                            firstValue: [4, 80, 79, 83, 84]
-                            weight: 0.5
-                        }, {
-                            rawEventKind: CONN
-                            attrName: "Packets Received"
-                            valueKind: INTEGER
-                            cmpKind: GREATER_OR_EQUAL
-                            firstValue: [251, 88, 2]
-                            secondValue: [251, 232, 3]
-                            weight: 0.5
-                        }]
-                        confidence: [{
-                            threatCategory: COMMAND_AND_CONTROL
-                            threatKind: "DNS Covert"
-                            confidence: 0.5
-                            weight: 0.5
-                        }, {
-                            threatCategory: COMMAND_AND_CONTROL
-                            threatKind: "HTTP Covert"
-                            confidence: 0.5
-                            weight: 0.5
-                        }]
-                        response: [{
-                            minimumScore: 0.5
-                            kind: MANUAL,
-                        }]
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
-                    updateTriagePolicy(
-                        id: 0
-                        old: {
-                            name: "Triage 1"
-                            triageExclusionId: ["0"]
-                            packetAttr: [{
-                                rawEventKind: CONN
-                                attrName: "Packets Received"
-                                valueKind: STRING
-                                cmpKind: CONTAIN
-                                firstValue: [4, 80, 79, 83, 84]
-                                weight: 0.5
-                            }, {
-                                rawEventKind: CONN
-                                attrName: "Packets Received"
-                                valueKind: INTEGER
-                                cmpKind: GREATER_OR_EQUAL
-                                firstValue: [251, 88, 2]
-                                secondValue: [251, 232, 3]
-                                weight: 0.5
-                            }]
-                            confidence: [{
-                                threatCategory: COMMAND_AND_CONTROL
-                                threatKind: "DNS Covert"
-                                confidence: 0.5
-                                weight: 0.5
-                            }, {
-                                threatCategory: COMMAND_AND_CONTROL
-                                threatKind: "HTTP Covert"
-                                confidence: 0.5
-                                weight: 0.5
-                            }]
-                            response: [{
-                                minimumScore: 0.5
-                                kind: MANUAL,
-                            }]
-                        }
-                        new: {
-                            name: "Triage 2"
-                            triageExclusionId: ["1"]
-                            packetAttr: [{
-                                rawEventKind: CONN
-                                attrName: "Packets Received"
-                                valueKind: STRING
-                                cmpKind: CONTAIN
-                                firstValue: [4, 80, 79, 83, 84]
-                                weight: 0.5
-                            }, {
-                                rawEventKind: CONN
-                                attrName: "Packets Received"
-                                valueKind: INTEGER
-                                cmpKind: GREATER
-                                firstValue: [251, 88, 2]
-                                secondValue: [251, 232, 3]
-                                weight: 0.5
-                            }]
-                            confidence: [{
-                                threatCategory: COMMAND_AND_CONTROL
-                                threatKind: "DNS Covert"
-                                confidence: 0.5
-                                weight: 0.5
-                            }, {
-                                threatCategory: COMMAND_AND_CONTROL
-                                threatKind: "HTTP Covert"
-                                confidence: 0.5
-                                weight: 0.5
-                            }]
-                            response: [{
-                                minimumScore: 0.5
-                                kind: MANUAL,
-                            }]
-                        }
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{updateTriagePolicy: "0"}"#);
-
-        let res = schema
-            .execute_as_system_admin(
-                r"
-                query {
-                    triagePolicyList(first: 10) {
-                        nodes {
-                            name
-                        }
-                    }
-                }",
-            )
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{triagePolicyList: {nodes: [{name: "Triage 2"}]}}"#
-        );
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    removeTriagePolicies(ids: ["0"])
-                }"#,
-            )
-            .await;
-        let removed = res.data.to_string();
-        assert!(
-            removed.contains("Triage 2"),
-            "Unexpected removeTriagePolicies payload: {removed}"
-        );
-    }
-
-    #[tokio::test]
-    #[allow(clippy::too_many_lines)]
-    async fn test_triage_policy_filter_by_customer() {
-        let schema = TestSchema::new().await;
-
-        // Prepare customers for validation
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertCustomer: "1"}"#);
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c2", description: "", networks: []) }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertCustomer: "2"}"#);
-
-        // exclusion reason to satisfy validation
-        let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
-                    insertTriageExclusionReason(input: {
-                        name: "Reason Filter"
-                        description: "filter reason"
-                        ipAddress: {
-                            hosts: ["10.0.0.1"]
-                            networks: []
-                            ranges: []
-                        }
-                    })
-                }"#,
-            )
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{insertTriageExclusionReason: "0"}"#
-        );
-
-        // global policy (customer_id None)
-        let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
-                    insertTriagePolicy(
-                        name: "Global Policy"
-                        triageExclusionId: ["0"]
-                        packetAttr: []
-                        confidence: []
-                        response: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
-
-        // customer-specific policy
-        let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
-                    insertTriagePolicy(
-                        name: "Customer Policy"
-                        triageExclusionId: ["0"]
-                        packetAttr: []
-                        confidence: []
-                        response: []
-                        customerId: "1"
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "1"}"#);
-
-        // customer_id = 1 should include both (None and 1)
-        let res = schema
-            .execute_as_system_admin(
-                r#"
-                {
-                    triagePolicyList(first: 10, customerId: "1") {
-                        totalCount
-                        nodes { name customerId }
-                    }
-                }"#,
-            )
-            .await;
-        let json = res.data.into_json().unwrap();
-        assert_eq!(json["triagePolicyList"]["totalCount"], "2");
-        let names: Vec<String> = json["triagePolicyList"]["nodes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|n| n["name"].as_str().unwrap().to_string())
-            .collect();
-        assert!(names.contains(&"Global Policy".to_string()));
-        assert!(names.contains(&"Customer Policy".to_string()));
-
-        // customer_id = 2 should include only global
-        let res = schema
-            .execute_as_system_admin(
-                r#"
-                {
-                    triagePolicyList(first: 10, customerId: "2") {
-                        totalCount
-                        nodes { name }
-                    }
-                }"#,
-            )
-            .await;
-        let json = res.data.into_json().unwrap();
-        assert_eq!(json["triagePolicyList"]["totalCount"], "1");
-        assert_eq!(
-            json["triagePolicyList"]["nodes"][0]["name"]
-                .as_str()
-                .unwrap(),
-            "Global Policy"
-        );
-    }
-
-    #[tokio::test]
-    #[allow(clippy::too_many_lines)]
-    async fn test_triage_policy_optional_threat_category() {
-        let schema = TestSchema::new().await;
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
-                    insertTriageExclusionReason(input: {
-                        name: "Reason"
-                        description: ""
-                        ipAddress: {
-                            hosts: ["1.1.1.1"]
-                            networks: []
-                            ranges: []
-                        }
-                    })
-                }"#,
-            )
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{insertTriageExclusionReason: "0"}"#
-        );
-
-        // Insert a policy that mixes null and non-null threatCategory entries.
-        let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
-                    insertTriagePolicy(
-                        name: "Mixed"
-                        triageExclusionId: ["0"]
-                        packetAttr: []
-                        confidence: [{
-                            threatCategory: COMMAND_AND_CONTROL
-                            threatKind: "DNS Covert"
-                            confidence: 0.5
-                            weight: 0.5
-                        }, {
-                            threatCategory: null
-                            threatKind: "Unspecified"
-                            confidence: 0.25
-                        }]
-                        response: []
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertTriagePolicy: "0"}"#);
-
-        // Query returns both null and non-null threatCategory values.
-        let res = schema
-            .execute_as_system_admin(
-                r"
-                query {
-                    triagePolicyList(first: 10) {
-                        nodes {
-                            name
-                            confidence {
-                                threatCategory
-                                threatKind
-                            }
-                        }
-                    }
-                }",
-            )
-            .await;
-        let json = res.data.into_json().unwrap();
-        let entries = json["triagePolicyList"]["nodes"][0]["confidence"]
-            .as_array()
-            .unwrap();
-        assert_eq!(entries.len(), 2);
-        // Confidence entries are sorted, and None orders before Some(_).
-        assert!(entries[0]["threatCategory"].is_null());
-        assert_eq!(entries[0]["threatKind"], "Unspecified");
-        assert_eq!(entries[1]["threatCategory"], "COMMAND_AND_CONTROL");
-        assert_eq!(entries[1]["threatKind"], "DNS Covert");
-
-        // Update: flip non-null to null and null to non-null.
-        let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
-                    updateTriagePolicy(
-                        id: 0
-                        old: {
-                            name: "Mixed"
-                            triageExclusionId: ["0"]
-                            packetAttr: []
-                            confidence: [{
-                                threatCategory: COMMAND_AND_CONTROL
-                                threatKind: "DNS Covert"
-                                confidence: 0.5
-                                weight: 0.5
-                            }, {
-                                threatCategory: null
-                                threatKind: "Unspecified"
-                                confidence: 0.25
-                            }]
+    /// Runs `eventListWithTriage` with a single inline policy built from the
+    /// given `packetAttr` and `confidence` lists.
+    async fn event_list_with_inline_policy(
+        schema: &TestSchema,
+        packet_attr: &str,
+        confidence: &str,
+    ) -> async_graphql::Response {
+        let query = format!(
+            r"{{
+                eventListWithTriage(
+                    filter: {{}}
+                    triage: {{
+                        policies: [{{
+                            id: 0
+                            packetAttr: {packet_attr}
+                            confidence: {confidence}
                             response: []
-                        }
-                        new: {
-                            name: "Mixed"
-                            triageExclusionId: ["0"]
-                            packetAttr: []
-                            confidence: [{
-                                threatCategory: null
-                                threatKind: "DNS Covert"
-                                confidence: 0.5
-                                weight: 0.5
-                            }, {
-                                threatCategory: EXFILTRATION
-                                threatKind: "Unspecified"
-                                confidence: 0.25
-                            }]
-                            response: []
-                        }
-                    )
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{updateTriagePolicy: "0"}"#);
-
-        let res = schema
-            .execute_as_system_admin(
-                r"
-                query {
-                    triagePolicyList(first: 10) {
-                        nodes {
-                            confidence {
-                                threatCategory
-                                threatKind
-                            }
-                        }
-                    }
-                }",
-            )
-            .await;
-        let json = res.data.into_json().unwrap();
-        let entries = json["triagePolicyList"]["nodes"][0]["confidence"]
-            .as_array()
-            .unwrap();
-        assert_eq!(entries.len(), 2);
-        assert!(entries[0]["threatCategory"].is_null());
-        assert_eq!(entries[0]["threatKind"], "DNS Covert");
-        assert_eq!(entries[1]["threatCategory"], "EXFILTRATION");
-        assert_eq!(entries[1]["threatKind"], "Unspecified");
+                        }}]
+                    }}
+                    first: 1
+                ) {{
+                    totalCount
+                }}
+            }}"
+        );
+        schema.execute_as_system_admin(&query).await
     }
 
     #[tokio::test]
-    async fn test_triage_policy_rejects_missing_threat_kind() {
+    async fn dce_rpc_raw_event_kind_accepted_in_inline_policy() {
         let schema = TestSchema::new().await;
 
-        let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
-                    insertTriageExclusionReason(input: {
-                        name: "Reason"
-                        description: ""
-                        ipAddress: {
-                            hosts: ["1.1.1.1"]
-                            networks: []
-                            ranges: []
-                        }
-                    })
-                }"#,
-            )
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{insertTriageExclusionReason: "0"}"#
-        );
+        // Exercises the remote enum conversions used by PacketAttrInput.
+        let res = event_list_with_inline_policy(
+            &schema,
+            r#"[{
+                rawEventKind: DCE_RPC
+                attrName: "Presentation Context ID"
+                valueKind: U_INTEGER
+                cmpKind: EQUAL
+                firstValue: [1]
+                weight: 1.0
+            }]"#,
+            "[]",
+        )
+        .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+    }
+
+    #[tokio::test]
+    async fn inline_policy_accepts_null_threat_category() {
+        let schema = TestSchema::new().await;
+
+        let res = event_list_with_inline_policy(
+            &schema,
+            "[]",
+            r#"[{ threatCategory: null, threatKind: "Unspecified", confidence: 0.25 }]"#,
+        )
+        .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+    }
+
+    #[tokio::test]
+    async fn inline_policy_rejects_missing_threat_kind() {
+        let schema = TestSchema::new().await;
 
         // threatKind is required even when threatCategory is null.
-        let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
-                    insertTriagePolicy(
-                        name: "Bad"
-                        triageExclusionId: ["0"]
-                        packetAttr: []
-                        confidence: [{
-                            threatCategory: null
-                            confidence: 0.25
-                        }]
-                        response: []
-                    )
-                }"#,
-            )
-            .await;
+        let res = event_list_with_inline_policy(
+            &schema,
+            "[]",
+            "[{ threatCategory: null, confidence: 0.25 }]",
+        )
+        .await;
         assert!(
             !res.errors.is_empty(),
             "expected validation error, got {res:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn removed_triage_policy_and_exclusion_surface_is_rejected() {
+        let schema = TestSchema::new().await;
+
+        let operations = [
+            r"{ triagePolicyList { totalCount } }",
+            r#"{ triagePolicy(id: "0") { name } }"#,
+            r#"mutation {
+                insertTriagePolicy(
+                    name: "p"
+                    triageExclusionId: []
+                    packetAttr: []
+                    confidence: []
+                    response: []
+                )
+            }"#,
+            r#"mutation {
+                updateTriagePolicy(
+                    id: "0"
+                    old: {
+                        name: "p"
+                        triageExclusionId: []
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                    }
+                    new: {
+                        name: "q"
+                        triageExclusionId: []
+                        packetAttr: []
+                        confidence: []
+                        response: []
+                    }
+                )
+            }"#,
+            r#"mutation { removeTriagePolicies(ids: ["0"]) }"#,
+            r"{ triageExclusionReasons { name } }",
+            r#"{ triageExclusionReason(id: "0") { name } }"#,
+            r#"mutation {
+                insertTriageExclusionReason(input: {
+                    name: "r"
+                    description: ""
+                    domain: ["example.com"]
+                })
+            }"#,
+            r#"mutation {
+                updateTriageExclusionReason(
+                    id: "0"
+                    old: { name: "r", description: "", domain: ["example.com"] }
+                    new: { name: "s", description: "", domain: ["example.com"] }
+                )
+            }"#,
+            r#"mutation { removeTriageExclusionReasons(ids: ["0"]) }"#,
+            r"{ eventTriageList(filter: {}) { __typename } }",
+        ];
+        for operation in operations {
+            let res = schema.execute_as_system_admin(operation).await;
+            assert!(
+                !res.errors.is_empty(),
+                "expected an error for {operation}, got {res:?}"
+            );
+            assert!(
+                res.errors
+                    .iter()
+                    .any(|e| e.message.starts_with("Unknown field")),
+                "expected an unknown-field error for {operation}, got {:?}",
+                res.errors
+            );
+        }
+
+        let types = [
+            "TriagePolicy",
+            "TriagePolicyConnection",
+            "TriagePolicyEdge",
+            "TriagePolicyInput",
+            "PacketAttr",
+            "Confidence",
+            "Response",
+            "TriageExclusionReason",
+            "TriageExclusionReasonInput",
+            "ExclusionReason",
+            "IpAddressTriageExclusion",
+            "DomainTriageExclusion",
+            "HostnameTriageExclusion",
+            "UriTriageExclusion",
+        ];
+        for name in types {
+            let res = schema
+                .execute_as_system_admin(&format!(r#"{{ __type(name: "{name}") {{ name }} }}"#))
+                .await;
+            assert!(res.errors.is_empty(), "errors for {name}: {:?}", res.errors);
+            assert_eq!(
+                res.data.to_string(),
+                "{__type: null}",
+                "type {name} is still in the schema"
+            );
+        }
     }
 }

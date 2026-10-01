@@ -23,7 +23,7 @@ mod sysmon;
 mod tls;
 mod unusual_destination_pattern;
 
-use std::{cmp, collections::BinaryHeap, net::IpAddr, sync::Arc};
+use std::{cmp, net::IpAddr, sync::Arc};
 
 use anyhow::{Context as AnyhowContext, anyhow, bail};
 use async_graphql::{
@@ -86,7 +86,6 @@ use crate::{error_with_username, graphql::query, warn_with_username};
 const DEFAULT_CONNECTION_SIZE: usize = 100;
 const DEFAULT_EVENT_FETCH_INTERVAL_SECS: u64 = 20;
 const ADD_TIME_FOR_NEXT_COMPARE: i64 = 1;
-const DEFAULT_TRIAGE_LIST_COUNT: usize = 100;
 
 type DateTime = Timestamp;
 
@@ -675,37 +674,6 @@ impl EventQuery {
         .await
     }
 
-    /// A list of detection events sorted by triage policy score in descending
-    /// order.
-    ///
-    /// Returns events that have triage scores applied based on the specified
-    /// triage policies. Each event is sorted by its highest triage score, and
-    /// only the top `count` events are returned.
-    ///
-    /// # Arguments
-    ///
-    /// * `filter` - Event filtering criteria, including triage policies to apply
-    /// * `count` - Maximum number of events to return (defaults to 100)
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// * The database connection fails
-    /// * The filter parameters are invalid
-    /// * An event cannot be processed
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))
-        .or(RoleGuard::new(Role::SecurityManager))
-        .or(RoleGuard::new(Role::SecurityMonitor))")]
-    async fn event_triage_list(
-        &self,
-        ctx: &Context<'_>,
-        filter: EventListFilterInput,
-        count: Option<usize>,
-    ) -> Result<Vec<Event>> {
-        load_triage_list(ctx, &filter, count).await
-    }
-
     /// A list of events that pass the standard filter, with optional inline
     /// triage scoring and exclusions.
     ///
@@ -1005,12 +973,11 @@ struct EventListFilterInput {
     learning_methods: Option<Vec<LearningMethod>>,
     confidence_min: Option<f32>,
     confidence_max: Option<f32>,
-    triage_policies: Option<Vec<ID>>,
 }
 
-/// Standard event filter for `eventListWithTriage`. Identical to
-/// `EventListFilterInput` minus `triagePolicies`: triage policies are passed
-/// exclusively via the separate `triage` argument as inline data.
+/// Standard event filter for `eventListWithTriage`. It has the same fields as
+/// `EventListFilterInput`; triage policies are passed exclusively via the
+/// separate `triage` argument as inline data.
 #[derive(Clone, InputObject)]
 struct EventStandardFilterInput {
     start: Option<Timestamp>,
@@ -1303,30 +1270,6 @@ fn from_filter_input(
         }
     };
 
-    let triage_policies: Option<Vec<review_database::TriagePolicyInput>> =
-        if let Some(triage_policies) = &input.triage_policies {
-            let map = store.triage_policy_map();
-            let triage_policies = convert_triage_input(&map, triage_policies)?;
-
-            let exclusion_reason_map = store.triage_exclusion_reason_map();
-            let triage_result = triage_policies
-                .iter()
-                .map(|policy| {
-                    let policy = policy.clone();
-                    let exclusion_reasons = policy
-                        .triage_exclusion_id
-                        .iter()
-                        .filter_map(|id| exclusion_reason_map.get_by_id(*id).ok().flatten())
-                        .map(|reason| reason.exclusion_reason)
-                        .collect::<Vec<_>>();
-                    policy.into_input_with_exclusion_reason(exclusion_reasons)
-                })
-                .collect::<Vec<_>>();
-            Some(triage_result)
-        } else {
-            None
-        };
-
     Ok(EventFilter::new(
         customers,
         networks,
@@ -1345,7 +1288,7 @@ fn from_filter_input(
         sensors,
         input.confidence_min,
         input.confidence_max,
-        triage_policies,
+        None,
     ))
 }
 
@@ -1451,24 +1394,6 @@ fn convert_sensors(
         }
     }
     Ok(converted_sensors)
-}
-
-fn convert_triage_input(
-    map: &IndexedTable<database::TriagePolicy>,
-    triage_policy_ids: &[ID],
-) -> anyhow::Result<Vec<database::TriagePolicy>> {
-    let mut triage_policies = Vec::with_capacity(triage_policy_ids.len());
-    for id in triage_policy_ids {
-        let i = id
-            .as_str()
-            .parse::<u32>()
-            .context(format!("invalid ID: {}", id.as_str()))?;
-        let Some(policy) = map.get_by_id(i)? else {
-            bail!("no such customer")
-        };
-        triage_policies.push(policy);
-    }
-    Ok(triage_policies)
 }
 
 /// Returns the list of sensor hostnames the caller is allowed to see, or
@@ -1596,167 +1521,6 @@ async fn load(
     Ok(connection)
 }
 
-/// Loads events sorted by triage policy score in descending order.
-///
-/// This function retrieves events that match the given filter, calculates
-/// their triage scores based on the specified triage policies, and returns
-/// them sorted by their highest triage score. Only events with triage scores
-/// are included in the result.
-///
-/// # Arguments
-///
-/// * `ctx` - GraphQL context
-/// * `filter` - Event filtering criteria
-/// * `count` - Maximum number of events to return (defaults to [`DEFAULT_TRIAGE_LIST_COUNT`])
-///
-/// # Errors
-///
-/// Returns an error if:
-/// * The database store cannot be accessed
-/// * The filter parameters are invalid
-/// * An event cannot be processed or matched against the filter
-async fn load_triage_list(
-    ctx: &Context<'_>,
-    filter: &EventListFilterInput,
-    count: Option<usize>,
-) -> Result<Vec<Event>> {
-    let start = filter.start;
-    let end = filter.end;
-    let store = crate::graphql::get_store(ctx)?;
-    let mut filter = from_filter_input(ctx, &store, filter)?;
-    filter.moderate_kinds();
-    if empty_time_range(start, end)? {
-        return Ok(Vec::new());
-    }
-    let count = count.unwrap_or(DEFAULT_TRIAGE_LIST_COUNT);
-
-    let start_key = earliest(start)?;
-    let end_key = latest(end)?;
-    let db = store.events();
-
-    let iter = db.iter_from(start_key, Direction::Forward);
-    // Use a binary heap to efficiently maintain only the top `count` events
-    // This prevents OOM issues with large datasets
-    let mut heap = BinaryHeap::new();
-
-    for item in iter {
-        let (key, mut event) = match item {
-            Ok(kv) => kv,
-            Err(e) => {
-                warn_with_username!(ctx, "Invalid event: {:?}", e);
-                continue;
-            }
-        };
-
-        if key > end_key {
-            break;
-        }
-        let triage_score = {
-            let matches = event.matches(&filter)?;
-            if !matches.0 {
-                continue;
-            }
-            matches.1
-        };
-
-        // Only include events with triage scores
-        if let Some(triage_score) = triage_score
-            && !triage_score.is_empty()
-        {
-            // Find the highest score for this event
-            let max_score = triage_score
-                .iter()
-                .map(|s| s.score)
-                .max_by(|a, b| a.partial_cmp(b).unwrap_or(cmp::Ordering::Equal))
-                .unwrap_or(0.0);
-
-            event.set_triage_scores(triage_score);
-            let event_priority = event_priority(&event);
-            let scored_event = ScoredEvent {
-                score: max_score,
-                priority: event_priority,
-                key,
-                event,
-            };
-
-            heap.push(scored_event);
-
-            // Keep only top `count` events to prevent OOM
-            if heap.len() > count {
-                heap.pop();
-            }
-        }
-    }
-
-    // Extract events from heap in descending order
-    let result: Vec<Event> = heap
-        .into_sorted_vec()
-        .into_iter()
-        .map(|scored| (scored.key, scored.event).into())
-        .collect();
-    Ok(result)
-}
-
-/// Represents an event with its triage score and priority for sorting.
-struct ScoredEvent {
-    score: f64,
-    priority: u8,
-    key: i128,
-    event: database::Event,
-}
-
-impl PartialEq for ScoredEvent {
-    fn eq(&self, other: &Self) -> bool {
-        self.score == other.score && self.priority == other.priority
-    }
-}
-
-impl Eq for ScoredEvent {}
-
-impl PartialOrd for ScoredEvent {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for ScoredEvent {
-    // Sorting logic for BinaryHeap (min-heap behavior):
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        // Primary sort: lower scores are ranked higher
-        other
-            .score
-            .partial_cmp(&self.score)
-            .unwrap_or(cmp::Ordering::Equal)
-            // Secondary sort: higher priority values (i.e., lower importance) are ranked higher.
-            .then_with(|| self.priority.cmp(&other.priority))
-    }
-}
-
-/// Assigns a priority value to an event based on its type and characteristics.
-///
-/// Priority order (lower value = higher priority):
-/// 1. `HttpThreat` with `cluster_id` = `None`
-/// 2. `DnsCovertChannel`
-/// 3. `DomainGenerationAlgorithm`
-/// 4. `LockyRansomware`
-/// 5. `HttpThreat` with `cluster_id` = `Some`
-/// 6. Other detection events
-fn event_priority(event: &database::Event) -> u8 {
-    match event {
-        database::Event::HttpThreat(http_threat) => {
-            if http_threat.cluster_id.is_none() {
-                0 // Highest priority
-            } else {
-                4 // Lower priority when cluster_id is present
-            }
-        }
-        database::Event::DnsCovertChannel(_) => 1,
-        database::Event::DomainGenerationAlgorithm(_) => 2,
-        database::Event::LockyRansomware(_) => 3,
-        _ => 5, // All other events have lowest priority
-    }
-}
-
 fn earliest(start: Option<Timestamp>) -> Result<i128> {
     start
         .map(event_key_prefix)
@@ -1845,7 +1609,7 @@ fn iter_to_events(
     let mut events = Vec::new();
     let mut exceeded = false;
     for item in iter {
-        let (key, mut event) = match item {
+        let (key, event) = match item {
             Ok(kv) => kv,
             Err(e) => {
                 warn_with_username!(ctx, "Invalid event: {:?}", e);
@@ -1855,15 +1619,8 @@ fn iter_to_events(
         if !(cond)(key.cmp(&to)) {
             break;
         }
-        let triage_score = {
-            let matches = event.matches(filter)?;
-            if !matches.0 {
-                continue;
-            }
-            matches.1
-        };
-        if let Some(triage_score) = triage_score {
-            event.set_triage_scores(triage_score);
+        if !event.matches(filter)?.0 {
+            continue;
         }
         events.push((key, (key, event).into()));
         exceeded = events.len() > len;
@@ -1903,7 +1660,6 @@ impl From<EventStandardFilterInput> for EventListFilterInput {
             learning_methods: input.learning_methods,
             confidence_min: input.confidence_min,
             confidence_max: input.confidence_max,
-            triage_policies: None,
         }
     }
 }
@@ -2109,7 +1865,7 @@ mod tests {
     use futures_util::StreamExt;
     use jiff::Timestamp;
     use review_database::{
-        self as database, EventCategory, EventKind, EventMessage,
+        EventCategory, EventKind, EventMessage,
         event::{
             BlocklistBootpFields, BlocklistConnFields, BlocklistDceRpcFields, BlocklistDhcpFields,
             BlocklistDnsFields, BlocklistKerberosFields, BlocklistMqttFields, BlocklistNfsFields,
@@ -2119,7 +1875,7 @@ mod tests {
         },
     };
 
-    use crate::graphql::{Role, TestSchema};
+    use crate::graphql::{Role, RoleGuard, TestSchema};
 
     async fn connection_page(
         schema: &TestSchema,
@@ -2331,13 +2087,6 @@ mod tests {
                     }
                     first: 1
                 ) { edges { cursor } }
-            }"#,
-            r#"{
-                eventTriageList(filter: {
-                    start: "2026-01-01T00:00:00Z"
-                    end: "2026-01-01T00:00:00Z"
-                    source: "invalid"
-                }) { id }
             }"#,
             r#"{
                 eventCountsByCategory(
@@ -2684,9 +2433,6 @@ mod tests {
             .execute_as_system_admin(&format!(
                 r#"{{
                     eventList(filter: {{ end: "{minimum}" }}) {{ edges {{ cursor }} totalCount }}
-                    eventTriageList(filter: {{ end: "{minimum}" }}) {{
-                        ... on DnsCovertChannel {{ time }}
-                    }}
                     eventCountsByCategory(filter: {{ end: "{minimum}" }}, first: 10) {{ counts }}
                     eventFrequencySeries(filter: {{ end: "{minimum}" }}, period: 1)
                     beforeMinimum: eventList(
@@ -2701,7 +2447,7 @@ mod tests {
         assert!(output.errors.is_empty(), "{:?}", output.errors);
         assert_eq!(
             output.data.to_string(),
-            r#"{eventList: {edges: [], totalCount: "0"}, eventTriageList: [], eventCountsByCategory: {counts: []}, eventFrequencySeries: [], beforeMinimum: {edges: [], totalCount: "2"}}"#
+            r#"{eventList: {edges: [], totalCount: "0"}, eventCountsByCategory: {counts: []}, eventFrequencySeries: [], beforeMinimum: {edges: [], totalCount: "2"}}"#
         );
 
         let epoch_output = schema
@@ -2741,28 +2487,6 @@ mod tests {
                 "sensor1",
             ))
             .expect("event at end must be stored");
-        let policy_id = store
-            .triage_policy_map()
-            .put(database::TriagePolicy {
-                id: 0,
-                name: "Negative time range test policy".to_string(),
-                triage_exclusion_id: Vec::new(),
-                packet_attr: Vec::new(),
-                confidence: vec![database::Confidence {
-                    threat_category: Some(database::EventCategory::CommandAndControl),
-                    threat_kind: "dns covert channel".to_string(),
-                    confidence: 0.0,
-                    weight: Some(1.0),
-                }],
-                response: vec![database::Response {
-                    minimum_score: 0.5,
-                    kind: database::ResponseKind::Manual,
-                }],
-                creation_time: DateTime::from_timestamp(0, 0)
-                    .expect("the Unix epoch is a valid chrono timestamp"),
-                customer_id: None,
-            })
-            .expect("triage policy must be stored");
         drop(store);
 
         let network = schema
@@ -2782,10 +2506,27 @@ mod tests {
         let output = schema
             .execute_as_system_admin(&format!(
                 r#"{{
-                    eventTriageList(
-                        filter: {{ start: "{start}", end: "{end}", triagePolicies: ["{policy_id}"] }}
-                        count: 10
-                    ) {{ ... on DnsCovertChannel {{ time }} }}
+                    eventListWithTriage(
+                        filter: {{ start: "{start}", end: "{end}" }}
+                        triage: {{
+                            policies: [{{
+                                id: 0
+                                packetAttr: []
+                                confidence: [{{
+                                    threatCategory: COMMAND_AND_CONTROL
+                                    threatKind: "dns covert channel"
+                                    confidence: 0.0
+                                    weight: 1.0
+                                }}]
+                                response: [{{ minimumScore: 0.5, kind: MANUAL }}]
+                            }}]
+                        }}
+                        first: 10
+                    ) {{
+                        edges {{
+                            node {{ ... on DnsCovertChannel {{ time triageScores {{ policyId }} }} }}
+                        }}
+                    }}
                     eventCountsByCategory(
                         filter: {{ start: "{start}", end: "{end}" }}
                         first: 10
@@ -2804,7 +2545,7 @@ mod tests {
         assert!(output.errors.is_empty(), "{:?}", output.errors);
         assert_eq!(
             output.data.to_string(),
-            r#"{eventTriageList: [{time: "1969-12-31T23:59:59.999999998Z"}], eventCountsByCategory: {counts: [1]}, eventCountsByNetwork: {values: ["0"], counts: [1]}, eventFrequencySeries: [1]}"#
+            r#"{eventListWithTriage: {edges: [{node: {time: "1969-12-31T23:59:59.999999998Z", triageScores: [{policyId: "0"}]}}]}, eventCountsByCategory: {counts: [1]}, eventCountsByNetwork: {values: ["0"], counts: [1]}, eventFrequencySeries: [1]}"#
         );
     }
 
@@ -2849,41 +2590,6 @@ mod tests {
             message.kind = kind;
             events.put(&message).expect("event must be stored");
         }
-        let policy_id = store
-            .triage_policy_map()
-            .put(database::TriagePolicy {
-                id: 0,
-                name: "Cross-epoch policy".to_string(),
-                triage_exclusion_id: Vec::new(),
-                packet_attr: Vec::new(),
-                confidence: vec![
-                    database::Confidence {
-                        threat_category: Some(EventCategory::CommandAndControl),
-                        threat_kind: "dns covert channel".to_string(),
-                        confidence: 0.0,
-                        weight: Some(0.9),
-                    },
-                    database::Confidence {
-                        threat_category: Some(EventCategory::CommandAndControl),
-                        threat_kind: "locky ransomware".to_string(),
-                        confidence: 0.0,
-                        weight: Some(0.9),
-                    },
-                    database::Confidence {
-                        threat_category: Some(EventCategory::InitialAccess),
-                        threat_kind: "dns covert channel".to_string(),
-                        confidence: 0.0,
-                        weight: Some(0.5),
-                    },
-                ],
-                response: vec![database::Response {
-                    minimum_score: 0.3,
-                    kind: database::ResponseKind::Manual,
-                }],
-                creation_time: DateTime::from_timestamp(0, 0).unwrap(),
-                customer_id: None,
-            })
-            .expect("triage policy must be stored");
         drop(store);
 
         let network = schema
@@ -2903,13 +2609,44 @@ mod tests {
         let output = schema
             .execute_as_system_admin(&format!(
                 r#"{{
-                    eventTriageList(
-                        filter: {{ start: "{start}", end: "{end}", triagePolicies: ["{policy_id}"] }}
-                        count: 10
+                    eventListWithTriage(
+                        filter: {{ start: "{start}", end: "{end}" }}
+                        triage: {{
+                            policies: [{{
+                                id: 0
+                                packetAttr: []
+                                confidence: [
+                                    {{
+                                        threatCategory: COMMAND_AND_CONTROL
+                                        threatKind: "dns covert channel"
+                                        confidence: 0.0
+                                        weight: 0.9
+                                    }}
+                                    {{
+                                        threatCategory: COMMAND_AND_CONTROL
+                                        threatKind: "locky ransomware"
+                                        confidence: 0.0
+                                        weight: 0.9
+                                    }}
+                                    {{
+                                        threatCategory: INITIAL_ACCESS
+                                        threatKind: "dns covert channel"
+                                        confidence: 0.0
+                                        weight: 0.5
+                                    }}
+                                ]
+                                response: [{{ minimumScore: 0.3, kind: MANUAL }}]
+                            }}]
+                        }}
+                        first: 10
                     ) {{
-                        __typename
-                        ... on DnsCovertChannel {{ time triageScores {{ score }} }}
-                        ... on LockyRansomware {{ time triageScores {{ score }} }}
+                        edges {{
+                            node {{
+                                __typename
+                                ... on DnsCovertChannel {{ time triageScores {{ score }} }}
+                                ... on LockyRansomware {{ time triageScores {{ score }} }}
+                            }}
+                        }}
                     }}
                     eventCountsByCategory(
                         filter: {{ start: "{start}", end: "{end}" }}
@@ -2928,10 +2665,14 @@ mod tests {
             .await;
         assert!(output.errors.is_empty(), "{:?}", output.errors);
         let data = output.data.into_json().expect("valid GraphQL JSON");
-        let triage = data["eventTriageList"]
+        let triage = data["eventListWithTriage"]["edges"]
             .as_array()
-            .expect("triage list must be an array");
+            .expect("triage edges must be an array")
+            .iter()
+            .map(|edge| &edge["node"])
+            .collect::<Vec<_>>();
         assert_eq!(triage.len(), 3);
+        assert!(triage.iter().all(|node| !node["triageScores"].is_null()));
         assert_eq!(triage[0]["__typename"], "DnsCovertChannel");
         assert_eq!(triage[0]["time"], start.to_string());
         assert_eq!(triage[1]["__typename"], "LockyRansomware");
@@ -3398,63 +3139,6 @@ mod tests {
                 Some(expected_count.as_str())
             );
         }
-    }
-
-    #[tokio::test]
-    async fn event_triage_list_country_filter_uses_stored_codes_without_locator() {
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-        let (_locator_dir, schema) =
-            schema_with_country_filter_events(ts, ts + chrono::Duration::seconds(1)).await;
-
-        // Both events match the triage policy, but only the first contains a
-        // stored US endpoint code.
-        let store = schema.store();
-        let policy_id = store
-            .triage_policy_map()
-            .put(database::TriagePolicy {
-                id: 0,
-                name: "Country filter test policy".to_string(),
-                triage_exclusion_id: Vec::new(),
-                packet_attr: Vec::new(),
-                confidence: vec![database::Confidence {
-                    threat_category: Some(database::EventCategory::CommandAndControl),
-                    threat_kind: "dns covert channel".to_string(),
-                    confidence: 0.0,
-                    weight: Some(1.0),
-                }],
-                response: vec![database::Response {
-                    minimum_score: 0.5,
-                    kind: database::ResponseKind::Manual,
-                }],
-                creation_time: ts,
-                customer_id: None,
-            })
-            .unwrap();
-        drop(store);
-
-        let res = schema
-            .execute_as_system_admin(&format!(
-                r#"{{
-                    eventTriageList(
-                        filter: {{ countries: ["US"], triagePolicies: ["{policy_id}"] }}
-                        count: 10
-                    ) {{
-                        ... on DnsCovertChannel {{ origAddr }}
-                    }}
-                }}"#
-            ))
-            .await;
-
-        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventTriageList: [{origAddr: "1.0.0.1"}]}"#
-        );
     }
 
     #[tokio::test]
@@ -5336,413 +5020,6 @@ mod tests {
         );
     }
 
-    /// Basic smoke test for the eventTriageList GraphQL API.
-    ///
-    /// This test validates that:
-    /// 1. The eventTriageList GraphQL API endpoint exists and accepts the correct parameters
-    /// 2. The API returns a valid response structure without errors
-    /// 3. The triagePolicies filter parameter is accepted
-    ///
-    /// Note: Full integration testing of triage policy matching requires more complex setup
-    /// involving review-database internals. This test provides basic API validation.
-    #[tokio::test]
-    #[allow(clippy::too_many_lines)]
-    async fn event_triage_list() {
-        use review_database::event::{
-            DgaFields, DnsEventFields, HttpEventFields, HttpThreatFields,
-        };
-
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let triage_map = store.triage_policy_map();
-
-        let base_ts = NaiveDate::from_ymd_opt(2024, 1, 1)
-            .unwrap()
-            .and_hms_micro_opt(0, 0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-
-        // 1. Insert multiple detection events
-        // Event 1: Unlabeled Outlier(cluster_id = None) - Score 0.9
-        let unlabeled_outlier = HttpThreatFields {
-            time: jiff_timestamp(base_ts),
-            start_time: base_ts.timestamp_nanos_opt().unwrap(),
-            duration: 0,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            sensor: "sensor1".to_string(),
-            orig_addr: Ipv4Addr::new(192, 168, 1, 1).into(),
-            orig_port: 10001,
-            resp_addr: Ipv4Addr::new(10, 0, 0, 1).into(),
-            resp_port: 80,
-            proto: 6,
-            method: "GET".to_string(),
-            host: "unlabeled.com".to_string(),
-            uri: "/malware".to_string(),
-            referer: String::new(),
-            version: "HTTP/1.1".to_string(),
-            user_agent: "Mozilla/5.0".to_string(),
-            request_len: 100,
-            response_len: 200,
-            status_code: 200,
-            status_msg: "OK".to_string(),
-            username: String::new(),
-            password: String::new(),
-            cookie: String::new(),
-            content_encoding: String::new(),
-            content_type: "text/html".to_string(),
-            cache_control: String::new(),
-            filenames: vec![],
-            mime_types: vec![],
-            body: vec![],
-            state: String::new(),
-            db_name: String::new(),
-            rule_id: 0,
-            matched_to: String::new(),
-            cluster_id: None,
-            attack_kind: String::new(),
-            confidence: 1.0,
-            category: Some(EventCategory::CommandAndControl),
-        };
-        db.put(&EventMessage {
-            time: jiff_timestamp(base_ts),
-            kind: EventKind::HttpThreat,
-            fields: bincode::serialize(&unlabeled_outlier).unwrap(),
-        })
-        .unwrap();
-
-        // Event 2: HttpThreat(cluster_id = Some) - Score 0.9
-        let http_threat_fields = HttpThreatFields {
-            time: jiff_timestamp(base_ts),
-            start_time: base_ts.timestamp_nanos_opt().unwrap(),
-            duration: 0,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            sensor: "sensor1".to_string(),
-            orig_addr: Ipv4Addr::new(192, 168, 1, 1).into(),
-            orig_port: 10001,
-            resp_addr: Ipv4Addr::new(10, 0, 0, 1).into(),
-            resp_port: 80,
-            proto: 6,
-            method: "GET".to_string(),
-            host: "http_threat.com".to_string(),
-            uri: "/malware".to_string(),
-            referer: String::new(),
-            version: "HTTP/1.1".to_string(),
-            user_agent: "Mozilla/5.0".to_string(),
-            request_len: 100,
-            response_len: 200,
-            status_code: 200,
-            status_msg: "OK".to_string(),
-            username: String::new(),
-            password: String::new(),
-            cookie: String::new(),
-            content_encoding: String::new(),
-            content_type: "text/html".to_string(),
-            cache_control: String::new(),
-            filenames: vec![],
-            mime_types: vec![],
-            body: vec![],
-            state: String::new(),
-            db_name: String::new(),
-            rule_id: 0,
-            matched_to: String::new(),
-            cluster_id: Some(1005),
-            attack_kind: String::new(),
-            confidence: 1.0,
-            category: Some(EventCategory::CommandAndControl),
-        };
-        db.put(&EventMessage {
-            time: jiff_timestamp(base_ts),
-            kind: EventKind::HttpThreat,
-            fields: bincode::serialize(&http_threat_fields).unwrap(),
-        })
-        .unwrap();
-
-        // Event 3: DnsCovertChannel - Score 0.9
-        // Same score as HttpThreat, but different type.
-        // We need to check which one comes first.
-        let dns_fields = DnsEventFields {
-            sensor: "sensor1".to_string(),
-            start_time: base_ts.timestamp_nanos_opt().unwrap(),
-            duration: 0,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            orig_addr: Ipv4Addr::new(192, 168, 1, 2).into(),
-            orig_port: 10002,
-            resp_addr: Ipv4Addr::new(8, 8, 8, 8).into(),
-            resp_port: 53,
-            proto: 17,
-            query: "covert.example.com".to_string(),
-            answer: vec![],
-            trans_id: 1234,
-            rtt: 10,
-            qclass: 1,
-            qtype: 1,
-            rcode: 0,
-            aa_flag: false,
-            tc_flag: false,
-            rd_flag: true,
-            ra_flag: true,
-            ttl: vec![],
-            confidence: 1.0,
-            category: Some(EventCategory::CommandAndControl),
-        };
-        db.put(&EventMessage {
-            time: jiff_timestamp(base_ts),
-            kind: EventKind::DnsCovertChannel,
-            fields: bincode::serialize(&dns_fields).unwrap(),
-        })
-        .unwrap();
-
-        // Event 4: DomainGenerationAlgorithm - Score 0.8
-        let dga_fields = DgaFields {
-            start_time: base_ts.timestamp_nanos_opt().unwrap(),
-            duration: 0,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            sensor: "sensor1".to_string(),
-            orig_addr: Ipv4Addr::new(192, 168, 1, 3).into(),
-            orig_port: 10003,
-            resp_addr: Ipv4Addr::new(10, 0, 0, 2).into(),
-            resp_port: 80,
-            proto: 6,
-            host: "dga.com".to_string(),
-            method: "GET".to_string(),
-            uri: "/".to_string(),
-            referer: String::new(),
-            version: "HTTP/1.1".to_string(),
-            user_agent: "Bot".to_string(),
-            request_len: 50,
-            response_len: 50,
-            status_code: 404,
-            status_msg: "Not Found".to_string(),
-            username: String::new(),
-            password: String::new(),
-            cookie: String::new(),
-            content_encoding: String::new(),
-            content_type: String::new(),
-            cache_control: String::new(),
-            filenames: vec![],
-            mime_types: vec![],
-            body: vec![],
-            state: String::new(),
-            confidence: 0.8,
-            category: Some(EventCategory::InitialAccess),
-        };
-        db.put(&EventMessage {
-            time: jiff_timestamp(base_ts),
-            kind: EventKind::DomainGenerationAlgorithm,
-            fields: bincode::serialize(&dga_fields).unwrap(),
-        })
-        .unwrap();
-
-        // Event 5: LockyRansomware - Score 0.8
-        // Same score as DomainGenerationAlgorithm, but different type.
-        // We need to check which one comes first.
-        let locky_fields = DnsEventFields {
-            sensor: "sensor1".to_string(),
-            start_time: base_ts.timestamp_nanos_opt().unwrap(),
-            duration: 0,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            orig_addr: Ipv4Addr::new(192, 168, 1, 4).into(),
-            orig_port: 10004,
-            resp_addr: Ipv4Addr::new(8, 8, 8, 8).into(),
-            resp_port: 53,
-            proto: 17,
-            query: "locky.example.com".to_string(),
-            answer: vec![],
-            trans_id: 5678,
-            rtt: 10,
-            qclass: 1,
-            qtype: 1,
-            rcode: 0,
-            aa_flag: false,
-            tc_flag: false,
-            rd_flag: true,
-            ra_flag: true,
-            ttl: vec![],
-            confidence: 0.8,
-            category: Some(EventCategory::InitialAccess),
-        };
-        db.put(&EventMessage {
-            time: jiff_timestamp(base_ts),
-            kind: EventKind::LockyRansomware,
-            fields: bincode::serialize(&locky_fields).unwrap(),
-        })
-        .unwrap();
-
-        // Event 6: NonBrowser - Score 0.5
-        let non_browser_fields = HttpEventFields {
-            start_time: base_ts.timestamp_nanos_opt().unwrap(),
-            duration: 0,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            sensor: "sensor1".to_string(),
-            orig_addr: Ipv4Addr::new(192, 168, 1, 5).into(),
-            orig_port: 10005,
-            resp_addr: Ipv4Addr::new(10, 0, 0, 3).into(),
-            resp_port: 8080,
-            proto: 6,
-            host: "api.com".to_string(),
-            method: "POST".to_string(),
-            uri: "/api".to_string(),
-            referer: String::new(),
-            version: "HTTP/1.1".to_string(),
-            user_agent: "curl".to_string(),
-            request_len: 20,
-            response_len: 20,
-            status_code: 200,
-            status_msg: "OK".to_string(),
-            username: String::new(),
-            password: String::new(),
-            cookie: String::new(),
-            content_encoding: String::new(),
-            content_type: "application/json".to_string(),
-            cache_control: String::new(),
-            filenames: vec![],
-            mime_types: vec![],
-            body: vec![],
-            state: String::new(),
-            confidence: 0.5,
-            category: Some(EventCategory::Discovery),
-        };
-        db.put(&EventMessage {
-            time: jiff_timestamp(base_ts),
-            kind: EventKind::NonBrowser,
-            fields: bincode::serialize(&non_browser_fields).unwrap(),
-        })
-        .unwrap();
-
-        // 2. Insert triage policies
-        let policy = database::TriagePolicy {
-            id: 0,
-            name: "Test Policy".to_string(),
-            triage_exclusion_id: Vec::new(),
-            packet_attr: Vec::new(),
-            confidence: vec![
-                database::Confidence {
-                    threat_category: Some(database::EventCategory::CommandAndControl),
-                    threat_kind: "dns covert channel".to_string(),
-                    confidence: 0.0,
-                    weight: Some(0.9),
-                },
-                database::Confidence {
-                    threat_category: Some(database::EventCategory::CommandAndControl),
-                    threat_kind: "http threat".to_string(),
-                    confidence: 0.0,
-                    weight: Some(0.9),
-                },
-                database::Confidence {
-                    threat_category: Some(database::EventCategory::InitialAccess),
-                    threat_kind: "dga".to_string(),
-                    confidence: 0.0,
-                    weight: Some(0.8),
-                },
-                database::Confidence {
-                    threat_category: Some(database::EventCategory::InitialAccess),
-                    threat_kind: "locky ransomware".to_string(),
-                    confidence: 0.0,
-                    weight: Some(0.8),
-                },
-                database::Confidence {
-                    threat_category: Some(database::EventCategory::Discovery),
-                    threat_kind: "non browser".to_string(),
-                    confidence: 0.0,
-                    weight: Some(0.5),
-                },
-            ],
-            response: [database::Response {
-                minimum_score: 0.3,
-                kind: database::ResponseKind::Manual,
-            }]
-            .to_vec(),
-            creation_time: base_ts,
-            customer_id: None,
-        };
-        let policy_id = triage_map.put(policy).unwrap();
-
-        // 3. Invoke eventTriageList
-        let query = format!(
-            r#"{{
-                eventTriageList(filter: {{
-                    start: "2024-01-01T00:00:00Z",
-                    end: "2024-01-02T00:00:00Z",
-                    triagePolicies: ["{policy_id}"]
-                }}, count: 10) {{
-                    __typename
-                    ... on HttpThreat {{ origAddr, clusterId }}
-                    ... on DnsCovertChannel {{ origAddr }}
-                    ... on DomainGenerationAlgorithm {{ origAddr }}
-                    ... on LockyRansomware {{ origAddr }}
-                    ... on NonBrowser {{ origAddr }}
-                }}
-            }}"#
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-
-        // 4. Validate query results
-        assert!(res.errors.is_empty(), "Errors: {:?}", res.errors);
-        let json: serde_json::Value =
-            serde_json::to_value(&res.data).expect("serializable response data");
-        let events = json["eventTriageList"]
-            .as_array()
-            .expect("eventTriageList should be an array");
-        assert_eq!(events.len(), 6);
-
-        // Expected order of triaged events:
-        // 1. Score 0.9: Unlabeled Outlier vs HttpThreat vs DnsCovertChannel.
-        //    Priority:
-        //    - HttpThreat(cluster_id = None)  ← treated as the unlabeled outlier
-        //    - DnsCovertChannel
-        //    - HttpThreat(cluster_id = Some(_))
-        // 2. Score 0.8: DomainGenerationAlgorithm vs LockyRansomware.
-        //    Priority:
-        //    - DomainGenerationAlgorithm
-        //    - LockyRansomware
-        // 3. Score 0.5: NonBrowser.
-
-        // first event should be unlabeled outlier (cluster_id = None)
-        let cluster_id = events
-            .first()
-            .and_then(|event| event["clusterId"].as_str())
-            .unwrap();
-        assert_eq!(cluster_id, "", "first event should be unlabeled outlier");
-
-        // Validate the full ordering matches the score/priority contract described
-        let actual_order: Vec<&str> = events
-            .iter()
-            .map(|event| event["__typename"].as_str().expect("typename string"))
-            .collect();
-        let expected_order = vec![
-            "HttpThreat",
-            "DnsCovertChannel",
-            "HttpThreat",
-            "DomainGenerationAlgorithm",
-            "LockyRansomware",
-            "NonBrowser",
-        ];
-        assert_eq!(
-            actual_order, expected_order,
-            "events should be sorted by score and priority"
-        );
-    }
-
     #[tokio::test]
     async fn event_list_unusual_destination_pattern() {
         let schema = TestSchema::new().await;
@@ -6093,6 +5370,32 @@ mod tests {
             )
             .await;
         assert!(!res.errors.is_empty(), "expected schema validation error");
+    }
+
+    #[tokio::test]
+    async fn event_list_filter_rejects_triage_policies() {
+        let schema = TestSchema::new().await;
+        for query in [
+            r#"{ eventList(filter: { triagePolicies: ["0"] }, first: 1) { totalCount } }"#,
+            r#"{ eventCountsByCategory(filter: { triagePolicies: ["0"] }, first: 1) { counts } }"#,
+        ] {
+            let res = schema.execute_as_system_admin(query).await;
+            assert!(!res.errors.is_empty(), "expected an error for {query}");
+            assert_eq!(res.data, async_graphql::Value::Null, "{query}");
+        }
+
+        // Sending the field as `null` is rejected too.
+        let request = async_graphql::Request::new(
+            "query($filter: EventListFilterInput!) { eventList(filter: $filter) { totalCount } }",
+        )
+        .variables(async_graphql::Variables::from_json(
+            serde_json::json!({ "filter": { "triagePolicies": null } }),
+        ));
+        let request =
+            schema.request_with_context(request, RoleGuard::Role(Role::SystemAdministrator), None);
+        let res = schema.schema.execute(request).await;
+        assert!(!res.errors.is_empty(), "expected a variables error");
+        assert_eq!(res.data, async_graphql::Value::Null);
     }
 
     #[tokio::test]

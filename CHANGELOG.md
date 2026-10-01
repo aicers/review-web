@@ -81,6 +81,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   agent would have. A Giganto service with no draft is skipped as
   `NOT_CONFIGURED`; one with an empty draft is attempted. A failed attempt's
   `error` now includes the cause chain the manager reports.
+- `removeCustomers` no longer refuses to remove a customer that a stored triage
+  policy references.
 
 ### Added
 
@@ -202,6 +204,27 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   error code `MAINTENANCE`, answered over HTTP with status 503; queries and
   subscriptions still run. Closing the gate waits for the mutations already
   running to finish.
+
+### Removed
+
+- The `triagePolicyList` and `triagePolicy` queries and the
+  `insertTriagePolicy`, `updateTriagePolicy`, and `removeTriagePolicies`
+  mutations were removed, with the `TriagePolicy`, `TriagePolicyConnection`,
+  `TriagePolicyEdge`, `TriagePolicyInput`, `PacketAttr`, `Confidence`, and
+  `Response` types. `review-web` no longer manages triage policies; callers
+  pass policies inline in the `triage` argument of `eventListWithTriage`.
+- The `triageExclusionReasons` and `triageExclusionReason` queries and the
+  `insertTriageExclusionReason`, `updateTriageExclusionReason`, and
+  `removeTriageExclusionReasons` mutations were removed, with the
+  `TriageExclusionReason`, `TriageExclusionReasonInput`, `ExclusionReason`,
+  `IpAddressTriageExclusion`, `DomainTriageExclusion`,
+  `HostnameTriageExclusion`, and `UriTriageExclusion` types. Callers pass
+  exclusions inline in the `triage` argument of `eventListWithTriage`.
+- The `eventTriageList` query and the `triagePolicies` field of
+  `EventListFilterInput` were removed. `triagePolicies` was accepted by
+  `eventList`, every `eventCountsBy*` query, and `eventFrequencySeries`; a
+  request that still sends the field, even as `null`, is now rejected. Callers
+  use `eventListWithTriage` with inline policies in its `triage` argument.
 
 ### Fixed
 
