@@ -709,6 +709,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn event_frequency_series_counts_events_sharing_timestamps() {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            for (seconds, count) in [(0, 2), (1, 3), (2, 2)] {
+                for _ in 0..count {
+                    store
+                        .events()
+                        .put(&event_message_at(
+                            DateTime::from_timestamp(seconds, 0).unwrap(),
+                            1,
+                            2,
+                        ))
+                        .unwrap();
+                }
+            }
+        }
+        assert_eq!(
+            frequency_series(&schema, 0, 2_000_000_000, 1, "").await,
+            [2, 3]
+        );
+    }
+
+    #[tokio::test]
     async fn event_frequency_series_extreme_ranges_and_periods() {
         let schema = TestSchema::new().await;
         {
@@ -739,8 +763,11 @@ mod tests {
         // The span exceeds i64 nanoseconds; the period's shifted key would
         // overflow i128, but the actual bounded result is valid.
         let series = frequency_series(&schema, i64::MIN, i64::MAX, 2_592_000, "").await;
-        assert_eq!(series.len(), 7_117);
-        assert_eq!(series.iter().sum::<usize>(), 5);
+        let mut expected = vec![0; 7_117];
+        expected[0] = 2;
+        expected[3_558] = 2;
+        expected[7_116] = 1;
+        assert_eq!(series, expected);
         assert_eq!(frequency_series(&schema, 0, 1, i64::MAX, "").await, [1]);
         assert_eq!(
             frequency_series(&schema, 0, 0, 1, "").await,
