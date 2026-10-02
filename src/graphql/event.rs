@@ -2434,7 +2434,7 @@ mod tests {
                 r#"{{
                     eventList(filter: {{ end: "{minimum}" }}) {{ edges {{ cursor }} totalCount }}
                     eventCountsByCategory(filter: {{ end: "{minimum}" }}, first: 10) {{ counts }}
-                    eventFrequencySeries(filter: {{ end: "{minimum}" }}, period: 1)
+                    eventFrequencySeries(filter: {{ start: "{minimum}", end: "{minimum}" }}, period: 1)
                     beforeMinimum: eventList(
                         filter: {{}}
                         before: "{}"

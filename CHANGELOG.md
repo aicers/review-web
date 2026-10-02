@@ -4,6 +4,19 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `eventFrequencySeries` now requires explicit, non-null `filter.start` and
+  `filter.end` and rejects requests exceeding 10,000 buckets before reading
+  events. Calls that omitted bounds must provide both; calls exceeding the
+  limit must increase `period` or narrow the time range. Accepted requests
+  retain start-aligned buckets over `[start, end)`, zeros for empty buckets,
+  and partial final buckets. Valid empty or reversed ranges return an empty
+  list; invalid filters, periods, and unsupported timestamps still return
+  errors. Wide ranges and large periods now use overflow-safe arithmetic.
+
 ## [0.35.0] - 2026-10-01
 
 ### Changed
@@ -1888,6 +1901,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.35.0...main
 [0.35.0]: https://github.com/aicers/review-web/compare/0.34.0...0.35.0
 [0.34.0]: https://github.com/aicers/review-web/compare/0.33.0...0.34.0
 [0.33.0]: https://github.com/aicers/review-web/compare/0.32.0...0.33.0

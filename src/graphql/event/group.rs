@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use async_graphql::{Context, Object, OutputType, Result, SimpleObject};
-use jiff::Timestamp;
 use num_traits::ToPrimitive;
 use review_database::event::{Direction, EventFilter};
 use review_database::{Event, IndexedTable, Iterable};
@@ -9,11 +8,14 @@ use tracing::warn;
 
 use super::{
     EventListFilterInput, ThreatLevel, earliest, empty_time_range, from_filter_input, latest,
+    timestamp_nanos,
 };
 use crate::{
     graphql::{Role, RoleGuard},
     warn_with_username,
 };
+
+const MAX_EVENT_FREQUENCY_SERIES_BUCKETS: usize = 10_000;
 
 #[derive(Default)]
 pub(in crate::graphql) struct EventGroupQuery;
@@ -223,8 +225,16 @@ impl EventGroupQuery {
         Ok(EventCounts { values, counts })
     }
 
-    /// A time series of event frequencies. The period length is given in
-    /// seconds.
+    /// A dense time series for `[start, end)`, aligned to `start`, with a
+    /// positive `period` in seconds. Both `filter.start` and `filter.end` must
+    /// be explicitly provided and non-null; omitted bounds no longer default
+    /// to the Unix epoch or an unbounded end. Timestamps must fit signed i64
+    /// nanoseconds. Valid ranges with `start >= end` return an empty list.
+    /// Returns `ceil((end - start) / period)` buckets, including zeros and a
+    /// partial final bucket. Events exactly at `end` are excluded. At most
+    /// 10,000 buckets are allowed; larger requests return an error before
+    /// event iteration. Provide both bounds for missing-bound errors, or
+    /// increase `period` or narrow the time range for bucket-limit errors.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -235,23 +245,44 @@ impl EventGroupQuery {
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] period: i64,
     ) -> Result<Vec<usize>> {
-        let start = filter.start.unwrap_or(Timestamp::UNIX_EPOCH);
-        let end = filter.end;
         let store = crate::graphql::get_store(ctx)?;
-        let mut filter = from_filter_input(ctx, &store, &filter)?;
-        filter.moderate_kinds();
-        if empty_time_range(Some(start), end)? {
+        let mut event_filter = from_filter_input(ctx, &store, &filter)?;
+        event_filter.moderate_kinds();
+        let start = filter
+            .start
+            .ok_or("eventFrequencySeries requires non-null filter.start")?;
+        let end = filter
+            .end
+            .ok_or("eventFrequencySeries requires non-null filter.end")?;
+        let start_nanos = i128::from(timestamp_nanos(start)?);
+        let end_nanos = i128::from(timestamp_nanos(end)?);
+        let period_nanos = i128::from(period)
+            .checked_mul(1_000_000_000)
+            .filter(|&value| value > 0)
+            .ok_or("eventFrequencySeries period must be positive seconds")?;
+        if start_nanos >= end_nanos {
             return Ok(Vec::new());
         }
 
-        let start = earliest(Some(start))?;
-        let end = latest(end)?;
+        // Work in nanoseconds rather than shifted event keys: the full signed
+        // i64 timestamp span and even an i64::MAX-second period fit in i128.
+        let span = end_nanos
+            .checked_sub(start_nanos)
+            .ok_or("eventFrequencySeries time span overflow")?;
+        let bucket_count = span
+            .checked_add(period_nanos - 1)
+            .ok_or("eventFrequencySeries bucket count overflow")?
+            / period_nanos;
+        if bucket_count > i128::try_from(MAX_EVENT_FREQUENCY_SERIES_BUCKETS)? {
+            return Err(format!(
+                "eventFrequencySeries would produce {bucket_count} buckets; the maximum is \
+                 {MAX_EVENT_FREQUENCY_SERIES_BUCKETS}. Increase period or narrow the time range."
+            )
+            .into());
+        }
+        let mut series = vec![0; usize::try_from(bucket_count)?];
         let db = store.events();
-        let period = i128::from(period * 1_000_000_000) << 64;
-        let mut series = Vec::new();
-        let mut cur_end = start + period - 1;
-        let mut freq = 0;
-        for item in db.iter_from(start, Direction::Forward) {
+        for item in db.iter_from(earliest(Some(start))?, Direction::Forward) {
             let (key, event) = match item {
                 Ok(kv) => kv,
                 Err(e) => {
@@ -259,23 +290,21 @@ impl EventGroupQuery {
                     continue;
                 }
             };
-            if key > end {
+            let event_nanos = key >> 64;
+            if event_nanos >= end_nanos {
                 break;
             }
-            while key > cur_end {
-                series.push(freq);
-                freq = 0;
-                cur_end += period;
-            }
-            if event.matches(&filter)?.0 {
-                freq += 1;
+            if event.matches(&event_filter)?.0 {
+                let offset = event_nanos
+                    .checked_sub(start_nanos)
+                    .ok_or("eventFrequencySeries bucket offset overflow")?;
+                let index = usize::try_from(offset / period_nanos)?;
+                let frequency = series
+                    .get_mut(index)
+                    .ok_or("eventFrequencySeries event outside bucket range")?;
+                *frequency += 1;
             }
         }
-        series.push(freq);
-        let Ok(len) = usize::try_from((end - start + period) / period) else {
-            return Err("period too short".into());
-        };
-        series.resize(len, 0);
         Ok(series)
     }
 }
@@ -543,7 +572,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn event_frequency_series_without_start_begins_at_the_unix_epoch() {
+    async fn event_frequency_series_requires_explicit_start() {
         let schema = TestSchema::new().await;
         let epoch = DateTime::from_timestamp(0, 0).expect("the Unix epoch is valid");
         let store = schema.store();
@@ -564,8 +593,265 @@ mod tests {
             ))
             .await;
 
+        assert_eq!(output.errors.len(), 1);
+        assert!(
+            output.errors[0]
+                .message
+                .contains("requires non-null filter.start")
+        );
+    }
+
+    async fn frequency_series(
+        schema: &TestSchema,
+        start: i64,
+        end: i64,
+        period: i64,
+        extra_filter: &str,
+    ) -> Vec<usize> {
+        let start = jiff::Timestamp::from_nanosecond(i128::from(start)).unwrap();
+        let end = jiff::Timestamp::from_nanosecond(i128::from(end)).unwrap();
+        let output = schema
+            .execute_as_system_admin(&format!(
+                r#"{{ eventFrequencySeries(filter: {{ start: "{start}", end: "{end}", {extra_filter} }}, period: {period}) }}"#
+            ))
+            .await;
         assert!(output.errors.is_empty(), "{:?}", output.errors);
-        assert_eq!(output.data.to_string(), r"{eventFrequencySeries: [1, 1]}");
+        serde_json::from_value(output.data.into_json().unwrap()["eventFrequencySeries"].clone())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn event_frequency_series_bucket_limit() {
+        let schema = TestSchema::new().await;
+        // Run the same boundary checks with an empty DB and with only a late
+        // event, which previously grew the series while advancing buckets.
+        for populated in [false, true] {
+            if populated {
+                let store = schema.store();
+                store
+                    .events()
+                    .put(&event_message_at(
+                        DateTime::from_timestamp(9_999, 0).unwrap(),
+                        1,
+                        2,
+                    ))
+                    .unwrap();
+            }
+            let series = frequency_series(&schema, 0, 10_000_000_000_000, 1, "").await;
+            assert_eq!(series.len(), 10_000);
+            assert!(series[..9_999].iter().all(|&count| count == 0));
+            assert_eq!(series[9_999], usize::from(populated));
+            // A partial bucket just below the limit is accepted too.
+            assert_eq!(
+                frequency_series(&schema, 0, 9_999_000_000_001, 1, "").await,
+                series
+            );
+            for end in [10_000_000_000_001, 10_001_000_000_000] {
+                let end = jiff::Timestamp::from_nanosecond(end).unwrap();
+                let output = schema.execute_as_system_admin(&format!(
+                    r#"{{ eventFrequencySeries(filter: {{ start: "1970-01-01T00:00:00Z", end: "{end}" }}, period: 1) }}"#
+                )).await;
+                assert_eq!(output.errors.len(), 1);
+                assert_eq!(
+                    output.errors[0].message,
+                    "eventFrequencySeries would produce 10001 buckets; the maximum is 10000. Increase period or narrow the time range."
+                );
+            }
+        }
+        let output = schema.execute_as_system_admin(
+            r#"{ eventFrequencySeries(filter: { start: "1970-01-01T00:00:00Z", end: "2026-01-01T00:00:00Z", source: "192.0.2.1" }, period: 1) }"#
+        ).await;
+        assert_eq!(output.errors.len(), 1);
+        assert!(output.errors[0].message.contains("maximum is 10000"));
+    }
+
+    #[tokio::test]
+    async fn event_frequency_series_start_aligned_exclusive_buckets() {
+        let schema = TestSchema::new().await;
+        // Fractional start crossing the epoch; cover start, an internal
+        // boundary, immediately before end, and the excluded end itself.
+        {
+            let store = schema.store();
+            for nanos in [-1_500_000_000, -500_000_000, 1_499_999_999, 1_500_000_000] {
+                store
+                    .events()
+                    .put(&event_message_at(
+                        DateTime::from_timestamp_nanos(nanos),
+                        1,
+                        2,
+                    ))
+                    .unwrap();
+            }
+        }
+        assert_eq!(
+            frequency_series(&schema, -1_500_000_000, 1_500_000_000, 1, "").await,
+            [1, 1, 1]
+        );
+        assert_eq!(
+            frequency_series(&schema, -1_500_000_000, 1_500_000_001, 1, "").await,
+            [1, 1, 1, 1]
+        );
+        assert_eq!(
+            frequency_series(&schema, -1_500_000_000, 4_500_000_001, 1, "").await,
+            [1, 1, 1, 1, 0, 0, 0]
+        );
+        assert_eq!(
+            frequency_series(
+                &schema,
+                -1_500_000_000,
+                1_500_000_001,
+                1,
+                r#"source: "192.0.2.1""#
+            )
+            .await,
+            [0, 0, 0, 0]
+        );
+    }
+
+    #[tokio::test]
+    async fn event_frequency_series_counts_events_sharing_timestamps() {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            for (seconds, count) in [(0, 2), (1, 3), (2, 2)] {
+                for _ in 0..count {
+                    store
+                        .events()
+                        .put(&event_message_at(
+                            DateTime::from_timestamp(seconds, 0).unwrap(),
+                            1,
+                            2,
+                        ))
+                        .unwrap();
+                }
+            }
+        }
+        assert_eq!(
+            frequency_series(&schema, 0, 2_000_000_000, 1, "").await,
+            [2, 3]
+        );
+    }
+
+    #[tokio::test]
+    async fn event_frequency_series_extreme_ranges_and_periods() {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            for nanos in [i64::MIN, i64::MIN + 1, -1, 0, i64::MAX - 1, i64::MAX] {
+                store
+                    .events()
+                    .put(&event_message_at(
+                        DateTime::from_timestamp_nanos(nanos),
+                        1,
+                        2,
+                    ))
+                    .unwrap();
+            }
+        }
+        assert_eq!(
+            frequency_series(&schema, i64::MIN, i64::MIN + 2, 1, "").await,
+            [2]
+        );
+        assert_eq!(
+            frequency_series(&schema, i64::MAX - 2, i64::MAX, 1, "").await,
+            [1]
+        );
+        assert_eq!(
+            frequency_series(&schema, i64::MIN, i64::MAX, i64::MAX, "").await,
+            [5]
+        );
+        // The span exceeds i64 nanoseconds; the period's shifted key would
+        // overflow i128, but the actual bounded result is valid.
+        let series = frequency_series(&schema, i64::MIN, i64::MAX, 2_592_000, "").await;
+        let mut expected = vec![0; 7_117];
+        expected[0] = 2;
+        expected[3_558] = 2;
+        expected[7_116] = 1;
+        assert_eq!(series, expected);
+        assert_eq!(frequency_series(&schema, 0, 1, i64::MAX, "").await, [1]);
+        assert_eq!(
+            frequency_series(&schema, 0, 0, 1, "").await,
+            Vec::<usize>::new()
+        );
+        assert_eq!(
+            frequency_series(&schema, 1, 0, 1, "").await,
+            Vec::<usize>::new()
+        );
+    }
+
+    #[tokio::test]
+    async fn event_frequency_series_validation_errors() {
+        let schema = TestSchema::new().await;
+        for (filter, period, message) in [
+            ("{}", 1, "requires non-null filter.start"),
+            (
+                r#"{ end: "1970-01-01T00:00:00Z" }"#,
+                1,
+                "requires non-null filter.start",
+            ),
+            (
+                r#"{ start: null, end: "1970-01-01T00:00:00Z" }"#,
+                1,
+                "requires non-null filter.start",
+            ),
+            (
+                r#"{ start: "1970-01-01T00:00:00Z" }"#,
+                1,
+                "requires non-null filter.end",
+            ),
+            (
+                r#"{ start: "1970-01-01T00:00:00Z", end: null }"#,
+                1,
+                "requires non-null filter.end",
+            ),
+            (
+                r#"{ start: "1970-01-01T00:00:00Z", end: "1970-01-01T00:00:00Z" }"#,
+                0,
+                "must be greater than or equal to 1",
+            ),
+            (
+                r#"{ start: "1970-01-01T00:00:00Z", end: "1969-01-01T00:00:00Z" }"#,
+                -1,
+                "must be greater than or equal to 1",
+            ),
+            (
+                r#"{ start: "2262-04-11T23:47:16.854775808Z", end: "1970-01-01T00:00:00Z" }"#,
+                1,
+                "outside the supported nanosecond range",
+            ),
+            (
+                r#"{ start: "1677-09-21T00:12:43.145224191Z", end: "1677-09-21T00:12:43.145224191Z" }"#,
+                1,
+                "outside the supported nanosecond range",
+            ),
+            (
+                r#"{ start: "1970-01-01T00:00:00Z", end: "2262-04-11T23:47:16.854775808Z" }"#,
+                1,
+                "outside the supported nanosecond range",
+            ),
+            (
+                r#"{ start: "1970-01-01T00:00:00Z", end: "1970-01-01T00:00:00Z", destination: "bad" }"#,
+                1,
+                "invalid destination IP address",
+            ),
+            (
+                r#"{ start: "1970-01-01T00:00:00Z", end: "1969-01-01T00:00:00Z", countries: ["USA"] }"#,
+                1,
+                "invalid country code",
+            ),
+        ] {
+            let output = schema
+                .execute_as_system_admin(&format!(
+                    "{{ eventFrequencySeries(filter: {filter}, period: {period}) }}"
+                ))
+                .await;
+            assert_eq!(output.errors.len(), 1, "filter: {filter}, period: {period}");
+            assert!(
+                output.errors[0].message.contains(message),
+                "{:?}",
+                output.errors
+            );
+        }
     }
 
     #[tokio::test]
