@@ -5,6 +5,10 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "review-database"
+      - dependency-name: "review-protocol"
+      - dependency-name: "roxy"
 
   - package-ecosystem: "github-actions"
     directory: "/"
