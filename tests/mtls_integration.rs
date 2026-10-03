@@ -250,6 +250,10 @@ xvcNsYaYqk6sRk/INvcaN2E=
             Ok(None)
         }
 
+        async fn servable_builds(&self, _target: &str) -> Result<Vec<BuildId>, anyhow::Error> {
+            Ok(Vec::new())
+        }
+
         async fn package_status(
             &self,
             _host: &str,

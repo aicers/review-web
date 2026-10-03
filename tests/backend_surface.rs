@@ -134,6 +134,10 @@ impl PackageDeployer for OutsideDeployer {
         Ok(self.installed.clone())
     }
 
+    async fn servable_builds(&self, _target: &str) -> Result<Vec<BuildId>, anyhow::Error> {
+        Ok(self.installed.iter().cloned().collect())
+    }
+
     async fn package_status(
         &self,
         _host: &str,
@@ -275,7 +279,14 @@ async fn an_outside_implementation_reports_an_installed_build() {
             .latest_build("giganto")
             .await
             .expect("the stub answers"),
-        Some(installed)
+        Some(installed.clone())
+    );
+    assert_eq!(
+        deployer
+            .servable_builds("giganto")
+            .await
+            .expect("the stub answers"),
+        vec![installed]
     );
 }
 
