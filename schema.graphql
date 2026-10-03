@@ -7933,6 +7933,24 @@ type Query {
 	Returns an error if the hosts could not be enumerated.
 	"""
 	runningRoxydBuilds: [RunningRoxydBuild!]!
+	"""
+	Returns the builds the store serves for `packageId`, newest-accepted
+	first, offered as the choices a build selector may name.
+	
+	Only a module or core-component package-id is accepted. A core
+	package-id additionally requires a System Administrator, as updating
+	one does; a Security Administrator asking for one is refused with the
+	same `Forbidden` the field guard gives, so the refusal reveals nothing
+	about the store. An empty list means the store serves no build of the
+	package.
+	
+	# Errors
+	
+	Returns an error if `packageId` is not a module or core-component
+	package-id, if the caller may not list it, or if the store could not
+	be read or still has a build of the package pending verification.
+	"""
+	storeBuildList(packageId: String!): [StoreBuild!]!
 }
 
 type RankedOutlier {
@@ -8532,6 +8550,20 @@ type StatusEdge {
 	A cursor for use in pagination
 	"""
 	cursor: String!
+}
+
+"""
+A build the store serves for a package, which a build selector may name.
+"""
+type StoreBuild {
+	"""
+	The build's version.
+	"""
+	version: String!
+	"""
+	The commit the build was made from.
+	"""
+	commit: String!
 }
 
 type StringEventCounter {

@@ -1,5 +1,6 @@
-//! The immediate package-deployment and host-onboarding mutations, and the
-//! query that lists the roxyd builds onboarding can name.
+//! The immediate package-deployment and host-onboarding mutations, the query
+//! that lists the roxyd builds onboarding can name, and the query that lists
+//! the builds the store serves for a package.
 //!
 //! These are immediate actions and never ride the configuration draft: the
 //! resolver authorizes, validates the shape of what was submitted, makes one
@@ -13,7 +14,7 @@
 //! through that one call.
 
 use async_graphql::{
-    Context, Enum, InputObject, Object, Result, SimpleObject, StringNumber, Union,
+    Context, Enum, Guard, InputObject, Object, Result, SimpleObject, StringNumber, Union,
 };
 use review_database::{BuildSelector, RequestKeyError};
 use review_protocol::types::capability::ROLLBACK_SUPERVISOR;
@@ -32,7 +33,7 @@ use super::{
 };
 use crate::{
     backend::{
-        self, BindAddrInput as BackendBindAddrInput, BuildId, DeployError,
+        self, BindAddrInput as BackendBindAddrInput, BuildId, CORE_PACKAGE_IDS, DeployError,
         HostOnboardingTicket as BackendHostOnboardingTicket, MODULE_PACKAGE_IDS, OperationId,
         RunningRoxydBuild as BackendRunningRoxydBuild,
     },
@@ -117,6 +118,24 @@ impl From<BackendRunningRoxydBuild> for RunningRoxydBuild {
             host: running.host,
             version: running.build.version,
             commit: running.build.commit,
+        }
+    }
+}
+
+/// A build the store serves for a package, which a build selector may name.
+#[derive(SimpleObject)]
+pub(crate) struct StoreBuild {
+    /// The build's version.
+    version: String,
+    /// The commit the build was made from.
+    commit: String,
+}
+
+impl From<BuildId> for StoreBuild {
+    fn from(build: BuildId) -> Self {
+        Self {
+            version: build.version,
+            commit: build.commit,
         }
     }
 }
@@ -468,6 +487,43 @@ impl OnboardingQuery {
         let onboarder = ctx.data::<BoxedHostOnboarder>()?;
         let running = onboarder.running_roxyd_builds().await?;
         Ok(running.into_iter().map(RunningRoxydBuild::from).collect())
+    }
+
+    /// Returns the builds the store serves for `packageId`, newest-accepted
+    /// first, offered as the choices a build selector may name.
+    ///
+    /// Only a module or core-component package-id is accepted. A core
+    /// package-id additionally requires a System Administrator, as updating
+    /// one does; a Security Administrator asking for one is refused with the
+    /// same `Forbidden` the field guard gives, so the refusal reveals nothing
+    /// about the store. An empty list means the store serves no build of the
+    /// package.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `packageId` is not a module or core-component
+    /// package-id, if the caller may not list it, or if the store could not
+    /// be read or still has a build of the package pending verification.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    async fn store_build_list(
+        &self,
+        ctx: &Context<'_>,
+        package_id: String,
+    ) -> Result<Vec<StoreBuild>> {
+        // Both classes are bound through `bind_package_class`, so a target
+        // outside both is refused by it, naming the target, before the
+        // core-only role check or the backend. A core package-id then needs
+        // the guard `updateCoreComponent` carries.
+        if bind_package_class(&package_id, &MODULE_PACKAGE_IDS).is_err() {
+            bind_package_class(&package_id, &CORE_PACKAGE_IDS)?;
+            RoleGuard::new(Role::SystemAdministrator).check(ctx).await?;
+        }
+
+        info_with_username!(ctx, "Store build list of {package_id} requested");
+        let deployer = ctx.data::<BoxedPackageDeployer>()?;
+        let builds = deployer.servable_builds(&package_id).await?;
+        Ok(builds.into_iter().map(StoreBuild::from).collect())
     }
 }
 
@@ -867,9 +923,15 @@ mod tests {
         installs: Mutex<Vec<InstallCall>>,
         updates: Mutex<Vec<UpdateCall>>,
         removes: Mutex<Vec<RemoveCall>>,
+        /// The package-ids `servable_builds` was asked about, in order.
+        servable_builds: Mutex<Vec<String>>,
     }
 
     impl Calls {
+        fn servable_builds(&self) -> Vec<String> {
+            self.servable_builds.lock().unwrap().clone()
+        }
+
         fn installs(&self) -> Vec<InstallCall> {
             self.installs.lock().unwrap().clone()
         }
@@ -983,23 +1045,45 @@ mod tests {
         Fail(Failure),
     }
 
-    /// Records every deployment call and answers from a fixed script.
+    /// What the stub answers `servable_builds` with.
+    #[derive(Clone)]
+    enum StoreBuildsAnswer {
+        List(Vec<BuildId>),
+        Fail,
+    }
+
+    /// Records every deployment call and `servable_builds` lookup, and answers
+    /// from a fixed script.
     ///
-    /// The read methods panic: a test that reaches one is testing something
-    /// this module does not do.
+    /// The other read methods panic: a test that reaches one is testing
+    /// something this module does not do.
     struct RecordingDeployer {
         calls: Arc<Calls>,
         answer: Answer,
+        store_builds: StoreBuildsAnswer,
     }
 
     impl RecordingDeployer {
         fn boxed(answer: Answer) -> (Box<dyn PackageDeployer>, Arc<Calls>) {
+            Self::with_store_builds(answer, StoreBuildsAnswer::List(Vec::new()))
+        }
+
+        fn with_store_builds(
+            answer: Answer,
+            store_builds: StoreBuildsAnswer,
+        ) -> (Box<dyn PackageDeployer>, Arc<Calls>) {
             let calls = Arc::<Calls>::default();
             let deployer = Self {
                 calls: Arc::clone(&calls),
                 answer,
+                store_builds,
             };
             (Box::new(deployer), calls)
+        }
+
+        /// A stub whose `servable_builds` answers with `store_builds`.
+        fn serving(store_builds: StoreBuildsAnswer) -> (Box<dyn PackageDeployer>, Arc<Calls>) {
+            Self::with_store_builds(Answer::Succeed(DeployOutcome::Applied), store_builds)
         }
 
         /// A stub that succeeds with `Applied`, for every test whose
@@ -1085,11 +1169,25 @@ mod tests {
             _host: &str,
             _target: &str,
         ) -> Result<Vec<ListenerBinding>, DeployError> {
-            unimplemented!("this stub answers the three deployment calls only")
+            unimplemented!("this stub answers the deployment calls and servable_builds only")
         }
 
         async fn latest_build(&self, _target: &str) -> Result<Option<BuildId>, anyhow::Error> {
-            unimplemented!("this stub answers the three deployment calls only")
+            unimplemented!("this stub answers the deployment calls and servable_builds only")
+        }
+
+        async fn servable_builds(&self, target: &str) -> Result<Vec<BuildId>, anyhow::Error> {
+            self.calls
+                .servable_builds
+                .lock()
+                .unwrap()
+                .push(target.to_string());
+            match &self.store_builds {
+                StoreBuildsAnswer::List(builds) => Ok(builds.clone()),
+                StoreBuildsAnswer::Fail => {
+                    anyhow::bail!("a build of {target} is still pending verification")
+                }
+            }
         }
 
         async fn package_status(
@@ -1098,7 +1196,7 @@ mod tests {
             _target: &str,
             _instance: Option<u32>,
         ) -> Result<PackageState, anyhow::Error> {
-            unimplemented!("this stub answers the three deployment calls only")
+            unimplemented!("this stub answers the deployment calls and servable_builds only")
         }
 
         async fn read_version(
@@ -1107,7 +1205,7 @@ mod tests {
             _target: &str,
             _instance: Option<u32>,
         ) -> Result<Option<BuildId>, anyhow::Error> {
-            unimplemented!("this stub answers the three deployment calls only")
+            unimplemented!("this stub answers the deployment calls and servable_builds only")
         }
 
         async fn register(
@@ -1117,7 +1215,7 @@ mod tests {
             _instance: Option<u32>,
             _mode: DeliveryMode,
         ) -> Result<BootstrapMaterial, anyhow::Error> {
-            unimplemented!("this stub answers the three deployment calls only")
+            unimplemented!("this stub answers the deployment calls and servable_builds only")
         }
 
         async fn deregister(
@@ -1126,7 +1224,7 @@ mod tests {
             _host: &str,
             _instance: Option<u32>,
         ) -> Result<(), anyhow::Error> {
-            unimplemented!("this stub answers the three deployment calls only")
+            unimplemented!("this stub answers the deployment calls and servable_builds only")
         }
     }
 
@@ -1480,6 +1578,10 @@ mod tests {
     }
 
     const RUNNING_ROXYD_BUILDS_QUERY: &str = "query { runningRoxydBuilds { host version commit } }";
+
+    fn store_build_list_query(package_id: &str) -> String {
+        format!(r#"query {{ storeBuildList(packageId: "{package_id}") {{ version commit }} }}"#)
+    }
 
     /// The build the existing onboarding tests submit, as the backend
     /// receives it.
@@ -2050,6 +2152,194 @@ mod tests {
             assert_eq!(response.errors.len(), 1, "{role:?}");
             assert_eq!(response.errors[0].message, "Forbidden", "{role:?}");
             assert_eq!(calls.running_count(), 0, "{role:?}");
+        }
+    }
+
+    fn store_build(version: &str, commit: &str) -> BuildId {
+        BuildId {
+            version: version.to_string(),
+            commit: commit.to_string(),
+        }
+    }
+
+    /// The list is the backend's, in the backend's order: the resolver neither
+    /// sorts nor collapses it, so two commits of one version stay two entries.
+    #[tokio::test(flavor = "current_thread")]
+    async fn store_build_list_lists_the_backend_answer_in_order() {
+        let (deployer, calls) = RecordingDeployer::serving(StoreBuildsAnswer::List(vec![
+            store_build("2.0.0", ONBOARD_COMMIT),
+            store_build(CONFIRMED_VERSION, CONFIRMED_COMMIT),
+            store_build(CONFIRMED_VERSION, ONBOARD_COMMIT),
+        ]));
+        let (onboarder, _) =
+            RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::List(vec![]));
+        let schema = schema_without_store(deployer, onboarder);
+        let (response, logs) = capturing_logs(execute_without_store(
+            &schema,
+            &store_build_list_query("giganto"),
+        ))
+        .await;
+
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        assert_json_eq!(
+            response.data.into_json().unwrap(),
+            json!({
+                "storeBuildList": [
+                    { "version": "2.0.0", "commit": ONBOARD_COMMIT },
+                    { "version": CONFIRMED_VERSION, "commit": CONFIRMED_COMMIT },
+                    { "version": CONFIRMED_VERSION, "commit": ONBOARD_COMMIT },
+                ]
+            })
+        );
+        assert_eq!(calls.servable_builds(), vec!["giganto".to_string()]);
+        assert_eq!(calls.total(), 0);
+        assert!(
+            logs.contains("Store build list of giganto requested"),
+            "{logs}"
+        );
+    }
+
+    /// A store serving no build of the package is a successful empty answer.
+    #[tokio::test]
+    async fn store_build_list_answers_an_empty_store_with_an_empty_list() {
+        let (deployer, calls) = RecordingDeployer::serving(StoreBuildsAnswer::List(vec![]));
+        let schema = TestSchema::new().await;
+        let response = schema
+            .execute_as_system_admin_with_data(
+                &store_build_list_query("review"),
+                deployer as BoxedPackageDeployer,
+            )
+            .await;
+
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        assert_json_eq!(
+            response.data.into_json().unwrap(),
+            json!({ "storeBuildList": [] })
+        );
+        assert_eq!(calls.servable_builds(), vec!["review".to_string()]);
+    }
+
+    /// A failed read is an error, never an empty list.
+    #[tokio::test]
+    async fn a_failed_store_build_read_is_an_ordinary_graphql_error() {
+        let (deployer, calls) = RecordingDeployer::serving(StoreBuildsAnswer::Fail);
+        let schema = TestSchema::new().await;
+        let response = schema
+            .execute_as_system_admin_with_data(
+                &store_build_list_query("hog"),
+                deployer as BoxedPackageDeployer,
+            )
+            .await;
+
+        assert_eq!(response.errors.len(), 1, "{:?}", response.errors);
+        assert_eq!(
+            response.errors[0].message,
+            "a build of hog is still pending verification"
+        );
+        assert_eq!(response.data, async_graphql::Value::Null);
+        assert_eq!(calls.servable_builds(), vec!["hog".to_string()]);
+    }
+
+    /// A System Administrator lists both classes; a Security Administrator
+    /// lists a module and is refused a core component with the guard's own
+    /// `Forbidden`; every other role is refused by the field guard. No refusal
+    /// reaches the backend.
+    #[tokio::test]
+    async fn store_build_list_binds_the_role_to_the_package_class() {
+        let cases = [
+            (Role::SystemAdministrator, "giganto", true),
+            (Role::SystemAdministrator, "roxyd", true),
+            (Role::SecurityAdministrator, "giganto", true),
+            (Role::SecurityAdministrator, "roxyd", false),
+            (Role::SecurityManager, "giganto", false),
+            (Role::SecurityManager, "roxyd", false),
+            (Role::SecurityMonitor, "giganto", false),
+            (Role::SecurityMonitor, "roxyd", false),
+        ];
+        for (role, package_id, allowed) in cases {
+            let (deployer, calls) =
+                RecordingDeployer::serving(StoreBuildsAnswer::List(vec![store_build(
+                    CONFIRMED_VERSION,
+                    CONFIRMED_COMMIT,
+                )]));
+            let schema = TestSchema::new().await;
+            let response = schema
+                .execute_with_guard_and_data(
+                    &store_build_list_query(package_id),
+                    RoleGuard::Role(role),
+                    deployer as BoxedPackageDeployer,
+                )
+                .await;
+
+            if allowed {
+                assert!(
+                    response.errors.is_empty(),
+                    "{role:?} {package_id}: {:?}",
+                    response.errors
+                );
+                assert_eq!(
+                    calls.servable_builds(),
+                    vec![package_id.to_string()],
+                    "{role:?} {package_id}"
+                );
+            } else {
+                assert_eq!(response.errors.len(), 1, "{role:?} {package_id}");
+                assert_eq!(
+                    response.errors[0].message, "Forbidden",
+                    "{role:?} {package_id}"
+                );
+                assert!(calls.servable_builds().is_empty(), "{role:?} {package_id}");
+            }
+        }
+    }
+
+    /// Every module and core package-id is accepted, and nothing else is:
+    /// `bootroot` and an unknown id are refused by the class binding, naming
+    /// the id, before the backend is asked — whichever role asks.
+    #[tokio::test]
+    async fn store_build_list_accepts_only_module_and_core_package_ids() {
+        for package_id in MODULE_PACKAGE_IDS.into_iter().chain(CORE_PACKAGE_IDS) {
+            let (deployer, calls) = RecordingDeployer::serving(StoreBuildsAnswer::List(vec![]));
+            let schema = TestSchema::new().await;
+            let response = schema
+                .execute_as_system_admin_with_data(
+                    &store_build_list_query(package_id),
+                    deployer as BoxedPackageDeployer,
+                )
+                .await;
+
+            assert!(
+                response.errors.is_empty(),
+                "{package_id}: {:?}",
+                response.errors
+            );
+            assert_eq!(calls.servable_builds(), vec![package_id.to_string()]);
+        }
+
+        for role in [Role::SystemAdministrator, Role::SecurityAdministrator] {
+            for package_id in ["bootroot", "unknown-package"] {
+                let (deployer, calls) =
+                    RecordingDeployer::serving(StoreBuildsAnswer::List(vec![store_build(
+                        CONFIRMED_VERSION,
+                        CONFIRMED_COMMIT,
+                    )]));
+                let schema = TestSchema::new().await;
+                let response = schema
+                    .execute_with_guard_and_data(
+                        &store_build_list_query(package_id),
+                        RoleGuard::Role(role),
+                        deployer as BoxedPackageDeployer,
+                    )
+                    .await;
+
+                assert_eq!(response.errors.len(), 1, "{role:?} {package_id}");
+                assert_eq!(
+                    response.errors[0].message,
+                    format!("{package_id} is not one of the package-ids this operation accepts"),
+                    "{role:?}"
+                );
+                assert!(calls.servable_builds().is_empty(), "{role:?} {package_id}");
+            }
         }
     }
 
@@ -3413,8 +3703,8 @@ mod tests {
             .collect()
     }
 
-    /// The onboarding query and the onboarding build input carry exactly the
-    /// shapes their contracts name.
+    /// The onboarding query, the onboarding build input and the store build
+    /// list carry exactly the shapes their contracts name.
     #[test]
     fn the_onboarding_build_types_keep_their_shapes() {
         let sdl = rendered_sdl();
@@ -3430,6 +3720,14 @@ mod tests {
         assert_eq!(
             sdl_block_fields(&sdl, "type RunningRoxydBuild {"),
             vec!["host: String!", "version: String!", "commit: String!"]
+        );
+        assert_eq!(
+            sdl_line(&sdl, "storeBuildList"),
+            "storeBuildList(packageId: String!): [StoreBuild!]!"
+        );
+        assert_eq!(
+            sdl_block_fields(&sdl, "type StoreBuild {"),
+            vec!["version: String!", "commit: String!"]
         );
     }
 

@@ -278,6 +278,10 @@ impl PackageDeployer for Deployer {
         bail!("No build store holds {target}")
     }
 
+    async fn servable_builds(&self, target: &str) -> Result<Vec<BuildId>, Error> {
+        bail!("No build store holds {target}")
+    }
+
     async fn package_status(
         &self,
         host: &str,

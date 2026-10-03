@@ -1319,6 +1319,22 @@ impl PackageDeployer for MockPackageDeployer {
         self.builds.latest_build(target).await
     }
 
+    // Answers from the same stub, so that the list's first entry is the build
+    // `latest_build` returns. It leaves the stub's call log alone: that log
+    // counts `latest_build` lookups only.
+    async fn servable_builds(&self, target: &str) -> Result<Vec<BuildId>, anyhow::Error> {
+        if self.builds.failing.contains(target) {
+            anyhow::bail!("the build store could not be read");
+        }
+        Ok(self
+            .builds
+            .answers
+            .get(target)
+            .cloned()
+            .into_iter()
+            .collect())
+    }
+
     async fn package_status(
         &self,
         _host: &str,

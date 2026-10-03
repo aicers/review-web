@@ -674,6 +674,29 @@ pub trait PackageDeployer: Send + Sync {
     /// Returns an error if the build store could not be read.
     async fn latest_build(&self, target: &str) -> Result<Option<BuildId>, anyhow::Error>;
 
+    /// Returns every build of `target` the store serves, newest-accepted
+    /// first.
+    ///
+    /// The list holds every build the store would resolve for `target`
+    /// through a [`BuildSelector`], and no other: what is unverified,
+    /// withdrawn or changed since verification is absent. It is ordered by
+    /// the store's own acceptance recency, the order
+    /// [`latest_build`](PackageDeployer::latest_build) uses, so its first
+    /// entry is the build `latest_build` returns. Each `(version, commit)`
+    /// pair is its own entry: two commits of one version are two entries.
+    ///
+    /// It is keyed on the package-id alone, as `latest_build` is.
+    ///
+    /// An empty list means the store holds no servable build of `target`, and
+    /// nothing else: an implementation must never answer an empty list for a
+    /// read it could not complete.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the build store could not be read, or if any build
+    /// of `target` is still pending verification.
+    async fn servable_builds(&self, target: &str) -> Result<Vec<BuildId>, anyhow::Error>;
+
     /// Returns the install and lifecycle state the host reports for one
     /// placement.
     ///

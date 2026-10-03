@@ -412,6 +412,10 @@ mod tests {
             unimplemented!("this stub answers recommend_bind_addrs only")
         }
 
+        async fn servable_builds(&self, _target: &str) -> Result<Vec<BuildId>, anyhow::Error> {
+            unimplemented!("this stub answers recommend_bind_addrs only")
+        }
+
         async fn package_status(
             &self,
             _host: &str,

@@ -4,6 +4,25 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added the `storeBuildList(packageId:)` GraphQL query, which lists the builds
+  the store serves for a module or core-component package, newest-accepted
+  first, each as a `version` and `commit` pair. System and Security
+  Administrators can list a module package; a core-component package requires a
+  System Administrator. A store that cannot be read, or that still has a build
+  of the package pending verification, answers with an error rather than an
+  empty list.
+- Added the required `PackageDeployer::servable_builds` method, which an
+  implementer must now provide. It returns every build the store would resolve
+  for a package-id through a build selector, ordered newest-accepted first so
+  that its first entry is the build `latest_build` returns; it returns an
+  empty list only when the store holds no servable build, and an error when
+  the store cannot be read or any build of the package is still pending
+  verification.
+
 ## [0.35.0] - 2026-10-01
 
 ### Changed
@@ -1888,6 +1907,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.35.0...main
 [0.35.0]: https://github.com/aicers/review-web/compare/0.34.0...0.35.0
 [0.34.0]: https://github.com/aicers/review-web/compare/0.33.0...0.34.0
 [0.33.0]: https://github.com/aicers/review-web/compare/0.32.0...0.33.0
