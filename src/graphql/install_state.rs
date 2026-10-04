@@ -240,11 +240,17 @@ pub(super) async fn update_state(
 
 /// Returns whether the installed build of one row has been withdrawn.
 ///
-/// `package_id` is `None` for a row no package deploys and for a core
-/// component excluded from update, and `installed` is `None` for a row with no
-/// installed build; each answers [`WithdrawalState::NOT_CHECKED`] and asks
-/// nothing. Everything else asks this request's [`WithdrawalMemo`], which asks
-/// the deployer at most once per `(package-id, version, commit)`.
+/// `package_id` is `None` for a row whose kind maps to no package-id, and
+/// `installed` is `None` for a row with no installed build identity; each
+/// answers [`WithdrawalState::NOT_CHECKED`] and asks nothing. Everything else
+/// asks this request's [`WithdrawalMemo`], which asks the deployer at most once
+/// per `(package-id, version, commit)`.
+///
+/// A core row never passes `None` for `package_id`:
+/// `CoreComponent::withdrawal_state` answers
+/// [`WithdrawalState::NOT_CHECKED`] for an installer-managed row itself,
+/// without calling this helper, and calls it with `Some(&self.component)`
+/// for every other core row.
 ///
 /// The check is independent of [`update_state`]: it is made whatever
 /// `latest_build` answered, and neither one's failure is reported as the
