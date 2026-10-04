@@ -90,8 +90,9 @@ model (**no `desiredVersion`**):
 - **Package identity** = manifest `component` == request `target`
   (host-agnostic); modules and core components alike. Canonical package-ids:
   `piglet`/`giganto`/`hog`/`reconverge`/`crusher` (modules), `review`/
-  `aice-web-next`/`roxyd` (core), `bootroot` (core, **not** updatable —
-  installer-managed).
+  `aice-web-next`/`roxyd`/`bootroot-agent` (core), `bootroot` (core, **not**
+  updatable — installer-managed). `bootroot-agent` is each host's Trust
+  Anchor agent binaries, a core target since 2026-10-04 (§9, decision 24).
 - **Upload** is a streaming binary transfer (the signed `.pkg`), **not** base64
   in GraphQL; review-web relays the bytes to review's store receiver (D2 §4a),
   which verifies and stores.
@@ -511,10 +512,11 @@ New mutations:
   class→guard binding is the authorization boundary; do not rely on callers
   passing the "right" mutation.
 - **`updateCoreComponent(component, host, buildSelector, onFailure)`** —
-  covers `review` + `aice-web-next` (singletons; host = their fixed host) and
-  `roxyd` (**host-scoped** — selects the instance). Argument is
-  **`(component, host)` uniformly**, keyed to the core-component registry (D1
-  §4c). Accepts only `review`/`aice-web-next`/`roxyd`; `bootroot` and any
+  covers `review` + `aice-web-next` (singletons; host = their fixed host),
+  `roxyd` and `bootroot-agent` (both **host-scoped** — the host selects the
+  instance). Argument is **`(component, host)` uniformly**, keyed to the
+  core-component registry (D1 §4c). Accepts only
+  `review`/`aice-web-next`/`roxyd`/`bootroot-agent`; `bootroot` and any
   module package-id are rejected (installer-managed / wrong class).
   **`HOLD` on a self-affecting core target is a UI-confirmed choice, not a
   rejected one.** For `review` and `aice-web-next`, `onFailure = HOLD` means a
@@ -900,8 +902,10 @@ by the resolver.
 - **Target package-class is bound to the guard tier at the resolver:**
   `installService`/`updateService`/`removeService` reject any `target` not in
   the five module package-ids; `updateCoreComponent` rejects any `component`
-  not in `{review, aice-web-next, roxyd}`. A `SecurityAdministrator` calling
-  `updateService(target="roxyd"|"review"|"aice-web-next")` is **rejected**
+  not in `{review, aice-web-next, roxyd, bootroot-agent}`. A
+  `SecurityAdministrator` calling
+  `updateService(target="roxyd"|"review"|"aice-web-next"|"bootroot-agent")`
+  is **rejected**
   (cannot reach a core package-id through the weaker module guard); `bootroot`
   is rejected everywhere.
 - **The resolver calls `install` exactly once, and propagates what comes
@@ -952,7 +956,8 @@ by the resolver.
   resolving it to a full `(version, commit)` build in either direction** and a
   non-matching selector returning a typed error; `onFailure` defaults to
   `ROLLBACK`; `updateCoreComponent` takes `(component, host)`, accepts
-  `review`/`aice-web-next`/`roxyd`, and **rejects `bootroot`**.
+  `review`/`aice-web-next`/`roxyd`/`bootroot-agent`, and **rejects
+  `bootroot`**.
 - The existing config draft→Apply mutations are **unchanged**, except that
   they, `updateNodeDraft` and `removeNodes` refuse to delete, re-kind or
   re-host an installed (numbered) instance's row, which only `removeService`
@@ -1140,6 +1145,8 @@ contradictions the same way.
   into review.
 - **No schema/type persistence** — that is review-database (D1).
 - **bootroot update** — rejected at the mutation boundary (installer-managed).
+  Each host's `bootroot-agent` is not the trust anchor and is accepted (§9,
+  decision 24).
 
 ## 9. Resolved decisions
 
@@ -1472,8 +1479,26 @@ supersedes.
     as a fifth parameter. `aicers/review`, the trait's implementor, adapts to
     all three.
 
-<!-- Decision 24 is the Trust Anchor agent target, added by its own amendment. -->
 <!-- markdownlint-disable MD029 -->
+24. **Each host's Trust Anchor agent is a core target, `bootroot-agent`
+    (2026-10-04).** A host onboarded with `roxyd join` gets the
+    `bootroot-agent` and `bootroot-remote` binaries from the operator, and
+    no installer update reaches it (bootler RFC 0004 §4). So `bootroot-agent`
+    joins `CORE_PACKAGE_IDS`, and `updateCoreComponent` takes it
+    host-scoped, as it takes `roxyd`. review routes it to that host's own
+    roxyd, and the update is not self-disrupting (RFC-D2 §4e). Nothing else
+    in this layer changes:
+    - The guard stays `SystemAdministrator`, and the module mutations reject
+      it like any core package-id.
+    - The `rollback-supervisor` gate (§5a) applies to it unchanged. It is a
+      host-level gate on every mutation, not a property of the target.
+    - The sets built from `CORE_PACKAGE_IDS` admit it with no text change:
+      the upload route's permitted set, `storeBuildList`, and
+      operation-attempt visibility.
+    - The core-component read path already lists whatever rows the registry
+      holds.
+
+    `bootroot` itself stays rejected everywhere.
 25. **Ingress refusals carry a closed `code` (2026-10-04).** The aice-web-next
     BFF must not show this repository's text (RFC-E §8) and must give each
     refusal its own remedy (RFC-E §9). Today both routes answer
