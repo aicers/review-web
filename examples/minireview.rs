@@ -393,6 +393,7 @@ pub struct Config {
     data_dir: PathBuf,
     backup_dir: PathBuf,
     log_dir: PathBuf,
+    #[cfg(feature = "auth-jwt")]
     htdocs_dir: PathBuf,
     database_url: String,
     graphql_srv_addr: SocketAddr,
@@ -402,7 +403,9 @@ pub struct Config {
     ip2location: Option<PathBuf>,
     #[cfg(feature = "auth-jwt")]
     reverse_proxies: Vec<review_web::archive::Config>,
+    #[cfg(feature = "auth-jwt")]
     client_cert: Option<PathBuf>,
+    #[cfg(feature = "auth-jwt")]
     client_key: Option<PathBuf>,
 }
 
@@ -411,6 +414,7 @@ struct ConfigParser {
     data_dir: PathBuf,
     backup_dir: PathBuf,
     log_dir: PathBuf,
+    #[cfg(feature = "auth-jwt")]
     htdocs_dir: PathBuf,
     database_url: String,
     graphql_srv_addr: String,
@@ -422,7 +426,9 @@ struct ConfigParser {
     archive: Option<review_web::archive::Config>,
     #[cfg(feature = "auth-jwt")]
     reverse_proxies: Option<Vec<review_web::archive::Config>>,
+    #[cfg(feature = "auth-jwt")]
     client_cert: Option<PathBuf>,
+    #[cfg(feature = "auth-jwt")]
     client_key: Option<PathBuf>,
 }
 
@@ -447,7 +453,9 @@ impl Config {
             .set_default("backup_dir", env::current_dir()?.join("backup").to_str())
             .context("cannot set the default backup directory")?
             .set_default("log_dir", DEFAULT_LOG_PATH)
-            .context("cannot set the default log path")?
+            .context("cannot set the default log path")?;
+        #[cfg(feature = "auth-jwt")]
+        let builder = builder
             .set_default("htdocs_dir", env::current_dir()?.join("htdocs").to_str())
             .context("cannot set the default web directory")?;
         let config: ConfigParser = if let Some(path) = path {
@@ -475,6 +483,7 @@ impl Config {
             data_dir: config.data_dir,
             backup_dir: config.backup_dir,
             log_dir: config.log_dir,
+            #[cfg(feature = "auth-jwt")]
             htdocs_dir: config.htdocs_dir,
             database_url: config.database_url,
             graphql_srv_addr,
@@ -484,7 +493,9 @@ impl Config {
             ip2location: config.ip2location,
             #[cfg(feature = "auth-jwt")]
             reverse_proxies,
+            #[cfg(feature = "auth-jwt")]
             client_cert: config.client_cert,
+            #[cfg(feature = "auth-jwt")]
             client_key: config.client_key,
         })
     }
@@ -504,6 +515,7 @@ impl Config {
         self.log_dir.as_ref()
     }
 
+    #[cfg(feature = "auth-jwt")]
     #[must_use]
     pub fn htdocs_dir(&self) -> &Path {
         self.htdocs_dir.as_ref()
@@ -603,6 +615,7 @@ fn run(config: &Config) -> Result<Arc<Notify>> {
 
     let web_config = web::ServerConfig {
         addr: config.graphql_srv_addr(),
+        #[cfg(feature = "auth-jwt")]
         document_root: config.htdocs_dir().to_owned(),
         cert_manager,
         tls_reload_handle,
@@ -613,7 +626,9 @@ fn run(config: &Config) -> Result<Arc<Notify>> {
             .collect(),
         #[cfg(feature = "auth-jwt")]
         reverse_proxies: config.reverse_proxies(),
+        #[cfg(feature = "auth-jwt")]
         client_cert_path: config.client_cert.clone(),
+        #[cfg(feature = "auth-jwt")]
         client_key_path: config.client_key.clone(),
         #[cfg(feature = "auth-mtls")]
         authenticator: Arc::new(MiniAuthenticator),

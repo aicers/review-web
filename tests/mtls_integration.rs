@@ -519,7 +519,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
         ca_cert: Certificate,
         issuer: Issuer<'static, KeyPair>,
         maintenance_gate: MaintenanceGate,
-        _temp_root: tempfile::TempDir,
+        document_root: tempfile::TempDir,
         _cert_dir: tempfile::TempDir,
         _store_dir: tempfile::TempDir,
         _backup_dir: tempfile::TempDir,
@@ -564,6 +564,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
 
         let config = ServerConfig {
             addr: SocketAddr::new(addr_ip, port),
+            #[cfg(feature = "auth-jwt")]
             document_root: temp_root.path().to_path_buf(),
             cert_manager: Arc::new(StaticCertManager {
                 cert_path: server_cert_path,
@@ -571,7 +572,9 @@ xvcNsYaYqk6sRk/INvcaN2E=
             }),
             tls_reload_handle: Arc::new(tokio::sync::Notify::new()),
             ca_certs: vec![ca_path],
+            #[cfg(feature = "auth-jwt")]
             client_cert_path: None,
+            #[cfg(feature = "auth-jwt")]
             client_key_path: None,
             authenticator: Arc::new(StubAuthenticator),
             package_store: Arc::new(StubPackageStore),
@@ -597,7 +600,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
             ca_cert,
             issuer,
             maintenance_gate,
-            _temp_root: temp_root,
+            document_root: temp_root,
             _cert_dir: cert_dir,
             _store_dir: store_dir,
             _backup_dir: backup_dir,
@@ -725,6 +728,38 @@ xvcNsYaYqk6sRk/INvcaN2E=
             .and_then(|value| value.as_str())
             .context("read __typename")?;
         assert_eq!(typename, "Query");
+        server.shutdown.notify_one();
+        server.shutdown.notified().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mtls_static_files_are_unavailable() -> anyhow::Result<()> {
+        let server = start_test_server()?;
+        std::fs::write(
+            server.document_root.path().join("index.html"),
+            "<html>Static files must not be served by mTLS builds</html>",
+        )
+        .context("write index.html in the test document root")?;
+        let (client, client_key) =
+            build_client_with_identity(&server.issuer, &server.ca_cert, SERVICE_DNS)?;
+        let token = sign_context_jwt(client_key.serialize_der().as_slice())?;
+
+        // Wait for a successful authenticated request before testing the fallback.
+        let response = send_graphql_request(&client, &server.url, Some(&token)).await?;
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+        let url = reqwest::Url::parse(&server.url)
+            .context("parse test server URL")?
+            .join("/index.html")
+            .context("build index.html URL")?;
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .context("GET index.html with a valid client certificate")?;
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+
         server.shutdown.notify_one();
         server.shutdown.notified().await;
         Ok(())

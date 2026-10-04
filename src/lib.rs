@@ -28,11 +28,13 @@ use async_graphql_axum::{GraphQLProtocol, GraphQLRequest, GraphQLResponse, Graph
 use axum::extract::ConnectInfo;
 #[cfg(feature = "auth-jwt")]
 use axum::response::Html;
+#[cfg(feature = "auth-jwt")]
+use axum::routing::get_service;
 use axum::{
     Json, Router,
     extract::{Extension, WebSocketUpgrade},
     response::{IntoResponse, Response},
-    routing::{get, get_service},
+    routing::get,
 };
 use axum_extra::{
     TypedHeader,
@@ -55,6 +57,7 @@ use serde_json::json;
 use tokio::{sync::Notify, task::JoinHandle};
 #[cfg(feature = "auth-mtls")]
 use tower::Service;
+#[cfg(feature = "auth-jwt")]
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing::error;
 #[cfg(feature = "auth-jwt")]
@@ -157,13 +160,16 @@ const _: () =
 /// Parameters for a web server.
 pub struct ServerConfig {
     pub addr: SocketAddr,
+    #[cfg(feature = "auth-jwt")]
     pub document_root: PathBuf,
     pub cert_manager: Arc<dyn CertManager>,
     pub tls_reload_handle: Arc<Notify>,
     pub ca_certs: Vec<PathBuf>,
     #[cfg(feature = "auth-jwt")]
     pub reverse_proxies: Vec<archive::Config>,
+    #[cfg(feature = "auth-jwt")]
     pub client_cert_path: Option<PathBuf>,
+    #[cfg(feature = "auth-jwt")]
     pub client_key_path: Option<PathBuf>,
     #[cfg(feature = "auth-mtls")]
     pub authenticator: Arc<dyn MtlsAuthenticator>,
@@ -259,6 +265,7 @@ where
     );
     let server: JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
         loop {
+            #[cfg(feature = "auth-jwt")]
             let static_files = get_service(ServeDir::new(config.document_root.clone()));
 
             #[cfg(feature = "auth-jwt")]
@@ -275,9 +282,10 @@ where
                 "/graphql/playground",
                 get(graphql_playground).post(graphql_handler),
             );
+            let router = router.merge(ingress::router());
+            #[cfg(feature = "auth-jwt")]
+            let router = router.fallback_service(static_files.layer(TraceLayer::new_for_http()));
             let router = router
-                .merge(ingress::router())
-                .fallback_service(static_files.layer(TraceLayer::new_for_http()))
                 .layer(Extension(schema.clone()))
                 .layer(Extension(store.clone()))
                 .layer(Extension(config.package_store.clone()))

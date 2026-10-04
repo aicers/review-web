@@ -2189,6 +2189,7 @@ mod tests {
                 }
             })
         );
+        drop(schema);
 
         for failure in [
             Failure::PortAllocationConflict,
@@ -3490,6 +3491,7 @@ mod tests {
 
             assert!(res.errors.is_empty(), "{submitted}: {:?}", res.errors);
             assert_eq!(calls.only_install().on_failure, expected, "{submitted}");
+            drop(schema);
 
             let (deployer, calls) = RecordingDeployer::applying();
             let schema = TestSchema::new().await;
