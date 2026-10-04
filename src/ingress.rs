@@ -1464,7 +1464,9 @@ mod tests {
         assert_eq!(sent.status, StatusCode::OK);
         let mut expected = ids(&CORE_PACKAGE_IDS);
         expected.extend(ids(&MODULE_PACKAGE_IDS));
-        assert_eq!(stub.observed().permitted, expected);
+        let observed = stub.observed();
+        assert_eq!(observed.permitted, expected);
+        assert!(!observed.permitted.iter().any(|id| id == "bootroot"));
     }
 
     #[tokio::test]

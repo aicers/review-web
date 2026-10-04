@@ -2,10 +2,11 @@
 //!
 //! A core component — `review`, `aice-web-next`, `roxyd`, `bootroot-agent`,
 //! `bootroot-remote`, `bootler-security` or `bootroot` — is neither an agent
-//! nor an external service, and it is not a child of a node record either. Its listing is therefore a top-level query rather than a
-//! field of `Node`: hanging it there would inherit the customer scoping a node
-//! read carries, which is the wrong guard for a class that gets no customer
-//! scoping precisely because it is control-plane.
+//! nor an external service, and it is not a child of a node record either.
+//! Its listing is therefore a top-level query rather than a field of `Node`:
+//! hanging it there would inherit the customer scoping a node read carries,
+//! which is the wrong guard for a class that gets no customer scoping
+//! precisely because it is control-plane.
 
 use async_graphql::{ComplexObject, Context, Object, Result, SimpleObject};
 use review_database::{self as database, Iterable};

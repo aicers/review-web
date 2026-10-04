@@ -57,9 +57,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `updateCoreComponent` and `POST /api/package/upload` now accept
   `bootroot-agent`, `bootroot-remote` and `bootler-security`, the programs an
   operator places on a host onboarded with `roxyd join`, as host-scoped core
-  packages, for System Administrators only. The module mutations
-  (`installService`, `updateService` and `removeService`) reject them like any
-  other core package, and `bootroot` stays rejected everywhere.
+  packages, for System Administrators only.
 
 ### Changed
 
