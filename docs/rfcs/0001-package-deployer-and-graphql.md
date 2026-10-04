@@ -8,7 +8,9 @@
 **Status:** Accepted; implementation is decomposed from §7. Amended
 2026-10-04 by [#1026](https://github.com/aicers/review-web/issues/1026) — §5a,
 §5b, §5c, §7 issues 6–9 and §9 decisions 25–28 — for RFC-E's signed-file
-intake, withdrawn-build mark and failure kind.
+intake, withdrawn-build mark and failure kind. Amended 2026-10-05 — §4, §5a,
+§5a-bis, §6 and §7 issue 10 — for reconverge's first-install configuration
+template.
 `aicers/review-web` is an aicers repo (in-repo issue flow,
 AgentCoop-decomposable, no external gate). Derived from the RFC-D scope
 (the review-web slice). This
@@ -132,7 +134,8 @@ model (**no `desiredVersion`**):
       // at once (RFC-D1 §2), so (host, target) alone is ambiguous.
       // INSTALL AND UPDATE ARE SEPARATE METHODS, because only one of them
       // allocates. `install` takes no `instance` — that is what it produces —
-      // and it is the only one carrying `bind_addrs` and `request_key`.
+      // and it is the only one carrying `bind_addrs`, `config_template`
+      // (§5a-bis) and `request_key`.
       // NO `bootstrap_material` PARAMETER. `install` mints the identity
       // itself (RFC-D2 §4f): the mint needs the instance number this call
       // allocates, and the owed teardown must be armed before it, so no
@@ -158,6 +161,9 @@ model (**no `desiredVersion`**):
           // decides a conflict — the catalog, the host's occupancy, the
           // allocation rows — is review's.
           bind_addrs: Option<Vec<BindAddrInput>>,
+          // A configuration template id, passed through unchanged; review
+          // validates it against deploy-core's catalog (§5a-bis).
+          config_template: Option<String>,
           // Dedupes the operator's INTENT. review persists it as the
           // `operation_attempt.idempotency_key` (RFC-D1 §4d) and looks it up
           // before allocating, so a resubmit after a restart finds the
@@ -377,9 +383,11 @@ New mutations:
   a request that supplies one for them is rejected — only the five modules
   are multi-instance.
 - **`installService(host, target, buildSelector, onFailure, bindAddrs,
-  requestKey)`** — installs the module on a host. It **allocates**: review
-  picks the next free instance number and this instance's addresses (RFC-D2
-  §4f, RFC-D1 §4g).
+  configTemplate, requestKey)`** — installs the module on a host. It
+  **allocates**: review picks the next free instance number and this
+  instance's addresses (RFC-D2 §4f, RFC-D1 §4g). The optional
+  `configTemplate` names the first-install configuration template, passed
+  through for review to validate (§5a-bis).
   **[DECISION] Because it allocates, it carries a client-supplied
   `requestKey`, single-flight is keyed on that rather than on the triple, and
   review PERSISTS it as the attempt's `idempotency_key`.** An earlier revision
@@ -439,8 +447,9 @@ New mutations:
   circular, and no ordering of two resolver calls fixes it.
   So **`PackageDeployer::install` owns the whole first-install
   orchestration**, and the resolver makes a single call. Inside it, review:
-  1. computes the **install-intent digest** over the submitted request
-     (RFC-D1 §4d) and looks the **`requestKey`** up: a row whose digest
+  1. computes the **install-intent digest** over the submitted request,
+     `configTemplate` included (RFC-D1 §4d, §5a-bis), and looks the
+     **`requestKey`** up: a row whose digest
      matches **returns that attempt** and allocates nothing, while one whose
      digest differs is refused with **`RequestKeyReused`**, non-retryable;
   2. allocates the **instance, the ports and the `operation_attempt`** in
@@ -458,8 +467,9 @@ New mutations:
   Keeping the mint inside `install` is what lets steps 2 and 3 precede it
   without the resolver holding a half-allocated state it cannot clean up. The
   resolver's job shrinks to authorization, shape validation and passing the
-  `requestKey` through. A first install is **never** an `update`; if a
-  first-install request ever reaches roxyd carrying no material, roxyd
+  `requestKey` and `configTemplate` through. A first install is **never** an
+  `update`; if a first-install request ever reaches roxyd carrying no
+  material, roxyd
   **fail-closes with `MissingBootstrapMaterial`** (RFC-C §4), so an `install`
   whose internal mint was skipped cannot silently place a module without a
   bootroot identity. **Failure
@@ -582,6 +592,140 @@ New mutations:
   unavailable or still verifying stays `Other`, because the operator retries it
   rather than choosing another build. RFC-E §9 renders the arm by asking the
   operator to refresh the build list and choose another build.
+
+### 5a-bis. Configuration template on the install surface (amended 2026-10-05)
+
+**Why.** reconverge (the Unsupervised Engine) cannot start from the
+first-install configuration file roxyd writes today, which holds only the
+manager-assigned bind addresses, and it is not reachable through REView's
+configuration plane afterwards. Which of its `[[detectors]]` settings the UI
+should let an operator choose is an open product policy, so in the interim its
+first-install configuration comes from a small catalog of **named
+configuration templates** the product owner maintains in `aicers/deploy-core`
+(a `config_template` module, each entry an `id`, an English and Korean `name`
+and `description`, and a TOML body). The operator picks one by name at
+install; roxyd renders it with host values and writes it once. The catalog
+also names the components that **require** a template — only `reconverge` —
+and no other component has one. The other four modules are unaffected:
+`piglet`, `hog` and `crusher` install with no configuration and are configured
+afterwards through the existing draft→Apply flow, and `giganto`'s
+first-install file stays bind-address-only. This subsection is review-web's
+part.
+
+- **[DECISION] `installService` gains an optional `configTemplate: String`** —
+  the id of a template in `target`'s catalog; absent means "no template". It is
+  passed to `PackageDeployer::install` **unchanged**, as `config_template:
+  Option<String>`. review-web checks neither its shape nor its membership —
+  an empty string reaches review like any other id — because the catalog is
+  review's to read: review links `aicers/deploy-core` and this repository does
+  not, and does not start to (`Cargo.toml` has no `deploy-core` entry, and
+  neither `review-database` nor `review-protocol` brings one in). review
+  refuses, at its mutation boundary
+  and before any attempt row exists:
+  - a request **without** a template for a target that requires one — so every
+    install of such a target is refused while its catalog is empty;
+  - a request **with** a template for a target that does not require one;
+  - an id that is not in the target's catalog.
+- **[DECISION] The three refusals are typed arms of `InstallServiceResult`,**
+  the way `BuildNotServable` is (§9 decisions 17, 28): new `DeployError`
+  variants in `src/backend.rs` — `ConfigTemplateRequired { target }`,
+  `ConfigTemplateNotApplicable { target }` and `UnknownConfigTemplate {
+  target, config_template }` — which review constructs and the
+  `install_service` resolver (`src/graphql/node/deploy.rs`) matches into the
+  like-named union members `ConfigTemplateRequired { target }`,
+  `ConfigTemplateNotApplicable { target }` and `UnknownConfigTemplate {
+  target, configTemplate }`. Each is a state of the install form with its own
+  remedy — choose a template, drop the field, refresh the template list — so
+  none may arrive as `DeployError::Other`'s text. They are install-only:
+  `UpdateServiceResult` and `UpdateCoreComponentResult` do not gain them.
+- **[DECISION] `updateService` gains nothing,** and neither does
+  `updateCoreComponent`. A template is honoured on a first install only — roxyd
+  never rewrites an instance's configuration and refuses a template on an
+  update (`InstallPreflight::ConfigTemplateOnUpdate`, RFC-C) — so no update
+  surface carries one, and review never sends one on an update.
+- **[DECISION] The template is part of the install intent.** review includes
+  the id in the install-intent digest (RFC-D1's `InstallIntent`, which today
+  holds `host`, `target`, `selector`, `on_failure` and `bind_addrs`), so a
+  `requestKey` reused with a different template — or with a template where the
+  first request had none, or the reverse — is `RequestKeyReused`, while the
+  same key with the same template returns the earlier attempt. review persists
+  the id on the operation attempt so a re-sent attempt sends the same request
+  (RFC-D2). This repository only passes the key and the id through, separately
+  and unchanged; it never folds one into the other.
+- **[DECISION] A new query, `configTemplates(target: String!):
+  ConfigTemplateList!`**, which the install form reads to decide whether to
+  show a template selector and what to list in it:
+  ```graphql
+  type ConfigTemplateList {
+    required: Boolean!
+    templates: [ConfigTemplate!]!
+  }
+  type ConfigTemplate {
+    id: String!
+    name: LocalizedText!
+    description: LocalizedText!
+  }
+  type LocalizedText {
+    en: String!
+    ko: String!
+  }
+  ```
+  `required` says whether `target` requires a template; `templates` lists its
+  catalog in declared order, and is empty for a component that has none — or
+  for a required component whose catalog is still empty, which the UI shows as
+  "no configuration template available yet" with Install disabled (RFC-E).
+  **It never returns a template's body**, and neither does the backend type it
+  is built from: the UI shows a name and a description and never TOML, and a
+  field that is not on either type cannot be added to a response by accident.
+  **Guard:** the role guard the install surface's read queries carry —
+  `RoleGuard` `SystemAdministrator` **or** `SecurityAdministrator`, as on
+  `storeBuildList` and `recommendBindAddrs` — and the module-class binding
+  `recommendBindAddrs` and `installService` apply,
+  `bind_package_class(&target, &MODULE_PACKAGE_IDS)`, so a non-module target is
+  an ordinary GraphQL error before any backend call. There is **no**
+  `check_hostname_access`: the query names no host, because the catalog is
+  keyed on the package-id alone, as `storeBuildList`'s store is. A failed
+  backend read is an ordinary GraphQL error, never an empty list.
+- **[DECISION] Both read through `PackageDeployer`, which review implements
+  from deploy-core's catalog.** `install` gains `config_template:
+  Option<String>` after `bind_addrs`, and a new method returns the summary the
+  query renders:
+  ```rust
+  async fn config_templates(
+      &self, target: &str,
+  ) -> Result<ConfigTemplateCatalog, anyhow::Error>;
+  pub struct ConfigTemplateCatalog {
+      pub required: bool,
+      pub templates: Vec<ConfigTemplateSummary>, // declared order
+  }
+  pub struct ConfigTemplateSummary {
+      pub id: String,
+      pub name: LocalizedText,
+      pub description: LocalizedText,
+  }
+  pub struct LocalizedText { pub en: String, pub ko: String }
+  ```
+  One method answers both `required` and the list, so the two come from one
+  catalog read. The fields are `pub` because review constructs them, as with
+  `DeployError`. Like §7's issue 1, the trait change lands before review's
+  implementation.
+- **Acceptance (this repository asserts the boundary, nothing behind it):**
+  - `installService` passes `configTemplate` to `install` byte-for-byte, and an
+    absent one as `None`, beside `bindAddrs` and `requestKey` unchanged;
+  - each of the three new `DeployError` variants comes back as its like-named
+    `InstallServiceResult` member with its fields unchanged, and neither
+    `updateService`'s nor `updateCoreComponent`'s schema has a
+    `configTemplate` argument or those members;
+  - `configTemplates` calls `config_templates` once and returns its answer
+    unchanged and in order; the SDL's `ConfigTemplate` has exactly `id`,
+    `name` and `description`;
+  - a role outside the guard, and a non-module target, are refused without a
+    backend call;
+  - SDL regenerated.
+
+  Which target requires a template, which ids exist, and that the digest
+  covers the id are review's and review-database's, asserted in RFC-D2 and
+  RFC-D1.
 
 ### 5b. Read types — inline version/lifecycle
 
@@ -915,9 +1059,10 @@ by the resolver.
   ordering, so it no longer asserts one: **those tests move to review's own
   RFC**, which owns the orchestration. What is testable here is the boundary —
   a test asserts `installService` invokes `install` **once**, passes the
-  `bindAddrs` list and the `requestKey` through unchanged, and surfaces the
-  returned operation id on success and the typed error on failure, including
-  `RequestKeyReused`, without reinterpreting either.
+  `bindAddrs` list, the `configTemplate` (§5a-bis) and the `requestKey`
+  through unchanged, and surfaces the returned operation id on success and the
+  typed error on failure, including `RequestKeyReused` and the three
+  configuration-template refusals, without reinterpreting either.
 - **Instances are allocated on install and addressed on update/remove:**
   `installService` carries **no** `instance` and a **`requestKey`**;
   `updateService` / `removeService` carry the number and reject one that does
@@ -1086,6 +1231,17 @@ Self-contained issues; dependency order within this repo:
    `installService`, `updateService` and `updateCoreComponent`, and pass-through
    tests per mutation; SDL regen. Like issue 1, the `DeployError` change lands
    before review's mapping (RFC-D2 §4b).
+10. **Configuration template on the install surface** (§5a-bis) — the
+    optional `configTemplate` argument on `installService` and
+    `config_template` on `PackageDeployer::install`, passed through unchanged;
+    `DeployError::ConfigTemplateRequired`, `ConfigTemplateNotApplicable` and
+    `UnknownConfigTemplate` with their `InstallServiceResult` arms; the
+    `configTemplates(target)` query over the new
+    `PackageDeployer::config_templates` method, with no body field anywhere;
+    the §5a-bis acceptance tests; SDL regen. The query lives in
+    `src/graphql/node/deploy.rs` beside `storeBuildList`, and the
+    `DeployError` doc comment's count of named variants is updated. Like
+    issue 1, the trait change lands before review's implementation.
 
 Cross-repo: issue 1 (trait def) should land **before** review D2's trait-impl
 issue; the mutations/route are exercised end-to-end once review (D2) is wired.
