@@ -68,6 +68,30 @@ pub(crate) enum OperationOutcome {
     Cancelled,
 }
 
+/// Why an attempt that ended `FAILED` failed, as a closed remedy group.
+///
+/// It mirrors `review_database::OperationFailureKind` one variant for one
+/// variant and in the stored order. It names the remedy an operator can act
+/// on rather than the cause, which stays in `review`'s log, and it is set on a
+/// `FAILED` attempt and on no other. The stored enum carries no fallback
+/// variant — `OTHER` is a kind of its own, not an unknown — so this one
+/// invents no `UNKNOWN`, and a kind appended upstream stops this crate from
+/// compiling until it is mirrored here.
+#[derive(Clone, Copy, Debug, Enum, Eq, PartialEq)]
+#[graphql(remote = "database::OperationFailureKind")]
+pub(crate) enum OperationFailureKind {
+    HostDiskSpace,
+    HostAgentUnsupported,
+    HostNotPrepared,
+    UnmanagedInstance,
+    ServiceFailed,
+    NotApplied,
+    TrustAnchorRefused,
+    BuildNotServable,
+    NoConfirmation,
+    Other,
+}
+
 /// The compensation an attempt still owes.
 ///
 /// It mirrors `review_database::OperationCleanupState`, and it is an enum
@@ -192,6 +216,15 @@ impl OperationAttempt {
     /// own.
     async fn outcome(&self) -> Option<OperationOutcome> {
         self.inner.outcome.map(Into::into)
+    }
+
+    /// Why an attempt that ended `FAILED` failed, as a closed remedy group.
+    ///
+    /// It is non-null exactly when `outcome` is `FAILED`, and null otherwise,
+    /// a running attempt included. It names what an operator can do about the
+    /// failure and no more; the detail of what went wrong is in the log.
+    async fn failure_kind(&self) -> Option<OperationFailureKind> {
+        self.inner.failure_kind.map(Into::into)
     }
 
     /// The host the operation applies to.
@@ -459,8 +492,8 @@ mod tests {
     use review_database::{
         Agent, AgentKind, AgentStatus, CoreComponent, ExternalService, ExternalServiceKind,
         ExternalServiceStatus, Lifecycle, Node, NodeProfile, OperationAction,
-        OperationAttempt as Record, OperationCleanupState, OperationOutcome, OperationPhase,
-        OperationRetryPolicy, Role, Store,
+        OperationAttempt as Record, OperationCleanupState, OperationFailureKind, OperationOutcome,
+        OperationPhase, OperationRetryPolicy, Role, Store,
     };
     use serde_json::json;
 
@@ -468,8 +501,8 @@ mod tests {
     use crate::graphql::TestSchema;
 
     /// The fields of an attempt, as every query test below asks for them.
-    const ATTEMPT_FIELDS: &str = "id action phase outcome host target instance resolvedVersion \
-                                  resolvedCommit cleanupOwed startedAt expiresAt";
+    const ATTEMPT_FIELDS: &str = "id action phase outcome failureKind host target instance \
+                                  resolvedVersion resolvedCommit cleanupOwed startedAt expiresAt";
 
     /// The digest an install attempt carries.
     ///
@@ -522,6 +555,7 @@ mod tests {
                 backoff_seconds: 1,
             },
             outcome: None,
+            failure_kind: None,
             finalized_at: None,
             expires_at: instant(3_600),
             backup_id: None,
@@ -533,11 +567,22 @@ mod tests {
     ///
     /// The finalization instant is stamped exactly when the attempt owes no
     /// compensation, which is what the ledger accepts and what moves the
-    /// latest pointer.
+    /// latest pointer. A failure kind is set exactly when the outcome is
+    /// `Failed`, which the ledger also demands; the kind is `Other` here, and
+    /// [`failed`] picks another.
     fn finished(mut attempt: Record, outcome: OperationOutcome) -> Record {
         attempt.phase = OperationPhase::Completed;
         attempt.outcome = Some(outcome);
+        attempt.failure_kind =
+            (outcome == OperationOutcome::Failed).then_some(OperationFailureKind::Other);
         attempt.finalized_at = attempt.cleanup_state.is_none().then(|| instant(60));
+        attempt
+    }
+
+    /// Returns `attempt` finished `Failed` with `kind`.
+    fn failed(attempt: Record, kind: OperationFailureKind) -> Record {
+        let mut attempt = finished(attempt, OperationOutcome::Failed);
+        attempt.failure_kind = Some(kind);
         attempt
     }
 
@@ -705,6 +750,7 @@ mod tests {
         assert_eq!(found["action"], json!("INSTALL"));
         assert_eq!(found["phase"], json!("DISPATCHED"));
         assert_eq!(found["outcome"], json!(null));
+        assert_eq!(found["failureKind"], json!(null));
         assert_eq!(found["host"], json!(HOST));
         assert_eq!(found["target"], json!("hog"));
         assert_eq!(found["instance"], json!("3"));
@@ -938,18 +984,155 @@ mod tests {
         for (key, instance, state, _) in &owed {
             let mut row = attempt(key, OperationAction::Remove, HOST, "roxyd", Some(*instance));
             row.cleanup_state = *state;
-            seed(&schema.store(), &finished(row, OperationOutcome::Failed));
+            seed(
+                &schema.store(),
+                &failed(row, OperationFailureKind::ServiceFailed),
+            );
         }
 
         for (key, _, _, rendered) in owed {
             let res = schema.execute_as_system_admin(&attempt_query(key)).await;
             assert!(res.errors.is_empty(), "{key}: {:?}", res.errors);
-            assert_eq!(
-                res.data.into_json().unwrap()["operationAttempt"]["cleanupOwed"],
-                rendered,
-                "{key}"
-            );
+            let data = res.data.into_json().unwrap();
+            let found = &data["operationAttempt"];
+            assert_eq!(found["cleanupOwed"], rendered, "{key}");
+            // An owed teardown and the failure kind are independent fields.
+            assert_eq!(found["failureKind"], json!("SERVICE_FAILED"), "{key}");
         }
+    }
+
+    /// A `FAILED` attempt reads back the kind it was stored with, every one of
+    /// the ten, under its SDL name.
+    #[tokio::test]
+    async fn a_failed_attempt_carries_its_failure_kind() {
+        let schema = TestSchema::new().await;
+        let kinds = [
+            (OperationFailureKind::HostDiskSpace, "HOST_DISK_SPACE"),
+            (
+                OperationFailureKind::HostAgentUnsupported,
+                "HOST_AGENT_UNSUPPORTED",
+            ),
+            (OperationFailureKind::HostNotPrepared, "HOST_NOT_PREPARED"),
+            (
+                OperationFailureKind::UnmanagedInstance,
+                "UNMANAGED_INSTANCE",
+            ),
+            (OperationFailureKind::ServiceFailed, "SERVICE_FAILED"),
+            (OperationFailureKind::NotApplied, "NOT_APPLIED"),
+            (
+                OperationFailureKind::TrustAnchorRefused,
+                "TRUST_ANCHOR_REFUSED",
+            ),
+            (OperationFailureKind::BuildNotServable, "BUILD_NOT_SERVABLE"),
+            (OperationFailureKind::NoConfirmation, "NO_CONFIRMATION"),
+            (OperationFailureKind::Other, "OTHER"),
+        ];
+        for (instance, (kind, _)) in (1..).zip(kinds) {
+            let key = format!("failed-{instance}");
+            let row = attempt(&key, OperationAction::Update, HOST, "roxyd", Some(instance));
+            seed(&schema.store(), &failed(row, kind));
+        }
+
+        for (instance, (_, rendered)) in (1..).zip(kinds) {
+            let key = format!("failed-{instance}");
+            let res = schema.execute_as_system_admin(&attempt_query(&key)).await;
+            assert!(res.errors.is_empty(), "{rendered}: {:?}", res.errors);
+            let data = res.data.into_json().unwrap();
+            let found = &data["operationAttempt"];
+            assert_eq!(found["outcome"], json!("FAILED"), "{rendered}");
+            assert_eq!(found["failureKind"], json!(rendered));
+        }
+    }
+
+    /// A failed onboarding carries its kind like any other attempt.
+    #[tokio::test]
+    async fn a_failed_onboarding_carries_its_failure_kind() {
+        let schema = TestSchema::new().await;
+        let row = attempt("onboard-1", OperationAction::Onboard, "newhost", "", None);
+        seed(
+            &schema.store(),
+            &failed(row, OperationFailureKind::HostNotPrepared),
+        );
+
+        let res = schema
+            .execute_as_system_admin(&attempt_query("onboard-1"))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        let found = &res.data.into_json().unwrap()["operationAttempt"];
+        assert_eq!(found["action"], json!("ONBOARD"));
+        assert_eq!(found["failureKind"], json!("HOST_NOT_PREPARED"));
+    }
+
+    /// Every attempt that did not end `FAILED`, a running one included,
+    /// carries no failure kind.
+    #[tokio::test]
+    async fn an_attempt_that_did_not_fail_carries_no_failure_kind() {
+        let schema = TestSchema::new().await;
+        let ended = [
+            ("succeeded-1", 1, OperationOutcome::Succeeded, "SUCCEEDED"),
+            (
+                "rolled-back-1",
+                2,
+                OperationOutcome::RolledBack,
+                "ROLLED_BACK",
+            ),
+            ("cancelled-1", 3, OperationOutcome::Cancelled, "CANCELLED"),
+        ];
+        for (key, instance, outcome, _) in ended {
+            let row = attempt(key, OperationAction::Update, HOST, "roxyd", Some(instance));
+            seed(&schema.store(), &finished(row, outcome));
+        }
+        seed(
+            &schema.store(),
+            &attempt("running-1", OperationAction::Update, HOST, "roxyd", Some(4)),
+        );
+
+        let expected = ended
+            .iter()
+            .map(|(key, _, _, rendered)| (*key, json!(rendered)))
+            .chain([("running-1", json!(null))]);
+        for (key, outcome) in expected {
+            let res = schema.execute_as_system_admin(&attempt_query(key)).await;
+            assert!(res.errors.is_empty(), "{key}: {:?}", res.errors);
+            let data = res.data.into_json().unwrap();
+            let found = &data["operationAttempt"];
+            assert_eq!(found["outcome"], outcome, "{key}");
+            assert_eq!(found["failureKind"], json!(null), "{key}");
+        }
+    }
+
+    /// The inline latest attempt is the same record as the top-level one, and
+    /// carries the failure kind too.
+    #[tokio::test]
+    async fn the_inline_attempt_carries_the_failure_kind() {
+        let schema = TestSchema::new().await;
+        let node_id = insert_node(
+            &schema.store(),
+            "node1",
+            HOST,
+            CUSTOMER,
+            vec![agent("hog1", AgentKind::SemiSupervised, Some(1))],
+            vec![],
+        );
+        seed(
+            &schema.store(),
+            &failed(
+                attempt("failed-1", OperationAction::Update, HOST, "hog", Some(1)),
+                OperationFailureKind::TrustAnchorRefused,
+            ),
+        );
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                "{{ node(id: \"{node_id}\") {{ agents {{ latestOperationAttempt {{ id outcome failureKind }} }} }} }}"
+            ))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        let found = &data["node"]["agents"][0]["latestOperationAttempt"];
+        assert_eq!(found["id"], json!("failed-1"));
+        assert_eq!(found["outcome"], json!("FAILED"));
+        assert_eq!(found["failureKind"], json!("TRUST_ANCHOR_REFUSED"));
     }
 
     /// The instance crosses as a decimal string, so the upper half of a `u32`
@@ -1260,7 +1443,7 @@ mod tests {
             vec![],
         );
         let query = format!(
-            "{{ node(id: \"{node_id}\") {{ agents {{ latestOperationAttempt {{ id cleanupOwed }} }} }} }}"
+            "{{ node(id: \"{node_id}\") {{ agents {{ latestOperationAttempt {{ id cleanupOwed failureKind }} }} }} }}"
         );
 
         let discharged = finished(
@@ -1278,13 +1461,17 @@ mod tests {
 
         let mut owing = attempt("owing-1", OperationAction::Remove, HOST, "hog", Some(1));
         owing.cleanup_state = Some(OperationCleanupState::PendingDeregister);
-        seed(&schema.store(), &finished(owing, OperationOutcome::Failed));
+        seed(
+            &schema.store(),
+            &failed(owing, OperationFailureKind::NotApplied),
+        );
         let res = schema.execute_as_system_admin(&query).await;
         assert!(res.errors.is_empty(), "{:?}", res.errors);
         let data = res.data.into_json().unwrap();
         let found = &data["node"]["agents"][0]["latestOperationAttempt"];
         assert_eq!(found["id"], json!("owing-1"));
         assert_eq!(found["cleanupOwed"], json!("PENDING_DEREGISTER"));
+        assert_eq!(found["failureKind"], json!("NOT_APPLIED"));
 
         seed(
             &schema.store(),

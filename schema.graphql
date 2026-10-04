@@ -7384,6 +7384,14 @@ type OperationAttempt {
 	"""
 	outcome: OperationOutcome
 	"""
+	Why an attempt that ended `FAILED` failed, as a closed remedy group.
+	
+	It is non-null exactly when `outcome` is `FAILED`, and null otherwise,
+	a running attempt included. It names what an operator can do about the
+	failure and no more; the detail of what went wrong is in the log.
+	"""
+	failureKind: OperationFailureKind
+	"""
 	The host the operation applies to.
 	"""
 	host: String!
@@ -7454,6 +7462,30 @@ server-composed English could be neither localised nor branched on.
 enum OperationCleanupState {
 	PENDING_DEREGISTER
 	PENDING_IDENTITY_TEARDOWN
+}
+
+"""
+Why an attempt that ended `FAILED` failed, as a closed remedy group.
+
+It mirrors `review_database::OperationFailureKind` one variant for one
+variant and in the stored order. It names the remedy an operator can act
+on rather than the cause, which stays in `review`'s log, and it is set on a
+`FAILED` attempt and on no other. The stored enum carries no fallback
+variant — `OTHER` is a kind of its own, not an unknown — so this one
+invents no `UNKNOWN`, and a kind appended upstream stops this crate from
+compiling until it is mirrored here.
+"""
+enum OperationFailureKind {
+	HOST_DISK_SPACE
+	HOST_AGENT_UNSUPPORTED
+	HOST_NOT_PREPARED
+	UNMANAGED_INSTANCE
+	SERVICE_FAILED
+	NOT_APPLIED
+	TRUST_ANCHOR_REFUSED
+	BUILD_NOT_SERVABLE
+	NO_CONFIRMATION
+	OTHER
 }
 
 """

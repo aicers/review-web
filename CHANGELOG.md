@@ -58,9 +58,22 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `bootroot-agent`, `bootroot-remote` and `bootler-security`, the programs an
   operator places on a host onboarded with `roxyd join`, as host-scoped core
   packages, for System Administrators only.
+- Added the `failureKind` field to `OperationAttempt` and the
+  `OperationFailureKind` enum it returns, which says why an attempt that ended
+  `FAILED` failed as a closed remedy group: `HOST_DISK_SPACE`,
+  `HOST_AGENT_UNSUPPORTED`, `HOST_NOT_PREPARED`, `UNMANAGED_INSTANCE`,
+  `SERVICE_FAILED`, `NOT_APPLIED`, `TRUST_ANCHOR_REFUSED`,
+  `BUILD_NOT_SERVABLE`, `NO_CONFIRMATION` or `OTHER`. The field is non-null
+  exactly when `outcome` is `FAILED`, and null otherwise; the value is the one
+  stored on the attempt record, and an attempt that failed before the store was
+  migrated reads `OTHER`.
 
 ### Changed
 
+- Bumped `review-database` dependency to 0.48.0. The new version records a
+  failure kind on every operation attempt that ended `Failed`, and its store
+  format moves to the 0.48 series, so a store written by 0.47 must be migrated
+  through `review-database` before this version serves it.
 - The Security Monitor role can now read `nodeList`, `node` and
   `nodeStatusList`, limited to the nodes of its own customers. This includes
   the install state and the latest operation attempt of each agent and external

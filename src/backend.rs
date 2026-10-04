@@ -185,13 +185,13 @@ pub(crate) const CORE_PACKAGE_IDS: [&str; 6] = [
 // neither pinned upstream defines it. The surfaces checked, at the exact
 // revisions this crate pins in `Cargo.toml`:
 //
-// - `review-database` at `bd060d0` — the `pub use` surface of its `lib.rs`,
-//   its three public modules `types`, `event` and `backup`, which together
-//   are every name this crate can import from it, and behind the re-exports
-//   the private `tables::operation_attempt` and `tables::port_allocation`
-//   modules that hold the deployment types.
-// - `review-protocol` at `d536008` — the `types::node` module, which carries
-//   the package (`NodePackageRequest`/`NodePackageResponse`/
+// - `review-database` at `2791e3b` (tag `0.48.0`) — the `pub use` surface of
+//   its `lib.rs`, its three public modules `types`, `event` and `backup`,
+//   which together are every name this crate can import from it, and behind
+//   the re-exports the private `tables::operation_attempt` and
+//   `tables::port_allocation` modules that hold the deployment types.
+// - `review-protocol` at `6eefd22` (tag `0.20.0`) — the `types::node` module,
+//   which carries the package (`NodePackageRequest`/`NodePackageResponse`/
 //   `NodePackageError`) and enrollment (`NodeEnrollRequest`/
 //   `NodeEnrollResponse`/`NodeEnrollError`) surfaces, and the rest of its
 //   public surface: the remainder of `types`, including its `capability`
@@ -216,9 +216,9 @@ pub(crate) const CORE_PACKAGE_IDS: [&str; 6] = [
 // - `OperationId` — upstream keys the ledger on
 //   `OperationAttempt::idempotency_key`, a bare `String`. There is no newtype
 //   over it; `review-database` exports `OperationAction`, `OperationAttempt`,
-//   `OperationCleanupState`, `OperationOnFailure`, `OperationOutcome`,
-//   `OperationPhase`, `OperationRetentionBound` and `OperationRetryPolicy`,
-//   and no `OperationId`.
+//   `OperationCleanupState`, `OperationFailureKind`, `OperationOnFailure`,
+//   `OperationOutcome`, `OperationPhase`, `OperationRetentionBound` and
+//   `OperationRetryPolicy`, and no `OperationId`.
 // - `DeployOutcome` — `review_database::OperationOutcome`, which is
 //   `tables::operation_attempt::Outcome` under its re-export name, is the
 //   *terminal* result of an apply as persisted (`Succeeded`, `Failed`,
