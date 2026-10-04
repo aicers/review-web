@@ -20,7 +20,8 @@ use crate::info_with_username;
 impl NodeStatusQuery {
     /// A list of status of nodes.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
     async fn node_status_list(
         &self,
         ctx: &Context<'_>,
@@ -127,7 +128,7 @@ mod tests {
     use assert_json_diff::assert_json_include;
     use serde_json::json;
 
-    use super::super::test_support::{MockAgentManager, insert_active_node, insert_apps};
+    use super::super::test_support::{MockAgentManager, insert_active_node, insert_apps, put_node};
     use crate::graphql::{BoxedAgentManager, Role, TestSchema};
 
     #[tokio::test]
@@ -696,6 +697,50 @@ mod tests {
         assert_eq!(
             data["nodeStatusList"]["pageInfo"]["hasPreviousPage"],
             json!(false)
+        );
+    }
+
+    /// A Security Monitor polls the status of only its own customers' nodes.
+    #[tokio::test]
+    async fn security_monitor_lists_only_its_customers_node_status() {
+        let mut online_apps_by_host_id = HashMap::new();
+        insert_apps(
+            "host1.example.com",
+            &["sensor"],
+            &mut online_apps_by_host_id,
+        );
+        insert_apps(
+            "host2.example.com",
+            &["sensor"],
+            &mut online_apps_by_host_id,
+        );
+
+        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            online_apps_by_host_id,
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let id0 = insert_active_node(&schema.store(), "node_customer_1", 1, "host1.example.com");
+        let id1 = insert_active_node(&schema.store(), "node_customer_2", 2, "host2.example.com");
+        let id2 = put_node(&schema.store(), "node_no_customer", None, vec![], vec![]);
+        assert_eq!((id0, id1, id2), (0, 1, 2));
+
+        let res = schema
+            .execute_as_scoped_user(
+                r"{nodeStatusList{totalCount edges{node{id name}}}}",
+                Role::SecurityMonitor,
+                Some(vec![1]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeStatusList": {
+                    "totalCount": "1",
+                    "edges": [{"node": {"id": "0", "name": "node_customer_1"}}]
+                }
+            })
         );
     }
 }

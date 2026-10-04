@@ -23,6 +23,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   the store cannot be read or any build of the package is still pending
   verification.
 
+### Changed
+
+- The Security Monitor role can now read `nodeList`, `node` and
+  `nodeStatusList`, limited to the nodes of its own customers. This includes
+  the install state and the latest operation attempt of each agent and external
+  service on those nodes. Node mutations still require a System or Security
+  Administrator.
+
 ## [0.35.0] - 2026-10-01
 
 ### Changed

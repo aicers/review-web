@@ -25,7 +25,8 @@ use crate::{graphql::query_with_constraints, info_with_username};
 impl NodeQuery {
     /// A list of nodes.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
     async fn node_list(
         &self,
         ctx: &Context<'_>,
@@ -47,7 +48,8 @@ impl NodeQuery {
 
     /// A node for the given ID.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
     async fn node(&self, ctx: &Context<'_>, id: ID) -> Result<Node> {
         let node = customer_access::load_accessible_node(ctx, &id)?;
 
@@ -3170,6 +3172,126 @@ mod tests {
         let data = res.data.into_json().unwrap();
         let edges = data["nodeList"]["edges"].as_array().unwrap();
         assert_eq!(edges.len(), 0);
+    }
+
+    /// Stores a node for customer 1, one for customer 2, and one with no
+    /// customer at all, in that order, so their IDs are 0, 1 and 2.
+    fn put_nodes_of_two_customers_and_none(store: &review_database::Store) {
+        let id0 = insert_active_node(store, "node_customer_1", 1, "host1.example.com");
+        let id1 = insert_active_node(store, "node_customer_2", 2, "host2.example.com");
+        let id2 = put_node(store, "node_no_customer", None, vec![], vec![]);
+        assert_eq!((id0, id1, id2), (0, 1, 2));
+    }
+
+    /// A Security Monitor lists only the nodes of its own customers.
+    #[tokio::test]
+    async fn security_monitor_lists_only_its_customers_nodes() {
+        let schema = TestSchema::new().await;
+        put_nodes_of_two_customers_and_none(&schema.store());
+
+        let res = schema
+            .execute_as_scoped_user(
+                r"{nodeList{totalCount edges{node{id name}}}}",
+                Role::SecurityMonitor,
+                Some(vec![1]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeList": {
+                    "totalCount": "1",
+                    "edges": [{"node": {"id": "0", "name": "node_customer_1"}}]
+                }
+            })
+        );
+    }
+
+    /// A Security Monitor reads a node of its own customer, and is refused one
+    /// of another customer and one with no customer.
+    #[tokio::test]
+    async fn security_monitor_reads_only_its_customers_node() {
+        let schema = TestSchema::new().await;
+        put_nodes_of_two_customers_and_none(&schema.store());
+
+        let res = schema
+            .execute_as_scoped_user(
+                r#"{node(id: "0") { id name }}"#,
+                Role::SecurityMonitor,
+                Some(vec![1]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({"node": {"id": "0", "name": "node_customer_1"}})
+        );
+
+        for id in ["1", "2"] {
+            let res = schema
+                .execute_as_scoped_user(
+                    &format!(r#"{{node(id: "{id}") {{ id name }}}}"#),
+                    Role::SecurityMonitor,
+                    Some(vec![1]),
+                )
+                .await;
+            assert_eq!(res.errors.len(), 1, "node {id}: {:?}", res.errors);
+            assert_eq!(res.errors[0].message, "Forbidden", "node {id}");
+        }
+    }
+
+    /// A Security Monitor reads nodes but does not remove them, even one of
+    /// its own customer.
+    #[tokio::test]
+    async fn security_monitor_cannot_remove_nodes() {
+        let schema = TestSchema::new().await;
+        put_nodes_of_two_customers_and_none(&schema.store());
+
+        let res = schema
+            .execute_as_scoped_user(
+                r#"mutation { removeNodes(ids: ["0"]) }"#,
+                Role::SecurityMonitor,
+                Some(vec![1]),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1, "{:?}", res.errors);
+        assert_eq!(res.errors[0].message, "Forbidden");
+
+        let res = schema
+            .execute_as_system_admin(r"{nodeList{totalCount edges{node{id name}}}}")
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeList": {
+                    "totalCount": "3",
+                    "edges": [
+                        {"node": {"id": "0", "name": "node_customer_1"}},
+                        {"node": {"id": "1", "name": "node_customer_2"}},
+                        {"node": {"id": "2", "name": "node_no_customer"}}
+                    ]
+                }
+            })
+        );
+    }
+
+    /// A Security Manager is still refused the node list.
+    #[tokio::test]
+    async fn security_manager_cannot_list_nodes() {
+        let schema = TestSchema::new().await;
+        put_nodes_of_two_customers_and_none(&schema.store());
+
+        let res = schema
+            .execute_as_scoped_user(
+                r"{nodeList{totalCount edges{node{name}}}}",
+                Role::SecurityManager,
+                Some(vec![1]),
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1, "{:?}", res.errors);
+        assert_eq!(res.errors[0].message, "Forbidden");
     }
 
     const INSTALLED_HOST: &str = "host1.example.com";

@@ -1302,6 +1302,69 @@ mod tests {
         }
     }
 
+    /// A Security Monitor reads the inline attempt on its own customer's node
+    /// through `nodeList`, and the list carries no other customer's node.
+    #[tokio::test]
+    async fn a_security_monitor_reads_the_inline_attempt_on_its_own_node() {
+        const OTHER_HOST: &str = "host2.example.com";
+        let schema = TestSchema::new().await;
+        insert_node(
+            &schema.store(),
+            "node1",
+            HOST,
+            1,
+            vec![agent("hog1", AgentKind::SemiSupervised, Some(1))],
+            vec![],
+        );
+        insert_node(
+            &schema.store(),
+            "node2",
+            OTHER_HOST,
+            2,
+            vec![agent("hog1", AgentKind::SemiSupervised, Some(1))],
+            vec![],
+        );
+        seed(
+            &schema.store(),
+            &attempt("own-1", OperationAction::Update, HOST, "hog", Some(1)),
+        );
+        seed(
+            &schema.store(),
+            &attempt(
+                "other-1",
+                OperationAction::Update,
+                OTHER_HOST,
+                "hog",
+                Some(1),
+            ),
+        );
+
+        let res = schema
+            .execute_as_scoped_user(
+                "{ nodeList { edges { node { name agents { key latestOperationAttempt { id } } } } } }",
+                Role::SecurityMonitor,
+                Some(vec![1]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeList": {
+                    "edges": [{
+                        "node": {
+                            "name": "node1",
+                            "agents": [{
+                                "key": "hog1",
+                                "latestOperationAttempt": {"id": "own-1"}
+                            }]
+                        }
+                    }]
+                }
+            })
+        );
+    }
+
     /// A node carrying only a draft profile has no hostname to key on, and its
     /// entries answer null rather than falling back to the drafted one.
     ///
