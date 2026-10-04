@@ -4,7 +4,7 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.36.0] - 2026-10-05
 
 ### Added
 
@@ -15,13 +15,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   System Administrator. A store that cannot be read, or that still has a build
   of the package pending verification, answers with an error rather than an
   empty list.
-- Added the required `PackageDeployer::servable_builds` method, which an
-  implementer must now provide. It returns every build the store would resolve
-  for a package-id through a build selector, ordered newest-accepted first so
-  that its first entry is the build `latest_build` returns; it returns an
-  empty list only when the store holds no servable build, and an error when
-  the store cannot be read or any build of the package is still pending
-  verification.
 - Added a closed `code` field beside the existing `error` text on every refusal
   that `POST /api/package/upload` and `POST /api/trust/generation` answer
   after authentication, so a caller can branch on the code rather than on the
@@ -42,22 +35,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   so `false` means "not withdrawn" only when `withdrawalCheckFailed` is also
   `false`. Both are `false` for a row with nothing installed, a kind no package
   deploys, and an installer-managed core component.
-- Added the required `PackageDeployer::is_build_withdrawn` method, which an
-  implementer must now provide. It answers whether the trust generation active
-  when it is called withdraws a build of a package-id; `false` means that
-  generation does not withdraw it and nothing else, and a check that could not
-  complete is an error, never `false`.
 - Added a `BuildNotServable` member, carrying the package-id as `target`, to the
   result unions of `installService`, `updateService` and `updateCoreComponent`.
   It is returned when the store will not serve the selected build, such as one
   withdrawn after the build list was read, and its remedy is to choose another
-  build. It is backed by the new `DeployError::BuildNotServable { target }`
-  variant. This is a breaking API change for callers that match `DeployError`
-  exhaustively.
-- `updateCoreComponent` and `POST /api/package/upload` now accept
-  `bootroot-agent`, `bootroot-remote` and `bootler-security`, the programs an
-  operator places on a host onboarded with `roxyd join`, as host-scoped core
-  packages, for System Administrators only.
+  build.
 - Added the `failureKind` field to `OperationAttempt` and the
   `OperationFailureKind` enum it returns, which says why an attempt that ended
   `FAILED` failed as a closed remedy group: `HOST_DISK_SPACE`,
@@ -70,15 +52,37 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- Added the required `servable_builds` method to the public `PackageDeployer`
+  trait. It returns every build the store would resolve for a package-id
+  through a build selector, ordered newest-accepted first so that its first
+  entry is the build `latest_build` returns; it returns an empty list only
+  when the store holds no servable build, and an error when the store cannot
+  be read or any build of the package is still pending verification. It has
+  no default implementation, so this is a breaking API change for callers
+  that implement the trait.
+- Added the required `is_build_withdrawn` method to the public
+  `PackageDeployer` trait. It answers whether the trust generation active
+  when it is called withdraws a build of a package-id; `false` means that
+  generation does not withdraw it and nothing else, and a check that could
+  not complete is an error, never `false`. It has no default implementation,
+  so this is a breaking API change for callers that implement the trait.
+- Added the `BuildNotServable { target }` variant to the public `DeployError`
+  enum. This is a breaking API change for callers that match on it
+  exhaustively.
+- `updateCoreComponent` and `POST /api/package/upload` now accept
+  `bootroot-agent`, `bootroot-remote` and `bootler-security`, the programs an
+  operator places on a host onboarded with `roxyd join`, as host-scoped core
+  packages, for System Administrators only.
 - Bumped `review-database` dependency to 0.48.0. The new version records a
   failure kind on every operation attempt that ended `Failed`, and its store
   format moves to the 0.48 series, so a store written by 0.47 must be migrated
   through `review-database` before this version serves it.
 - The Security Monitor role can now read `nodeList`, `node` and
-  `nodeStatusList`, limited to the nodes of its own customers. This includes
-  the install state and the latest operation attempt of each agent and external
-  service on those nodes. Node mutations still require a System or Security
-  Administrator.
+  `nodeStatusList`, limited to the nodes of its own customers. It sees what a
+  Security Administrator sees on those nodes, including node profiles and
+  their drafts, agent and external service configurations and drafts, and the
+  install state and latest operation attempt of each agent and external
+  service. Node mutations still require a System or Security Administrator.
 
 ## [0.35.0] - 2026-10-01
 
@@ -1964,7 +1968,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
-[Unreleased]: https://github.com/aicers/review-web/compare/0.35.0...main
+[0.36.0]: https://github.com/aicers/review-web/compare/0.35.0...0.36.0
 [0.35.0]: https://github.com/aicers/review-web/compare/0.34.0...0.35.0
 [0.34.0]: https://github.com/aicers/review-web/compare/0.33.0...0.34.0
 [0.33.0]: https://github.com/aicers/review-web/compare/0.32.0...0.33.0
