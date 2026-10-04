@@ -5,7 +5,10 @@
 **Repo:** `aicers/review-web` · **Grounded on** `origin/main` @ `5d0eba5`
 (v0.34.0). Re-verify before relying.
 
-**Status:** Accepted; implementation is decomposed from §7.
+**Status:** Accepted; implementation is decomposed from §7. Amended
+2026-10-04 by [#1026](https://github.com/aicers/review-web/issues/1026) — §5a,
+§5b, §5c, §7 issues 6–9 and §9 decisions 25–28 — for RFC-E's signed-file
+intake, withdrawn-build mark and failure kind.
 `aicers/review-web` is an aicers repo (in-repo issue flow,
 AgentCoop-decomposable, no external gate). Derived from the RFC-D scope
 (the review-web slice). This
@@ -564,6 +567,19 @@ New mutations:
   commit)` build in either direction** (§3); the resolver does not itself look
   up the store. **`onFailure`** enum = `ROLLBACK` (default) | `HOLD`.
 
+- **[DECISION] A build the store will not serve is a typed arm of the install,
+  update and core-update results** (§9 decision 28). `installService`,
+  `updateService` and `updateCoreComponent` gain a
+  **`BuildNotServable { target }`** arm, backed by a new
+  `DeployError::BuildNotServable { target }`. review raises it when the selector
+  matches no accepted build, when every matching build is withdrawn, unverified
+  or failed an integrity check, or when the resolved build turns out, on
+  opening, to be gone from the index, unverified, changed or withdrawn — all
+  before any attempt row exists (RFC-D2 §4b). A store, index or trust that is
+  unavailable or still verifying stays `Other`, because the operator retries it
+  rather than choosing another build. RFC-E §9 renders the arm by asking the
+  operator to refresh the build list and choose another build.
+
 ### 5b. Read types — inline version/lifecycle
 
 - **Read types return one entry per installed instance, not per kind.** A
@@ -609,6 +625,30 @@ New mutations:
   erroring or by silently substituting another state), and
   **`updateAvailable: Boolean`**
   (computed per build). **No `desiredVersion`.**
+- **[DECISION] Every row that reports an installed build also reports whether
+  that build is withdrawn** (§9 decision 26). Every type that carries
+  `updateCheckFailed` — `Agent`, `ExternalService`, `AgentSnapshot`,
+  `ExternalServiceSnapshot` and `CoreComponent` — gains
+  **`installedBuildWithdrawn: Boolean!`** and its companion
+  **`withdrawalCheckFailed: Boolean!`**. They are computed through a new trait
+  method, `PackageDeployer::is_build_withdrawn`, which takes a package-id and a
+  `BuildId` and returns `Result<bool, anyhow::Error>`: whether the trust
+  generation active when it is called withdraws that build of that package
+  (RFC-D2 §4a). `false` means that generation does not withdraw it, and nothing
+  else: a read that could not complete is `Err`, never `false`. It is called at
+  most once per `(package-id, build)` per request, memoised as `latest_build` is
+  per package-id. `installedBuildWithdrawn` is the answer for the row's
+  `(installedVersion, installedCommit)`. `withdrawalCheckFailed` is `true` when
+  the call failed, and then `installedBuildWithdrawn` is `false`. A row
+  `updateAvailable` does not check — a kind that maps to no package-id, or an
+  `installerManaged` core component — and a row with no installed identity
+  report both `false` without calling it. This is decision 16's pair shape, so
+  the UI reads the two pairs the same way. **No exposure query**: review's
+  exposure report (RFC-D2 §4a) is recomputed only on the trust reconcile pass
+  (hourly and after each activation), is kept only as the baseline of its log,
+  and reports a disconnected host's core builds as unknown, whereas the inline
+  pair answers for exactly the build the row shows, against the generation
+  active at that moment.
 - **Surface `boundAddrs`** on the external-service type — the `(config-key,
   host:port)` pairs the instance **is currently bound to**, as reported by
   roxyd on **every** status report and recorded by review (RFC-D1 §4b,
@@ -642,7 +682,10 @@ New mutations:
     `action`, `phase`, `outcome`,
     `resolvedVersion`, `resolvedCommit`, `startedAt`, `expiresAt`, and
     **`cleanupOwed`** with a human-readable reason when compensation is still
-    owed (D2 §4d). `cleanupOwed` is what makes a blocked **update, remove or
+    owed (D2 §4d), and **`failureKind`** (§9 decision 27): the closed
+    `OperationFailureKind`, mirroring RFC-D1 §4d's stored enum one for one,
+    non-null exactly when `outcome` is `FAILED`. `cleanupOwed` is what makes a
+    blocked **update, remove or
     re-onboard** legible instead of a mysterious rejection. An **install** is
     never among them — it allocates a fresh number and so a different triple
     (D2 §4d) — and writing "re-install" here would restate a component-wide
@@ -752,6 +795,29 @@ New mutations:
   code.
 - Fronted by the aice-web-next BFF (RFC-E §7); air-gapped USB→browser→BFF→here
   works.
+- **[DECISION] Every refusal on the two ingress routes after authentication
+  carries a closed `code`** (§9 decision 25). The JSON body becomes
+  `{ "error": "<text>", "code": "<CODE>" }`, with the status unchanged. `error`
+  keeps today's English text, for logs. `code` is what a caller branches on, so
+  a reworded message cannot reclassify a refusal. The routes get their own
+  refusal type for this; `crate::Error`'s response body, which every other route
+  shares, is unchanged. The codes, one per refusal the route already
+  distinguishes:
+  - package upload: `ROLE_NOT_PERMITTED` (403), `SIGNATURE_INVALID` (400),
+    `MANIFEST_INCOMPLETE` (400), `PACKAGE_NOT_PERMITTED` (403), `TOO_LARGE`
+    (413), `TRANSPORT` (400) and `UNAVAILABLE` (503);
+  - trust-set generation: `ROLE_NOT_PERMITTED` (403), `SIGNATURE_INVALID` (400),
+    `MALFORMED` (400), `EPOCH_NOT_NEWER` (409), `TOO_LARGE` (413), `TRANSPORT`
+    (400) and `UNAVAILABLE` (503). `EPOCH_NOT_NEWER` also carries
+    `submittedEpoch` and `activeEpoch` as JSON numbers, the two bounded scalars
+    its text already includes.
+
+  An authentication failure (401) carries no `code`: it is a fault in the
+  caller's own credential — under `auth-mtls`, the BFF's client certificate or
+  the Context JWT bound to it — not a refusal of the file, so it has no operator
+  remedy to branch on, and the BFF renders it as its generic failure (RFC-E §7).
+  No code is added for a cause the route does not distinguish today —
+  `MANIFEST_INCOMPLETE` stays one code.
 - **[DECISION] A SEPARATE trust-plane ingress route — not the module store.**
   Add a second streamed route (e.g. `POST /api/trust/generation`) that hands a
   signed release-signing trust-set generation to review's trust manager
@@ -990,6 +1056,31 @@ Self-contained issues; dependency order within this repo:
    manager, bypassing the store entirely (no `pending/`/`accepted/`/
    `index.json` writes), with the store-untouched and role-rejection tests.
    Independent of 1–4; depends on review's trust manager (D2 §4a) end-to-end.
+6. **Closed codes on the ingress refusals** (§5c, §9 decision 25) — the ingress
+   routes' own refusal type with the `code` field on every refusal after
+   authentication, `submittedEpoch` and `activeEpoch` on `EPOCH_NOT_NEWER`, and
+   a test per code pinning status, code and that `error` still carries the text;
+   `crate::Error`'s body is unchanged. Independent of review.
+7. **Withdrawn-build fields** (§5b, §9 decision 26) —
+   `PackageDeployer::is_build_withdrawn` on the trait with its
+   `false`-means-not-withdrawn contract, the per-request memo, and
+   `installedBuildWithdrawn` / `withdrawalCheckFailed` on the five types that
+   carry `updateCheckFailed`, with the pinned test that
+   `withdrawalCheckFailed = true` implies `installedBuildWithdrawn = false` and
+   tests that an unchecked kind, an `installerManaged` core component and a row
+   with no installed identity never call the method; SDL regen. review
+   implements the method (RFC-D2 §4a); like issue 1, the trait change lands
+   before review's implementation.
+8. **`failureKind` on the operation record** (§5b, §9 decision 27) — the
+   `OperationFailureKind` GraphQL enum mirroring RFC-D1 §4d's
+   `review_database::OperationFailureKind` one for one, and `failureKind` on
+   `OperationAttempt`, non-null exactly when `outcome` is `FAILED`; SDL regen.
+   Depends on the `review-database` release carrying the field.
+9. **`BuildNotServable` arm** (§5a, §9 decision 28) —
+   `DeployError::BuildNotServable { target }`, the union arm on
+   `installService`, `updateService` and `updateCoreComponent`, and pass-through
+   tests per mutation; SDL regen. Like issue 1, the `DeployError` change lands
+   before review's mapping (RFC-D2 §4b).
 
 Cross-repo: issue 1 (trait def) should land **before** review D2's trait-impl
 issue; the mutations/route are exercised end-to-end once review (D2) is wired.
@@ -1380,3 +1471,35 @@ supersedes.
     gains a `build` argument, and `HostOnboardingTicket::new` takes the hash
     as a fifth parameter. `aicers/review`, the trait's implementor, adapts to
     all three.
+
+<!-- Decision 24 is the Trust Anchor agent target, added by its own amendment. -->
+<!-- markdownlint-disable MD029 -->
+25. **Ingress refusals carry a closed `code` (2026-10-04).** The aice-web-next
+    BFF must not show this repository's text (RFC-E §8) and must give each
+    refusal its own remedy (RFC-E §9). Today both routes answer
+    `{ "error": "<text>" }`, and one 400 covers a bad signature, an incomplete
+    manifest and a broken transfer, so the BFF could only tell them apart by
+    matching the English text — which decision 17 rejects for the GraphQL
+    surface for the same reason. So each refusal after authentication gains a
+    `code` (§5c) and keeps its text.
+26. **Rows carry `installedBuildWithdrawn` with a companion
+    `withdrawalCheckFailed` (2026-10-04).** RFC-E §4 marks a card whose
+    installed build has been withdrawn, and RFC-D2 §4a left the GraphQL carrier
+    for that unowned. The pair follows decision 16's pair shape rather than a
+    nullable boolean, so one gap has one shape on the surface. It is computed
+    from a new trait method rather than from review's exposure report, for the
+    reasons §5b gives.
+27. **The operation record exposes `failureKind` (2026-10-04).** RFC-E §9 shows
+    a remedy for an operation that ended `FAILED`, which needs the cause class
+    the Central Manager already distinguishes and until now only logged. review
+    records it on the operation record (RFC-D2 §4b, RFC-D1 §4d) and this
+    repository passes it through; it is not derived here from anything else.
+28. **A build the store will not serve is a typed arm, not text (2026-10-04).**
+    RFC-E §9 asks the operator to choose another build when the selected one
+    cannot be served, which happens when it was withdrawn between the build list
+    and the submit. review raises that before any attempt row exists, but today
+    it crosses as `DeployError::Other`, so the UI could only recognise it by
+    matching review's English text, which decision 17 rules out. So it gets its
+    own `DeployError` variant and union arm (§5a); the other unresolved reasons
+    stay `Other`.
+<!-- markdownlint-enable MD029 -->
