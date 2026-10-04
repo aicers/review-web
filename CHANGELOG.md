@@ -22,6 +22,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   empty list only when the store holds no servable build, and an error when
   the store cannot be read or any build of the package is still pending
   verification.
+- Added a closed `code` field beside the existing `error` text on every refusal
+  that `POST /api/package/upload` and `POST /api/trust/generation` answer
+  after authentication, so a caller can branch on the code rather than on the
+  wording. The upload route answers `ROLE_NOT_PERMITTED`, `SIGNATURE_INVALID`,
+  `MANIFEST_INCOMPLETE`, `PACKAGE_NOT_PERMITTED`, `TOO_LARGE`, `TRANSPORT` and
+  `UNAVAILABLE`; the trust-generation route answers `ROLE_NOT_PERMITTED`,
+  `SIGNATURE_INVALID`, `MALFORMED`, `EPOCH_NOT_NEWER`, `TOO_LARGE`,
+  `TRANSPORT` and `UNAVAILABLE`. An `EPOCH_NOT_NEWER` refusal also carries
+  `submittedEpoch` and `activeEpoch` as JSON numbers. Response statuses and
+  `error` texts are unchanged, and an authentication failure still answers
+  `401` with only an `error` field.
 
 ### Changed
 

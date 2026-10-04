@@ -25,6 +25,8 @@ use axum::{
     Json, Router,
     body::{Body, Bytes},
     extract::Extension,
+    http::StatusCode,
+    response::{IntoResponse, Response},
     routing::post,
 };
 use axum_extra::{
@@ -103,6 +105,129 @@ const ERR_TRUST_UNAVAILABLE: &str = "the trust manager is unavailable";
 
 const TRUST_OUTCOME_ACTIVATED: &str = "Activated";
 const TRUST_OUTCOME_FORBIDDEN: &str = "Forbidden";
+
+/// A refusal code the package-upload route answers after authentication.
+///
+/// The set is closed and owned by this route alone: a caller branches on the
+/// code rendered beside the English `error` text, never on the text itself,
+/// so rewording a message cannot reclassify a refusal. It shares no type with
+/// [`TrustRefusalCode`], so this route cannot answer a trust-only code.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "code", rename_all = "SCREAMING_SNAKE_CASE")]
+enum UploadRefusalCode {
+    RoleNotPermitted,
+    SignatureInvalid,
+    ManifestIncomplete,
+    PackageNotPermitted,
+    TooLarge,
+    Transport,
+    Unavailable,
+}
+
+/// A refusal code the trust-generation route answers after authentication.
+///
+/// The set is closed and owned by this route alone, as with
+/// [`UploadRefusalCode`]. `EpochNotNewer` is the one code that carries data:
+/// the two epochs render beside it as JSON numbers, and no other code can
+/// carry them because no other variant has the fields.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "code", rename_all = "SCREAMING_SNAKE_CASE")]
+enum TrustRefusalCode {
+    RoleNotPermitted,
+    SignatureInvalid,
+    Malformed,
+    EpochNotNewer {
+        #[serde(rename = "submittedEpoch")]
+        submitted_epoch: u64,
+        #[serde(rename = "activeEpoch")]
+        active_epoch: u64,
+    },
+    TooLarge,
+    Transport,
+    Unavailable,
+}
+
+/// A closed refusal code and the HTTP status it is answered with.
+trait RefusalCode: Serialize {
+    fn status(&self) -> StatusCode;
+}
+
+impl RefusalCode for UploadRefusalCode {
+    fn status(&self) -> StatusCode {
+        match self {
+            Self::SignatureInvalid | Self::ManifestIncomplete | Self::Transport => {
+                StatusCode::BAD_REQUEST
+            }
+            Self::RoleNotPermitted | Self::PackageNotPermitted => StatusCode::FORBIDDEN,
+            Self::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+        }
+    }
+}
+
+impl RefusalCode for TrustRefusalCode {
+    fn status(&self) -> StatusCode {
+        match self {
+            Self::SignatureInvalid | Self::Malformed | Self::Transport => StatusCode::BAD_REQUEST,
+            Self::RoleNotPermitted => StatusCode::FORBIDDEN,
+            Self::EpochNotNewer { .. } => StatusCode::CONFLICT,
+            Self::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+        }
+    }
+}
+
+/// A refusal an ingress route answers once the caller has authenticated.
+///
+/// It renders as `{"error": <text>, "code": <CODE>}`, plus whatever fields the
+/// code itself carries, with the status the code determines. It is kept apart
+/// from [`Error`], whose `{"error": ...}` body every other route shares.
+#[derive(Debug, Serialize)]
+struct Refusal<C> {
+    error: String,
+    #[serde(flatten)]
+    code: C,
+}
+
+impl<C> Refusal<C> {
+    fn new(code: C, error: impl Into<String>) -> Self {
+        Self {
+            error: error.into(),
+            code,
+        }
+    }
+}
+
+impl<C: RefusalCode> IntoResponse for Refusal<C> {
+    fn into_response(self) -> Response {
+        (self.code.status(), Json(self)).into_response()
+    }
+}
+
+/// The failure an ingress handler answers.
+///
+/// An authentication failure is rendered by [`Error`] itself, so a `401`
+/// keeps the shared `{"error": ...}` body with no code: it is a fault in the
+/// caller's own credential, not a refusal of what was submitted.
+enum IngressError<C> {
+    Unauthenticated(Error),
+    Refused(Refusal<C>),
+}
+
+impl<C> From<Refusal<C>> for IngressError<C> {
+    fn from(refusal: Refusal<C>) -> Self {
+        Self::Refused(refusal)
+    }
+}
+
+impl<C: RefusalCode> IntoResponse for IngressError<C> {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Unauthenticated(error) => error.into_response(),
+            Self::Refused(refusal) => refusal.into_response(),
+        }
+    }
+}
 
 /// The maximum request-body size, in bytes, the package-upload route accepts.
 ///
@@ -329,20 +454,26 @@ fn log_rejection(actor: &str, variant: &'static str) {
 /// the response body or a log line: the one arm that interpolates anything
 /// interpolates the `&'static str` it found in this crate's own package-id
 /// lists, and a value in neither list is dropped rather than echoed.
-fn map_ingest_error(error: PackageIngestError, actor: &str) -> Error {
+fn map_ingest_error(error: PackageIngestError, actor: &str) -> Refusal<UploadRefusalCode> {
     match error {
         PackageIngestError::SignatureInvalid => {
             log_rejection(actor, VARIANT_SIGNATURE_INVALID);
-            Error::BadRequest(ERR_SIGNATURE_INVALID.to_string())
+            Refusal::new(UploadRefusalCode::SignatureInvalid, ERR_SIGNATURE_INVALID)
         }
         PackageIngestError::ManifestIncomplete => {
             log_rejection(actor, VARIANT_MANIFEST_INCOMPLETE);
-            Error::BadRequest(ERR_MANIFEST_INCOMPLETE.to_string())
+            Refusal::new(
+                UploadRefusalCode::ManifestIncomplete,
+                ERR_MANIFEST_INCOMPLETE,
+            )
         }
         PackageIngestError::PackageNotPermitted { package_id } => {
             log_rejection(actor, VARIANT_PACKAGE_NOT_PERMITTED);
             if let Some(known) = known_package_id(&package_id) {
-                Error::Forbidden(format!("uploading {known} is not permitted for this role"))
+                Refusal::new(
+                    UploadRefusalCode::PackageNotPermitted,
+                    format!("uploading {known} is not permitted for this role"),
+                )
             } else {
                 // An id in neither list came from a manifest this product does
                 // not know. Logging it would put the same untrusted bytes in a
@@ -352,20 +483,23 @@ fn map_ingest_error(error: PackageIngestError, actor: &str) -> Error {
                     variant = VARIANT_PACKAGE_NOT_PERMITTED,
                     "the store receiver named a package-id in neither package-id list"
                 );
-                Error::Forbidden(ERR_PACKAGE_NOT_PERMITTED.to_string())
+                Refusal::new(
+                    UploadRefusalCode::PackageNotPermitted,
+                    ERR_PACKAGE_NOT_PERMITTED,
+                )
             }
         }
         PackageIngestError::TooLarge => {
             log_rejection(actor, VARIANT_TOO_LARGE);
-            Error::PayloadTooLarge(ERR_TOO_LARGE.to_string())
+            Refusal::new(UploadRefusalCode::TooLarge, ERR_TOO_LARGE)
         }
         PackageIngestError::Transport => {
             log_rejection(actor, VARIANT_TRANSPORT);
-            Error::BadRequest(ERR_TRANSPORT.to_string())
+            Refusal::new(UploadRefusalCode::Transport, ERR_TRANSPORT)
         }
         PackageIngestError::Unavailable => {
             log_rejection(actor, VARIANT_UNAVAILABLE);
-            Error::ServiceUnavailable(ERR_UNAVAILABLE.to_string())
+            Refusal::new(UploadRefusalCode::Unavailable, ERR_UNAVAILABLE)
         }
     }
 }
@@ -393,15 +527,18 @@ fn log_trust_refusal(actor: &str) {
 /// The exhaustive match deliberately has no catch-all arm. Every response
 /// message is owned here, and the only submitted values that can reach one are
 /// the two bounded epoch scalars.
-fn map_trust_ingest_error(error: &TrustIngestError, actor: &str) -> Error {
+fn map_trust_ingest_error(error: &TrustIngestError, actor: &str) -> Refusal<TrustRefusalCode> {
     match error {
         TrustIngestError::SignatureInvalid => {
             log_trust_outcome(actor, VARIANT_SIGNATURE_INVALID);
-            Error::BadRequest(ERR_TRUST_SIGNATURE_INVALID.to_string())
+            Refusal::new(
+                TrustRefusalCode::SignatureInvalid,
+                ERR_TRUST_SIGNATURE_INVALID,
+            )
         }
         TrustIngestError::Malformed => {
             log_trust_outcome(actor, VARIANT_MALFORMED);
-            Error::BadRequest(ERR_TRUST_MALFORMED.to_string())
+            Refusal::new(TrustRefusalCode::Malformed, ERR_TRUST_MALFORMED)
         }
         TrustIngestError::EpochNotNewer { submitted, active } => {
             info!(
@@ -412,21 +549,25 @@ fn map_trust_ingest_error(error: &TrustIngestError, actor: &str) -> Error {
                 active,
                 "a trust generation submission completed"
             );
-            Error::Conflict(format!(
-                "{ERR_TRUST_EPOCH_NOT_NEWER}: submitted {submitted}, active {active}"
-            ))
+            Refusal::new(
+                TrustRefusalCode::EpochNotNewer {
+                    submitted_epoch: *submitted,
+                    active_epoch: *active,
+                },
+                format!("{ERR_TRUST_EPOCH_NOT_NEWER}: submitted {submitted}, active {active}"),
+            )
         }
         TrustIngestError::TooLarge => {
             log_trust_outcome(actor, VARIANT_TOO_LARGE);
-            Error::PayloadTooLarge(ERR_TRUST_TOO_LARGE.to_string())
+            Refusal::new(TrustRefusalCode::TooLarge, ERR_TRUST_TOO_LARGE)
         }
         TrustIngestError::Transport => {
             log_trust_outcome(actor, VARIANT_TRANSPORT);
-            Error::BadRequest(ERR_TRUST_TRANSPORT.to_string())
+            Refusal::new(TrustRefusalCode::Transport, ERR_TRUST_TRANSPORT)
         }
         TrustIngestError::Unavailable => {
             log_trust_outcome(actor, VARIANT_UNAVAILABLE);
-            Error::ServiceUnavailable(ERR_TRUST_UNAVAILABLE.to_string())
+            Refusal::new(TrustRefusalCode::Unavailable, ERR_TRUST_UNAVAILABLE)
         }
     }
 }
@@ -443,14 +584,17 @@ async fn accept(
     limit: u64,
     actor: &IngressActor,
     body: Body,
-) -> Result<Json<AcceptedBuild>, Error> {
+) -> Result<Json<AcceptedBuild>, Refusal<UploadRefusalCode>> {
     let Some(permitted) = permitted_package_ids(actor.role) else {
         warn!(
             actor = actor.name,
             route = PACKAGE_UPLOAD_PATH,
             "a signed-package upload was refused: the role is neither administrator tier"
         );
-        return Err(Error::Forbidden(ERR_ROLE_NOT_PERMITTED.to_string()));
+        return Err(Refusal::new(
+            UploadRefusalCode::RoleNotPermitted,
+            ERR_ROLE_NOT_PERMITTED,
+        ));
     };
 
     let accepted = receiver
@@ -469,10 +613,13 @@ async fn accept_trust_generation(
     limit: u64,
     actor: &IngressActor,
     body: Body,
-) -> Result<Json<ActivatedTrustGeneration>, Error> {
+) -> Result<Json<ActivatedTrustGeneration>, Refusal<TrustRefusalCode>> {
     if actor.role != Role::SystemAdministrator {
         log_trust_refusal(&actor.name);
-        return Err(Error::Forbidden(ERR_TRUST_ROLE_NOT_PERMITTED.to_string()));
+        return Err(Refusal::new(
+            TrustRefusalCode::RoleNotPermitted,
+            ERR_TRUST_ROLE_NOT_PERMITTED,
+        ));
     }
 
     let activation = manager
@@ -501,9 +648,9 @@ async fn upload_package(
     Extension(PackageUploadLimit(limit)): Extension<PackageUploadLimit>,
     auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
     body: Body,
-) -> Result<Json<AcceptedBuild>, Error> {
-    let actor = authenticate(&store, auth)?;
-    accept(&receiver, limit, &actor, body).await
+) -> Result<Json<AcceptedBuild>, IngressError<UploadRefusalCode>> {
+    let actor = authenticate(&store, auth).map_err(IngressError::Unauthenticated)?;
+    Ok(accept(&receiver, limit, &actor, body).await?)
 }
 
 /// Accepts a trust generation from a bearer-authenticated system
@@ -515,9 +662,9 @@ async fn submit_trust_generation(
     Extension(TrustGenerationLimit(limit)): Extension<TrustGenerationLimit>,
     auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
     body: Body,
-) -> Result<Json<ActivatedTrustGeneration>, Error> {
-    let actor = authenticate(&store, auth)?;
-    accept_trust_generation(&manager, limit, &actor, body).await
+) -> Result<Json<ActivatedTrustGeneration>, IngressError<TrustRefusalCode>> {
+    let actor = authenticate(&store, auth).map_err(IngressError::Unauthenticated)?;
+    Ok(accept_trust_generation(&manager, limit, &actor, body).await?)
 }
 
 /// Accepts a signed package from an mTLS peer.
@@ -532,9 +679,10 @@ async fn upload_package(
     peer: Option<Extension<Arc<TlsPeerInfo>>>,
     auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
     body: Body,
-) -> Result<Json<AcceptedBuild>, Error> {
-    let actor = authenticate(authenticator.as_ref(), peer, auth)?;
-    accept(&receiver, limit, &actor, body).await
+) -> Result<Json<AcceptedBuild>, IngressError<UploadRefusalCode>> {
+    let actor =
+        authenticate(authenticator.as_ref(), peer, auth).map_err(IngressError::Unauthenticated)?;
+    Ok(accept(&receiver, limit, &actor, body).await?)
 }
 
 /// Accepts a trust generation from an mTLS-authenticated system
@@ -547,9 +695,10 @@ async fn submit_trust_generation(
     peer: Option<Extension<Arc<TlsPeerInfo>>>,
     auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
     body: Body,
-) -> Result<Json<ActivatedTrustGeneration>, Error> {
-    let actor = authenticate(authenticator.as_ref(), peer, auth)?;
-    accept_trust_generation(&manager, limit, &actor, body).await
+) -> Result<Json<ActivatedTrustGeneration>, IngressError<TrustRefusalCode>> {
+    let actor =
+        authenticate(authenticator.as_ref(), peer, auth).map_err(IngressError::Unauthenticated)?;
+    Ok(accept_trust_generation(&manager, limit, &actor, body).await?)
 }
 
 #[cfg(test)]
@@ -573,11 +722,11 @@ mod tests {
         ERR_SIGNATURE_INVALID, ERR_TOO_LARGE, ERR_TRANSPORT, ERR_TRUST_EPOCH_NOT_NEWER,
         ERR_TRUST_MALFORMED, ERR_TRUST_ROLE_NOT_PERMITTED, ERR_TRUST_SIGNATURE_INVALID,
         ERR_TRUST_TOO_LARGE, ERR_TRUST_TRANSPORT, ERR_TRUST_UNAVAILABLE, ERR_UNAVAILABLE,
-        Extension, PACKAGE_UPLOAD_PATH, PackageUploadLimit, Role, Router, StreamExt,
-        TRUST_GENERATION_PATH, TRUST_OUTCOME_ACTIVATED, TRUST_OUTCOME_FORBIDDEN,
-        TrustGenerationLimit, VARIANT_EPOCH_NOT_NEWER, VARIANT_MALFORMED,
-        VARIANT_SIGNATURE_INVALID, VARIANT_TOO_LARGE, VARIANT_TRANSPORT, VARIANT_UNAVAILABLE,
-        capped_stream, router,
+        Extension, IntoResponse, PACKAGE_UPLOAD_PATH, PackageUploadLimit, Refusal, RefusalCode,
+        Role, Router, StreamExt, TRUST_GENERATION_PATH, TRUST_OUTCOME_ACTIVATED,
+        TRUST_OUTCOME_FORBIDDEN, TrustGenerationLimit, TrustRefusalCode, UploadRefusalCode,
+        VARIANT_EPOCH_NOT_NEWER, VARIANT_MALFORMED, VARIANT_SIGNATURE_INVALID, VARIANT_TOO_LARGE,
+        VARIANT_TRANSPORT, VARIANT_UNAVAILABLE, capped_stream, router,
     };
     use crate::backend::{
         AcceptedPackage, BuildId, CORE_PACKAGE_IDS, IngressStream, IngressStreamError,
@@ -1005,6 +1154,18 @@ mod tests {
                 .ok()
                 .and_then(|body| body.get(name).and_then(Value::as_u64))
         }
+
+        fn has(&self, name: &str) -> bool {
+            serde_json::from_str::<Value>(&self.raw).is_ok_and(|body| body.get(name).is_some())
+        }
+
+        /// Asserts the body a `401` carries: the shared `{"error": ...}` with
+        /// a non-empty text and no code.
+        fn assert_unauthorized(&self) {
+            assert_eq!(self.status, StatusCode::UNAUTHORIZED);
+            assert!(!self.error().is_empty(), "{}", self.raw);
+            assert!(!self.has("code"), "{}", self.raw);
+        }
     }
 
     async fn run(router: Router, request: Request<Body>) -> Sent {
@@ -1346,6 +1507,7 @@ mod tests {
             sent.error(),
             "uploading review is not permitted for this role"
         );
+        assert_eq!(sent.field("code"), "PACKAGE_NOT_PERMITTED");
         let observed = stub.observed();
         for core in CORE_PACKAGE_IDS {
             assert!(!observed.permitted.iter().any(|id| id == core), "{core}");
@@ -1360,6 +1522,7 @@ mod tests {
 
             assert_eq!(sent.status, StatusCode::FORBIDDEN, "{role}");
             assert_eq!(sent.error(), ERR_ROLE_NOT_PERMITTED);
+            assert_eq!(sent.field("code"), "ROLE_NOT_PERMITTED", "{role}");
             let observed = stub.observed();
             assert_eq!(observed.calls, 0, "{role}");
             assert_eq!(observed.chunks, 0, "{role}");
@@ -1371,7 +1534,7 @@ mod tests {
         let stub = stub(Outcome::Accept);
         let sent = send(&Caller::Anonymous, CAP, &stub, small_body()).await;
 
-        assert_eq!(sent.status, StatusCode::UNAUTHORIZED);
+        sent.assert_unauthorized();
         assert_eq!(stub.observed().calls, 0);
     }
 
@@ -1380,7 +1543,7 @@ mod tests {
         let stub = stub(Outcome::Accept);
         let sent = send(&Caller::Invalid, CAP, &stub, small_body()).await;
 
-        assert_eq!(sent.status, StatusCode::UNAUTHORIZED);
+        sent.assert_unauthorized();
         assert_eq!(stub.observed().calls, 0);
     }
 
@@ -1398,8 +1561,8 @@ mod tests {
 
     /// One byte over the cap is cut off where it is crossed: the receiver sees
     /// the error item as the last thing on the stream, no chunk follows it, and
-    /// the client gets a `413` with the ordinary `{"error": ...}` body rather
-    /// than a reset connection it would retry.
+    /// the client gets a `413` with a `TOO_LARGE` refusal body rather than a
+    /// reset connection it would retry.
     #[tokio::test]
     async fn a_body_one_byte_over_the_cap_is_refused_mid_stream() {
         let stub = stub(Outcome::Accept);
@@ -1415,6 +1578,7 @@ mod tests {
 
         assert_eq!(sent.status, StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(sent.error(), ERR_TOO_LARGE);
+        assert_eq!(sent.field("code"), "TOO_LARGE");
         let observed = stub.observed();
         assert_eq!(observed.error_item, Some(ErrorItem::TooLarge));
         assert_eq!(observed.items_after_error, 0);
@@ -1440,6 +1604,7 @@ mod tests {
 
         assert_eq!(sent.status, StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(sent.error(), ERR_TOO_LARGE);
+        assert_eq!(sent.field("code"), "TOO_LARGE");
         let observed = stub.observed();
         assert_eq!(observed.chunks, 0);
         assert_eq!(observed.total_len, 0);
@@ -1460,6 +1625,7 @@ mod tests {
 
         assert_eq!(sent.status, StatusCode::BAD_REQUEST);
         assert_eq!(sent.error(), ERR_TRANSPORT);
+        assert_eq!(sent.field("code"), "TRANSPORT");
         let observed = stub.observed();
         assert_eq!(observed.error_item, Some(ErrorItem::Transport));
         assert_eq!(observed.items_after_error, 0);
@@ -1467,37 +1633,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn every_receiver_failure_maps_to_its_status_and_message() {
+    async fn every_receiver_failure_maps_to_its_status_code_and_message() {
         let table = [
             (
                 Outcome::SignatureInvalid,
                 StatusCode::BAD_REQUEST,
+                "SIGNATURE_INVALID",
                 ERR_SIGNATURE_INVALID,
             ),
             (
                 Outcome::ManifestIncomplete,
                 StatusCode::BAD_REQUEST,
+                "MANIFEST_INCOMPLETE",
                 ERR_MANIFEST_INCOMPLETE,
             ),
             (
                 Outcome::NotPermitted("nothing-known"),
                 StatusCode::FORBIDDEN,
+                "PACKAGE_NOT_PERMITTED",
                 ERR_PACKAGE_NOT_PERMITTED,
             ),
             (
                 Outcome::TooLarge,
                 StatusCode::PAYLOAD_TOO_LARGE,
+                "TOO_LARGE",
                 ERR_TOO_LARGE,
             ),
-            (Outcome::Transport, StatusCode::BAD_REQUEST, ERR_TRANSPORT),
+            (
+                Outcome::Transport,
+                StatusCode::BAD_REQUEST,
+                "TRANSPORT",
+                ERR_TRANSPORT,
+            ),
             (
                 Outcome::Unavailable,
                 StatusCode::SERVICE_UNAVAILABLE,
+                "UNAVAILABLE",
                 ERR_UNAVAILABLE,
             ),
         ];
 
-        for (outcome, status, message) in table {
+        for (outcome, status, code, message) in table {
             let stub = stub(outcome.clone());
             let sent = send(
                 &Caller::Role(Role::SystemAdministrator),
@@ -1508,7 +1684,10 @@ mod tests {
             .await;
 
             assert_eq!(sent.status, status, "{outcome:?}");
+            assert_eq!(sent.field("code"), code, "{outcome:?}");
             assert_eq!(sent.error(), message, "{outcome:?}");
+            assert!(!sent.has("submittedEpoch"), "{outcome:?}");
+            assert!(!sent.has("activeEpoch"), "{outcome:?}");
         }
     }
 
@@ -1533,6 +1712,7 @@ mod tests {
 
             assert_eq!(sent.status, StatusCode::FORBIDDEN, "{package_id}");
             assert_eq!(sent.error(), ERR_PACKAGE_NOT_PERMITTED, "{package_id}");
+            assert_eq!(sent.field("code"), "PACKAGE_NOT_PERMITTED", "{package_id}");
             // The capture is live — the variant's own name is in it — so the
             // two assertions below are about what the log does not carry
             // rather than about an empty buffer.
@@ -1566,6 +1746,7 @@ mod tests {
                 format!("uploading {package_id} is not permitted for this role"),
                 "{package_id}"
             );
+            assert_eq!(sent.field("code"), "PACKAGE_NOT_PERMITTED", "{package_id}");
         }
     }
 
@@ -1659,6 +1840,9 @@ mod tests {
 
             assert_eq!(sent.status, StatusCode::FORBIDDEN, "{role}");
             assert_eq!(sent.error(), ERR_TRUST_ROLE_NOT_PERMITTED, "{role}");
+            assert_eq!(sent.field("code"), "ROLE_NOT_PERMITTED", "{role}");
+            assert!(!sent.has("submittedEpoch"), "{role}");
+            assert!(!sent.has("activeEpoch"), "{role}");
             let observed = stub.observed();
             assert_eq!(observed.calls, 0, "{role}");
             assert_eq!(observed.chunks, 0, "{role}");
@@ -1677,7 +1861,7 @@ mod tests {
             let body = counted_body(1, CHUNK_LEN, stub.produced.clone());
             let sent = send_trust(&caller, CAP, &stub, body).await;
 
-            assert_eq!(sent.status, StatusCode::UNAUTHORIZED);
+            sent.assert_unauthorized();
             assert_eq!(stub.observed().calls, 0);
             assert_eq!(stub.produced.load(Ordering::SeqCst), 0);
             assert_eq!(stub.package_calls.load(Ordering::SeqCst), 0);
@@ -1742,6 +1926,7 @@ mod tests {
 
         assert_eq!(sent.status, StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(sent.error(), ERR_TRUST_TOO_LARGE);
+        assert_eq!(sent.field("code"), "TOO_LARGE");
         let observed = excess.observed();
         assert_eq!(observed.total_len, CAP);
         assert_eq!(observed.chunks, 4);
@@ -1762,6 +1947,7 @@ mod tests {
 
         assert_eq!(sent.status, StatusCode::BAD_REQUEST);
         assert_eq!(sent.error(), ERR_TRUST_TRANSPORT);
+        assert_eq!(sent.field("code"), "TRANSPORT");
         let observed = stub.observed();
         assert_eq!(observed.chunks, 1);
         assert_eq!(observed.error_item, Some(ErrorItem::Transport));
@@ -1769,17 +1955,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn every_trust_manager_failure_maps_to_its_status_and_owned_message() {
+    async fn every_trust_manager_failure_maps_to_its_status_code_and_owned_message() {
         let table = [
             (
                 TrustOutcome::SignatureInvalid,
                 StatusCode::BAD_REQUEST,
+                "SIGNATURE_INVALID",
                 ERR_TRUST_SIGNATURE_INVALID.to_string(),
                 VARIANT_SIGNATURE_INVALID,
             ),
             (
                 TrustOutcome::Malformed,
                 StatusCode::BAD_REQUEST,
+                "MALFORMED",
                 ERR_TRUST_MALFORMED.to_string(),
                 VARIANT_MALFORMED,
             ),
@@ -1789,30 +1977,34 @@ mod tests {
                     active: 9,
                 },
                 StatusCode::CONFLICT,
+                "EPOCH_NOT_NEWER",
                 format!("{ERR_TRUST_EPOCH_NOT_NEWER}: submitted 7, active 9"),
                 VARIANT_EPOCH_NOT_NEWER,
             ),
             (
                 TrustOutcome::TooLarge,
                 StatusCode::PAYLOAD_TOO_LARGE,
+                "TOO_LARGE",
                 ERR_TRUST_TOO_LARGE.to_string(),
                 VARIANT_TOO_LARGE,
             ),
             (
                 TrustOutcome::Transport,
                 StatusCode::BAD_REQUEST,
+                "TRANSPORT",
                 ERR_TRUST_TRANSPORT.to_string(),
                 VARIANT_TRANSPORT,
             ),
             (
                 TrustOutcome::Unavailable,
                 StatusCode::SERVICE_UNAVAILABLE,
+                "UNAVAILABLE",
                 ERR_TRUST_UNAVAILABLE.to_string(),
                 VARIANT_UNAVAILABLE,
             ),
         ];
 
-        for (outcome, status, message, variant) in table {
+        for (outcome, status, code, message, variant) in table {
             let stub = trust_stub(outcome.clone());
             let sent = send_trust(
                 &Caller::Role(Role::SystemAdministrator),
@@ -1823,12 +2015,192 @@ mod tests {
             .await;
 
             assert_eq!(sent.status, status, "{outcome:?}");
+            assert_eq!(sent.field("code"), code, "{outcome:?}");
             assert_eq!(sent.error(), message, "{outcome:?}");
+            if let TrustOutcome::EpochNotNewer { submitted, active } = outcome {
+                assert_eq!(sent.u64_field("submittedEpoch"), Some(submitted));
+                assert_eq!(sent.u64_field("activeEpoch"), Some(active));
+            } else {
+                assert!(!sent.has("submittedEpoch"), "{outcome:?}");
+                assert!(!sent.has("activeEpoch"), "{outcome:?}");
+            }
             assert!(sent.logs.contains(EXPECTED_TRUST_ACTOR), "{outcome:?}");
             assert!(sent.logs.contains(variant), "{outcome:?}");
             assert!(!sent.raw.contains(MARKER), "{outcome:?}");
             assert!(!sent.logs.contains(MARKER), "{outcome:?}");
         }
+    }
+
+    /// Equal epochs are not special-cased, and epochs past `i64::MAX` and
+    /// 2^53 still render as JSON numbers rather than as strings.
+    #[tokio::test]
+    async fn epoch_not_newer_carries_both_epochs_as_numbers_at_any_magnitude() {
+        for (submitted, active) in [(7, 7), (u64::MAX - 1, u64::MAX), (u64::MAX, u64::MAX)] {
+            let stub = trust_stub(TrustOutcome::EpochNotNewer { submitted, active });
+            let sent = send_trust(
+                &Caller::Role(Role::SystemAdministrator),
+                CAP,
+                &stub,
+                small_body(),
+            )
+            .await;
+
+            assert_eq!(sent.status, StatusCode::CONFLICT, "{submitted} {active}");
+            assert_eq!(
+                sent.field("code"),
+                "EPOCH_NOT_NEWER",
+                "{submitted} {active}"
+            );
+            assert_eq!(
+                sent.error(),
+                format!("{ERR_TRUST_EPOCH_NOT_NEWER}: submitted {submitted}, active {active}")
+            );
+            assert_eq!(sent.u64_field("submittedEpoch"), Some(submitted));
+            assert_eq!(sent.u64_field("activeEpoch"), Some(active));
+        }
+    }
+
+    /// Renders a refusal carrying `code` as the JSON object it is sent as.
+    fn refusal_body(code: impl serde::Serialize) -> serde_json::Map<String, Value> {
+        match serde_json::to_value(Refusal::new(code, "text")).expect("a refusal serializes") {
+            Value::Object(map) => map,
+            other => panic!("a refusal renders as an object, not {other}"),
+        }
+    }
+
+    /// Pins the upload route's closed code set. The match has no `_` arm, so
+    /// a variant added to the enum fails the build here until it is pinned.
+    #[test]
+    fn the_upload_route_answers_its_own_closed_code_set() {
+        fn expected(code: UploadRefusalCode) -> (StatusCode, &'static str) {
+            match code {
+                UploadRefusalCode::RoleNotPermitted => {
+                    (StatusCode::FORBIDDEN, "ROLE_NOT_PERMITTED")
+                }
+                UploadRefusalCode::SignatureInvalid => {
+                    (StatusCode::BAD_REQUEST, "SIGNATURE_INVALID")
+                }
+                UploadRefusalCode::ManifestIncomplete => {
+                    (StatusCode::BAD_REQUEST, "MANIFEST_INCOMPLETE")
+                }
+                UploadRefusalCode::PackageNotPermitted => {
+                    (StatusCode::FORBIDDEN, "PACKAGE_NOT_PERMITTED")
+                }
+                UploadRefusalCode::TooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "TOO_LARGE"),
+                UploadRefusalCode::Transport => (StatusCode::BAD_REQUEST, "TRANSPORT"),
+                UploadRefusalCode::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "UNAVAILABLE"),
+            }
+        }
+
+        let all = [
+            UploadRefusalCode::RoleNotPermitted,
+            UploadRefusalCode::SignatureInvalid,
+            UploadRefusalCode::ManifestIncomplete,
+            UploadRefusalCode::PackageNotPermitted,
+            UploadRefusalCode::TooLarge,
+            UploadRefusalCode::Transport,
+            UploadRefusalCode::Unavailable,
+        ];
+        let mut wire = Vec::new();
+        for code in all {
+            let (status, expected_wire) = expected(code);
+            let body = refusal_body(code);
+            assert_eq!(body.len(), 2, "{code:?}");
+            assert_eq!(body.get("error"), Some(&Value::from("text")), "{code:?}");
+            assert_eq!(
+                body.get("code"),
+                Some(&Value::from(expected_wire)),
+                "{code:?}"
+            );
+            assert_eq!(code.status(), status, "{code:?}");
+            assert_eq!(
+                Refusal::new(code, "text").into_response().status(),
+                status,
+                "{code:?}"
+            );
+            wire.push(expected_wire);
+        }
+        assert_eq!(
+            wire,
+            [
+                "ROLE_NOT_PERMITTED",
+                "SIGNATURE_INVALID",
+                "MANIFEST_INCOMPLETE",
+                "PACKAGE_NOT_PERMITTED",
+                "TOO_LARGE",
+                "TRANSPORT",
+                "UNAVAILABLE",
+            ]
+        );
+    }
+
+    /// Pins the trust route's closed code set, exhaustively as above, and
+    /// that only `EPOCH_NOT_NEWER` carries the two epochs.
+    #[test]
+    fn the_trust_route_answers_its_own_closed_code_set() {
+        fn expected(code: TrustRefusalCode) -> (StatusCode, &'static str) {
+            match code {
+                TrustRefusalCode::RoleNotPermitted => (StatusCode::FORBIDDEN, "ROLE_NOT_PERMITTED"),
+                TrustRefusalCode::SignatureInvalid => {
+                    (StatusCode::BAD_REQUEST, "SIGNATURE_INVALID")
+                }
+                TrustRefusalCode::Malformed => (StatusCode::BAD_REQUEST, "MALFORMED"),
+                TrustRefusalCode::EpochNotNewer { .. } => (StatusCode::CONFLICT, "EPOCH_NOT_NEWER"),
+                TrustRefusalCode::TooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "TOO_LARGE"),
+                TrustRefusalCode::Transport => (StatusCode::BAD_REQUEST, "TRANSPORT"),
+                TrustRefusalCode::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "UNAVAILABLE"),
+            }
+        }
+
+        let all = [
+            TrustRefusalCode::RoleNotPermitted,
+            TrustRefusalCode::SignatureInvalid,
+            TrustRefusalCode::Malformed,
+            TrustRefusalCode::EpochNotNewer {
+                submitted_epoch: 7,
+                active_epoch: 9,
+            },
+            TrustRefusalCode::TooLarge,
+            TrustRefusalCode::Transport,
+            TrustRefusalCode::Unavailable,
+        ];
+        let mut wire = Vec::new();
+        for code in all {
+            let (status, expected_wire) = expected(code);
+            let body = refusal_body(code);
+            assert_eq!(body.get("error"), Some(&Value::from("text")), "{code:?}");
+            assert_eq!(
+                body.get("code"),
+                Some(&Value::from(expected_wire)),
+                "{code:?}"
+            );
+            if let TrustRefusalCode::EpochNotNewer { .. } = code {
+                assert_eq!(body.len(), 4);
+                assert_eq!(body.get("submittedEpoch"), Some(&Value::from(7_u64)));
+                assert_eq!(body.get("activeEpoch"), Some(&Value::from(9_u64)));
+            } else {
+                assert_eq!(body.len(), 2, "{code:?}");
+            }
+            assert_eq!(code.status(), status, "{code:?}");
+            assert_eq!(
+                Refusal::new(code, "text").into_response().status(),
+                status,
+                "{code:?}"
+            );
+            wire.push(expected_wire);
+        }
+        assert_eq!(
+            wire,
+            [
+                "ROLE_NOT_PERMITTED",
+                "SIGNATURE_INVALID",
+                "MALFORMED",
+                "EPOCH_NOT_NEWER",
+                "TOO_LARGE",
+                "TRANSPORT",
+                "UNAVAILABLE",
+            ]
+        );
     }
 
     #[tokio::test]
