@@ -1,11 +1,13 @@
 //! The installed build state a host reports, as the read path renders it.
 //!
 //! The state itself is a projection of what `review-database` stores on an
-//! agent, an external service or a core-component row. The one thing that is
-//! not — whether a newer build is available — needs the store's newest
-//! accepted build for the row's package, and that answer is memoized per
-//! request by [`LatestBuildMemo`] so that a package installed on fifty hosts
-//! costs one lookup rather than fifty.
+//! agent, an external service or a core-component row. Two things are not.
+//! Whether a newer build is available needs the store's newest accepted build
+//! for the row's package, and that answer is memoized per request by
+//! [`LatestBuildMemo`] so that a package installed on fifty hosts costs one
+//! lookup rather than fifty. Whether the installed build has been withdrawn
+//! needs the active trust generation's answer for that build, memoized per
+//! request by [`WithdrawalMemo`] in the same way.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -65,6 +67,32 @@ impl UpdateState {
     /// Nothing was asked, so nothing failed.
     pub(super) const NOT_CHECKED: Self = Self {
         available: false,
+        check_failed: false,
+    };
+}
+
+/// Whether the installed build of one row has been withdrawn, and whether the
+/// check that would have said so failed.
+///
+/// The two never disagree: `check_failed` is only ever `true` beside a
+/// `withdrawn` of `false`, because a check that failed answered nothing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct WithdrawalState {
+    /// Whether the trust generation active for this response withdraws the
+    /// row's installed build.
+    pub(super) withdrawn: bool,
+    /// Whether this response's check of the row's installed build failed.
+    pub(super) check_failed: bool,
+}
+
+impl WithdrawalState {
+    /// The answer for a row nothing was checked for: a kind that maps to no
+    /// package-id, an installer-managed core component, or a row with no
+    /// installed build.
+    ///
+    /// Nothing was asked, so nothing failed.
+    pub(super) const NOT_CHECKED: Self = Self {
+        withdrawn: false,
         check_failed: false,
     };
 }
@@ -210,6 +238,52 @@ pub(super) async fn update_state(
     )
 }
 
+/// Returns whether the installed build of one row has been withdrawn.
+///
+/// `package_id` is `None` for a row no package deploys and for a core
+/// component excluded from update, and `installed` is `None` for a row with no
+/// installed build; each answers [`WithdrawalState::NOT_CHECKED`] and asks
+/// nothing. Everything else asks this request's [`WithdrawalMemo`], which asks
+/// the deployer at most once per `(package-id, version, commit)`.
+///
+/// The check is independent of [`update_state`]: it is made whatever
+/// `latest_build` answered, and neither one's failure is reported as the
+/// other's.
+///
+/// # Errors
+///
+/// Returns an error if the deployer or the memo is missing from the GraphQL
+/// context, which is a wiring fault rather than a failed check. A failed check
+/// is reported in [`WithdrawalState::check_failed`] instead, so that one
+/// unreadable trust tree cannot null an entry, its list and its node.
+pub(super) async fn withdrawal_state(
+    ctx: &Context<'_>,
+    package_id: Option<&str>,
+    installed: Option<(&str, &str)>,
+) -> Result<WithdrawalState> {
+    let Some((package_id, (version, commit))) = package_id.zip(installed) else {
+        return Ok(WithdrawalState::NOT_CHECKED);
+    };
+    let deployer = ctx.data::<BoxedPackageDeployer>()?;
+    let memo = ctx.data::<WithdrawalMemo>()?;
+
+    Ok(
+        match memo
+            .is_withdrawn(deployer.as_ref(), package_id, version, commit)
+            .await
+        {
+            WithdrawalCheck::Answered(withdrawn) => WithdrawalState {
+                withdrawn,
+                check_failed: false,
+            },
+            WithdrawalCheck::Failed => WithdrawalState {
+                withdrawn: false,
+                check_failed: true,
+            },
+        },
+    )
+}
+
 /// What this request's lookup for one package-id answered.
 #[derive(Clone)]
 enum LatestBuild {
@@ -274,11 +348,86 @@ impl LatestBuildMemo {
     }
 }
 
-/// Gives every request a [`LatestBuildMemo`] of its own.
+/// What this request's check of one build answered.
+#[derive(Clone, Copy)]
+enum WithdrawalCheck {
+    /// Whether the active trust generation withdraws the build.
+    Answered(bool),
+    /// The check failed, so nothing is known about the build here.
+    Failed,
+}
+
+/// The key a [`WithdrawalMemo`] answers under: package-id, version and commit.
+type WithdrawalKey = (String, String, String);
+
+/// The `is_build_withdrawn` answers this request has already obtained.
 ///
-/// The memo has to be per request and the schema is built once, so it is put
-/// in the request's data as the request is prepared rather than in the
-/// schema's.
+/// It is request-scoped for the same reason [`LatestBuildMemo`] is, and more
+/// so: a withdrawal takes effect when a trust generation is activated, and a
+/// cache outliving the request would keep reporting a build as not withdrawn
+/// after one that withdraws it.
+///
+/// The map holds one cell per `(package-id, version, commit)` and its lock is
+/// released before the check runs, so that rows of one build share a single
+/// call while a build whose check is slow delays only its own rows.
+#[derive(Default)]
+pub(super) struct WithdrawalMemo {
+    answers: Mutex<HashMap<WithdrawalKey, Arc<OnceCell<WithdrawalCheck>>>>,
+}
+
+impl WithdrawalMemo {
+    /// Returns whether `version` and `commit` of `package_id` are withdrawn,
+    /// asking the deployer only if this request has not asked already.
+    ///
+    /// A failure is recorded like any other answer and logged once per build
+    /// per request as an operator breadcrumb; the log is not the signal, the
+    /// `withdrawalCheckFailed` field is.
+    async fn is_withdrawn(
+        &self,
+        deployer: &dyn crate::backend::PackageDeployer,
+        package_id: &str,
+        version: &str,
+        commit: &str,
+    ) -> WithdrawalCheck {
+        let answer = {
+            let mut answers = self.answers.lock().await;
+            Arc::clone(
+                answers
+                    .entry((
+                        package_id.to_string(),
+                        version.to_string(),
+                        commit.to_string(),
+                    ))
+                    .or_default(),
+            )
+        };
+        *answer
+            .get_or_init(|| async {
+                let build = BuildId {
+                    version: version.to_string(),
+                    commit: commit.to_string(),
+                };
+                match deployer.is_build_withdrawn(package_id, &build).await {
+                    Ok(withdrawn) => WithdrawalCheck::Answered(withdrawn),
+                    Err(e) => {
+                        warn!(
+                            "cannot check whether build {version} ({commit}) of package \
+                             {package_id} is withdrawn: {e:#}"
+                        );
+                        WithdrawalCheck::Failed
+                    }
+                }
+            })
+            .await
+    }
+}
+
+/// Gives every request a [`LatestBuildMemo`] and a [`WithdrawalMemo`] of its
+/// own.
+///
+/// The memos have to be per request and the schema is built once, so they are
+/// put in the request's data as the request is prepared rather than in the
+/// schema's. One extension installs both, so that the schema registers one.
 pub(super) struct LatestBuildMemoExtension;
 
 impl ExtensionFactory for LatestBuildMemoExtension {
@@ -298,7 +447,8 @@ impl Extension for LatestBuildMemoExtension {
         Ok(next
             .run(ctx, request)
             .await?
-            .data(LatestBuildMemo::default()))
+            .data(LatestBuildMemo::default())
+            .data(WithdrawalMemo::default()))
     }
 }
 
@@ -319,16 +469,20 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::{
-        LatestBuild, LatestBuildMemo, Lifecycle as GqlLifecycle, installed_identity,
-        projected_state,
+        LatestBuild, LatestBuildMemo, Lifecycle as GqlLifecycle, WithdrawalCheck, WithdrawalMemo,
+        installed_identity, projected_state,
     };
     use crate::{
         backend::CertManager,
         graphql::{
             BoxedPackageDeployer, LatestBuildStub, MockAgentManager, MockHostOnboarder,
-            MockPackageDeployer, ParsedCertificate, RoleGuard, TestSchema,
+            MockPackageDeployer, ParsedCertificate, RoleGuard, TestSchema, WithdrawalStub,
         },
     };
+
+    /// The withdrawal pair, selected on its own so the whole-entry assertions
+    /// above it stay about the fields they were written for.
+    const WITHDRAWAL_FIELDS: &str = "installedBuildWithdrawn withdrawalCheckFailed";
 
     /// The install-state fields of an agent entry.
     const AGENT_FIELDS: &str = "key instance installedVersion installedCommit lifecycle \
@@ -441,6 +595,48 @@ mod tests {
         TestSchema::new_with_package_deployer(deployer).await
     }
 
+    async fn schema_with_withdrawals(
+        builds: &Arc<LatestBuildStub>,
+        withdrawals: &Arc<WithdrawalStub>,
+    ) -> TestSchema {
+        let deployer: BoxedPackageDeployer = Box::new(
+            MockPackageDeployer::with_builds(builds.clone()).with_withdrawals(withdrawals.clone()),
+        );
+        TestSchema::new_with_package_deployer(deployer).await
+    }
+
+    /// Reads the withdrawal pair of every row of all five types: the keyed
+    /// node types through `node`, the snapshots through `nodeStatusList`, and
+    /// the core components through `coreComponentList`.
+    fn every_type_query(id: u32) -> String {
+        format!(
+            "{{ node(id: \"{id}\") {{ agents {{ {WITHDRAWAL_FIELDS} }} \
+             externalServices {{ {WITHDRAWAL_FIELDS} }} }} \
+             nodeStatusList(first: 10) {{ nodes {{ agents {{ {WITHDRAWAL_FIELDS} }} \
+             externalServices {{ {WITHDRAWAL_FIELDS} }} }} }} \
+             coreComponentList {{ {WITHDRAWAL_FIELDS} }} }}"
+        )
+    }
+
+    /// Returns the rows of each of the five types in an [`every_type_query`]
+    /// response, named after the type, for a store holding one node.
+    fn rows_by_type(data: &serde_json::Value) -> Vec<(&'static str, Vec<serde_json::Value>)> {
+        let rows = |value: &serde_json::Value| {
+            value.as_array().expect("the rows render as a list").clone()
+        };
+        let snapshot = &data["nodeStatusList"]["nodes"][0];
+        vec![
+            ("Agent", rows(&data["node"]["agents"])),
+            ("ExternalService", rows(&data["node"]["externalServices"])),
+            ("AgentSnapshot", rows(&snapshot["agents"])),
+            (
+                "ExternalServiceSnapshot",
+                rows(&snapshot["externalServices"]),
+            ),
+            ("CoreComponent", rows(&data["coreComponentList"])),
+        ]
+    }
+
     fn agents_query(id: u32) -> String {
         format!("{{ node(id: \"{id}\") {{ agents {{ {AGENT_FIELDS} }} }} }}")
     }
@@ -551,6 +747,68 @@ mod tests {
         assert!(matches!(resolved.0, LatestBuild::Found(_)));
         assert!(matches!(resolved.1, LatestBuild::Found(_)));
         assert_eq!(builds.calls("hog"), 1);
+    }
+
+    /// One build's check does not hold up another's, for the same reason one
+    /// package's lookup does not: the gate holds the first build open until
+    /// the second has answered, so a memo that serialized the two would never
+    /// finish.
+    #[tokio::test]
+    async fn one_build_check_does_not_block_another() {
+        let gate = Arc::new(Notify::new());
+        let withdrawals = Arc::new(
+            WithdrawalStub::default()
+                .with_withdrawn("hog", "1.0.0", "aaaaaa")
+                .with_gate("hog", "1.0.0", "aaaaaa", gate.clone()),
+        );
+        let deployer = MockPackageDeployer::default().with_withdrawals(withdrawals.clone());
+        let memo = WithdrawalMemo::default();
+
+        let resolved = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::join!(
+                memo.is_withdrawn(&deployer, "hog", "1.0.0", "aaaaaa"),
+                async {
+                    let answer = memo.is_withdrawn(&deployer, "hog", "1.1.0", "bbbbbb").await;
+                    gate.notify_one();
+                    answer
+                }
+            )
+        })
+        .await
+        .expect("a check of one build does not wait on another");
+
+        assert!(matches!(resolved.0, WithdrawalCheck::Answered(true)));
+        assert!(matches!(resolved.1, WithdrawalCheck::Answered(false)));
+    }
+
+    /// Two rows of one build share a single check even when they resolve
+    /// together, rather than both missing an answer that has not landed yet.
+    #[tokio::test]
+    async fn concurrent_rows_of_one_build_share_one_check() {
+        let gate = Arc::new(Notify::new());
+        let withdrawals = Arc::new(
+            WithdrawalStub::default()
+                .with_withdrawn("hog", "1.0.0", "aaaaaa")
+                .with_gate("hog", "1.0.0", "aaaaaa", gate.clone()),
+        );
+        let deployer = MockPackageDeployer::default().with_withdrawals(withdrawals.clone());
+        let memo = WithdrawalMemo::default();
+
+        let resolved = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::join!(
+                memo.is_withdrawn(&deployer, "hog", "1.0.0", "aaaaaa"),
+                async {
+                    gate.notify_one();
+                    memo.is_withdrawn(&deployer, "hog", "1.0.0", "aaaaaa").await
+                }
+            )
+        })
+        .await
+        .expect("the second row waits on the first rather than deadlocking");
+
+        assert!(matches!(resolved.0, WithdrawalCheck::Answered(true)));
+        assert!(matches!(resolved.1, WithdrawalCheck::Answered(true)));
+        assert_eq!(withdrawals.calls("hog", "1.0.0", "aaaaaa"), 1);
     }
 
     #[tokio::test]
@@ -1780,12 +2038,444 @@ mod tests {
         );
     }
 
-    /// The schema the server serves carries the request-scoped memo.
+    /// Inserts one node and three core components whose rows carry, on every
+    /// one of the five types, a withdrawn build, a build that is not withdrawn
+    /// and a build whose check fails, in that order.
+    ///
+    /// Each type uses its own package, so each type's rows ask about their own
+    /// builds.
+    fn insert_one_of_each_answer(store: &Store) -> u32 {
+        let id = insert_node(
+            store,
+            "node1",
+            [
+                ("1.0.0", "wwwwww"),
+                ("1.0.0", "nnnnnn"),
+                ("1.0.0", "ffffff"),
+            ]
+            .iter()
+            .enumerate()
+            .map(|(i, &installed)| {
+                agent(
+                    &format!("00{i}.hog"),
+                    AgentKind::SemiSupervised,
+                    Some(u32::try_from(i).expect("a small index")),
+                    Some(installed),
+                    Lifecycle::Running,
+                )
+            })
+            .collect(),
+            [
+                ("2.0.0", "wwwwww"),
+                ("2.0.0", "nnnnnn"),
+                ("2.0.0", "ffffff"),
+            ]
+            .iter()
+            .enumerate()
+            .map(|(i, &installed)| {
+                external_service(
+                    &format!("00{i}.giganto"),
+                    ExternalServiceKind::DataStore,
+                    Some(u32::try_from(i).expect("a small index")),
+                    Some(installed),
+                    Lifecycle::Running,
+                    &[],
+                )
+            })
+            .collect(),
+        );
+        for (host, commit) in [
+            ("host-a.example.com", "wwwwww"),
+            ("host-b.example.com", "nnnnnn"),
+            ("host-c.example.com", "ffffff"),
+        ] {
+            insert_core_component(
+                store,
+                "roxyd",
+                host,
+                Some(("0.6.0", commit)),
+                Lifecycle::Running,
+                false,
+            );
+        }
+        id
+    }
+
+    /// The withdrawal stub matching [`insert_one_of_each_answer`].
+    fn one_of_each_answer() -> WithdrawalStub {
+        WithdrawalStub::default()
+            .with_withdrawn("hog", "1.0.0", "wwwwww")
+            .with_failure("hog", "1.0.0", "ffffff")
+            .with_withdrawn("giganto", "2.0.0", "wwwwww")
+            .with_failure("giganto", "2.0.0", "ffffff")
+            .with_withdrawn("roxyd", "0.6.0", "wwwwww")
+            .with_failure("roxyd", "0.6.0", "ffffff")
+    }
+
+    /// Each of the three answers maps to its pair on all five types: withdrawn
+    /// is `true`/`false`, not withdrawn is `false`/`false`, and a failed check
+    /// is `false`/`true` — a field, never a GraphQL error.
+    #[tokio::test]
+    async fn the_withdrawal_pair_maps_every_answer_on_every_type() {
+        let builds = Arc::new(LatestBuildStub::default());
+        let withdrawals = Arc::new(one_of_each_answer());
+        let schema = schema_with_withdrawals(&builds, &withdrawals).await;
+        let id = insert_one_of_each_answer(&schema.store());
+
+        let res = schema.execute_as_system_admin(&every_type_query(id)).await;
+
+        assert!(
+            res.errors.is_empty(),
+            "a failed check is a field, not an error: {:?}",
+            res.errors
+        );
+        let data = res.data.into_json().unwrap();
+        for (type_name, rows) in rows_by_type(&data) {
+            assert_eq!(
+                rows,
+                vec![
+                    json!({"installedBuildWithdrawn": true, "withdrawalCheckFailed": false}),
+                    json!({"installedBuildWithdrawn": false, "withdrawalCheckFailed": false}),
+                    json!({"installedBuildWithdrawn": false, "withdrawalCheckFailed": true}),
+                ],
+                "on {type_name}"
+            );
+        }
+        // The keyed types and the snapshots render the same rows, and share
+        // one check per build.
+        assert_eq!(withdrawals.calls("hog", "1.0.0", "wwwwww"), 1);
+        assert_eq!(withdrawals.calls("hog", "1.0.0", "ffffff"), 1);
+        assert_eq!(withdrawals.calls("giganto", "2.0.0", "nnnnnn"), 1);
+        assert_eq!(withdrawals.total_calls(), 9);
+    }
+
+    /// A failed check never reports a withdrawn build, on any type.
+    ///
+    /// Every build here is both withdrawn and failing, so a mapping that let
+    /// the stub's withdrawn set leak past a failure would render `true` beside
+    /// the failure.
+    #[tokio::test]
+    async fn a_failed_withdrawal_check_never_reports_a_withdrawn_build() {
+        let builds = Arc::new(LatestBuildStub::default());
+        let mut stub = WithdrawalStub::default();
+        for (package_id, version) in [("hog", "1.0.0"), ("giganto", "2.0.0"), ("roxyd", "0.6.0")] {
+            for commit in ["wwwwww", "nnnnnn", "ffffff"] {
+                stub = stub
+                    .with_withdrawn(package_id, version, commit)
+                    .with_failure(package_id, version, commit);
+            }
+        }
+        let withdrawals = Arc::new(stub);
+        let schema = schema_with_withdrawals(&builds, &withdrawals).await;
+        let id = insert_one_of_each_answer(&schema.store());
+
+        let res = schema.execute_as_system_admin(&every_type_query(id)).await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        for (type_name, rows) in rows_by_type(&data) {
+            assert_eq!(rows.len(), 3, "on {type_name}");
+            for row in rows {
+                assert_eq!(
+                    row,
+                    json!({"installedBuildWithdrawn": false, "withdrawalCheckFailed": true}),
+                    "on {type_name}"
+                );
+            }
+        }
+    }
+
+    /// A row with nothing to check reports both `false` and asks nothing: a
+    /// kind no package deploys, an installer-managed core component, and a row
+    /// with no installed identity — null, half, or whole under
+    /// `NOT_INSTALLED`.
+    ///
+    /// Every build named here fails its check, so a row that asked anyway
+    /// would also render `withdrawalCheckFailed: true`.
+    #[tokio::test]
+    async fn a_row_with_nothing_to_check_is_never_checked() {
+        let builds = Arc::new(LatestBuildStub::default());
+        let withdrawals = Arc::new(
+            WithdrawalStub::default()
+                .with_failure("hog", "1.0.0", "aaaaaa")
+                .with_failure("giganto", "1.0.0", "aaaaaa")
+                .with_failure("bootroot", "0.1.0", "bbbbbb")
+                .with_failure("roxyd", "0.6.0", "cccccc"),
+        );
+        let schema = schema_with_withdrawals(&builds, &withdrawals).await;
+        let null_identity = agent(
+            "001.hog",
+            AgentKind::SemiSupervised,
+            Some(1),
+            None,
+            Lifecycle::Running,
+        );
+        let mut half = agent(
+            "002.hog",
+            AgentKind::SemiSupervised,
+            Some(2),
+            Some(("1.0.0", "aaaaaa")),
+            Lifecycle::Running,
+        );
+        half.installed_commit = None;
+        let mut other_half = agent(
+            "003.hog",
+            AgentKind::SemiSupervised,
+            Some(3),
+            Some(("1.0.0", "aaaaaa")),
+            Lifecycle::Running,
+        );
+        other_half.installed_version = None;
+        let not_installed = agent(
+            "004.hog",
+            AgentKind::SemiSupervised,
+            Some(4),
+            Some(("1.0.0", "aaaaaa")),
+            Lifecycle::NotInstalled,
+        );
+        let id = insert_node(
+            &schema.store(),
+            "node1",
+            vec![null_identity, half, other_half, not_installed],
+            vec![
+                external_service(
+                    "001.ti-container",
+                    ExternalServiceKind::TiContainer,
+                    Some(1),
+                    Some(("1.0.0", "aaaaaa")),
+                    Lifecycle::Running,
+                    &[],
+                ),
+                external_service(
+                    "001.giganto",
+                    ExternalServiceKind::DataStore,
+                    Some(1),
+                    Some(("1.0.0", "aaaaaa")),
+                    Lifecycle::NotInstalled,
+                    &[],
+                ),
+            ],
+        );
+        insert_core_component(
+            &schema.store(),
+            "bootroot",
+            "node1.example.com",
+            Some(("0.1.0", "bbbbbb")),
+            Lifecycle::Running,
+            true,
+        );
+        insert_core_component(
+            &schema.store(),
+            "roxyd",
+            "node1.example.com",
+            Some(("0.6.0", "cccccc")),
+            Lifecycle::NotInstalled,
+            false,
+        );
+
+        let res = schema.execute_as_system_admin(&every_type_query(id)).await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        let mut rows = 0;
+        for (type_name, entries) in rows_by_type(&data) {
+            assert!(!entries.is_empty(), "on {type_name}");
+            for entry in entries {
+                assert_eq!(
+                    entry,
+                    json!({"installedBuildWithdrawn": false, "withdrawalCheckFailed": false}),
+                    "on {type_name}"
+                );
+                rows += 1;
+            }
+        }
+        assert_eq!(rows, 14);
+        assert_eq!(
+            withdrawals.total_calls(),
+            0,
+            "a row with nothing to check asks nothing"
+        );
+    }
+
+    /// One build on many hosts is one check, and two builds of one package are
+    /// two, however many rows and types carry them.
+    #[tokio::test]
+    async fn the_withdrawal_check_is_asked_once_per_build() {
+        let builds = Arc::new(LatestBuildStub::default());
+        let withdrawals = Arc::new(WithdrawalStub::default());
+        let schema = schema_with_withdrawals(&builds, &withdrawals).await;
+        for (name, commit) in [
+            ("node1", "aaaaaa"),
+            ("node2", "aaaaaa"),
+            ("node3", "bbbbbb"),
+        ] {
+            insert_node(
+                &schema.store(),
+                name,
+                vec![agent(
+                    "001.hog",
+                    AgentKind::SemiSupervised,
+                    Some(1),
+                    Some(("1.0.0", commit)),
+                    Lifecycle::Running,
+                )],
+                vec![],
+            );
+        }
+        for host in ["host-a.example.com", "host-b.example.com"] {
+            insert_core_component(
+                &schema.store(),
+                "roxyd",
+                host,
+                Some(("0.6.0", "cccccc")),
+                Lifecycle::Running,
+                false,
+            );
+        }
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                "{{ nodeList {{ edges {{ node {{ agents {{ {WITHDRAWAL_FIELDS} }} }} }} }} \
+                 nodeStatusList(first: 10) {{ nodes {{ agents {{ {WITHDRAWAL_FIELDS} }} }} }} \
+                 coreComponentList {{ {WITHDRAWAL_FIELDS} }} }}"
+            ))
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(
+            withdrawals.calls("hog", "1.0.0", "aaaaaa"),
+            1,
+            "one build is checked once across hosts and types"
+        );
+        assert_eq!(
+            withdrawals.calls("hog", "1.0.0", "bbbbbb"),
+            1,
+            "another build of the same package is its own check"
+        );
+        assert_eq!(withdrawals.calls("roxyd", "0.6.0", "cccccc"), 1);
+        assert_eq!(withdrawals.total_calls(), 3);
+    }
+
+    /// The withdrawal check is independent of the update check: it is made
+    /// whatever `latest_build` answered, and neither one's failure is reported
+    /// as the other's.
+    #[tokio::test]
+    async fn the_withdrawal_check_is_independent_of_the_update_check() {
+        // `hog`'s newest build cannot be read and its installed build is
+        // withdrawn; `giganto` has no accepted build and its check fails.
+        let builds = Arc::new(LatestBuildStub::default().with_failure("hog"));
+        let withdrawals = Arc::new(
+            WithdrawalStub::default()
+                .with_withdrawn("hog", "1.0.0", "aaaaaa")
+                .with_failure("giganto", "2.0.0", "bbbbbb"),
+        );
+        let schema = schema_with_withdrawals(&builds, &withdrawals).await;
+        let id = insert_node(
+            &schema.store(),
+            "node1",
+            vec![agent(
+                "001.hog",
+                AgentKind::SemiSupervised,
+                Some(1),
+                Some(("1.0.0", "aaaaaa")),
+                Lifecycle::Running,
+            )],
+            vec![external_service(
+                "001.giganto",
+                ExternalServiceKind::DataStore,
+                Some(1),
+                Some(("2.0.0", "bbbbbb")),
+                Lifecycle::Running,
+                &[],
+            )],
+        );
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                "{{ node(id: \"{id}\") {{ \
+                 agents {{ updateAvailable updateCheckFailed {WITHDRAWAL_FIELDS} }} \
+                 externalServices {{ updateAvailable updateCheckFailed {WITHDRAWAL_FIELDS} }} \
+                 }} }}"
+            ))
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        let node = res.data.into_json().unwrap()["node"].clone();
+        assert_json_eq!(
+            node["agents"][0].clone(),
+            json!({
+                "updateAvailable": false,
+                "updateCheckFailed": true,
+                "installedBuildWithdrawn": true,
+                "withdrawalCheckFailed": false,
+            })
+        );
+        assert_json_eq!(
+            node["externalServices"][0].clone(),
+            json!({
+                "updateAvailable": false,
+                "updateCheckFailed": false,
+                "installedBuildWithdrawn": false,
+                "withdrawalCheckFailed": true,
+            })
+        );
+        assert_eq!(builds.calls("hog"), 1);
+        assert_eq!(builds.calls("giganto"), 1);
+        assert_eq!(withdrawals.calls("hog", "1.0.0", "aaaaaa"), 1);
+        assert_eq!(withdrawals.calls("giganto", "2.0.0", "bbbbbb"), 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_withdrawal_check_is_logged_once_per_build() {
+        // A build no other test in this binary drives, because the captured
+        // lines are shared across the binary.
+        const VERSION: &str = "7.7.7-logged";
+
+        let logs = captured_logs();
+        let before = logs.withdrawal_lines_naming(VERSION).len();
+        let builds = Arc::new(LatestBuildStub::default());
+        let withdrawals =
+            Arc::new(WithdrawalStub::default().with_failure("review", VERSION, "eeeeee"));
+        let schema = schema_with_withdrawals(&builds, &withdrawals).await;
+        for host in ["host-a.example.com", "host-b.example.com"] {
+            insert_core_component(
+                &schema.store(),
+                "review",
+                host,
+                Some((VERSION, "eeeeee")),
+                Lifecycle::Running,
+                false,
+            );
+        }
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                "{{ coreComponentList {{ {WITHDRAWAL_FIELDS} }} }}"
+            ))
+            .await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        let rows = res.data.into_json().unwrap()["coreComponentList"].clone();
+        assert_eq!(rows.as_array().map(Vec::len), Some(2));
+        for row in rows.as_array().expect("the rows render as a list") {
+            assert_eq!(row["withdrawalCheckFailed"], json!(true));
+        }
+        assert_eq!(withdrawals.calls("review", VERSION, "eeeeee"), 1);
+        let breadcrumbs = logs.withdrawal_lines_naming(VERSION);
+        assert_eq!(
+            breadcrumbs.len() - before,
+            1,
+            "one breadcrumb per build per request: {breadcrumbs:?}"
+        );
+    }
+
+    /// The schema the server serves carries both request-scoped memos.
     ///
     /// Every assertion above runs against `TestSchema`, which installs the
     /// extension itself, so all of them would still pass if the production
-    /// builder lost it. Losing it makes `updateAvailable` a resolver error on
-    /// a non-null field, which nulls the entry, then its list, then its node.
+    /// builder lost it. Losing it makes `updateAvailable` and
+    /// `installedBuildWithdrawn` resolver errors on non-null fields, which
+    /// null the entry, then its list, then its node.
     #[tokio::test]
     async fn the_served_schema_carries_the_memo() {
         struct StubCertManager;
@@ -1824,10 +2514,12 @@ mod tests {
             vec![],
         );
         let builds = Arc::new(LatestBuildStub::default().with_answer("hog", "1.2.0", "abcabc"));
+        let withdrawals =
+            Arc::new(WithdrawalStub::default().with_withdrawn("hog", "1.1.0", "yyyyyy"));
         let schema = crate::graphql::schema(
             Arc::new(RwLock::new(store)),
             MockAgentManager {},
-            MockPackageDeployer::with_builds(builds.clone()),
+            MockPackageDeployer::with_builds(builds.clone()).with_withdrawals(withdrawals.clone()),
             MockHostOnboarder {},
             None,
             Arc::new(StubCertManager),
@@ -1837,8 +2529,10 @@ mod tests {
 
         let res = schema
             .execute(
-                async_graphql::Request::new(agents_query(id))
-                    .data(RoleGuard::Role(Role::SystemAdministrator)),
+                async_graphql::Request::new(format!(
+                    "{{ node(id: \"{id}\") {{ agents {{ {AGENT_FIELDS} {WITHDRAWAL_FIELDS} }} }} }}"
+                ))
+                .data(RoleGuard::Role(Role::SystemAdministrator)),
             )
             .await;
 
@@ -1846,7 +2540,10 @@ mod tests {
         let entry = res.data.into_json().unwrap()["node"]["agents"][0].clone();
         assert_eq!(entry["updateAvailable"], json!(true));
         assert_eq!(entry["updateCheckFailed"], json!(false));
+        assert_eq!(entry["installedBuildWithdrawn"], json!(true));
+        assert_eq!(entry["withdrawalCheckFailed"], json!(false));
         assert_eq!(builds.calls("hog"), 1);
+        assert_eq!(withdrawals.calls("hog", "1.1.0", "yyyyyy"), 1);
     }
 
     /// Returns the log lines this test binary has emitted, installing the
@@ -1882,16 +2579,22 @@ mod tests {
     impl CapturedLogs {
         /// Returns the failed-lookup breadcrumbs naming `package_id`.
         fn lines_naming(&self, package_id: &str) -> Vec<String> {
+            self.lines_with("cannot read the latest build of package", package_id)
+        }
+
+        /// Returns the failed-withdrawal-check breadcrumbs naming `needle`.
+        fn withdrawal_lines_naming(&self, needle: &str) -> Vec<String> {
+            self.lines_with("cannot check whether build", needle)
+        }
+
+        fn lines_with(&self, breadcrumb: &str, needle: &str) -> Vec<String> {
             let captured = self
                 .0
                 .lock()
                 .unwrap_or_else(|e| panic!("Mutex poisoned: {e}"));
             String::from_utf8_lossy(&captured)
                 .lines()
-                .filter(|line| {
-                    line.contains("cannot read the latest build of package")
-                        && line.contains(package_id)
-                })
+                .filter(|line| line.contains(breadcrumb) && line.contains(needle))
                 .map(ToString::to_string)
                 .collect()
         }

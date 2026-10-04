@@ -416,6 +416,14 @@ mod tests {
             unimplemented!("this stub answers recommend_bind_addrs only")
         }
 
+        async fn is_build_withdrawn(
+            &self,
+            _target: &str,
+            _build: &BuildId,
+        ) -> Result<bool, anyhow::Error> {
+            unimplemented!("this stub answers recommend_bind_addrs only")
+        }
+
         async fn package_status(
             &self,
             _host: &str,
@@ -862,6 +870,7 @@ mod tests {
             DeployError::HostOccupancyUnavailable { .. }
             | DeployError::RequestKey(_)
             | DeployError::CleanupPending { .. }
+            | DeployError::BuildNotServable { .. }
             | DeployError::Other(_) => None,
         }
     }
@@ -911,6 +920,12 @@ mod tests {
                     target: "giganto".to_string(),
                     instance: Some(1),
                     operation_id: OperationId::new("b0a6f6aa".to_string()),
+                },
+                None,
+            ),
+            (
+                DeployError::BuildNotServable {
+                    target: "giganto".to_string(),
                 },
                 None,
             ),
