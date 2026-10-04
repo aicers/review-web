@@ -286,6 +286,7 @@ fn the_operation_attempt_type_keeps_its_signature() {
         "\n\taction: OperationAction!\n",
         "\n\tphase: OperationPhase!\n",
         "\n\toutcome: OperationOutcome\n",
+        "\n\tfailureKind: OperationFailureKind\n",
         "\n\thost: String!\n",
         "\n\ttarget: String\n",
         "\n\tinstance: StringNumber\n",
@@ -323,7 +324,7 @@ fn the_operation_attempt_type_keeps_its_signature() {
     );
 }
 
-/// The four operation enums mirror the stored ones, one variant for one
+/// The five operation enums mirror the stored ones, one variant for one
 /// variant, and none of them carries a fallback.
 #[test]
 fn the_operation_enums_mirror_the_stored_ones() {
@@ -345,6 +346,21 @@ fn the_operation_enums_mirror_the_stored_ones() {
         (
             "enum OperationCleanupState {",
             vec!["PENDING_DEREGISTER", "PENDING_IDENTITY_TEARDOWN"],
+        ),
+        (
+            "enum OperationFailureKind {",
+            vec![
+                "HOST_DISK_SPACE",
+                "HOST_AGENT_UNSUPPORTED",
+                "HOST_NOT_PREPARED",
+                "UNMANAGED_INSTANCE",
+                "SERVICE_FAILED",
+                "NOT_APPLIED",
+                "TRUST_ANCHOR_REFUSED",
+                "BUILD_NOT_SERVABLE",
+                "NO_CONFIRMATION",
+                "OTHER",
+            ],
         ),
     ] {
         let variants: Vec<&str> = definition(&sdl, header)
