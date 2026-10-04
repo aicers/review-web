@@ -33,6 +33,27 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `submittedEpoch` and `activeEpoch` as JSON numbers. Response statuses and
   `error` texts are unchanged, and an authentication failure still answers
   `401` with only an `error` field.
+- Added the `installedBuildWithdrawn` and `withdrawalCheckFailed` fields to
+  `Agent`, `ExternalService`, `AgentSnapshot`, `ExternalServiceSnapshot` and
+  `CoreComponent`. `installedBuildWithdrawn` is `true` when the trust generation
+  active for the response withdraws the row's installed build, which stays
+  installed until the row is moved to another build. `withdrawalCheckFailed` is
+  `true` when that check failed, and `installedBuildWithdrawn` is then `false`,
+  so `false` means "not withdrawn" only when `withdrawalCheckFailed` is also
+  `false`. Both are `false` for a row with nothing installed, a kind no package
+  deploys, and an installer-managed core component.
+- Added the required `PackageDeployer::is_build_withdrawn` method, which an
+  implementer must now provide. It answers whether the trust generation active
+  when it is called withdraws a build of a package-id; `false` means that
+  generation does not withdraw it and nothing else, and a check that could not
+  complete is an error, never `false`.
+- Added a `BuildNotServable` member, carrying the package-id as `target`, to the
+  result unions of `installService`, `updateService` and `updateCoreComponent`.
+  It is returned when the store will not serve the selected build, such as one
+  withdrawn after the build list was read, and its remedy is to choose another
+  build. It is backed by the new `DeployError::BuildNotServable { target }`
+  variant. This is a breaking API change for callers that match `DeployError`
+  exhaustively.
 
 ### Changed
 

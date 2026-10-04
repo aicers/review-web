@@ -254,6 +254,14 @@ xvcNsYaYqk6sRk/INvcaN2E=
             Ok(Vec::new())
         }
 
+        async fn is_build_withdrawn(
+            &self,
+            _target: &str,
+            _build: &BuildId,
+        ) -> Result<bool, anyhow::Error> {
+            Ok(false)
+        }
+
         async fn package_status(
             &self,
             _host: &str,

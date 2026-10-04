@@ -75,6 +75,42 @@ type Agent {
 	"""
 	updateCheckFailed: Boolean!
 	"""
+	Whether the trust generation active for this response withdraws the
+	build installed for this entry.
+	
+	A withdrawn build is no longer served for new installs or updates, but
+	stays installed where it already runs; the remedy is to update this
+	entry to another build.
+	
+	A `false` here is "not withdrawn" only when `withdrawalCheckFailed` is
+	`false`; the two must be read together. An entry with nothing installed
+	and one whose kind maps to no package-id are both `false`, and consult
+	nothing.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context. A failed check is not an error: it is reported through
+	`withdrawalCheckFailed`.
+	"""
+	installedBuildWithdrawn: Boolean!
+	"""
+	Whether this response's check of whether this entry's installed
+	build is withdrawn failed.
+	
+	It is `true` only when the check failed, and `installedBuildWithdrawn`
+	is then `false` because nothing was answered; a client must not render
+	that pair as "not withdrawn". An entry with nothing installed and one
+	whose kind maps to no package-id are both `false`: nothing was asked,
+	so nothing failed.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context.
+	"""
+	withdrawalCheckFailed: Boolean!
+	"""
 	The current operation attempt for this entry's own
 	`(host, target, instance)`, or null if the triple has none.
 	
@@ -218,6 +254,42 @@ type AgentSnapshot {
 	context.
 	"""
 	updateCheckFailed: Boolean!
+	"""
+	Whether the trust generation active for this response withdraws the
+	build installed for this entry.
+	
+	A withdrawn build is no longer served for new installs or updates, but
+	stays installed where it already runs; the remedy is to update this
+	entry to another build.
+	
+	A `false` here is "not withdrawn" only when `withdrawalCheckFailed` is
+	`false`; the two must be read together. An entry with nothing installed
+	and one whose kind maps to no package-id are both `false`, and consult
+	nothing.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context. A failed check is not an error: it is reported through
+	`withdrawalCheckFailed`.
+	"""
+	installedBuildWithdrawn: Boolean!
+	"""
+	Whether this response's check of whether this entry's installed
+	build is withdrawn failed.
+	
+	It is `true` only when the check failed, and `installedBuildWithdrawn`
+	is then `false` because nothing was answered; a client must not render
+	that pair as "not withdrawn". An entry with nothing installed and one
+	whose kind maps to no package-id are both `false`: nothing was asked,
+	so nothing failed.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context.
+	"""
+	withdrawalCheckFailed: Boolean!
 }
 
 enum AgentStatus {
@@ -3279,6 +3351,22 @@ type BoundAddr {
 }
 
 """
+The store will not serve the build the request selected.
+
+It typically means the build was withdrawn between reading the build list
+and submitting, though a build that no longer matches the selector, or one
+that is unverified or changed, is refused the same way. The remedy is to
+refresh the build list and choose another build. A store that could not be
+read is not this: that is an ordinary GraphQL error, retried as submitted.
+"""
+type BuildNotServable {
+	"""
+	The package-id the selection was for.
+	"""
+	target: String!
+}
+
+"""
 The build the operator asked for: exactly one field is set.
 
 GraphQL has no input union, so the two alternatives cross as nullable
@@ -3547,6 +3635,41 @@ type CoreComponent {
 	context.
 	"""
 	updateCheckFailed: Boolean!
+	"""
+	Whether the trust generation active for this response withdraws the
+	build installed for this row.
+	
+	A withdrawn build is no longer served for new installs or updates, but
+	stays installed where it already runs; the remedy is to update this
+	component on this host to another build.
+	
+	A `false` here is "not withdrawn" only when `withdrawalCheckFailed` is
+	`false`; the two must be read together. A row with nothing installed
+	and an `installerManaged` row are both `false`, and consult nothing.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context. A failed check is not an error: it is reported through
+	`withdrawalCheckFailed`.
+	"""
+	installedBuildWithdrawn: Boolean!
+	"""
+	Whether this response's check of whether this row's installed
+	build is withdrawn failed.
+	
+	It is `true` only when the check failed, and `installedBuildWithdrawn`
+	is then `false` because nothing was answered; a client must not render
+	that pair as "not withdrawn". A row with nothing installed and an
+	`installerManaged` row are both `false`: nothing was asked, so nothing
+	failed.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context.
+	"""
+	withdrawalCheckFailed: Boolean!
 	"""
 	The current operation attempt for this row's `(host, component)`, or
 	null if it has none.
@@ -4656,6 +4779,42 @@ type ExternalService {
 	"""
 	updateCheckFailed: Boolean!
 	"""
+	Whether the trust generation active for this response withdraws the
+	build installed for this entry.
+	
+	A withdrawn build is no longer served for new installs or updates, but
+	stays installed where it already runs; the remedy is to update this
+	entry to another build.
+	
+	A `false` here is "not withdrawn" only when `withdrawalCheckFailed` is
+	`false`; the two must be read together. An entry with nothing installed
+	and one whose kind maps to no package-id are both `false`, and consult
+	nothing.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context. A failed check is not an error: it is reported through
+	`withdrawalCheckFailed`.
+	"""
+	installedBuildWithdrawn: Boolean!
+	"""
+	Whether this response's check of whether this entry's installed
+	build is withdrawn failed.
+	
+	It is `true` only when the check failed, and `installedBuildWithdrawn`
+	is then `false` because nothing was answered; a client must not render
+	that pair as "not withdrawn". An entry with nothing installed and one
+	whose kind maps to no package-id are both `false`: nothing was asked,
+	so nothing failed.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context.
+	"""
+	withdrawalCheckFailed: Boolean!
+	"""
 	The current operation attempt for this entry's own
 	`(host, target, instance)`, or null if the triple has none.
 	
@@ -4756,6 +4915,42 @@ type ExternalServiceSnapshot {
 	context.
 	"""
 	updateCheckFailed: Boolean!
+	"""
+	Whether the trust generation active for this response withdraws the
+	build installed for this entry.
+	
+	A withdrawn build is no longer served for new installs or updates, but
+	stays installed where it already runs; the remedy is to update this
+	entry to another build.
+	
+	A `false` here is "not withdrawn" only when `withdrawalCheckFailed` is
+	`false`; the two must be read together. An entry with nothing installed
+	and one whose kind maps to no package-id are both `false`, and consult
+	nothing.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context. A failed check is not an error: it is reported through
+	`withdrawalCheckFailed`.
+	"""
+	installedBuildWithdrawn: Boolean!
+	"""
+	Whether this response's check of whether this entry's installed
+	build is withdrawn failed.
+	
+	It is `true` only when the check failed, and `installedBuildWithdrawn`
+	is then `false` because nothing was answered; a client must not render
+	that pair as "not withdrawn". An entry with nothing installed and one
+	whose kind maps to no package-id are both `false`: nothing was asked,
+	so nothing failed.
+	
+	# Errors
+	
+	Returns an error if the package deployer is missing from the GraphQL
+	context.
+	"""
+	withdrawalCheckFailed: Boolean!
 }
 
 enum ExternalServiceStatus {
@@ -5414,7 +5609,7 @@ type HttpThreat implements Event {
 """
 What `installService` answers with.
 """
-union InstallServiceResult = InstallServiceSuccess | PortAllocationConflict | HostPortOccupied | HostOccupancyUnavailable | RequestKeyReused | CleanupPending | RollbackUnsupported
+union InstallServiceResult = InstallServiceSuccess | PortAllocationConflict | HostPortOccupied | HostOccupancyUnavailable | RequestKeyReused | CleanupPending | RollbackUnsupported | BuildNotServable
 
 """
 The install was accepted, and this is the operation to poll.
@@ -8114,6 +8309,9 @@ type Regression {
 
 """
 What `removeService` answers with.
+
+A removal resolves no build, so no build-not-servable refusal is reachable
+from it.
 """
 union RemoveServiceResult = RemoveServiceSuccess | CleanupPending
 
@@ -9566,7 +9764,7 @@ type UnusualDestinationPattern implements Event {
 """
 What `updateCoreComponent` answers with.
 """
-union UpdateCoreComponentResult = UpdateCoreComponentSuccess | CleanupPending | RollbackUnsupported
+union UpdateCoreComponentResult = UpdateCoreComponentSuccess | CleanupPending | RollbackUnsupported | BuildNotServable
 
 """
 A core-component update was accepted, and this is the operation to poll.
@@ -9588,7 +9786,7 @@ What `updateService` answers with.
 An update allocates nothing, so neither bind-address conflict and no
 request-key refusal is reachable from it.
 """
-union UpdateServiceResult = UpdateServiceSuccess | CleanupPending | RollbackUnsupported
+union UpdateServiceResult = UpdateServiceSuccess | CleanupPending | RollbackUnsupported | BuildNotServable
 
 """
 The update was accepted, and this is the operation to poll.

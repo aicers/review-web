@@ -28,7 +28,7 @@ use roxy::Process as RoxyProcess;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    install_state::{self, Lifecycle, UpdateState},
+    install_state::{self, Lifecycle, UpdateState, WithdrawalState},
     operation_attempt::{self, OperationAttempt},
 };
 
@@ -206,6 +206,44 @@ impl Agent {
         Ok(self.update_state(ctx).await?.check_failed)
     }
 
+    /// Whether the trust generation active for this response withdraws the
+    /// build installed for this entry.
+    ///
+    /// A withdrawn build is no longer served for new installs or updates, but
+    /// stays installed where it already runs; the remedy is to update this
+    /// entry to another build.
+    ///
+    /// A `false` here is "not withdrawn" only when `withdrawalCheckFailed` is
+    /// `false`; the two must be read together. An entry with nothing installed
+    /// and one whose kind maps to no package-id are both `false`, and consult
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context. A failed check is not an error: it is reported through
+    /// `withdrawalCheckFailed`.
+    async fn installed_build_withdrawn(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.withdrawal_state(ctx).await?.withdrawn)
+    }
+
+    /// Whether this response's check of whether this entry's installed
+    /// build is withdrawn failed.
+    ///
+    /// It is `true` only when the check failed, and `installedBuildWithdrawn`
+    /// is then `false` because nothing was answered; a client must not render
+    /// that pair as "not withdrawn". An entry with nothing installed and one
+    /// whose kind maps to no package-id are both `false`: nothing was asked,
+    /// so nothing failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context.
+    async fn withdrawal_check_failed(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.withdrawal_state(ctx).await?.check_failed)
+    }
+
     /// The current operation attempt for this entry's own
     /// `(host, target, instance)`, or null if the triple has none.
     ///
@@ -238,6 +276,20 @@ impl Agent {
     async fn update_state(&self, ctx: &Context<'_>) -> Result<UpdateState> {
         let kind = database::AgentKind::from(self.kind);
         install_state::update_state(
+            ctx,
+            kind.package_id(),
+            install_state::installed_identity(
+                self.installed_version.as_deref(),
+                self.installed_commit.as_deref(),
+                self.lifecycle,
+            ),
+        )
+        .await
+    }
+
+    async fn withdrawal_state(&self, ctx: &Context<'_>) -> Result<WithdrawalState> {
+        let kind = database::AgentKind::from(self.kind);
+        install_state::withdrawal_state(
             ctx,
             kind.package_id(),
             install_state::installed_identity(
@@ -361,6 +413,44 @@ impl ExternalService {
         Ok(self.update_state(ctx).await?.check_failed)
     }
 
+    /// Whether the trust generation active for this response withdraws the
+    /// build installed for this entry.
+    ///
+    /// A withdrawn build is no longer served for new installs or updates, but
+    /// stays installed where it already runs; the remedy is to update this
+    /// entry to another build.
+    ///
+    /// A `false` here is "not withdrawn" only when `withdrawalCheckFailed` is
+    /// `false`; the two must be read together. An entry with nothing installed
+    /// and one whose kind maps to no package-id are both `false`, and consult
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context. A failed check is not an error: it is reported through
+    /// `withdrawalCheckFailed`.
+    async fn installed_build_withdrawn(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.withdrawal_state(ctx).await?.withdrawn)
+    }
+
+    /// Whether this response's check of whether this entry's installed
+    /// build is withdrawn failed.
+    ///
+    /// It is `true` only when the check failed, and `installedBuildWithdrawn`
+    /// is then `false` because nothing was answered; a client must not render
+    /// that pair as "not withdrawn". An entry with nothing installed and one
+    /// whose kind maps to no package-id are both `false`: nothing was asked,
+    /// so nothing failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context.
+    async fn withdrawal_check_failed(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.withdrawal_state(ctx).await?.check_failed)
+    }
+
     /// The current operation attempt for this entry's own
     /// `(host, target, instance)`, or null if the triple has none.
     ///
@@ -393,6 +483,20 @@ impl ExternalService {
     async fn update_state(&self, ctx: &Context<'_>) -> Result<UpdateState> {
         let kind = database::ExternalServiceKind::from(self.kind);
         install_state::update_state(
+            ctx,
+            kind.package_id(),
+            install_state::installed_identity(
+                self.installed_version.as_deref(),
+                self.installed_commit.as_deref(),
+                self.lifecycle,
+            ),
+        )
+        .await
+    }
+
+    async fn withdrawal_state(&self, ctx: &Context<'_>) -> Result<WithdrawalState> {
+        let kind = database::ExternalServiceKind::from(self.kind);
+        install_state::withdrawal_state(
             ctx,
             kind.package_id(),
             install_state::installed_identity(
@@ -609,12 +713,64 @@ impl AgentSnapshot {
     async fn update_check_failed(&self, ctx: &Context<'_>) -> Result<bool> {
         Ok(self.update_state(ctx).await?.check_failed)
     }
+
+    /// Whether the trust generation active for this response withdraws the
+    /// build installed for this entry.
+    ///
+    /// A withdrawn build is no longer served for new installs or updates, but
+    /// stays installed where it already runs; the remedy is to update this
+    /// entry to another build.
+    ///
+    /// A `false` here is "not withdrawn" only when `withdrawalCheckFailed` is
+    /// `false`; the two must be read together. An entry with nothing installed
+    /// and one whose kind maps to no package-id are both `false`, and consult
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context. A failed check is not an error: it is reported through
+    /// `withdrawalCheckFailed`.
+    async fn installed_build_withdrawn(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.withdrawal_state(ctx).await?.withdrawn)
+    }
+
+    /// Whether this response's check of whether this entry's installed
+    /// build is withdrawn failed.
+    ///
+    /// It is `true` only when the check failed, and `installedBuildWithdrawn`
+    /// is then `false` because nothing was answered; a client must not render
+    /// that pair as "not withdrawn". An entry with nothing installed and one
+    /// whose kind maps to no package-id are both `false`: nothing was asked,
+    /// so nothing failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context.
+    async fn withdrawal_check_failed(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.withdrawal_state(ctx).await?.check_failed)
+    }
 }
 
 impl AgentSnapshot {
     async fn update_state(&self, ctx: &Context<'_>) -> Result<UpdateState> {
         let kind = database::AgentKind::from(self.kind);
         install_state::update_state(
+            ctx,
+            kind.package_id(),
+            install_state::installed_identity(
+                self.installed_version.as_deref(),
+                self.installed_commit.as_deref(),
+                self.lifecycle,
+            ),
+        )
+        .await
+    }
+
+    async fn withdrawal_state(&self, ctx: &Context<'_>) -> Result<WithdrawalState> {
+        let kind = database::AgentKind::from(self.kind);
+        install_state::withdrawal_state(
             ctx,
             kind.package_id(),
             install_state::installed_identity(
@@ -703,12 +859,64 @@ impl ExternalServiceSnapshot {
     async fn update_check_failed(&self, ctx: &Context<'_>) -> Result<bool> {
         Ok(self.update_state(ctx).await?.check_failed)
     }
+
+    /// Whether the trust generation active for this response withdraws the
+    /// build installed for this entry.
+    ///
+    /// A withdrawn build is no longer served for new installs or updates, but
+    /// stays installed where it already runs; the remedy is to update this
+    /// entry to another build.
+    ///
+    /// A `false` here is "not withdrawn" only when `withdrawalCheckFailed` is
+    /// `false`; the two must be read together. An entry with nothing installed
+    /// and one whose kind maps to no package-id are both `false`, and consult
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context. A failed check is not an error: it is reported through
+    /// `withdrawalCheckFailed`.
+    async fn installed_build_withdrawn(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.withdrawal_state(ctx).await?.withdrawn)
+    }
+
+    /// Whether this response's check of whether this entry's installed
+    /// build is withdrawn failed.
+    ///
+    /// It is `true` only when the check failed, and `installedBuildWithdrawn`
+    /// is then `false` because nothing was answered; a client must not render
+    /// that pair as "not withdrawn". An entry with nothing installed and one
+    /// whose kind maps to no package-id are both `false`: nothing was asked,
+    /// so nothing failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context.
+    async fn withdrawal_check_failed(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.withdrawal_state(ctx).await?.check_failed)
+    }
 }
 
 impl ExternalServiceSnapshot {
     async fn update_state(&self, ctx: &Context<'_>) -> Result<UpdateState> {
         let kind = database::ExternalServiceKind::from(self.kind);
         install_state::update_state(
+            ctx,
+            kind.package_id(),
+            install_state::installed_identity(
+                self.installed_version.as_deref(),
+                self.installed_commit.as_deref(),
+                self.lifecycle,
+            ),
+        )
+        .await
+    }
+
+    async fn withdrawal_state(&self, ctx: &Context<'_>) -> Result<WithdrawalState> {
+        let kind = database::ExternalServiceKind::from(self.kind);
+        install_state::withdrawal_state(
             ctx,
             kind.package_id(),
             install_state::installed_identity(

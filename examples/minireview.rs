@@ -282,6 +282,10 @@ impl PackageDeployer for Deployer {
         bail!("No build store holds {target}")
     }
 
+    async fn is_build_withdrawn(&self, target: &str, _build: &BuildId) -> Result<bool, Error> {
+        bail!("No trust generation covers {target}")
+    }
+
     async fn package_status(
         &self,
         host: &str,

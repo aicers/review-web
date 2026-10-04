@@ -183,6 +183,7 @@ pub(crate) enum UpdateCoreComponentResult {
     Success(UpdateCoreComponentSuccess),
     CleanupPending(CleanupPending),
     RollbackUnsupported(RollbackUnsupported),
+    BuildNotServable(BuildNotServable),
 }
 
 /// The one-time credential and command for bringing a host under management.
@@ -254,6 +255,19 @@ pub(crate) struct RollbackUnsupported {
     capability: String,
 }
 
+/// The store will not serve the build the request selected.
+///
+/// It typically means the build was withdrawn between reading the build list
+/// and submitting, though a build that no longer matches the selector, or one
+/// that is unverified or changed, is refused the same way. The remedy is to
+/// refresh the build list and choose another build. A store that could not be
+/// read is not this: that is an ordinary GraphQL error, retried as submitted.
+#[derive(SimpleObject)]
+pub(crate) struct BuildNotServable {
+    /// The package-id the selection was for.
+    target: String,
+}
+
 /// What `installService` answers with.
 // Every other refusal — the guard, the per-host check, the class binding, a
 // malformed request key, a malformed selector, an unparseable bind address, a
@@ -269,6 +283,7 @@ pub(crate) enum InstallServiceResult {
     RequestKeyReused(RequestKeyReused),
     CleanupPending(CleanupPending),
     RollbackUnsupported(RollbackUnsupported),
+    BuildNotServable(BuildNotServable),
 }
 
 /// What `updateService` answers with.
@@ -280,9 +295,13 @@ pub(crate) enum UpdateServiceResult {
     Success(UpdateServiceSuccess),
     CleanupPending(CleanupPending),
     RollbackUnsupported(RollbackUnsupported),
+    BuildNotServable(BuildNotServable),
 }
 
 /// What `removeService` answers with.
+///
+/// A removal resolves no build, so no build-not-servable refusal is reachable
+/// from it.
 #[derive(Union)]
 pub(crate) enum RemoveServiceResult {
     Success(RemoveServiceSuccess),
@@ -628,6 +647,11 @@ impl DeployMutation {
                 instance,
                 operation_id,
             ))),
+            Err(DeployError::BuildNotServable { target }) => {
+                Ok(InstallServiceResult::BuildNotServable(BuildNotServable {
+                    target,
+                }))
+            }
             Err(e) => Err(e.into()),
         }
     }
@@ -686,6 +710,11 @@ impl DeployMutation {
                 instance,
                 operation_id,
             ))),
+            Err(DeployError::BuildNotServable { target }) => {
+                Ok(UpdateServiceResult::BuildNotServable(BuildNotServable {
+                    target,
+                }))
+            }
             Err(e) => Err(e.into()),
         }
     }
@@ -770,6 +799,9 @@ impl DeployMutation {
                 instance,
                 operation_id,
             ))),
+            Err(DeployError::BuildNotServable { target }) => Ok(
+                UpdateCoreComponentResult::BuildNotServable(BuildNotServable { target }),
+            ),
             Err(e) => Err(e.into()),
         }
     }
@@ -888,6 +920,11 @@ mod tests {
     /// the variant's field would fail the assertion.
     const REUSED_KEY: &str = "cccccccc-dddd-4eee-8fff-000000000001";
 
+    /// The target a `BuildNotServable` refusal carries. It is deliberately not
+    /// a target any test submits, so a resolver that rendered its own argument
+    /// instead of the variant's field would fail the assertion.
+    const UNSERVABLE_TARGET: &str = "unservable-target";
+
     /// The targets outside the module class every mutation must refuse.
     const FOREIGN_TARGETS: [&str; 4] = ["roxyd", "review", "aice-web-next", "bootroot"];
 
@@ -980,6 +1017,7 @@ mod tests {
         MalformedRequestKey,
         RequestKeyRead,
         CleanupPending(Option<u32>),
+        BuildNotServable,
         Other,
     }
 
@@ -1024,6 +1062,9 @@ mod tests {
                     target: "giganto".to_string(),
                     instance,
                     operation_id: OperationId::new(OPERATION_ID.to_string()),
+                },
+                Self::BuildNotServable => DeployError::BuildNotServable {
+                    target: UNSERVABLE_TARGET.to_string(),
                 },
                 Self::Other => {
                     DeployError::Other(anyhow::anyhow!("review answered something unmodelled"))
@@ -1173,6 +1214,14 @@ mod tests {
         }
 
         async fn latest_build(&self, _target: &str) -> Result<Option<BuildId>, anyhow::Error> {
+            unimplemented!("this stub answers the deployment calls and servable_builds only")
+        }
+
+        async fn is_build_withdrawn(
+            &self,
+            _target: &str,
+            _build: &BuildId,
+        ) -> Result<bool, anyhow::Error> {
             unimplemented!("this stub answers the deployment calls and servable_builds only")
         }
 
@@ -1535,12 +1584,14 @@ mod tests {
         ... on HostOccupancyUnavailable { host reason }
         ... on RequestKeyReused { requestKey }
         ... on CleanupPending { host target instance operationId }
-        ... on RollbackUnsupported { host capability }";
+        ... on RollbackUnsupported { host capability }
+        ... on BuildNotServable { target }";
 
     const UPDATE_SELECTION: &str = "__typename
         ... on UpdateServiceSuccess { operationId disposition }
         ... on CleanupPending { host target instance operationId }
-        ... on RollbackUnsupported { host capability }";
+        ... on RollbackUnsupported { host capability }
+        ... on BuildNotServable { target }";
 
     const REMOVE_SELECTION: &str = "__typename
         ... on RemoveServiceSuccess { operationId }
@@ -1549,7 +1600,8 @@ mod tests {
     const CORE_UPDATE_SELECTION: &str = "__typename
         ... on UpdateCoreComponentSuccess { operationId disposition }
         ... on CleanupPending { host target instance operationId }
-        ... on RollbackUnsupported { host capability }";
+        ... on RollbackUnsupported { host capability }
+        ... on BuildNotServable { target }";
 
     fn install_mutation(args: &str) -> String {
         format!("mutation {{ installService({args}) {{ {INSTALL_SELECTION} }} }}")
@@ -1912,8 +1964,11 @@ mod tests {
         }
     }
 
+    /// `CleanupPending` and `BuildNotServable` are the only backend refusals
+    /// a core update returns as a member; every other variant is an ordinary
+    /// GraphQL error.
     #[tokio::test]
-    async fn cleanup_pending_is_the_only_core_update_error_returned_as_a_member() {
+    async fn only_the_core_update_union_variants_are_returned_as_members() {
         let (deployer, _) = RecordingDeployer::boxed(Answer::Fail(Failure::CleanupPending(None)));
         let schema = TestSchema::new().await;
         let response = schema
@@ -1942,6 +1997,8 @@ mod tests {
             Failure::HostPortOccupied,
             Failure::HostOccupancyUnavailable,
             Failure::RequestKeyReused,
+            Failure::MalformedRequestKey,
+            Failure::RequestKeyRead,
             Failure::Other,
         ] {
             let (deployer, _) = RecordingDeployer::boxed(Answer::Fail(failure));
@@ -3199,6 +3256,39 @@ mod tests {
         }
     }
 
+    /// `BuildNotServable` arrives as its member on the three mutations that
+    /// resolve a build, carrying the variant's own `target` rather than the
+    /// one the request submitted, after exactly one backend call.
+    #[tokio::test]
+    async fn an_unservable_build_is_the_union_member_on_every_build_mutation() {
+        for (query, field) in [
+            (install_mutation(&install_args("giganto")), "installService"),
+            (update_mutation(&update_args("giganto")), "updateService"),
+            (
+                core_update_mutation(&core_update_args("review", "control-host")),
+                "updateCoreComponent",
+            ),
+        ] {
+            let (deployer, calls) =
+                RecordingDeployer::boxed(Answer::Fail(Failure::BuildNotServable));
+            let schema = TestSchema::new().await;
+
+            let res = schema
+                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .await;
+
+            assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
+            assert_eq!(calls.total(), 1, "{query}");
+            assert_json_eq!(
+                res.data.into_json().unwrap()[field].clone(),
+                json!({
+                    "__typename": "BuildNotServable",
+                    "target": UNSERVABLE_TARGET,
+                })
+            );
+        }
+    }
+
     /// Every variant outside the operation's union is an ordinary GraphQL
     /// error rather than a member.
     #[tokio::test]
@@ -3224,9 +3314,28 @@ mod tests {
             assert_eq!(calls.total(), 1);
         }
 
+        // A removal resolves no build, so `BuildNotServable` is outside its
+        // union though it is inside the install and update ones.
+        let (deployer, calls) = RecordingDeployer::boxed(Answer::Fail(Failure::BuildNotServable));
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin_with_data(
+                &remove_mutation(&remove_args("giganto")),
+                deployer as BoxedPackageDeployer,
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(
+            res.errors[0].message,
+            format!("the selected build of {UNSERVABLE_TARGET} cannot be served")
+        );
+        assert!(res.data.into_json().unwrap().is_null());
+        assert_eq!(calls.total(), 1);
+
         // An update and a removal allocate nothing, so every variant but
-        // `CleanupPending` is outside their unions — the two bind-address
-        // conflicts and the reuse refusal included.
+        // `CleanupPending` and, for an update, `BuildNotServable` is outside
+        // their unions — the two bind-address conflicts and the reuse refusal
+        // included.
         let outside = [
             Failure::Other,
             Failure::PortAllocationConflict,
@@ -3739,12 +3848,12 @@ mod tests {
             sdl_line(&sdl, "union InstallServiceResult"),
             "union InstallServiceResult = InstallServiceSuccess | PortAllocationConflict | \
              HostPortOccupied | HostOccupancyUnavailable | RequestKeyReused | CleanupPending | \
-             RollbackUnsupported"
+             RollbackUnsupported | BuildNotServable"
         );
         assert_eq!(
             sdl_line(&sdl, "union UpdateServiceResult"),
             "union UpdateServiceResult = UpdateServiceSuccess | CleanupPending | \
-             RollbackUnsupported"
+             RollbackUnsupported | BuildNotServable"
         );
         assert_eq!(
             sdl_line(&sdl, "union RemoveServiceResult"),
@@ -3753,7 +3862,7 @@ mod tests {
         assert_eq!(
             sdl_line(&sdl, "union UpdateCoreComponentResult"),
             "union UpdateCoreComponentResult = UpdateCoreComponentSuccess | CleanupPending | \
-             RollbackUnsupported"
+             RollbackUnsupported | BuildNotServable"
         );
         assert!(!sdl.contains("union HostOnboardingTicket"));
     }

@@ -1098,6 +1098,7 @@ enum MockDeployFailure {
     HostOccupancyUnavailable,
     RequestKey,
     CleanupPending,
+    BuildNotServable,
     /// An arbitrary `anyhow::Error`, which reaches the caller as
     /// [`DeployError::Other`] through `?` rather than by being named.
     Arbitrary,
@@ -1191,11 +1192,105 @@ impl LatestBuildStub {
     }
 }
 
+/// The `is_build_withdrawn` answers a [`MockPackageDeployer`] gives, and the
+/// record of what it was asked.
+///
+/// It is a sibling of [`LatestBuildStub`] rather than part of it, so that each
+/// call log counts one method and a test can tell the two checks apart. A
+/// build absent from `withdrawn` and `failing` answers `Ok(false)`.
+#[cfg(test)]
+#[derive(Default)]
+struct WithdrawalStub {
+    /// The `(package-id, version, commit)` triples that are withdrawn.
+    withdrawn: std::collections::HashSet<(String, String, String)>,
+    /// The `(package-id, version, commit)` triples whose check fails.
+    failing: std::collections::HashSet<(String, String, String)>,
+    /// Every `(package-id, version, commit)` asked about, in the order it was
+    /// asked.
+    calls: std::sync::Mutex<Vec<(String, String, String)>>,
+    /// The triples whose check parks until the test releases it.
+    gates: std::collections::HashMap<(String, String, String), Arc<tokio::sync::Notify>>,
+}
+
+#[cfg(test)]
+impl WithdrawalStub {
+    fn key(package_id: &str, version: &str, commit: &str) -> (String, String, String) {
+        (
+            package_id.to_string(),
+            version.to_string(),
+            commit.to_string(),
+        )
+    }
+
+    fn with_withdrawn(mut self, package_id: &str, version: &str, commit: &str) -> Self {
+        self.withdrawn
+            .insert(Self::key(package_id, version, commit));
+        self
+    }
+
+    fn with_failure(mut self, package_id: &str, version: &str, commit: &str) -> Self {
+        self.failing.insert(Self::key(package_id, version, commit));
+        self
+    }
+
+    /// Parks the check of the given build until `gate` is notified.
+    fn with_gate(
+        mut self,
+        package_id: &str,
+        version: &str,
+        commit: &str,
+        gate: Arc<tokio::sync::Notify>,
+    ) -> Self {
+        self.gates
+            .insert(Self::key(package_id, version, commit), gate);
+        self
+    }
+
+    async fn is_build_withdrawn(
+        &self,
+        package_id: &str,
+        build: &BuildId,
+    ) -> Result<bool, anyhow::Error> {
+        let key = Self::key(package_id, &build.version, &build.commit);
+        self.calls
+            .lock()
+            .unwrap_or_else(|e| panic!("Mutex poisoned: {e}"))
+            .push(key.clone());
+        if let Some(gate) = self.gates.get(&key) {
+            gate.notified().await;
+        }
+        if self.failing.contains(&key) {
+            anyhow::bail!("the trust tree could not be read");
+        }
+        Ok(self.withdrawn.contains(&key))
+    }
+
+    /// Returns how many times the given build was asked about.
+    fn calls(&self, package_id: &str, version: &str, commit: &str) -> usize {
+        let key = Self::key(package_id, version, commit);
+        self.calls
+            .lock()
+            .unwrap_or_else(|e| panic!("Mutex poisoned: {e}"))
+            .iter()
+            .filter(|asked| **asked == key)
+            .count()
+    }
+
+    /// Returns how many checks were made in total.
+    fn total_calls(&self) -> usize {
+        self.calls
+            .lock()
+            .unwrap_or_else(|e| panic!("Mutex poisoned: {e}"))
+            .len()
+    }
+}
+
 #[cfg(test)]
 #[derive(Default)]
 struct MockPackageDeployer {
     failure: MockDeployFailure,
     builds: Arc<LatestBuildStub>,
+    withdrawals: Arc<WithdrawalStub>,
 }
 
 #[cfg(test)]
@@ -1203,16 +1298,23 @@ impl MockPackageDeployer {
     fn failing(failure: MockDeployFailure) -> Self {
         Self {
             failure,
-            builds: Arc::default(),
+            ..Self::default()
         }
     }
 
     /// Builds a deployer answering `latest_build` from the given stub.
     fn with_builds(builds: Arc<LatestBuildStub>) -> Self {
         Self {
-            failure: MockDeployFailure::None,
             builds,
+            ..Self::default()
         }
+    }
+
+    /// Answers `is_build_withdrawn` from the given stub rather than with
+    /// `Ok(false)` for every build.
+    fn with_withdrawals(mut self, withdrawals: Arc<WithdrawalStub>) -> Self {
+        self.withdrawals = withdrawals;
+        self
     }
 
     fn check(&self) -> Result<(), DeployError> {
@@ -1249,6 +1351,9 @@ impl MockPackageDeployer {
                 target: "giganto".to_string(),
                 instance: Some(1),
                 operation_id: OperationId::new("b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e".to_string()),
+            }),
+            MockDeployFailure::BuildNotServable => Err(DeployError::BuildNotServable {
+                target: "giganto".to_string(),
             }),
             MockDeployFailure::Arbitrary => {
                 arbitrary_deploy_failure()?;
@@ -1333,6 +1438,16 @@ impl PackageDeployer for MockPackageDeployer {
             .cloned()
             .into_iter()
             .collect())
+    }
+
+    // Answers from the withdrawal stub, which withdraws nothing unless a test
+    // put a build there.
+    async fn is_build_withdrawn(
+        &self,
+        target: &str,
+        build: &BuildId,
+    ) -> Result<bool, anyhow::Error> {
+        self.withdrawals.is_build_withdrawn(target, build).await
     }
 
     async fn package_status(
@@ -2204,6 +2319,7 @@ mod tests {
             MockDeployFailure::HostOccupancyUnavailable,
             MockDeployFailure::RequestKey,
             MockDeployFailure::CleanupPending,
+            MockDeployFailure::BuildNotServable,
             MockDeployFailure::Arbitrary,
         ] {
             let deployer: Box<dyn super::PackageDeployer> =
@@ -2267,6 +2383,10 @@ mod tests {
                             "b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e"
                         );
                         MockDeployFailure::CleanupPending
+                    }
+                    DeployError::BuildNotServable { target } => {
+                        assert_eq!(target, "giganto");
+                        MockDeployFailure::BuildNotServable
                     }
                     DeployError::Other(_) => MockDeployFailure::Arbitrary,
                 };

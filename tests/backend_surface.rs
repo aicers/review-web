@@ -73,6 +73,11 @@ impl PackageDeployer for OutsideDeployer {
                 request_key: request_key.to_string(),
             }));
         }
+        if target == "unservable" {
+            return Err(DeployError::BuildNotServable {
+                target: target.to_string(),
+            });
+        }
         if target == "occupied" {
             return Err(DeployError::PortAllocationConflict {
                 host: host.to_string(),
@@ -136,6 +141,14 @@ impl PackageDeployer for OutsideDeployer {
 
     async fn servable_builds(&self, _target: &str) -> Result<Vec<BuildId>, anyhow::Error> {
         Ok(self.installed.iter().cloned().collect())
+    }
+
+    async fn is_build_withdrawn(
+        &self,
+        _target: &str,
+        _build: &BuildId,
+    ) -> Result<bool, anyhow::Error> {
+        Ok(false)
     }
 
     async fn package_status(
@@ -286,7 +299,13 @@ async fn an_outside_implementation_reports_an_installed_build() {
             .servable_builds("giganto")
             .await
             .expect("the stub answers"),
-        vec![installed]
+        vec![installed.clone()]
+    );
+    assert!(
+        !deployer
+            .is_build_withdrawn("giganto", &installed)
+            .await
+            .expect("the stub answers")
     );
 }
 
@@ -358,6 +377,23 @@ async fn every_named_variant_is_constructible_from_another_crate() {
         .map(|_| ())
         .expect_err("the request key was reused");
     assert!(matches!(error, DeployError::RequestKey(_)));
+
+    let error = deployer
+        .install(
+            "host1",
+            "unservable",
+            BuildSelector::Version("0.1.0".to_string()),
+            FailurePolicy::Rollback,
+            None,
+            REQUEST_KEY,
+        )
+        .await
+        .map(|_| ())
+        .expect_err("the selected build cannot be served");
+    assert!(matches!(
+        error,
+        DeployError::BuildNotServable { target } if target == "unservable"
+    ));
 
     let error = deployer
         .update(

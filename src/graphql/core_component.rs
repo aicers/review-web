@@ -13,7 +13,7 @@ use tracing::info;
 
 use super::{
     Role, RoleGuard,
-    install_state::{self, Lifecycle, UpdateState},
+    install_state::{self, Lifecycle, UpdateState, WithdrawalState},
     operation_attempt::{self, OperationAttempt},
 };
 use crate::info_with_username;
@@ -131,6 +131,43 @@ impl CoreComponent {
         Ok(self.update_state(ctx).await?.check_failed)
     }
 
+    /// Whether the trust generation active for this response withdraws the
+    /// build installed for this row.
+    ///
+    /// A withdrawn build is no longer served for new installs or updates, but
+    /// stays installed where it already runs; the remedy is to update this
+    /// component on this host to another build.
+    ///
+    /// A `false` here is "not withdrawn" only when `withdrawalCheckFailed` is
+    /// `false`; the two must be read together. A row with nothing installed
+    /// and an `installerManaged` row are both `false`, and consult nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context. A failed check is not an error: it is reported through
+    /// `withdrawalCheckFailed`.
+    async fn installed_build_withdrawn(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.withdrawal_state(ctx).await?.withdrawn)
+    }
+
+    /// Whether this response's check of whether this row's installed
+    /// build is withdrawn failed.
+    ///
+    /// It is `true` only when the check failed, and `installedBuildWithdrawn`
+    /// is then `false` because nothing was answered; a client must not render
+    /// that pair as "not withdrawn". A row with nothing installed and an
+    /// `installerManaged` row are both `false`: nothing was asked, so nothing
+    /// failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package deployer is missing from the GraphQL
+    /// context.
+    async fn withdrawal_check_failed(&self, ctx: &Context<'_>) -> Result<bool> {
+        Ok(self.withdrawal_state(ctx).await?.check_failed)
+    }
+
     /// The current operation attempt for this row's `(host, component)`, or
     /// null if it has none.
     ///
@@ -158,6 +195,22 @@ impl CoreComponent {
             return Ok(UpdateState::NOT_CHECKED);
         }
         install_state::update_state(
+            ctx,
+            Some(&self.component),
+            install_state::installed_identity(
+                self.installed_version.as_deref(),
+                self.installed_commit.as_deref(),
+                Some(self.lifecycle),
+            ),
+        )
+        .await
+    }
+
+    async fn withdrawal_state(&self, ctx: &Context<'_>) -> Result<WithdrawalState> {
+        if self.installer_managed {
+            return Ok(WithdrawalState::NOT_CHECKED);
+        }
+        install_state::withdrawal_state(
             ctx,
             Some(&self.component),
             install_state::installed_identity(

@@ -473,7 +473,7 @@ pub struct RunningRoxydBuild {
 
 /// Why a deployment operation could not be carried out.
 ///
-/// The five named variants are exactly the failures a resolver renders as a
+/// The six named variants are exactly the failures a resolver renders as a
 /// state of the form the operator is looking at, so a resolver decides the
 /// result-payload union member by matching on the kind rather than on a
 /// message string — an upstream wording change would otherwise silently
@@ -546,6 +546,21 @@ pub enum DeployError {
         /// The operation that owes it.
         operation_id: OperationId,
     },
+    /// The store will not serve the build the request selected.
+    ///
+    /// It applies when no accepted build of `target` matches the selector, or
+    /// when the matching build is withdrawn, unverified, changed since
+    /// verification, or gone. It is raised before any attempt is recorded,
+    /// and the remedy is to choose another build.
+    ///
+    /// A store, index or trust read that is unavailable or still verifying is
+    /// not this variant but [`Other`](DeployError::Other): the operator
+    /// retries those rather than choosing another build.
+    #[error("the selected build of {target} cannot be served")]
+    BuildNotServable {
+        /// The package-id the selection was for.
+        target: String,
+    },
     /// Any other failure, rendered as an ordinary GraphQL error.
     ///
     /// [`review_database::PortAllocationError::Database`] arrives here: it is
@@ -592,8 +607,9 @@ pub trait PackageDeployer: Send + Sync {
     /// taken, [`DeployError::HostOccupancyUnavailable`] if the host could not
     /// be asked, [`DeployError::RequestKey`] if `request_key` is malformed or
     /// was reused for a different request, [`DeployError::CleanupPending`] if
-    /// a teardown is still owed on the target, and [`DeployError::Other`] for
-    /// any other failure.
+    /// a teardown is still owed on the target,
+    /// [`DeployError::BuildNotServable`] if the store will not serve the
+    /// selected build, and [`DeployError::Other`] for any other failure.
     async fn install(
         &self,
         host: &str,
@@ -615,9 +631,10 @@ pub trait PackageDeployer: Send + Sync {
     /// # Errors
     ///
     /// Returns [`DeployError::CleanupPending`] if a teardown is still owed on
-    /// the target, and [`DeployError::Other`] for any other failure. It
-    /// allocates nothing, so it produces no bind-address or request-key
-    /// variant.
+    /// the target, [`DeployError::BuildNotServable`] if the store will not
+    /// serve the selected build, and [`DeployError::Other`] for any other
+    /// failure. It allocates nothing, so it produces no bind-address or
+    /// request-key variant.
     async fn update(
         &self,
         host: &str,
@@ -696,6 +713,33 @@ pub trait PackageDeployer: Send + Sync {
     /// Returns an error if the build store could not be read, or if any build
     /// of `target` is still pending verification.
     async fn servable_builds(&self, target: &str) -> Result<Vec<BuildId>, anyhow::Error>;
+
+    /// Returns whether the trust generation active when it is called
+    /// withdraws `build` of package `target`.
+    ///
+    /// `Ok(false)` means that generation does not withdraw the build, and
+    /// nothing else: an implementation must never answer `Ok(false)` for a
+    /// read it could not complete. A build absent from
+    /// [`servable_builds`](PackageDeployer::servable_builds) is not thereby
+    /// withdrawn — that list also omits unverified and changed builds — so a
+    /// caller asks this method rather than deriving the answer from it.
+    ///
+    /// It is keyed on the package-id and the build alone and takes no host or
+    /// instance, because a withdrawal names a build, not a placement. A caller
+    /// asks at most once per `(package-id, build)` per request and reuses the
+    /// answer across every row carrying that build, and caches nothing beyond
+    /// the request, so that the answer reflects a generation activated a
+    /// moment earlier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the active trust generation could not be read,
+    /// including when no trust tree is present.
+    async fn is_build_withdrawn(
+        &self,
+        target: &str,
+        build: &BuildId,
+    ) -> Result<bool, anyhow::Error>;
 
     /// Returns the install and lifecycle state the host reports for one
     /// placement.

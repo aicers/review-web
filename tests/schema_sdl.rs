@@ -124,6 +124,14 @@ fn the_install_state_fields_keep_their_signatures() {
             definition.contains("\n\tupdateCheckFailed: Boolean!\n"),
             "{header}"
         );
+        assert!(
+            definition.contains("\n\tinstalledBuildWithdrawn: Boolean!\n"),
+            "{header}"
+        );
+        assert!(
+            definition.contains("\n\twithdrawalCheckFailed: Boolean!\n"),
+            "{header}"
+        );
     }
 
     // `boundAddrs` is on the external service alone: the agent modules bind
@@ -151,6 +159,8 @@ fn the_install_state_fields_keep_their_signatures() {
     assert!(core_component.contains("\n\tlifecycle: Lifecycle!\n"));
     assert!(core_component.contains("\n\tupdateAvailable: Boolean!\n"));
     assert!(core_component.contains("\n\tupdateCheckFailed: Boolean!\n"));
+    assert!(core_component.contains("\n\tinstalledBuildWithdrawn: Boolean!\n"));
+    assert!(core_component.contains("\n\twithdrawalCheckFailed: Boolean!\n"));
     assert!(core_component.contains("\n\tinstallerManaged: Boolean!\n"));
 
     assert!(sdl.contains("\n\tcoreComponentList: [CoreComponent!]!\n"));
