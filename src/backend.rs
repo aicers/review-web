@@ -158,7 +158,10 @@ pub(crate) const MODULE_PACKAGE_IDS: [&str; 5] =
 /// The canonical package-ids of the core-component packages.
 ///
 /// A core component is single-instance on a host, so an operation on one
-/// carries no instance number.
+/// carries no instance number. `review` and `aice-web-next` are platform
+/// singletons; `roxyd`, `bootroot-agent`, `bootroot-remote` and
+/// `bootler-security` are the programs an operator places on every host
+/// onboarded with `roxyd join`, and each is updated host-scoped.
 ///
 /// `bootroot` is a core package and is deliberately absent: it is
 /// installer-managed and no operation in this product targets it. Every
@@ -166,7 +169,14 @@ pub(crate) const MODULE_PACKAGE_IDS: [&str; 5] =
 /// so leaving `bootroot` out gives it the right answer by the stricter route
 /// rather than by a listing that invites someone to offer it an action.
 // Declared here for the same reason as `MODULE_PACKAGE_IDS`.
-pub(crate) const CORE_PACKAGE_IDS: [&str; 3] = ["review", "aice-web-next", "roxyd"];
+pub(crate) const CORE_PACKAGE_IDS: [&str; 6] = [
+    "review",
+    "aice-web-next",
+    "roxyd",
+    "bootroot-agent",
+    "bootroot-remote",
+    "bootler-security",
+];
 
 // Upstream type-surface check for the six local types declared below.
 //
@@ -1098,8 +1108,18 @@ mod tests {
     }
 
     #[test]
-    fn core_package_ids_are_the_three_core_components() {
-        assert_eq!(CORE_PACKAGE_IDS, ["review", "aice-web-next", "roxyd"]);
+    fn core_package_ids_are_the_six_core_components() {
+        assert_eq!(
+            CORE_PACKAGE_IDS,
+            [
+                "review",
+                "aice-web-next",
+                "roxyd",
+                "bootroot-agent",
+                "bootroot-remote",
+                "bootler-security",
+            ]
+        );
     }
 
     /// `bootroot` is installer-managed and no operation targets it, so it is in

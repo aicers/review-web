@@ -3557,8 +3557,8 @@ A core component installed, or due to be installed, on a host.
 """
 type CoreComponent {
 	"""
-	The canonical package-id: `review`, `aice-web-next`, `roxyd` or
-	`bootroot`.
+	The canonical package-id: `review`, `aice-web-next`, `roxyd`,
+	`bootroot-agent`, `bootroot-remote`, `bootler-security` or `bootroot`.
 	
 	It is itself the package-id the row's build comes from; no
 	kind-to-package-id mapping is involved on this type.
@@ -8021,11 +8021,12 @@ type Query {
 	"""
 	The core-component registry: one entry per `(component, host)`.
 	
-	The registry is one row per pair — two singletons plus one `roxyd` and
-	one `bootroot` per host — so it is a plain list rather than a paginated
-	connection. The order is the registry's own key order, which is a
-	deterministic function of `(component, host)`; nothing here re-sorts
-	it.
+	The registry is one row per pair — two singletons plus one row per host
+	for each host-scoped component (`roxyd`, `bootroot-agent`,
+	`bootroot-remote`, `bootler-security` and `bootroot`) — so it is a plain
+	list rather than a paginated connection. The order is the registry's
+	own key order, which is a deterministic function of
+	`(component, host)`; nothing here re-sorts it.
 	
 	# Errors
 	
