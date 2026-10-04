@@ -661,6 +661,9 @@ mod tests {
             "review",
             "aice-web-next",
             "roxyd",
+            "bootroot-agent",
+            "bootroot-remote",
+            "bootler-security",
             "bootroot",
             "nonesuch",
             "",
@@ -746,6 +749,44 @@ mod tests {
             refused.data.into_json().unwrap()["operationAttempt"],
             json!(null)
         );
+    }
+
+    /// An attempt on any of the programs a join host's operator places is a
+    /// core attempt: a System Administrator reads it, and a Security
+    /// Administrator scoped to the host's customer is refused it.
+    #[tokio::test]
+    async fn a_join_host_program_attempt_is_for_a_system_administrator_only() {
+        let schema = TestSchema::new().await;
+        insert_node(&schema.store(), "node1", HOST, CUSTOMER, vec![], vec![]);
+        for target in ["bootroot-agent", "bootroot-remote", "bootler-security"] {
+            let key = format!("core-{target}");
+            seed(
+                &schema.store(),
+                &attempt(&key, OperationAction::Update, HOST, target, None),
+            );
+
+            let res = schema.execute_as_system_admin(&attempt_query(&key)).await;
+            assert!(res.errors.is_empty(), "{target}: {:?}", res.errors);
+            assert_eq!(
+                res.data.into_json().unwrap()["operationAttempt"]["target"],
+                json!(target)
+            );
+
+            let refused = schema
+                .execute_as_scoped_user(
+                    &attempt_query(&key),
+                    Role::SecurityAdministrator,
+                    Some(vec![CUSTOMER]),
+                )
+                .await;
+            assert_eq!(refused.errors.len(), 1, "{target}: {:?}", refused.errors);
+            assert_eq!(refused.errors[0].message, "Forbidden", "{target}");
+            assert_eq!(
+                refused.data.into_json().unwrap()["operationAttempt"],
+                json!(null),
+                "{target}"
+            );
+        }
     }
 
     /// The role floor refuses the two lower roles whatever they are scoped to

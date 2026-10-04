@@ -54,6 +54,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   build. It is backed by the new `DeployError::BuildNotServable { target }`
   variant. This is a breaking API change for callers that match `DeployError`
   exhaustively.
+- `updateCoreComponent` and `POST /api/package/upload` now accept
+  `bootroot-agent`, `bootroot-remote` and `bootler-security`, the programs an
+  operator places on a host onboarded with `roxyd join`, as host-scoped core
+  packages, for System Administrators only.
 
 ### Changed
 

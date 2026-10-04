@@ -1,11 +1,12 @@
 //! The registry of the platform's own host-fixed infrastructure.
 //!
-//! A core component — `review`, `aice-web-next`, `roxyd` or `bootroot` — is
-//! neither an agent nor an external service, and it is not a child of a node
-//! record either. Its listing is therefore a top-level query rather than a
-//! field of `Node`: hanging it there would inherit the customer scoping a node
-//! read carries, which is the wrong guard for a class that gets no customer
-//! scoping precisely because it is control-plane.
+//! A core component — `review`, `aice-web-next`, `roxyd`, `bootroot-agent`,
+//! `bootroot-remote`, `bootler-security` or `bootroot` — is neither an agent
+//! nor an external service, and it is not a child of a node record either.
+//! Its listing is therefore a top-level query rather than a field of `Node`:
+//! hanging it there would inherit the customer scoping a node read carries,
+//! which is the wrong guard for a class that gets no customer scoping
+//! precisely because it is control-plane.
 
 use async_graphql::{ComplexObject, Context, Object, Result, SimpleObject};
 use review_database::{self as database, Iterable};
@@ -25,11 +26,12 @@ pub(super) struct CoreComponentQuery;
 impl CoreComponentQuery {
     /// The core-component registry: one entry per `(component, host)`.
     ///
-    /// The registry is one row per pair — two singletons plus one `roxyd` and
-    /// one `bootroot` per host — so it is a plain list rather than a paginated
-    /// connection. The order is the registry's own key order, which is a
-    /// deterministic function of `(component, host)`; nothing here re-sorts
-    /// it.
+    /// The registry is one row per pair — two singletons plus one row per host
+    /// for each host-scoped component (`roxyd`, `bootroot-agent`,
+    /// `bootroot-remote`, `bootler-security` and `bootroot`) — so it is a plain
+    /// list rather than a paginated connection. The order is the registry's
+    /// own key order, which is a deterministic function of
+    /// `(component, host)`; nothing here re-sorts it.
     ///
     /// # Errors
     ///
@@ -53,8 +55,8 @@ impl CoreComponentQuery {
 #[derive(Clone, SimpleObject)]
 #[graphql(complex)]
 pub(super) struct CoreComponent {
-    /// The canonical package-id: `review`, `aice-web-next`, `roxyd` or
-    /// `bootroot`.
+    /// The canonical package-id: `review`, `aice-web-next`, `roxyd`,
+    /// `bootroot-agent`, `bootroot-remote`, `bootler-security` or `bootroot`.
     ///
     /// It is itself the package-id the row's build comes from; no
     /// kind-to-package-id mapping is involved on this type.

@@ -926,7 +926,19 @@ mod tests {
     const UNSERVABLE_TARGET: &str = "unservable-target";
 
     /// The targets outside the module class every mutation must refuse.
-    const FOREIGN_TARGETS: [&str; 4] = ["roxyd", "review", "aice-web-next", "bootroot"];
+    const FOREIGN_TARGETS: [&str; 7] = [
+        "roxyd",
+        "review",
+        "aice-web-next",
+        "bootroot-agent",
+        "bootroot-remote",
+        "bootler-security",
+        "bootroot",
+    ];
+
+    /// The programs an operator places on a host onboarded with `roxyd join`,
+    /// each a host-scoped core component.
+    const JOIN_HOST_PROGRAMS: [&str; 3] = ["bootroot-agent", "bootroot-remote", "bootler-security"];
 
     #[derive(Clone, Debug, PartialEq)]
     struct InstallCall {
@@ -1783,6 +1795,7 @@ mod tests {
                 response.errors
             );
             let call = calls.only_update();
+            assert_eq!(call.host, "control-host");
             assert_eq!(call.target, component);
             assert_eq!(call.instance, None);
         }
@@ -3462,6 +3475,69 @@ mod tests {
                     assert_eq!(reads.hosts(), vec!["host1".to_string()], "{query}");
                 }
             }
+        }
+    }
+
+    /// Each program a join host's operator places is updated host-scoped by a
+    /// System Administrator alone, and its `ROLLBACK` meets the same host-level
+    /// gate as any other target.
+    #[tokio::test]
+    async fn join_host_programs_are_host_scoped_core_updates() {
+        for component in JOIN_HOST_PROGRAMS {
+            let (deployer, calls) = RecordingDeployer::applying();
+            let schema = TestSchema::new().await;
+            let query = core_update_mutation(&core_update_args(component, "join-host"));
+            let response = schema
+                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .await;
+            assert!(
+                response.errors.is_empty(),
+                "{component}: {:?}",
+                response.errors
+            );
+            let call = calls.only_update();
+            assert_eq!(call.host, "join-host", "{component}");
+            assert_eq!(call.target, component);
+            assert_eq!(call.instance, None, "{component}");
+
+            let (deployer, calls) = RecordingDeployer::applying();
+            let schema = TestSchema::new().await;
+            let response = schema
+                .execute_with_guard_and_data(
+                    &query,
+                    RoleGuard::Role(Role::SecurityAdministrator),
+                    deployer as BoxedPackageDeployer,
+                )
+                .await;
+            assert_eq!(response.errors.len(), 1, "{component}");
+            assert_eq!(response.errors[0].message, "Forbidden", "{component}");
+            assert_eq!(calls.total(), 0, "{component}");
+
+            let (deployer, calls) = RecordingDeployer::applying();
+            let (schema, reads) = schema_advertising(Advertised::Tags(&[NODE_PACKAGE])).await;
+            let args = format!(
+                "{}, onFailure: ROLLBACK",
+                core_update_args(component, "join-host")
+            );
+            let res = schema
+                .execute_as_system_admin_with_data(
+                    &core_update_mutation(&args),
+                    deployer as BoxedPackageDeployer,
+                )
+                .await;
+            assert!(res.errors.is_empty(), "{component}: {:?}", res.errors);
+            assert_json_eq!(
+                res.data.into_json().unwrap(),
+                json!({
+                    "updateCoreComponent": {
+                        "__typename": "RollbackUnsupported",
+                        "host": "join-host",
+                        "capability": "rollback-supervisor",
+                    }
+                })
+            );
+            assert_eq!(calls.total(), 0, "{component}");
+            assert_eq!(reads.hosts(), vec!["join-host".to_string()], "{component}");
         }
     }
 
