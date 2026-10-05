@@ -35,6 +35,14 @@ fn committed_sdl_matches_rendered_schema() {
     assert!(rendered_sdl() == COMMITTED_SDL, "{REGENERATE}");
 }
 
+/// The retired process list has no query or object left in the schema.
+#[test]
+fn schema_has_no_process_list() {
+    let sdl = rendered_sdl();
+    assert!(!sdl.contains("processList"), "{REGENERATE}");
+    assert!(!sdl.contains("type Process {"), "{REGENERATE}");
+}
+
 /// Category counts preserve the nullable uncategorized bucket without making
 /// the count at the corresponding index nullable.
 #[test]

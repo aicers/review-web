@@ -102,16 +102,10 @@ impl NodeControlMutation {
         customer_access::check_hostname_access(ctx, &hostname)?;
 
         let agents = ctx.data::<BoxedAgentManager>()?;
-        let review_hostname = roxy::hostname();
-        if !review_hostname.is_empty() && review_hostname == hostname {
-            info_with_username!(ctx, "Node reboot skipped: manager is running on {hostname}");
-            Err("cannot reboot. review reboot is not allowed".into())
-        } else {
-            info_with_username!(ctx, "Reboot request sent to {hostname}");
-            agents.reboot(&hostname).await?;
-            update_agent_status_to_unknown(ctx, &hostname);
-            Ok(hostname)
-        }
+        info_with_username!(ctx, "Reboot request sent to {hostname}");
+        agents.reboot(&hostname).await?;
+        update_agent_status_to_unknown(ctx, &hostname);
+        Ok(hostname)
     }
 
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
@@ -120,19 +114,10 @@ impl NodeControlMutation {
         customer_access::check_hostname_access(ctx, &hostname)?;
 
         let agents = ctx.data::<BoxedAgentManager>()?;
-        let review_hostname = roxy::hostname();
-        if !review_hostname.is_empty() && review_hostname == hostname {
-            info_with_username!(
-                ctx,
-                "Node shutdown skipped: manager is running on {hostname}"
-            );
-            Err("cannot shutdown. review shutdown is not allowed".into())
-        } else {
-            info_with_username!(ctx, "Shutdown request sent to {hostname}");
-            agents.halt(&hostname).await?;
-            update_agent_status_to_unknown(ctx, &hostname);
-            Ok(hostname)
-        }
+        info_with_username!(ctx, "Shutdown request sent to {hostname}");
+        agents.halt(&hostname).await?;
+        update_agent_status_to_unknown(ctx, &hostname);
+        Ok(hostname)
     }
 
     /// Applies the draft configuration to the node with the given ID.
@@ -2801,17 +2786,10 @@ mod tests {
             anyhow::bail!("{hostname} is unreachable")
         }
 
-        async fn get_process_list(
-            &self,
-            hostname: &str,
-        ) -> Result<Vec<roxy::Process>, anyhow::Error> {
-            anyhow::bail!("{hostname} is unreachable")
-        }
-
         async fn get_resource_usage(
             &self,
             hostname: &str,
-        ) -> Result<roxy::ResourceUsage, anyhow::Error> {
+        ) -> Result<review_protocol::types::ResourceUsage, anyhow::Error> {
             anyhow::bail!("{hostname} is unreachable")
         }
 
@@ -2904,17 +2882,10 @@ mod tests {
             anyhow::bail!("{hostname} is unreachable")
         }
 
-        async fn get_process_list(
-            &self,
-            hostname: &str,
-        ) -> Result<Vec<roxy::Process>, anyhow::Error> {
-            anyhow::bail!("{hostname} is unreachable")
-        }
-
         async fn get_resource_usage(
             &self,
             hostname: &str,
-        ) -> Result<roxy::ResourceUsage, anyhow::Error> {
+        ) -> Result<review_protocol::types::ResourceUsage, anyhow::Error> {
             anyhow::bail!("{hostname} is unreachable")
         }
 
@@ -3207,6 +3178,107 @@ mod tests {
             .await;
         assert_eq!(res.errors.len(), 1);
         assert_eq!(res.errors[0].message, "analysis is unreachable");
+    }
+
+    #[tokio::test]
+    async fn node_reboot_manager_hostname_reaches_agent_manager() {
+        let agent_manager: BoxedAgentManager = Box::new(FailingMockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let hostname = gethostname::gethostname().to_string_lossy().into_owned();
+        assert_ne!(hostname, "");
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"mutation {{ nodeReboot(hostname: "{hostname}") }}"#
+            ))
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, format!("{hostname} is unreachable"));
+    }
+
+    #[tokio::test]
+    async fn node_shutdown_manager_hostname_reaches_agent_manager() {
+        let agent_manager: BoxedAgentManager = Box::new(FailingMockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+        });
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let hostname = gethostname::gethostname().to_string_lossy().into_owned();
+        assert_ne!(hostname, "");
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"mutation {{ nodeShutdown(hostname: "{hostname}") }}"#
+            ))
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(res.errors[0].message, "Failed to halt");
+    }
+
+    #[tokio::test]
+    async fn manager_power_operations_preserve_access_checks_and_update_status() {
+        let hostname = gethostname::gethostname().to_string_lossy().into_owned();
+        assert_ne!(hostname, "");
+
+        for operation in ["nodeReboot", "nodeShutdown"] {
+            let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+                online_apps_by_host_id: HashMap::new(),
+                available_agents: vec![],
+            });
+            let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+            let id = put_node_with_agents(
+                &schema.store(),
+                "manager",
+                1,
+                &hostname,
+                vec![installed_agent(
+                    "sensor",
+                    review_database::AgentKind::Sensor,
+                    Some("test = 'toml'"),
+                    Some(1),
+                )],
+            );
+            let query = format!(
+                "mutation {{ {operation}(hostname: {}) }}",
+                serde_json::to_string(&hostname).unwrap()
+            );
+
+            for (role, customers) in [
+                (Role::SecurityMonitor, vec![1]),
+                (Role::SecurityAdministrator, vec![2]),
+            ] {
+                update_account_customers(&schema.store(), "testuser", Some(customers.clone()));
+                let res = schema
+                    .execute_as_scoped_user(&query, role, Some(customers))
+                    .await;
+                assert_eq!(res.errors.len(), 1, "{operation}: {:?}", res.errors);
+                assert_eq!(res.errors[0].message, "Forbidden");
+                assert_eq!(
+                    stored_node(&schema.store(), id)
+                        .agents
+                        .first()
+                        .unwrap()
+                        .status,
+                    AgentStatus::Enabled
+                );
+            }
+
+            update_account_customers(&schema.store(), "testuser", Some(vec![1]));
+            let res = schema
+                .execute_as_scoped_user(&query, Role::SecurityAdministrator, Some(vec![1]))
+                .await;
+            assert!(res.errors.is_empty(), "{operation}: {:?}", res.errors);
+            assert_eq!(res.data.into_json().unwrap(), json!({operation: hostname}));
+            assert_eq!(
+                stored_node(&schema.store(), id)
+                    .agents
+                    .first()
+                    .unwrap()
+                    .status,
+                AgentStatus::Unknown
+            );
+        }
     }
 
     #[tokio::test]
@@ -4579,17 +4651,10 @@ mod tests {
             anyhow::bail!("{hostname} is unreachable")
         }
 
-        async fn get_process_list(
-            &self,
-            hostname: &str,
-        ) -> Result<Vec<roxy::Process>, anyhow::Error> {
-            anyhow::bail!("{hostname} is unreachable")
-        }
-
         async fn get_resource_usage(
             &self,
             hostname: &str,
-        ) -> Result<roxy::ResourceUsage, anyhow::Error> {
+        ) -> Result<review_protocol::types::ResourceUsage, anyhow::Error> {
             anyhow::bail!("{hostname} is unreachable")
         }
 

@@ -165,13 +165,6 @@ xvcNsYaYqk6sRk/INvcaN2E=
             Ok(std::collections::BTreeSet::new())
         }
 
-        async fn get_process_list(
-            &self,
-            _hostname: &str,
-        ) -> Result<Vec<review_web::backend::Process>, anyhow::Error> {
-            Ok(Vec::new())
-        }
-
         async fn get_resource_usage(
             &self,
             _hostname: &str,
