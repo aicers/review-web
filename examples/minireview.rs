@@ -235,6 +235,7 @@ impl PackageDeployer for Deployer {
         _selector: BuildSelector,
         _on_failure: FailurePolicy,
         _bind_addrs: Option<Vec<BindAddrInput>>,
+        _config_template: Option<String>,
         _request_key: &str,
     ) -> Result<(DeployOutcome, OperationId), DeployError> {
         Err(DeployError::Other(anyhow!("Host {host} is unreachable")))
@@ -270,6 +271,13 @@ impl PackageDeployer for Deployer {
 
     async fn latest_build(&self, target: &str) -> Result<Option<BuildId>, Error> {
         bail!("No build store holds {target}")
+    }
+
+    async fn config_templates(
+        &self,
+        target: &str,
+    ) -> Result<review_web::backend::ConfigTemplateCatalog, anyhow::Error> {
+        bail!("No configuration template catalog holds {target}")
     }
 
     async fn servable_builds(&self, target: &str) -> Result<Vec<BuildId>, Error> {

@@ -6,8 +6,42 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- Added the optional `configTemplate` argument on `installService`, naming the
+  first-install configuration template.
+- Added `ConfigTemplateRequired { target }`,
+  `ConfigTemplateNotApplicable { target }` and
+  `UnknownConfigTemplate { target, configTemplate }` members to
+  `installService`'s result union. Their remedies are to choose a template,
+  drop the field, and refresh the template list, respectively.
+- Added the `configTemplates(target:)` query for System and Security
+  Administrators, accepting module package-ids only. It returns
+  `ConfigTemplateList` with `required` and `templates` of
+  `ConfigTemplate { id, name, description }`, whose name and description are
+  `LocalizedText { en, ko }`. It never returns a template's content.
+
 ### Changed
 
+- Added `config_template: Option<String>` to `PackageDeployer::install`, after
+  `bind_addrs`. This is a breaking API change for trait implementers.
+- Added the required `PackageDeployer::config_templates` method with the public
+  `ConfigTemplateCatalog`, `ConfigTemplateSummary` and `LocalizedText` types.
+  It returns the target's requirement and template metadata in catalog order,
+  with an error if the catalog could not be read. It has no default
+  implementation, so this is a breaking API change for trait implementers.
+- Added `ConfigTemplateRequired { target }`,
+  `ConfigTemplateNotApplicable { target }` and
+  `UnknownConfigTemplate { target, config_template }` to `DeployError`. This is
+  a breaking API change for callers that match on it exhaustively.
+- Bumped `review-database` dependency to 0.49.0. The new version persists an
+  install's configuration template id on its install intent and operation
+  attempt, and its store format moves to the 0.49 series, so a store written
+  by 0.48 must be migrated through `review-database` before this version serves
+  it.
+- Bumped `review-protocol` dependency to 0.21.0. The new version carries the
+  configuration template id on a node package install request and adds the
+  two install refusals for it.
 - `AgentManager` now uses review-protocol's `ResourceUsage` type.
 - The Manager's own host's resource usage and ping are read through
   `AgentManager` like any other host.

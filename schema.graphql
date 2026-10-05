@@ -3553,6 +3553,37 @@ input ConfidenceInput {
 }
 
 """
+A named configuration template's metadata.
+"""
+type ConfigTemplate {
+	id: String!
+	name: LocalizedText!
+	description: LocalizedText!
+}
+
+"""
+A target's requirement and configuration-template summaries.
+"""
+type ConfigTemplateList {
+	required: Boolean!
+	templates: [ConfigTemplate!]!
+}
+
+"""
+The target takes no configuration template. Drop the field.
+"""
+type ConfigTemplateNotApplicable {
+	target: String!
+}
+
+"""
+The target requires a configuration template. Choose a template.
+"""
+type ConfigTemplateRequired {
+	target: String!
+}
+
+"""
 A core component installed, or due to be installed, on a host.
 """
 type CoreComponent {
@@ -5609,7 +5640,7 @@ type HttpThreat implements Event {
 """
 What `installService` answers with.
 """
-union InstallServiceResult = InstallServiceSuccess | PortAllocationConflict | HostPortOccupied | HostOccupancyUnavailable | RequestKeyReused | CleanupPending | RollbackUnsupported | BuildNotServable
+union InstallServiceResult = InstallServiceSuccess | PortAllocationConflict | HostPortOccupied | HostOccupancyUnavailable | RequestKeyReused | CleanupPending | RollbackUnsupported | BuildNotServable | ConfigTemplateRequired | ConfigTemplateNotApplicable | UnknownConfigTemplate
 
 """
 The install was accepted, and this is the operation to poll.
@@ -6007,6 +6038,14 @@ type LineSegment {
 	lastIndex: Int!
 	regOriginal: Regression!
 	regTrend: Regression!
+}
+
+"""
+Text in English and Korean.
+"""
+type LocalizedText {
+	en: String!
+	ko: String!
 }
 
 type LockyRansomware implements Event {
@@ -6662,8 +6701,12 @@ type Mutation {
 	
 	`bindAddrs` is optional. Absent means "no listening addresses to set",
 	which is every component review's catalog does not list.
+	
+	`configTemplate` names the first-install configuration template from
+	`configTemplates(target)`. Absent means none; review decides whether
+	the target requires one and whether the id exists.
 	"""
-	installService(host: String!, target: String!, buildSelector: BuildSelectorInput!, onFailure: FailurePolicy! = ROLLBACK, bindAddrs: [BindAddrInput!], requestKey: String!): InstallServiceResult!
+	installService(host: String!, target: String!, buildSelector: BuildSelectorInput!, onFailure: FailurePolicy! = ROLLBACK, bindAddrs: [BindAddrInput!], configTemplate: String, requestKey: String!): InstallServiceResult!
 	"""
 	Updates the build of an existing instance and returns the operation to
 	poll.
@@ -8167,6 +8210,19 @@ type Query {
 	be read or still has a build of the package pending verification.
 	"""
 	storeBuildList(packageId: String!): [StoreBuild!]!
+	"""
+	Returns the configuration templates for a module package-id.
+	
+	`required` means an install must name a template. `templates` is in
+	the catalog's declared order and may be empty; a required target with
+	an empty list cannot be installed yet. No template body is ever returned.
+	
+	# Errors
+	
+	Returns an error if the target is not a module package-id, the caller
+	may not list it, or the catalog could not be read.
+	"""
+	configTemplates(target: String!): ConfigTemplateList!
 }
 
 type RankedOutlier {
@@ -9680,6 +9736,14 @@ type TrustedUserAgentEdge {
 type U8EventCounter {
 	values: [Int]!
 	counts: [Int!]!
+}
+
+"""
+The id is absent from the target's catalog. Refresh the template list.
+"""
+type UnknownConfigTemplate {
+	target: String!
+	configTemplate: String!
 }
 
 enum UnstructuredClusteringAlgorithm {

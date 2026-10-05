@@ -348,6 +348,7 @@ mod tests {
             _selector: BuildSelector,
             _on_failure: FailurePolicy,
             _bind_addrs: Option<Vec<BackendBindAddrInput>>,
+            _config_template: Option<String>,
             _request_key: &str,
         ) -> Result<(DeployOutcome, OperationId), DeployError> {
             unimplemented!("this stub answers recommend_bind_addrs only")
@@ -409,6 +410,13 @@ mod tests {
         }
 
         async fn latest_build(&self, _target: &str) -> Result<Option<BuildId>, anyhow::Error> {
+            unimplemented!("this stub answers recommend_bind_addrs only")
+        }
+
+        async fn config_templates(
+            &self,
+            _target: &str,
+        ) -> Result<crate::backend::ConfigTemplateCatalog, anyhow::Error> {
             unimplemented!("this stub answers recommend_bind_addrs only")
         }
 
@@ -871,6 +879,9 @@ mod tests {
             | DeployError::RequestKey(_)
             | DeployError::CleanupPending { .. }
             | DeployError::BuildNotServable { .. }
+            | DeployError::ConfigTemplateRequired { .. }
+            | DeployError::ConfigTemplateNotApplicable { .. }
+            | DeployError::UnknownConfigTemplate { .. }
             | DeployError::Other(_) => None,
         }
     }
@@ -880,6 +891,25 @@ mod tests {
     #[test]
     fn no_other_variant_converts_to_either_conflict_object() {
         let every_variant = [
+            (
+                DeployError::ConfigTemplateRequired {
+                    target: "reconverge".to_string(),
+                },
+                None,
+            ),
+            (
+                DeployError::ConfigTemplateNotApplicable {
+                    target: "giganto".to_string(),
+                },
+                None,
+            ),
+            (
+                DeployError::UnknownConfigTemplate {
+                    target: "reconverge".to_string(),
+                    config_template: "unknown".to_string(),
+                },
+                None,
+            ),
             (
                 DeployError::PortAllocationConflict {
                     host: "host1".to_string(),

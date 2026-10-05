@@ -175,19 +175,20 @@ pub(crate) const CORE_PACKAGE_IDS: [&str; 6] = [
     "bootler-security",
 ];
 
-// Upstream type-surface check for the six local types declared below.
+// Upstream type-surface check for the nine local types declared below.
 //
 // Each of `BuildId`, `OperationId`, `DeployOutcome`, `JoinToken`,
-// `HostOnboardingTicket` and `DeployError` is declared here only because
+// `HostOnboardingTicket`, `DeployError`, `ConfigTemplateCatalog`,
+// `ConfigTemplateSummary` and `LocalizedText` is declared here only because
 // neither pinned upstream defines it. The surfaces checked, at the exact
 // revisions this crate pins in `Cargo.toml`:
 //
-// - `review-database` at `2791e3b` (tag `0.48.0`) — the `pub use` surface of
+// - `review-database` at `7cd319c` (tag `0.49.0`) — the `pub use` surface of
 //   its `lib.rs`, its three public modules `types`, `event` and `backup`,
 //   which together are every name this crate can import from it, and behind
 //   the re-exports the private `tables::operation_attempt` and
 //   `tables::port_allocation` modules that hold the deployment types.
-// - `review-protocol` at `6eefd22` (tag `0.20.0`) — the `types::node` module,
+// - `review-protocol` at `76e28fe` (tag `0.21.0`) — the `types::node` module,
 //   which carries the package (`NodePackageRequest`/`NodePackageResponse`/
 //   `NodePackageError`) and enrollment (`NodeEnrollRequest`/
 //   `NodeEnrollResponse`/`NodeEnrollError`) surfaces, and the rest of its
@@ -199,9 +200,13 @@ pub(crate) const CORE_PACKAGE_IDS: [&str; 6] = [
 //   Several are feature-gated, so the check read the tree rather than a built
 //   rustdoc, which would show only the features that happened to be on.
 //
-// None of the six names exists anywhere in either tree. What is there instead,
+// None of the nine names exists anywhere in either tree. What is there instead,
 // and why it is not the same type:
 //
+// - `ConfigTemplateCatalog`, `ConfigTemplateSummary` and `LocalizedText` —
+//   neither pinned upstream declares them. The catalog's own types live in
+//   deploy-core, which this crate does not link. The upstream
+//   `config_template` id fields are not catalog types.
 // - `BuildId` — `review_database::BuildSelector` asks for a build by version
 //   *or* commit, so it is a request and not an identity, and this crate
 //   already imports it. `review_protocol::types::node::PackageIdentity` pairs
@@ -480,7 +485,7 @@ pub struct RunningRoxydBuild {
 
 /// Why a deployment operation could not be carried out.
 ///
-/// The six named variants are exactly the failures a resolver renders as a
+/// The nine named variants are exactly the failures a resolver renders as a
 /// state of the form the operator is looking at, so a resolver decides the
 /// result-payload union member by matching on the kind rather than on a
 /// message string — an upstream wording change would otherwise silently
@@ -568,12 +573,63 @@ pub enum DeployError {
         /// The package-id the selection was for.
         target: String,
     },
+    /// The target requires a configuration template but none was submitted.
+    ///
+    /// This also applies while its catalog is empty. Choose a template.
+    #[error("{target} requires a configuration template")]
+    ConfigTemplateRequired {
+        /// The package-id that requires a template.
+        target: String,
+    },
+    /// The target takes no configuration template. Drop the field.
+    #[error("{target} takes no configuration template")]
+    ConfigTemplateNotApplicable {
+        /// The package-id that takes no template.
+        target: String,
+    },
+    /// The id is absent from the target's catalog. Refresh the template list.
+    #[error("{config_template} is not a configuration template of {target}")]
+    UnknownConfigTemplate {
+        /// The package-id whose catalog was checked.
+        target: String,
+        /// The unknown configuration template id.
+        config_template: String,
+    },
     /// Any other failure, rendered as an ordinary GraphQL error.
     ///
     /// [`review_database::PortAllocationError::Database`] arrives here: it is
     /// not a bind-address conflict.
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+}
+
+/// What a target's configuration-template catalog holds, without any body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfigTemplateCatalog {
+    /// Whether an install requires a template.
+    pub required: bool,
+    /// The summaries in the catalog's declared order.
+    pub templates: Vec<ConfigTemplateSummary>,
+}
+
+/// A named configuration template's metadata, without its body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfigTemplateSummary {
+    /// The template's catalog id.
+    pub id: String,
+    /// The template's localized name.
+    pub name: LocalizedText,
+    /// The template's localized description.
+    pub description: LocalizedText,
+}
+
+/// Text in English and Korean.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalizedText {
+    /// The English text.
+    pub en: String,
+    /// The Korean text.
+    pub ko: String,
 }
 
 /// Installs, updates, removes and reads packages on a host through roxyd.
@@ -594,8 +650,12 @@ pub trait PackageDeployer: Send + Sync {
     ///
     /// `install` and [`update`](PackageDeployer::update) are separate methods
     /// because only this one allocates. It takes no `instance` — that is what
-    /// it produces — and it is the only one carrying `bind_addrs` and
-    /// `request_key`.
+    /// it produces — and it is the only one carrying `bind_addrs`,
+    /// `config_template` and `request_key`.
+    ///
+    /// `config_template` is the id of a configuration template in `target`'s
+    /// catalog. `None` means no template. It is passed through unchanged and
+    /// validated by the implementation.
     ///
     /// It takes **no** `bootstrap_material` parameter: the implementation
     /// mints the identity itself, because the mint needs the instance number
@@ -616,7 +676,14 @@ pub trait PackageDeployer: Send + Sync {
     /// was reused for a different request, [`DeployError::CleanupPending`] if
     /// a teardown is still owed on the target,
     /// [`DeployError::BuildNotServable`] if the store will not serve the
-    /// selected build, and [`DeployError::Other`] for any other failure.
+    /// selected build, [`DeployError::ConfigTemplateRequired`] if a required
+    /// template was omitted, [`DeployError::ConfigTemplateNotApplicable`] if
+    /// the target takes no template, [`DeployError::UnknownConfigTemplate`]
+    /// if the id is absent from the target's catalog, and
+    /// [`DeployError::Other`] for any other failure.
+    // The public install contract keeps these independent arguments, as the
+    // GraphQL mutation does; grouping them would change the implementer API.
+    #[allow(clippy::too_many_arguments)]
     async fn install(
         &self,
         host: &str,
@@ -624,6 +691,7 @@ pub trait PackageDeployer: Send + Sync {
         selector: BuildSelector,
         on_failure: FailurePolicy,
         bind_addrs: Option<Vec<BindAddrInput>>,
+        config_template: Option<String>,
         request_key: &str,
     ) -> Result<(DeployOutcome, OperationId), DeployError>;
 
@@ -720,6 +788,21 @@ pub trait PackageDeployer: Send + Sync {
     /// Returns an error if the build store could not be read, or if any build
     /// of `target` is still pending verification.
     async fn servable_builds(&self, target: &str) -> Result<Vec<BuildId>, anyhow::Error>;
+
+    /// Returns the configuration-template catalog for `target`.
+    ///
+    /// It is keyed on the package-id alone: the catalog is host-agnostic, as
+    /// the store is for [`servable_builds`](PackageDeployer::servable_builds).
+    /// One call answers both `required` and the list from one catalog read.
+    /// `templates` is in the catalog's declared order and is empty for a
+    /// component that has none or a required component whose catalog is still
+    /// empty. It never carries a template's body. An implementation must
+    /// never answer an empty list for a read it could not complete.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the catalog could not be read.
+    async fn config_templates(&self, target: &str) -> Result<ConfigTemplateCatalog, anyhow::Error>;
 
     /// Returns whether the trust generation active when it is called
     /// withdraws `build` of package `target`.
