@@ -116,7 +116,7 @@ impl TokenSigner for ProductionTokenSigner {
             .read()
             .map_err(|e| AuthError::ReadJwtSecret(e.to_string()))?;
 
-        let hostname = roxy::hostname();
+        let hostname = gethostname::gethostname().to_string_lossy().into_owned();
         if hostname.is_empty() {
             return Err(AuthError::Other(
                 "Failed to obtain hostname for Aimer token".to_string(),

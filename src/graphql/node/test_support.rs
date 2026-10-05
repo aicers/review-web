@@ -3,7 +3,7 @@ use std::{collections::HashMap, time::Duration};
 use async_trait::async_trait;
 use chrono::Utc;
 use review_database::{Role, types};
-use roxy::ResourceUsage;
+use review_protocol::types::ResourceUsage;
 
 use crate::graphql::{AgentManager, SamplingPolicy, customer::NetworksTargetAgentLookupKeysPair};
 
@@ -54,14 +54,7 @@ impl AgentManager for MockAgentManager {
         unimplemented!()
     }
 
-    async fn get_process_list(&self, _hostname: &str) -> Result<Vec<roxy::Process>, anyhow::Error> {
-        unimplemented!()
-    }
-
-    async fn get_resource_usage(
-        &self,
-        _hostname: &str,
-    ) -> Result<roxy::ResourceUsage, anyhow::Error> {
+    async fn get_resource_usage(&self, _hostname: &str) -> Result<ResourceUsage, anyhow::Error> {
         Ok(ResourceUsage {
             cpu_usage: 20.0,
             total_memory: 1000,

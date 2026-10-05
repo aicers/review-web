@@ -16,8 +16,8 @@ use ipnet::IpNet;
 // two distinct types with the same name, so nothing here glob-imports either
 // module and neither `Lifecycle` is brought into scope.
 use review_database::{BuildSelector, ListenerBinding, ListenerTransport, PortOwner};
+pub use review_protocol::types::ResourceUsage;
 use review_protocol::types::node::{BootstrapMaterial, DeliveryMode, FailurePolicy, PackageState};
-pub use roxy::{Process, ResourceUsage};
 
 use crate::graphql::customer::NetworksTargetAgentLookupKeysPair;
 pub use crate::graphql::{ParsedCertificate, SamplingPolicy};
@@ -75,9 +75,6 @@ pub trait AgentManager: Send + Sync {
     ///
     /// Returns an error if the host's capability set cannot be read.
     async fn capabilities(&self, hostname: &str) -> Result<BTreeSet<String>, anyhow::Error>;
-
-    /// Returns the list of processes running on the given host.
-    async fn get_process_list(&self, _hostname: &str) -> Result<Vec<Process>, anyhow::Error>;
 
     /// Returns the resource usage of the given host.
     async fn get_resource_usage(&self, _hostname: &str) -> Result<ResourceUsage, anyhow::Error>;

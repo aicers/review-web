@@ -8,7 +8,6 @@ updates:
     ignore:
       - dependency-name: "review-database"
       - dependency-name: "review-protocol"
-      - dependency-name: "roxy"
 
   - package-ecosystem: "github-actions"
     directory: "/"

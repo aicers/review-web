@@ -58,6 +58,7 @@ use num_traits::ToPrimitive;
 use review_database::{self as database, Role, Store, event::Direction};
 #[cfg(test)]
 use review_database::{BuildSelector, ListenerBinding, ListenerTransport, PortOwner};
+pub use review_protocol::types::ResourceUsage;
 // `review_database::Lifecycle` and `review_protocol::types::node::Lifecycle`
 // share a name, so the protocol one is renamed at the import rather than
 // glob-imported or shadowed.
@@ -65,7 +66,6 @@ use review_database::{BuildSelector, ListenerBinding, ListenerTransport, PortOwn
 use review_protocol::types::node::{
     BootstrapMaterial, DeliveryMode, FailurePolicy, Lifecycle as ProtocolLifecycle, PackageState,
 };
-pub use roxy::{Process, ResourceUsage};
 use tokio::sync::Notify;
 use tracing::warn;
 use vinum::signal;
@@ -227,7 +227,6 @@ struct SubQueryTwoB(
     traffic_filter::TrafficFilterQuery,
     allow_network::AllowNetworkQuery,
     trusted_user_agent::UserAgentQuery,
-    node::ProcessListQuery,
     node::BindAddrQuery,
     node::OnboardingQuery,
 );
@@ -1053,10 +1052,6 @@ impl AgentManager for MockAgentManager {
             std::iter::once(review_protocol::types::capability::ROLLBACK_SUPERVISOR.to_string())
                 .collect(),
         )
-    }
-
-    async fn get_process_list(&self, _hostname: &str) -> Result<Vec<Process>, anyhow::Error> {
-        unimplemented!()
     }
 
     // A mock host reports no resource usage and answers no ping. Both are

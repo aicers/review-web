@@ -34,9 +34,7 @@ use review_web::{
         PackageDeployer, PackageIngestError, PackageStoreReceiver, RunningRoxydBuild,
         TrustActivation, TrustIngestError, TrustManager,
     },
-    graphql::{
-        Process, ResourceUsage, SamplingPolicy, customer::NetworksTargetAgentLookupKeysPair,
-    },
+    graphql::{ResourceUsage, SamplingPolicy, customer::NetworksTargetAgentLookupKeysPair},
     maintenance::MaintenanceGate,
 };
 use serde::Deserialize;
@@ -192,10 +190,6 @@ impl AgentManager for Manager {
     }
 
     async fn capabilities(&self, hostname: &str) -> Result<BTreeSet<String>, Error> {
-        bail!("Host {hostname} is unreachable")
-    }
-
-    async fn get_process_list(&self, hostname: &str) -> Result<Vec<Process>, Error> {
         bail!("Host {hostname} is unreachable")
     }
 

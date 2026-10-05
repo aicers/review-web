@@ -7742,14 +7742,6 @@ type PreserveOutliersOutput {
 	sensor: String!
 }
 
-type Process {
-	user: String!
-	cpuUsage: String!
-	memUsage: String!
-	startTime: DateTime!
-	command: String!
-}
-
 type Qualifier {
 	id: ID!
 	description: String!
@@ -8135,10 +8127,6 @@ type Query {
 	A list of trusted user agent list.
 	"""
 	trustedUserAgentList(after: String, before: String, first: Int, last: Int): TrustedUserAgentConnection!
-	"""
-	A list of process of the node.
-	"""
-	processList(hostname: String!): [Process!]!
 	"""
 	Returns the addresses review would propose for the next instance of
 	`target` on `host`.

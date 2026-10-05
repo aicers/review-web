@@ -7,7 +7,6 @@ mod customer_sensor_list;
 pub(super) mod deploy;
 mod input;
 mod installed_guard;
-mod process;
 mod status;
 #[cfg(test)]
 pub(super) mod test_support;
@@ -18,13 +17,11 @@ use async_graphql::{
     ComplexObject, Context, Enum, Object, Result, SimpleObject, StringNumber, types::ID,
 };
 use bincode::Options;
-use chrono::{DateTime, TimeZone, Utc};
 #[allow(clippy::module_name_repetitions)]
 pub use crud::agent_lookup_keys_by_customer_id;
 use database::{Indexable, event::Direction};
 use input::NodeInput;
 use review_database as database;
-use roxy::Process as RoxyProcess;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -45,9 +42,6 @@ pub(super) struct NodeStatusQuery;
 
 #[derive(Default)]
 pub(super) struct NodeControlMutation;
-
-#[derive(Default)]
-pub(super) struct ProcessListQuery;
 
 /// The root of the bind-address recommendation query.
 #[derive(Default)]
@@ -1014,7 +1008,7 @@ impl NodeStatus {
 impl NodeStatus {
     fn new(
         node: database::Node,
-        resource_usage: Option<&roxy::ResourceUsage>,
+        resource_usage: Option<&review_protocol::types::ResourceUsage>,
         ping: Option<Duration>,
         manager: bool,
     ) -> Self {
@@ -1119,31 +1113,10 @@ impl Indexable for NodeStatus {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize, SimpleObject)]
-pub struct Process {
-    pub user: String,
-    pub cpu_usage: String,
-    pub mem_usage: String,
-    pub start_time: DateTime<Utc>,
-    pub command: String,
-}
-
-impl From<RoxyProcess> for Process {
-    fn from(value: RoxyProcess) -> Self {
-        Self {
-            user: value.user,
-            cpu_usage: value.cpu_usage.to_string(),
-            mem_usage: value.mem_usage.to_string(),
-            start_time: Utc.timestamp_nanos(value.start_time),
-            command: value.command,
-        }
-    }
-}
-
 pub fn matches_manager_hostname(hostname: &str) -> bool {
     // Current machine's hostname is the Manager server's hostname, because this code always runs on
     // the Manager server.
-    let manager_hostname = roxy::hostname();
+    let manager_hostname = gethostname::gethostname().to_string_lossy().into_owned();
     !manager_hostname.is_empty() && manager_hostname == hostname
 }
 

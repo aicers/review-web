@@ -4,6 +4,20 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `AgentManager` now uses review-protocol's `ResourceUsage` type.
+- The Manager's own host's resource usage and ping are read through
+  `AgentManager` like any other host.
+- `nodeReboot` and `nodeShutdown` no longer refuse the host the Manager runs on.
+
+### Removed
+
+- The `processList` GraphQL query.
+- The `AgentManager::get_process_list` method and the `Process` type re-exports.
+
 ## [0.36.0] - 2026-10-05
 
 ### Added
@@ -1968,6 +1982,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.36.0...main
 [0.36.0]: https://github.com/aicers/review-web/compare/0.35.0...0.36.0
 [0.35.0]: https://github.com/aicers/review-web/compare/0.34.0...0.35.0
 [0.34.0]: https://github.com/aicers/review-web/compare/0.33.0...0.34.0

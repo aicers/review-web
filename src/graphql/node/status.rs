@@ -6,7 +6,7 @@ use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
 };
 use review_database::UniqueKey;
-use roxy::ResourceUsage;
+use review_protocol::types::ResourceUsage;
 use tracing::info;
 
 use super::{
@@ -86,8 +86,7 @@ async fn load(
 
         let is_manager = matches_manager_hostname(hostname);
 
-        let (resource_usage, ping) =
-            fetch_resource_usage_and_ping(agent_manager, hostname, is_manager).await;
+        let (resource_usage, ping) = fetch_resource_usage_and_ping(agent_manager, hostname).await;
 
         let key = node.unique_key();
         connection.edges.push(Edge::new(
@@ -102,23 +101,11 @@ async fn load(
 async fn fetch_resource_usage_and_ping(
     agent_manager: &BoxedAgentManager,
     hostname: &str,
-    is_manager: bool,
 ) -> (Option<ResourceUsage>, Option<Duration>) {
-    if is_manager {
-        // Since this code is executed on the Manager server itself, we retrieve the resource
-        // usage directly without making a remote call. The ping value is set to 0 without
-        // performing an actual ping, because ping on the same machine should result in negligible
-        // round-trip time (RTT).
-        (
-            Some(roxy::resource_usage().await),
-            Some(Duration::from_secs(0)),
-        )
-    } else {
-        (
-            agent_manager.get_resource_usage(hostname).await.ok(),
-            agent_manager.ping(hostname).await.ok(),
-        )
-    }
+    (
+        agent_manager.get_resource_usage(hostname).await.ok(),
+        agent_manager.ping(hostname).await.ok(),
+    )
 }
 
 #[cfg(test)]
@@ -132,11 +119,43 @@ mod tests {
     use crate::graphql::{BoxedAgentManager, Role, TestSchema};
 
     #[tokio::test]
+    async fn unreachable_manager_host_has_no_resource_usage_or_ping() {
+        let schema = TestSchema::new().await;
+        let hostname = gethostname::gethostname().to_string_lossy().into_owned();
+        assert_ne!(hostname, "");
+        insert_active_node(&schema.store(), "manager", 1, &hostname);
+
+        let res = schema
+            .execute_as_system_admin(
+                r"{nodeStatusList{edges{node{manager cpuUsage totalMemory usedMemory
+                    totalDiskSpace usedDiskSpace ping}}}}",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeStatusList": {
+                    "edges": [{"node": {
+                        "manager": true,
+                        "cpuUsage": null,
+                        "totalMemory": null,
+                        "usedMemory": null,
+                        "totalDiskSpace": null,
+                        "usedDiskSpace": null,
+                        "ping": null
+                    }}]
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn test_node_status_list() {
         let mut online_apps_by_host_id = HashMap::new();
 
-        let manager_hostname = roxy::hostname(); // Current machine's hostname is the Manager server's hostname.
+        let manager_hostname = gethostname::gethostname().to_string_lossy().into_owned();
         insert_apps(
             manager_hostname.as_str(),
             &["sensor"],
@@ -341,7 +360,12 @@ mod tests {
                                     "description": "This node has the Manager.",
                                     "hostname": manager_hostname
                                 },
-                                "ping": 0.0,
+                                "cpuUsage": 20.0,
+                                "totalMemory": "1000",
+                                "usedMemory": "100",
+                                "totalDiskSpace": "1000",
+                                "usedDiskSpace": "100",
+                                "ping": 0.00001,
                                 "manager": true,
                                 "agents": [
                                     {

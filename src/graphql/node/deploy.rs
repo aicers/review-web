@@ -1506,17 +1506,10 @@ mod tests {
             unimplemented!("this stub answers the capability read only")
         }
 
-        async fn get_process_list(
-            &self,
-            _hostname: &str,
-        ) -> Result<Vec<roxy::Process>, anyhow::Error> {
-            unimplemented!("this stub answers the capability read only")
-        }
-
         async fn get_resource_usage(
             &self,
             _hostname: &str,
-        ) -> Result<roxy::ResourceUsage, anyhow::Error> {
+        ) -> Result<review_protocol::types::ResourceUsage, anyhow::Error> {
             unimplemented!("this stub answers the capability read only")
         }
 

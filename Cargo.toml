@@ -18,6 +18,7 @@ chrono = { version = "0.4.42", default-features = false, features = [
 ] } # NOTE: match with review-database
 futures = "0.3"
 futures-util = "0.3"
+gethostname = "1"
 http = "1"
 ip2location = "0.6.0"
 ipnet = { version = "2", features = ["serde"] }
@@ -30,7 +31,6 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 review-database = { git = "https://github.com/aicers/review-database.git", tag = "0.48.0" }
 review-protocol = { git = "https://github.com/aicers/review-protocol.git", tag = "0.20.0" }
-roxy = { git = "https://github.com/aicers/roxy.git", tag = "0.6.0" }
 rustls = { version = "0.23", default-features = false, features = [
   "ring",
   "std",
