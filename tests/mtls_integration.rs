@@ -200,6 +200,7 @@ xvcNsYaYqk6sRk/INvcaN2E=
             _selector: BuildSelector,
             _on_failure: FailurePolicy,
             _bind_addrs: Option<Vec<BindAddrInput>>,
+            _config_template: Option<String>,
             _request_key: &str,
         ) -> Result<(DeployOutcome, OperationId), DeployError> {
             Err(DeployError::Other(anyhow::anyhow!(
@@ -241,6 +242,16 @@ xvcNsYaYqk6sRk/INvcaN2E=
 
         async fn latest_build(&self, _target: &str) -> Result<Option<BuildId>, anyhow::Error> {
             Ok(None)
+        }
+
+        async fn config_templates(
+            &self,
+            _target: &str,
+        ) -> Result<review_web::backend::ConfigTemplateCatalog, anyhow::Error> {
+            Ok(review_web::backend::ConfigTemplateCatalog {
+                required: false,
+                templates: vec![],
+            })
         }
 
         async fn servable_builds(&self, _target: &str) -> Result<Vec<BuildId>, anyhow::Error> {

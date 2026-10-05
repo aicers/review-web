@@ -1372,6 +1372,7 @@ impl PackageDeployer for MockPackageDeployer {
         _selector: BuildSelector,
         _on_failure: FailurePolicy,
         _bind_addrs: Option<Vec<BindAddrInput>>,
+        _config_template: Option<String>,
         _request_key: &str,
     ) -> Result<(DeployOutcome, OperationId), DeployError> {
         self.check()?;
@@ -1417,6 +1418,16 @@ impl PackageDeployer for MockPackageDeployer {
     // at all unless a test put one there.
     async fn latest_build(&self, target: &str) -> Result<Option<BuildId>, anyhow::Error> {
         self.builds.latest_build(target).await
+    }
+
+    async fn config_templates(
+        &self,
+        _target: &str,
+    ) -> Result<crate::backend::ConfigTemplateCatalog, anyhow::Error> {
+        Ok(crate::backend::ConfigTemplateCatalog {
+            required: false,
+            templates: vec![],
+        })
     }
 
     // Answers from the same stub, so that the list's first entry is the build
@@ -2226,6 +2237,7 @@ mod tests {
                         review_database::BuildSelector::Version("0.1.0".to_string()),
                         review_protocol::types::node::FailurePolicy::Rollback,
                         None,
+                        None,
                         "b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e",
                     )
                     .await?;
@@ -2328,6 +2340,7 @@ mod tests {
                         selector.clone(),
                         FailurePolicy::Rollback,
                         None,
+                        None,
                         "b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e",
                     )
                     .await
@@ -2384,6 +2397,11 @@ mod tests {
                         MockDeployFailure::BuildNotServable
                     }
                     DeployError::Other(_) => MockDeployFailure::Arbitrary,
+                    DeployError::ConfigTemplateRequired { .. }
+                    | DeployError::ConfigTemplateNotApplicable { .. }
+                    | DeployError::UnknownConfigTemplate { .. } => {
+                        panic!("this mock does not script configuration template refusals")
+                    }
                 };
                 assert_eq!(selected, failure);
             }
@@ -2420,6 +2438,7 @@ mod tests {
                     listener_key: "ingest".to_string(),
                     addr: std::net::SocketAddr::from(([127, 0, 0, 1], 38_370)),
                 }]),
+                None,
                 "b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e",
             )
             .await

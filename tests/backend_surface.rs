@@ -24,10 +24,10 @@ use review_protocol::types::node::{
     BootstrapMaterial, DeliveryMode, FailurePolicy, Lifecycle as ProtocolLifecycle, PackageState,
 };
 use review_web::backend::{
-    AcceptedPackage, BindAddrInput, BuildId, DeployError, DeployOutcome, HostOnboarder,
-    HostOnboardingTicket, IngressStream, IngressStreamError, JoinToken, OperationId,
-    PackageDeployer, PackageIngestError, PackageStoreReceiver, RunningRoxydBuild, TrustActivation,
-    TrustIngestError, TrustManager,
+    AcceptedPackage, BindAddrInput, BuildId, ConfigTemplateCatalog, ConfigTemplateSummary,
+    DeployError, DeployOutcome, HostOnboarder, HostOnboardingTicket, IngressStream,
+    IngressStreamError, JoinToken, LocalizedText, OperationId, PackageDeployer, PackageIngestError,
+    PackageStoreReceiver, RunningRoxydBuild, TrustActivation, TrustIngestError, TrustManager,
 };
 
 const TOKEN: &str = "s3cret-join-token";
@@ -53,6 +53,7 @@ impl PackageDeployer for OutsideDeployer {
         _selector: BuildSelector,
         _on_failure: FailurePolicy,
         bind_addrs: Option<Vec<BindAddrInput>>,
+        config_template: Option<String>,
         request_key: &str,
     ) -> Result<(DeployOutcome, OperationId), DeployError> {
         // Reading `BindAddrInput`'s two public fields from another crate is the
@@ -72,6 +73,25 @@ impl PackageDeployer for OutsideDeployer {
             return Err(DeployError::RequestKey(RequestKeyError::RequestKeyReused {
                 request_key: request_key.to_string(),
             }));
+        }
+        match target {
+            "template-required" => {
+                return Err(DeployError::ConfigTemplateRequired {
+                    target: target.to_string(),
+                });
+            }
+            "template-not-applicable" => {
+                return Err(DeployError::ConfigTemplateNotApplicable {
+                    target: target.to_string(),
+                });
+            }
+            "unknown-template" => {
+                return Err(DeployError::UnknownConfigTemplate {
+                    target: target.to_string(),
+                    config_template: config_template.unwrap_or_default(),
+                });
+            }
+            _ => {}
         }
         if target == "unservable" {
             return Err(DeployError::BuildNotServable {
@@ -137,6 +157,13 @@ impl PackageDeployer for OutsideDeployer {
 
     async fn latest_build(&self, _target: &str) -> Result<Option<BuildId>, anyhow::Error> {
         Ok(self.installed.clone())
+    }
+
+    async fn config_templates(
+        &self,
+        _target: &str,
+    ) -> Result<ConfigTemplateCatalog, anyhow::Error> {
+        Ok(outside_catalog())
     }
 
     async fn servable_builds(&self, _target: &str) -> Result<Vec<BuildId>, anyhow::Error> {
@@ -235,6 +262,69 @@ impl HostOnboarder for OutsideOnboarder {
     }
 }
 
+fn outside_catalog() -> ConfigTemplateCatalog {
+    ConfigTemplateCatalog {
+        required: true,
+        templates: vec![ConfigTemplateSummary {
+            id: "baseline".to_string(),
+            name: LocalizedText {
+                en: "Baseline".to_string(),
+                ko: "기본".to_string(),
+            },
+            description: LocalizedText {
+                en: "Baseline configuration".to_string(),
+                ko: "기본 설정".to_string(),
+            },
+        }],
+    }
+}
+
+#[tokio::test]
+async fn configuration_template_types_are_constructed_outside_the_crate() {
+    let deployer = deployer(None);
+    assert_eq!(
+        deployer.config_templates("reconverge").await.unwrap(),
+        outside_catalog()
+    );
+    for target in [
+        "template-required",
+        "template-not-applicable",
+        "unknown-template",
+    ] {
+        let error = deployer
+            .install(
+                "host1",
+                target,
+                BuildSelector::Version("0.1.0".to_string()),
+                FailurePolicy::Hold,
+                None,
+                Some("unknown-id".to_string()),
+                REQUEST_KEY,
+            )
+            .await
+            .unwrap_err();
+        match (target, error) {
+            ("template-required", DeployError::ConfigTemplateRequired { target }) => {
+                assert_eq!(target, "template-required");
+            }
+            ("template-not-applicable", DeployError::ConfigTemplateNotApplicable { target }) => {
+                assert_eq!(target, "template-not-applicable");
+            }
+            (
+                "unknown-template",
+                DeployError::UnknownConfigTemplate {
+                    target,
+                    config_template,
+                },
+            ) => {
+                assert_eq!(target, "unknown-template");
+                assert_eq!(config_template, "unknown-id");
+            }
+            (_, error) => panic!("unexpected variant: {error:?}"),
+        }
+    }
+}
+
 fn roxyd_build() -> BuildId {
     BuildId {
         version: ROXYD_VERSION.to_string(),
@@ -323,6 +413,8 @@ async fn an_outside_implementation_reports_an_absent_build_as_none() {
     );
 }
 
+// Keep the public deployment-error construction checks together.
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn every_named_variant_is_constructible_from_another_crate() {
     let deployer = deployer(None);
@@ -333,6 +425,7 @@ async fn every_named_variant_is_constructible_from_another_crate() {
             "occupied",
             BuildSelector::Version("0.1.0".to_string()),
             FailurePolicy::Rollback,
+            None,
             None,
             REQUEST_KEY,
         )
@@ -354,6 +447,7 @@ async fn every_named_variant_is_constructible_from_another_crate() {
                 listener_key: String::new(),
                 addr: "127.0.0.1:38370".parse().expect("a literal address"),
             }]),
+            None,
             REQUEST_KEY,
         )
         .await
@@ -371,6 +465,7 @@ async fn every_named_variant_is_constructible_from_another_crate() {
             BuildSelector::Version("0.1.0".to_string()),
             FailurePolicy::Hold,
             None,
+            None,
             "reused",
         )
         .await
@@ -384,6 +479,7 @@ async fn every_named_variant_is_constructible_from_another_crate() {
             "unservable",
             BuildSelector::Version("0.1.0".to_string()),
             FailurePolicy::Rollback,
+            None,
             None,
             REQUEST_KEY,
         )
@@ -442,6 +538,7 @@ async fn an_operation_pairs_its_disposition_with_its_identity() {
             "giganto",
             BuildSelector::Version("0.1.0".to_string()),
             FailurePolicy::Rollback,
+            None,
             None,
             REQUEST_KEY,
         )

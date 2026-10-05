@@ -1,6 +1,6 @@
-//! The immediate package-deployment and host-onboarding mutations, the query
-//! that lists the roxyd builds onboarding can name, and the query that lists
-//! the builds the store serves for a package.
+//! The immediate package-deployment and host-onboarding mutations and the
+//! queries that list the roxyd builds onboarding can name, the builds the
+//! store serves for a package, and its configuration templates.
 //!
 //! These are immediate actions and never ride the configuration draft: the
 //! resolver authorizes, validates the shape of what was submitted, makes one
@@ -33,9 +33,10 @@ use super::{
 };
 use crate::{
     backend::{
-        self, BindAddrInput as BackendBindAddrInput, BuildId, CORE_PACKAGE_IDS, DeployError,
-        HostOnboardingTicket as BackendHostOnboardingTicket, MODULE_PACKAGE_IDS, OperationId,
-        RunningRoxydBuild as BackendRunningRoxydBuild,
+        self, BindAddrInput as BackendBindAddrInput, BuildId, CORE_PACKAGE_IDS,
+        ConfigTemplateCatalog, ConfigTemplateSummary, DeployError,
+        HostOnboardingTicket as BackendHostOnboardingTicket, LocalizedText as BackendLocalizedText,
+        MODULE_PACKAGE_IDS, OperationId, RunningRoxydBuild as BackendRunningRoxydBuild,
     },
     info_with_username,
 };
@@ -136,6 +137,60 @@ impl From<BuildId> for StoreBuild {
         Self {
             version: build.version,
             commit: build.commit,
+        }
+    }
+}
+
+/// A target's requirement and configuration-template summaries.
+#[derive(SimpleObject)]
+pub(crate) struct ConfigTemplateList {
+    required: bool,
+    templates: Vec<ConfigTemplate>,
+}
+
+impl From<ConfigTemplateCatalog> for ConfigTemplateList {
+    fn from(catalog: ConfigTemplateCatalog) -> Self {
+        Self {
+            required: catalog.required,
+            templates: catalog
+                .templates
+                .into_iter()
+                .map(ConfigTemplate::from)
+                .collect(),
+        }
+    }
+}
+
+/// A named configuration template's metadata.
+#[derive(SimpleObject)]
+pub(crate) struct ConfigTemplate {
+    id: String,
+    name: LocalizedText,
+    description: LocalizedText,
+}
+
+impl From<ConfigTemplateSummary> for ConfigTemplate {
+    fn from(template: ConfigTemplateSummary) -> Self {
+        Self {
+            id: template.id,
+            name: template.name.into(),
+            description: template.description.into(),
+        }
+    }
+}
+
+/// Text in English and Korean.
+#[derive(SimpleObject)]
+pub(crate) struct LocalizedText {
+    en: String,
+    ko: String,
+}
+
+impl From<BackendLocalizedText> for LocalizedText {
+    fn from(text: BackendLocalizedText) -> Self {
+        Self {
+            en: text.en,
+            ko: text.ko,
         }
     }
 }
@@ -268,6 +323,25 @@ pub(crate) struct BuildNotServable {
     target: String,
 }
 
+/// The target requires a configuration template. Choose a template.
+#[derive(SimpleObject)]
+pub(crate) struct ConfigTemplateRequired {
+    target: String,
+}
+
+/// The target takes no configuration template. Drop the field.
+#[derive(SimpleObject)]
+pub(crate) struct ConfigTemplateNotApplicable {
+    target: String,
+}
+
+/// The id is absent from the target's catalog. Refresh the template list.
+#[derive(SimpleObject)]
+pub(crate) struct UnknownConfigTemplate {
+    target: String,
+    config_template: String,
+}
+
 /// What `installService` answers with.
 // Every other refusal — the guard, the per-host check, the class binding, a
 // malformed request key, a malformed selector, an unparseable bind address, a
@@ -284,6 +358,9 @@ pub(crate) enum InstallServiceResult {
     CleanupPending(CleanupPending),
     RollbackUnsupported(RollbackUnsupported),
     BuildNotServable(BuildNotServable),
+    ConfigTemplateRequired(ConfigTemplateRequired),
+    ConfigTemplateNotApplicable(ConfigTemplateNotApplicable),
+    UnknownConfigTemplate(UnknownConfigTemplate),
 }
 
 /// What `updateService` answers with.
@@ -544,6 +621,29 @@ impl OnboardingQuery {
         let builds = deployer.servable_builds(&package_id).await?;
         Ok(builds.into_iter().map(StoreBuild::from).collect())
     }
+
+    /// Returns the configuration templates for a module package-id.
+    ///
+    /// `required` means an install must name a template. `templates` is in
+    /// the catalog's declared order and may be empty; a required target with
+    /// an empty list cannot be installed yet. No template body is ever returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target is not a module package-id, the caller
+    /// may not list it, or the catalog could not be read.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    async fn config_templates(
+        &self,
+        ctx: &Context<'_>,
+        target: String,
+    ) -> Result<ConfigTemplateList> {
+        bind_package_class(&target, &MODULE_PACKAGE_IDS)?;
+        info_with_username!(ctx, "Configuration templates of {target} requested");
+        let deployer = ctx.data::<BoxedPackageDeployer>()?;
+        Ok(deployer.config_templates(&target).await?.into())
+    }
 }
 
 #[Object]
@@ -561,8 +661,12 @@ impl DeployMutation {
     ///
     /// `bindAddrs` is optional. Absent means "no listening addresses to set",
     /// which is every component review's catalog does not list.
+    ///
+    /// `configTemplate` names the first-install configuration template from
+    /// `configTemplates(target)`. Absent means none; review decides whether
+    /// the target requires one and whether the id exists.
     // The argument list is the mutation's published contract, so it is not a
-    // parameter count to reduce: folding the six into an input object would
+    // parameter count to reduce: folding the seven into an input object would
     // change the schema.
     #[allow(clippy::too_many_arguments)]
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
@@ -575,6 +679,7 @@ impl DeployMutation {
         build_selector: BuildSelectorInput,
         #[graphql(default_with = "FailurePolicy::Rollback")] on_failure: FailurePolicy,
         bind_addrs: Option<Vec<BindAddrInput>>,
+        config_template: Option<String>,
         request_key: String,
     ) -> Result<InstallServiceResult> {
         customer_access::check_hostname_access(ctx, &host)?;
@@ -599,6 +704,7 @@ impl DeployMutation {
                 selector,
                 on_failure.into(),
                 addrs,
+                config_template,
                 &request_key,
             )
             .await
@@ -652,6 +758,23 @@ impl DeployMutation {
                     target,
                 }))
             }
+            Err(DeployError::ConfigTemplateRequired { target }) => Ok(
+                InstallServiceResult::ConfigTemplateRequired(ConfigTemplateRequired { target }),
+            ),
+            Err(DeployError::ConfigTemplateNotApplicable { target }) => {
+                Ok(InstallServiceResult::ConfigTemplateNotApplicable(
+                    ConfigTemplateNotApplicable { target },
+                ))
+            }
+            Err(DeployError::UnknownConfigTemplate {
+                target,
+                config_template,
+            }) => Ok(InstallServiceResult::UnknownConfigTemplate(
+                UnknownConfigTemplate {
+                    target,
+                    config_template,
+                },
+            )),
             Err(e) => Err(e.into()),
         }
     }
@@ -881,9 +1004,10 @@ mod tests {
     use crate::{
         backend::{
             AgentManager, BindAddrInput as BackendBindAddrInput, BuildId, CORE_PACKAGE_IDS,
-            DeployError, DeployOutcome, HostOnboarder,
-            HostOnboardingTicket as BackendHostOnboardingTicket, JoinToken, MODULE_PACKAGE_IDS,
-            OperationId, PackageDeployer, RunningRoxydBuild as BackendRunningRoxydBuild,
+            ConfigTemplateCatalog, ConfigTemplateSummary, DeployError, DeployOutcome,
+            HostOnboarder, HostOnboardingTicket as BackendHostOnboardingTicket, JoinToken,
+            LocalizedText as BackendLocalizedText, MODULE_PACKAGE_IDS, OperationId,
+            PackageDeployer, RunningRoxydBuild as BackendRunningRoxydBuild,
         },
         graphql::{
             BoxedAgentManager, BoxedHostOnboarder, BoxedPackageDeployer, Mutation,
@@ -920,6 +1044,10 @@ mod tests {
     /// the variant's field would fail the assertion.
     const REUSED_KEY: &str = "cccccccc-dddd-4eee-8fff-000000000001";
 
+    /// Backend error fields deliberately distinct from every submitted value.
+    const TEMPLATE_TARGET: &str = "backend-template-target";
+    const UNKNOWN_TEMPLATE: &str = "backend-unknown-template";
+
     /// The target a `BuildNotServable` refusal carries. It is deliberately not
     /// a target any test submits, so a resolver that rendered its own argument
     /// instead of the variant's field would fail the assertion.
@@ -947,6 +1075,7 @@ mod tests {
         selector: BuildSelector,
         on_failure: BackendFailurePolicy,
         bind_addrs: Option<Vec<BackendBindAddrInput>>,
+        config_template: Option<String>,
         request_key: String,
     }
 
@@ -974,9 +1103,15 @@ mod tests {
         removes: Mutex<Vec<RemoveCall>>,
         /// The package-ids `servable_builds` was asked about, in order.
         servable_builds: Mutex<Vec<String>>,
+        /// The package-ids `config_templates` was asked about, in order.
+        config_templates: Mutex<Vec<String>>,
     }
 
     impl Calls {
+        fn config_templates(&self) -> Vec<String> {
+            self.config_templates.lock().unwrap().clone()
+        }
+
         fn servable_builds(&self) -> Vec<String> {
             self.servable_builds.lock().unwrap().clone()
         }
@@ -1030,6 +1165,9 @@ mod tests {
         RequestKeyRead,
         CleanupPending(Option<u32>),
         BuildNotServable,
+        ConfigTemplateRequired,
+        ConfigTemplateNotApplicable,
+        UnknownConfigTemplate,
         Other,
     }
 
@@ -1078,6 +1216,16 @@ mod tests {
                 Self::BuildNotServable => DeployError::BuildNotServable {
                     target: UNSERVABLE_TARGET.to_string(),
                 },
+                Self::ConfigTemplateRequired => DeployError::ConfigTemplateRequired {
+                    target: TEMPLATE_TARGET.to_string(),
+                },
+                Self::ConfigTemplateNotApplicable => DeployError::ConfigTemplateNotApplicable {
+                    target: TEMPLATE_TARGET.to_string(),
+                },
+                Self::UnknownConfigTemplate => DeployError::UnknownConfigTemplate {
+                    target: TEMPLATE_TARGET.to_string(),
+                    config_template: UNKNOWN_TEMPLATE.to_string(),
+                },
                 Self::Other => {
                     DeployError::Other(anyhow::anyhow!("review answered something unmodelled"))
                 }
@@ -1105,15 +1253,20 @@ mod tests {
         Fail,
     }
 
-    /// Records every deployment call and `servable_builds` lookup, and answers
-    /// from a fixed script.
+    /// What the stub answers `config_templates` with.
+    enum ConfigTemplatesAnswer {
+        Catalog(ConfigTemplateCatalog),
+        Fail,
+    }
+
+    /// Records deployment and catalog lookups and answers from a fixed script.
     ///
-    /// The other read methods panic: a test that reaches one is testing
-    /// something this module does not do.
+    /// The other read methods panic when a test reaches them.
     struct RecordingDeployer {
         calls: Arc<Calls>,
         answer: Answer,
         store_builds: StoreBuildsAnswer,
+        config_templates: ConfigTemplatesAnswer,
     }
 
     impl RecordingDeployer {
@@ -1130,6 +1283,23 @@ mod tests {
                 calls: Arc::clone(&calls),
                 answer,
                 store_builds,
+                config_templates: ConfigTemplatesAnswer::Catalog(ConfigTemplateCatalog {
+                    required: false,
+                    templates: vec![],
+                }),
+            };
+            (Box::new(deployer), calls)
+        }
+
+        fn with_templates(
+            config_templates: ConfigTemplatesAnswer,
+        ) -> (Box<dyn PackageDeployer>, Arc<Calls>) {
+            let calls = Arc::<Calls>::default();
+            let deployer = Self {
+                calls: Arc::clone(&calls),
+                answer: Answer::Succeed(DeployOutcome::Applied),
+                store_builds: StoreBuildsAnswer::List(vec![]),
+                config_templates,
             };
             (Box::new(deployer), calls)
         }
@@ -1171,6 +1341,7 @@ mod tests {
             selector: BuildSelector,
             on_failure: BackendFailurePolicy,
             bind_addrs: Option<Vec<BackendBindAddrInput>>,
+            config_template: Option<String>,
             request_key: &str,
         ) -> Result<(DeployOutcome, OperationId), DeployError> {
             self.calls.installs.lock().unwrap().push(InstallCall {
@@ -1179,6 +1350,7 @@ mod tests {
                 selector,
                 on_failure,
                 bind_addrs,
+                config_template,
                 request_key: request_key.to_string(),
             });
             self.answer_with(request_key)
@@ -1222,11 +1394,11 @@ mod tests {
             _host: &str,
             _target: &str,
         ) -> Result<Vec<ListenerBinding>, DeployError> {
-            unimplemented!("this stub answers the deployment calls and servable_builds only")
+            unimplemented!("this stub answers deployment calls and catalog lookups only")
         }
 
         async fn latest_build(&self, _target: &str) -> Result<Option<BuildId>, anyhow::Error> {
-            unimplemented!("this stub answers the deployment calls and servable_builds only")
+            unimplemented!("this stub answers deployment calls and catalog lookups only")
         }
 
         async fn is_build_withdrawn(
@@ -1234,7 +1406,24 @@ mod tests {
             _target: &str,
             _build: &BuildId,
         ) -> Result<bool, anyhow::Error> {
-            unimplemented!("this stub answers the deployment calls and servable_builds only")
+            unimplemented!("this stub answers deployment calls and catalog lookups only")
+        }
+
+        async fn config_templates(
+            &self,
+            target: &str,
+        ) -> Result<ConfigTemplateCatalog, anyhow::Error> {
+            self.calls
+                .config_templates
+                .lock()
+                .unwrap()
+                .push(target.to_string());
+            match &self.config_templates {
+                ConfigTemplatesAnswer::Catalog(catalog) => Ok(catalog.clone()),
+                ConfigTemplatesAnswer::Fail => {
+                    anyhow::bail!("configuration template catalog could not be read")
+                }
+            }
         }
 
         async fn servable_builds(&self, target: &str) -> Result<Vec<BuildId>, anyhow::Error> {
@@ -1257,7 +1446,7 @@ mod tests {
             _target: &str,
             _instance: Option<u32>,
         ) -> Result<PackageState, anyhow::Error> {
-            unimplemented!("this stub answers the deployment calls and servable_builds only")
+            unimplemented!("this stub answers deployment calls and catalog lookups only")
         }
 
         async fn read_version(
@@ -1266,7 +1455,7 @@ mod tests {
             _target: &str,
             _instance: Option<u32>,
         ) -> Result<Option<BuildId>, anyhow::Error> {
-            unimplemented!("this stub answers the deployment calls and servable_builds only")
+            unimplemented!("this stub answers deployment calls and catalog lookups only")
         }
 
         async fn register(
@@ -1276,7 +1465,7 @@ mod tests {
             _instance: Option<u32>,
             _mode: DeliveryMode,
         ) -> Result<BootstrapMaterial, anyhow::Error> {
-            unimplemented!("this stub answers the deployment calls and servable_builds only")
+            unimplemented!("this stub answers deployment calls and catalog lookups only")
         }
 
         async fn deregister(
@@ -1285,7 +1474,7 @@ mod tests {
             _host: &str,
             _instance: Option<u32>,
         ) -> Result<(), anyhow::Error> {
-            unimplemented!("this stub answers the deployment calls and servable_builds only")
+            unimplemented!("this stub answers deployment calls and catalog lookups only")
         }
     }
 
@@ -1590,7 +1779,10 @@ mod tests {
         ... on RequestKeyReused { requestKey }
         ... on CleanupPending { host target instance operationId }
         ... on RollbackUnsupported { host capability }
-        ... on BuildNotServable { target }";
+        ... on BuildNotServable { target }
+        ... on ConfigTemplateRequired { target }
+        ... on ConfigTemplateNotApplicable { target }
+        ... on UnknownConfigTemplate { target configTemplate }";
 
     const UPDATE_SELECTION: &str = "__typename
         ... on UpdateServiceSuccess { operationId disposition }
@@ -2133,6 +2325,313 @@ mod tests {
                 version: version.to_string(),
                 commit: commit.to_string(),
             },
+        }
+    }
+
+    fn config_templates_query(target: &str) -> String {
+        format!(
+            r#"{{ configTemplates(target: "{target}") {{ required templates {{ id name {{ en ko }} description {{ en ko }} }} }} }}"#
+        )
+    }
+
+    fn template_summary(id: &str) -> ConfigTemplateSummary {
+        ConfigTemplateSummary {
+            id: id.to_string(),
+            name: BackendLocalizedText {
+                en: format!("Name {id}"),
+                ko: format!("이름 {id}"),
+            },
+            description: BackendLocalizedText {
+                en: format!("Description {id}"),
+                ko: format!("설명 {id}"),
+            },
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn config_templates_returns_the_catalog_unchanged() {
+        // Repeated ids and non-alphabetical order must survive the boundary.
+        for (required, ids) in [(true, vec!["z", "a", "z"]), (true, vec![]), (false, vec![])] {
+            let catalog = ConfigTemplateCatalog {
+                required,
+                templates: ids.iter().map(|id| template_summary(id)).collect(),
+            };
+            let expected: Vec<_> = ids.iter().map(|id| json!({
+                "id": id,
+                "name": { "en": format!("Name {id}"), "ko": format!("이름 {id}") },
+                "description": { "en": format!("Description {id}"), "ko": format!("설명 {id}") },
+            })).collect();
+            let (deployer, calls) =
+                RecordingDeployer::with_templates(ConfigTemplatesAnswer::Catalog(catalog));
+            let (onboarder, _) =
+                RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::List(vec![]));
+            let schema = schema_without_store(deployer, onboarder);
+            let (response, logs) = capturing_logs(execute_without_store(
+                &schema,
+                &config_templates_query("reconverge"),
+            ))
+            .await;
+            assert!(response.errors.is_empty(), "{:?}", response.errors);
+            assert_json_eq!(
+                response.data.into_json().unwrap(),
+                json!({
+                    "configTemplates": { "required": required, "templates": expected }
+                })
+            );
+            assert_eq!(calls.config_templates(), vec!["reconverge"]);
+            assert_eq!(calls.total(), 0);
+            assert!(
+                logs.contains("Configuration templates of reconverge requested"),
+                "{logs}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_config_template_read_is_an_ordinary_graphql_error() {
+        let (deployer, calls) = RecordingDeployer::with_templates(ConfigTemplatesAnswer::Fail);
+        let schema = TestSchema::new().await;
+        let response = schema
+            .execute_as_system_admin_with_data(
+                &config_templates_query("reconverge"),
+                deployer as BoxedPackageDeployer,
+            )
+            .await;
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(
+            response.errors[0].message,
+            "configuration template catalog could not be read"
+        );
+        assert_eq!(response.data, async_graphql::Value::Null);
+        assert_eq!(calls.config_templates(), vec!["reconverge"]);
+        assert_eq!(calls.total(), 0);
+    }
+
+    #[tokio::test]
+    async fn config_templates_binds_roles_and_module_package_ids_before_the_backend() {
+        let schema = TestSchema::new().await;
+        for role in [
+            Role::SystemAdministrator,
+            Role::SecurityAdministrator,
+            Role::SecurityManager,
+            Role::SecurityMonitor,
+        ] {
+            for target in MODULE_PACKAGE_IDS
+                .into_iter()
+                .chain(CORE_PACKAGE_IDS)
+                .chain(["bootroot", "unknown-package"])
+            {
+                let (deployer, calls) = RecordingDeployer::applying();
+                let response = schema
+                    .execute_with_guard_and_data(
+                        &config_templates_query(target),
+                        RoleGuard::Role(role),
+                        deployer as BoxedPackageDeployer,
+                    )
+                    .await;
+                if matches!(role, Role::SecurityManager | Role::SecurityMonitor) {
+                    assert_eq!(response.errors.len(), 1, "{role:?} {target}");
+                    assert_eq!(response.errors[0].message, "Forbidden");
+                    assert_eq!(response.data, async_graphql::Value::Null);
+                    assert_eq!(calls.config_templates(), Vec::<String>::new());
+                } else if MODULE_PACKAGE_IDS.contains(&target) {
+                    assert!(
+                        response.errors.is_empty(),
+                        "{role:?} {target}: {:?}",
+                        response.errors
+                    );
+                    assert_eq!(calls.config_templates(), vec![target]);
+                } else {
+                    assert_eq!(response.errors.len(), 1, "{role:?} {target}");
+                    assert_eq!(
+                        response.errors[0].message,
+                        format!("{target} is not one of the package-ids this operation accepts")
+                    );
+                    assert_eq!(response.data, async_graphql::Value::Null);
+                    assert_eq!(calls.config_templates(), Vec::<String>::new());
+                }
+                assert_eq!(calls.total(), 0);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_customer_scoped_administrator_can_read_config_templates() {
+        let (deployer, calls) = RecordingDeployer::applying();
+        let schema = TestSchema::new().await;
+        let response = schema
+            .execute_as_scoped_user_with_data(
+                &config_templates_query("reconverge"),
+                Role::SecurityAdministrator,
+                Some(vec![1]),
+                deployer as BoxedPackageDeployer,
+            )
+            .await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        assert_eq!(calls.config_templates(), vec!["reconverge"]);
+        assert_eq!(calls.total(), 0);
+    }
+
+    #[tokio::test]
+    async fn install_passes_config_template_byte_for_byte() {
+        let schema = TestSchema::new().await;
+        for target in ["reconverge", "giganto"] {
+            for (argument, expected) in [
+                (
+                    r#", configTemplate: "  baseline-ü ""#,
+                    Some("  baseline-ü "),
+                ),
+                (r#", configTemplate: """#, Some("")),
+                ("", None),
+                (", configTemplate: null", None),
+            ] {
+                let (deployer, calls) = RecordingDeployer::applying();
+                let args = format!(
+                    r#"{}{argument}, bindAddrs: [{{listenerKey: "ingest", addr: "127.0.0.1:38370"}}]"#,
+                    install_args(target)
+                );
+                let response = schema
+                    .execute_as_system_admin_with_data(
+                        &install_mutation(&args),
+                        deployer as BoxedPackageDeployer,
+                    )
+                    .await;
+                assert!(response.errors.is_empty(), "{args}: {:?}", response.errors);
+                assert_eq!(calls.total(), 1);
+                let call = calls.only_install();
+                assert_eq!(call.config_template.as_deref(), expected);
+                assert_eq!(call.request_key, REQUEST_KEY);
+                assert_eq!(
+                    call.bind_addrs,
+                    Some(vec![BackendBindAddrInput {
+                        listener_key: "ingest".to_string(),
+                        addr: "127.0.0.1:38370".parse().unwrap()
+                    }])
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn config_template_preserves_pre_backend_refusals() {
+        let schema = TestSchema::new().await;
+        let valid = install_args("giganto");
+        for (args, message) in [
+            (
+                install_args("roxyd"),
+                "roxyd is not one of the package-ids this operation accepts".to_string(),
+            ),
+            (
+                valid.replace(REQUEST_KEY, "malformed"),
+                malformed_message("malformed"),
+            ),
+            (
+                valid.replace(r#"{version: "0.1.0"}"#, "{}"),
+                "buildSelector sets neither version nor commit; exactly one is required"
+                    .to_string(),
+            ),
+            (
+                format!(r#"{valid}, bindAddrs: [{{listenerKey: "ingest", addr: "invalid"}}]"#),
+                "parsing the bind address invalid".to_string(),
+            ),
+        ] {
+            let (deployer, calls) = RecordingDeployer::applying();
+            let query = install_mutation(&format!(r#"{args}, configTemplate: "  ü ""#));
+            let response = schema
+                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .await;
+            assert_eq!(response.errors.len(), 1, "{query}");
+            assert_eq!(response.errors[0].message, message, "{query}");
+            assert_eq!(calls.total(), 0);
+        }
+        let query = install_mutation(&format!(r#"{valid}, configTemplate: """#));
+        let (deployer, calls) = RecordingDeployer::applying();
+        let response = schema
+            .execute_with_guard_and_data(
+                &query,
+                RoleGuard::Role(Role::SecurityMonitor),
+                deployer as BoxedPackageDeployer,
+            )
+            .await;
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(response.errors[0].message, "Forbidden");
+        assert_eq!(calls.total(), 0);
+
+        let (deployer, calls) = RecordingDeployer::applying();
+        let response = schema
+            .execute_as_scoped_user_with_data(
+                &query,
+                Role::SecurityAdministrator,
+                Some(vec![1]),
+                deployer as BoxedPackageDeployer,
+            )
+            .await;
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(response.errors[0].message, "Forbidden");
+        assert_eq!(calls.total(), 0);
+
+        let (schema, reads) = schema_advertising(Advertised::Tags(&[])).await;
+        let (deployer, calls) = RecordingDeployer::applying();
+        let response = schema
+            .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+            .await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        assert_eq!(
+            response.data.into_json().unwrap()["installService"]["__typename"],
+            "RollbackUnsupported"
+        );
+        assert_eq!(reads.hosts(), vec!["host1"]);
+        assert_eq!(calls.total(), 0);
+    }
+
+    #[tokio::test]
+    async fn config_template_refusals_are_install_members_only() {
+        let schema = TestSchema::new().await;
+        for (failure, expected) in [
+            (
+                Failure::ConfigTemplateRequired,
+                json!({"__typename": "ConfigTemplateRequired", "target": TEMPLATE_TARGET}),
+            ),
+            (
+                Failure::ConfigTemplateNotApplicable,
+                json!({"__typename": "ConfigTemplateNotApplicable", "target": TEMPLATE_TARGET}),
+            ),
+            (
+                Failure::UnknownConfigTemplate,
+                json!({"__typename": "UnknownConfigTemplate", "target": TEMPLATE_TARGET, "configTemplate": UNKNOWN_TEMPLATE}),
+            ),
+        ] {
+            let (deployer, calls) = RecordingDeployer::boxed(Answer::Fail(failure));
+            let args = format!(
+                r#"{}, configTemplate: "submitted-template""#,
+                install_args("giganto")
+            );
+            let response = schema
+                .execute_as_system_admin_with_data(
+                    &install_mutation(&args),
+                    deployer as BoxedPackageDeployer,
+                )
+                .await;
+            assert!(response.errors.is_empty(), "{:?}", response.errors);
+            assert_json_eq!(
+                response.data.into_json().unwrap()["installService"].clone(),
+                expected
+            );
+            assert_eq!(calls.total(), 1);
+            for query in [
+                update_mutation(&update_args("giganto")),
+                remove_mutation(&remove_args("giganto")),
+                core_update_mutation(&core_update_args("review", "control-host")),
+            ] {
+                let (deployer, calls) = RecordingDeployer::boxed(Answer::Fail(failure));
+                let response = schema
+                    .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                    .await;
+                assert_eq!(response.errors.len(), 1, "{query}");
+                assert_eq!(response.errors[0].message, failure.error().to_string());
+                assert_eq!(response.data, async_graphql::Value::Null);
+                assert_eq!(calls.total(), 1);
+            }
         }
     }
 
@@ -3837,7 +4336,7 @@ mod tests {
             install,
             "installService(host: String!, target: String!, buildSelector: BuildSelectorInput!, \
              onFailure: FailurePolicy! = ROLLBACK, bindAddrs: [BindAddrInput!], \
-             requestKey: String!): InstallServiceResult!"
+             configTemplate: String, requestKey: String!): InstallServiceResult!"
         );
         assert!(!install.contains("instance"), "{install}");
 
@@ -3888,6 +4387,37 @@ mod tests {
         let sdl = rendered_sdl();
 
         assert_eq!(
+            sdl_line(&sdl, "configTemplates("),
+            "configTemplates(target: String!): ConfigTemplateList!"
+        );
+        for (header, fields) in [
+            (
+                "type ConfigTemplateList {",
+                vec!["required: Boolean!", "templates: [ConfigTemplate!]!"],
+            ),
+            (
+                "type ConfigTemplate {",
+                vec![
+                    "id: String!",
+                    "name: LocalizedText!",
+                    "description: LocalizedText!",
+                ],
+            ),
+            ("type LocalizedText {", vec!["en: String!", "ko: String!"]),
+            ("type ConfigTemplateRequired {", vec!["target: String!"]),
+            (
+                "type ConfigTemplateNotApplicable {",
+                vec!["target: String!"],
+            ),
+            (
+                "type UnknownConfigTemplate {",
+                vec!["target: String!", "configTemplate: String!"],
+            ),
+        ] {
+            assert_eq!(sdl_block_fields(&sdl, header), fields, "{header}");
+        }
+
+        assert_eq!(
             sdl_line(&sdl, "runningRoxydBuilds"),
             "runningRoxydBuilds: [RunningRoxydBuild!]!"
         );
@@ -3917,7 +4447,8 @@ mod tests {
             sdl_line(&sdl, "union InstallServiceResult"),
             "union InstallServiceResult = InstallServiceSuccess | PortAllocationConflict | \
              HostPortOccupied | HostOccupancyUnavailable | RequestKeyReused | CleanupPending | \
-             RollbackUnsupported | BuildNotServable"
+             RollbackUnsupported | BuildNotServable | ConfigTemplateRequired | \
+             ConfigTemplateNotApplicable | UnknownConfigTemplate"
         );
         assert_eq!(
             sdl_line(&sdl, "union UpdateServiceResult"),

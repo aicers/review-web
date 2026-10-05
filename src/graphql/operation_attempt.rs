@@ -539,6 +539,7 @@ mod tests {
             target: target.to_string(),
             instance,
             action,
+            config_template: None,
             // The ledger admits a digest under `INSTALL` and refuses one under
             // every other action, so this follows the action rather than being
             // a parameter of its own.
