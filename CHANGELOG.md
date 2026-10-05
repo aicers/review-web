@@ -4,7 +4,7 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.37.0] - 2026-10-06
 
 ### Added
 
@@ -42,15 +42,26 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Bumped `review-protocol` dependency to 0.21.0. The new version carries the
   configuration template id on a node package install request and adds the
   two install refusals for it.
-- `AgentManager` now uses review-protocol's `ResourceUsage` type.
-- The Manager's own host's resource usage and ping are read through
-  `AgentManager` like any other host.
-- `nodeReboot` and `nodeShutdown` no longer refuse the host the Manager runs on.
+- `AgentManager::get_resource_usage` now returns review-protocol's
+  `ResourceUsage` in place of roxy's, and the `ResourceUsage` that `backend`
+  and `graphql` re-export is now review-protocol's type. This is a breaking
+  API change for callers that implement `AgentManager`.
+- `nodeStatusList` now reads the resource usage and ping of the host the
+  Manager runs on through `AgentManager`, as for every other host, instead
+  of measuring the usage locally and reporting a ping of 0. When
+  `AgentManager` cannot answer for that host, its usage fields and `ping`
+  are null. An `AgentManager` implementation now receives
+  `get_resource_usage` and `ping` calls for the Manager's own hostname.
+- `nodeReboot` and `nodeShutdown` no longer refuse the host the Manager runs
+  on; the request goes to `AgentManager::reboot` or `AgentManager::halt` as
+  for any other host.
 
 ### Removed
 
-- The `processList` GraphQL query.
-- The `AgentManager::get_process_list` method and the `Process` type re-exports.
+- The `processList` GraphQL query and its `Process` type.
+- The `AgentManager::get_process_list` method and the `Process` type
+  re-exports. This is a breaking API change for callers that implement
+  `AgentManager`.
 
 ## [0.36.0] - 2026-10-05
 
@@ -2016,7 +2027,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
-[Unreleased]: https://github.com/aicers/review-web/compare/0.36.0...main
+[0.37.0]: https://github.com/aicers/review-web/compare/0.36.0...0.37.0
 [0.36.0]: https://github.com/aicers/review-web/compare/0.35.0...0.36.0
 [0.35.0]: https://github.com/aicers/review-web/compare/0.34.0...0.35.0
 [0.34.0]: https://github.com/aicers/review-web/compare/0.33.0...0.34.0
