@@ -8,6 +8,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- **Breaking change:** `ServerConfig.document_root`, `client_cert_path` and
+  `client_key_path` are now available only in `auth-jwt` builds. Embedders must
+  pass these fields only when `auth-jwt` is enabled. `auth-mtls` builds no
+  longer serve static files; requests to unmatched routes return 404.
 - `eventFrequencySeries` now requires explicit, non-null `filter.start` and
   `filter.end` and rejects requests exceeding 10,000 buckets before reading
   events. Calls that omitted bounds must provide both; calls exceeding the
@@ -124,10 +128,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
-- **Breaking change:** `ServerConfig.document_root`, `client_cert_path` and
-  `client_key_path` are now available only in `auth-jwt` builds. Embedders must
-  pass these fields only when `auth-jwt` is enabled. `auth-mtls` builds no
-  longer serve static files; requests to unmatched routes return 404.
 - Added the required `servable_builds` method to the public `PackageDeployer`
   trait. It returns every build the store would resolve for a package-id
   through a build selector, ordered newest-accepted first so that its first
