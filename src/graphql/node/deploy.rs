@@ -3991,6 +3991,8 @@ mod tests {
             assert_eq!(call.host, "join-host", "{component}");
             assert_eq!(call.target, component);
             assert_eq!(call.instance, None, "{component}");
+            // Release database file descriptors before opening the next schema.
+            drop(schema);
 
             let (deployer, calls) = RecordingDeployer::applying();
             let schema = TestSchema::new().await;
@@ -4004,6 +4006,7 @@ mod tests {
             assert_eq!(response.errors.len(), 1, "{component}");
             assert_eq!(response.errors[0].message, "Forbidden", "{component}");
             assert_eq!(calls.total(), 0, "{component}");
+            drop(schema);
 
             let (deployer, calls) = RecordingDeployer::applying();
             let (schema, reads) = schema_advertising(Advertised::Tags(&[NODE_PACKAGE])).await;
