@@ -6,6 +6,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- Added the `deleteCustomerData` GraphQL mutation for system administrators in
+  mTLS deployments, with persisted per-service progress, failed-service retries,
+  startup recovery, and shutdown waiting for customer data deletion.
+
 ### Changed
 
 - **Breaking change:** `ServerConfig.document_root`, `client_cert_path` and

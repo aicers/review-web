@@ -2531,6 +2531,8 @@ mod tests {
             Arc::new(StubCertManager),
             Arc::new(Notify::new()),
             crate::maintenance::MaintenanceGate::new(),
+            #[cfg(feature = "auth-mtls")]
+            Arc::new(crate::customer_data_deletion::CustomerDataDeletionTaskManager::default()),
         );
 
         let res = schema

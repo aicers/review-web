@@ -7,7 +7,7 @@ use itertools::Itertools;
 use review_database::{self as database};
 use tracing::info;
 
-use super::{BoxedAgentManager, Role, RoleGuard};
+use super::{Role, RoleGuard, SharedAgentManager};
 use crate::info_with_username;
 
 #[derive(Default)]
@@ -129,7 +129,7 @@ impl TrafficFilterMutation {
         ctx: &Context<'_>,
         host_fqdns: Vec<String>,
     ) -> Result<Vec<String>> {
-        let agent_manager = ctx.data::<BoxedAgentManager>()?;
+        let agent_manager = ctx.data::<SharedAgentManager>()?;
         let mut res = Vec::new();
         for host_fqdn in &host_fqdns {
             let rules = {

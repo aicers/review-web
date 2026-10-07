@@ -7,7 +7,7 @@ use review_database::AgentStatus;
 use tracing::{error, info, warn};
 
 use super::{
-    super::{BoxedAgentManager, Role, RoleGuard, customer_access},
+    super::{Role, RoleGuard, SharedAgentManager, customer_access},
     Node, NodeControlMutation, SEMI_SUPERVISED_AGENT, gen_agent_lookup_key,
 };
 use crate::graphql::{
@@ -101,7 +101,7 @@ impl NodeControlMutation {
     async fn node_reboot(&self, ctx: &Context<'_>, hostname: String) -> Result<String> {
         customer_access::check_hostname_access(ctx, &hostname)?;
 
-        let agents = ctx.data::<BoxedAgentManager>()?;
+        let agents = ctx.data::<SharedAgentManager>()?;
         info_with_username!(ctx, "Reboot request sent to {hostname}");
         agents.reboot(&hostname).await?;
         update_agent_status_to_unknown(ctx, &hostname);
@@ -113,7 +113,7 @@ impl NodeControlMutation {
     async fn node_shutdown(&self, ctx: &Context<'_>, hostname: String) -> Result<String> {
         customer_access::check_hostname_access(ctx, &hostname)?;
 
-        let agents = ctx.data::<BoxedAgentManager>()?;
+        let agents = ctx.data::<SharedAgentManager>()?;
         info_with_username!(ctx, "Shutdown request sent to {hostname}");
         agents.halt(&hostname).await?;
         update_agent_status_to_unknown(ctx, &hostname);
@@ -198,7 +198,7 @@ impl NodeControlMutation {
                     "Node ID {i} - Node's agents are not notified because the hostname is empty.",
                 );
             } else {
-                let agent_manager = ctx.data::<BoxedAgentManager>()?;
+                let agent_manager = ctx.data::<SharedAgentManager>()?;
                 if let Err(e) = notify_agents(
                     agent_manager,
                     hostname.as_str(),
@@ -361,7 +361,7 @@ impl NodeControlMutation {
             }
         };
 
-        let agent_manager = ctx.data::<BoxedAgentManager>()?;
+        let agent_manager = ctx.data::<SharedAgentManager>()?;
         let mut attempts = Vec::new();
         let mut skipped = Vec::new();
 
@@ -428,7 +428,7 @@ impl<'a> ApplyTarget<'a> {
 }
 
 async fn notify_agents(
-    agent_manager: &BoxedAgentManager,
+    agent_manager: &SharedAgentManager,
     hostname: &str,
     update_agent_keys: &[&str],
     disable_agent_keys: &[&str],
@@ -633,7 +633,7 @@ mod tests {
         node_input, put_node, stored_node, update_account_customers,
     };
     use crate::graphql::{
-        AgentManager, BoxedAgentManager, Role, SamplingPolicy, TestSchema,
+        AgentManager, Role, SamplingPolicy, SharedAgentManager, TestSchema,
         customer::NetworksTargetAgentLookupKeysPair, gen_agent_lookup_key,
     };
 
@@ -644,7 +644,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn test_apply_node() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![
                 test_agent_lookup_key("unsupervised", "all-in-one"),
@@ -2067,7 +2067,7 @@ mod tests {
         // This test ensures that the `applyNode` GraphQL API doesn't notify agents when the agent's
         // draft is empty. `FailingMockAgentManager` is designed to fail if notifications are
         // triggered, so we can confirm no notifications occur if the test passes.
-        let agent_manager: BoxedAgentManager = Box::new(FailingMockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(FailingMockAgentManager {
             online_apps_by_host_id: HashMap::new(),
         });
 
@@ -2211,7 +2211,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_node_error_due_to_invalid_drafts() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![
                 test_agent_lookup_key("unsupervised", "all-in-one"),
@@ -2302,7 +2302,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_node_error_due_to_different_node_input() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![
                 test_agent_lookup_key("unsupervised", "all-in-one"),
@@ -2384,7 +2384,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_node_empty_hostname() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![
                 test_agent_lookup_key("unsupervised", "all-in-one"),
@@ -2467,7 +2467,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn test_apply_node_external_service_removal() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![test_agent_lookup_key("unsupervised", "all-in-one")],
         });
@@ -2653,7 +2653,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_node_with_agent_manager_failures() {
-        let agent_manager: BoxedAgentManager = Box::new(FailingMockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(FailingMockAgentManager {
             online_apps_by_host_id: HashMap::new(),
         });
 
@@ -2736,6 +2736,14 @@ mod tests {
 
     #[async_trait]
     impl AgentManager for MockAgentManager {
+        #[cfg(feature = "auth-mtls")]
+        async fn request_customer_data_deletion(
+            &self,
+            _targets: &[crate::customer_data_deletion::CustomerDataDeletionTarget],
+        ) -> Result<(), anyhow::Error> {
+            unimplemented!()
+        }
+
         async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
             anyhow::bail!("not expected to be called")
         }
@@ -2832,6 +2840,14 @@ mod tests {
 
     #[async_trait]
     impl AgentManager for FailingMockAgentManager {
+        #[cfg(feature = "auth-mtls")]
+        async fn request_customer_data_deletion(
+            &self,
+            _targets: &[crate::customer_data_deletion::CustomerDataDeletionTarget],
+        ) -> Result<(), anyhow::Error> {
+            unimplemented!()
+        }
+
         async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
             anyhow::bail!("not expected to be called")
         }
@@ -2923,7 +2939,7 @@ mod tests {
             &mut online_apps_by_host_id,
         );
 
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id,
             available_agents: vec![test_agent_lookup_key("semi-supervised", "analysis")],
         });
@@ -3014,7 +3030,7 @@ mod tests {
             &mut online_apps_by_host_id,
         );
 
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id,
             available_agents: vec![test_agent_lookup_key("semi-supervised", "analysis")],
         });
@@ -3105,7 +3121,7 @@ mod tests {
             &mut online_apps_by_host_id,
         );
 
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id,
             available_agents: vec![test_agent_lookup_key("semi-supervised", "host-customer-1")],
         });
@@ -3139,7 +3155,7 @@ mod tests {
             &mut online_apps_by_host_id,
         );
 
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id,
             available_agents: vec![test_agent_lookup_key("semi-supervised", "host-customer-2")],
         });
@@ -3163,7 +3179,7 @@ mod tests {
 
     #[tokio::test]
     async fn node_reboot_customer_scoping_admin_allowed() {
-        let agent_manager: BoxedAgentManager = Box::new(FailingMockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(FailingMockAgentManager {
             online_apps_by_host_id: HashMap::new(),
         });
 
@@ -3182,7 +3198,7 @@ mod tests {
 
     #[tokio::test]
     async fn node_reboot_manager_hostname_reaches_agent_manager() {
-        let agent_manager: BoxedAgentManager = Box::new(FailingMockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(FailingMockAgentManager {
             online_apps_by_host_id: HashMap::new(),
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -3200,7 +3216,7 @@ mod tests {
 
     #[tokio::test]
     async fn node_shutdown_manager_hostname_reaches_agent_manager() {
-        let agent_manager: BoxedAgentManager = Box::new(FailingMockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(FailingMockAgentManager {
             online_apps_by_host_id: HashMap::new(),
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -3222,7 +3238,7 @@ mod tests {
         assert_ne!(hostname, "");
 
         for operation in ["nodeReboot", "nodeShutdown"] {
-            let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+            let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
                 online_apps_by_host_id: HashMap::new(),
                 available_agents: vec![],
             });
@@ -3283,7 +3299,7 @@ mod tests {
 
     #[tokio::test]
     async fn node_reboot_customer_scoping_allowed() {
-        let agent_manager: BoxedAgentManager = Box::new(FailingMockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(FailingMockAgentManager {
             online_apps_by_host_id: HashMap::new(),
         });
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
@@ -3312,7 +3328,7 @@ mod tests {
             &mut online_apps_by_host_id,
         );
 
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id,
             available_agents: vec![test_agent_lookup_key("semi-supervised", "host-customer-2")],
         });
@@ -3336,7 +3352,7 @@ mod tests {
 
     #[tokio::test]
     async fn apply_node_customer_scoping_admin_allowed() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
@@ -3389,7 +3405,7 @@ mod tests {
 
     #[tokio::test]
     async fn apply_node_customer_scoping_allowed() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
@@ -3445,7 +3461,7 @@ mod tests {
 
     #[tokio::test]
     async fn apply_node_customer_scoping_forbidden() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
@@ -3497,7 +3513,7 @@ mod tests {
 
     #[tokio::test]
     async fn apply_node_customer_scoping_profile_draft_customer_change_forbidden() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
@@ -3623,7 +3639,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_node_draft_db_only() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![test_agent_lookup_key("unsupervised", "all-in-one")],
         });
@@ -3711,7 +3727,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_node_draft_missing_name_draft_errors() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
@@ -3779,7 +3795,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_node_draft_customer_change() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
@@ -3867,7 +3883,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_node_draft_no_op_short_circuit() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
@@ -3954,7 +3970,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_agent_config_null_keys_mixed_states() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![
                 test_agent_lookup_key("unsupervised", "mixed"),
@@ -4015,7 +4031,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_agent_config_explicit_subset() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![
                 test_agent_lookup_key("unsupervised", "subset"),
@@ -4073,7 +4089,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_agent_config_empty_array() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![test_agent_lookup_key("unsupervised", "empty")],
         });
@@ -4121,7 +4137,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_agent_config_duplicate_keys() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![test_agent_lookup_key("unsupervised", "dup")],
         });
@@ -4161,7 +4177,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_agent_config_unknown_key_rejected() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![test_agent_lookup_key("unsupervised", "unk")],
         });
@@ -4201,7 +4217,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_agent_config_ordering() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![
                 test_agent_lookup_key("unsupervised", "order"),
@@ -4301,7 +4317,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_agent_config_missing_hostname_errors() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
@@ -4349,7 +4365,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_agent_config_mixed_outcomes() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             // Only the unsupervised lookup key succeeds; the sensor lookup key will fail.
             available_agents: vec![test_agent_lookup_key("unsupervised", "mixfail")],
@@ -4404,7 +4420,7 @@ mod tests {
     #[tokio::test]
     #[cfg(feature = "auth-mtls")]
     async fn test_apply_agent_config_multi_instance_lookup_keys() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![
                 test_agent_lookup_key("001.hog", "multi-instance"),
@@ -4469,7 +4485,7 @@ mod tests {
 
     #[tokio::test]
     async fn apply_node_draft_customer_scoping_forbidden() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
@@ -4512,7 +4528,7 @@ mod tests {
 
     #[tokio::test]
     async fn apply_agent_config_customer_scoping_forbidden() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
@@ -4540,7 +4556,7 @@ mod tests {
 
     #[tokio::test]
     async fn apply_node_draft_customer_scoping_admin_allowed() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
@@ -4598,18 +4614,26 @@ mod tests {
     }
 
     impl RecordingAgentManager {
-        fn boxed(failing: Vec<String>) -> (BoxedAgentManager, Arc<Mutex<Vec<String>>>) {
+        fn boxed(failing: Vec<String>) -> (SharedAgentManager, Arc<Mutex<Vec<String>>>) {
             let calls = Arc::new(Mutex::new(Vec::new()));
             let manager = Self {
                 calls: Arc::clone(&calls),
                 failing,
             };
-            (Box::new(manager), calls)
+            (Arc::new(manager), calls)
         }
     }
 
     #[async_trait]
     impl AgentManager for RecordingAgentManager {
+        #[cfg(feature = "auth-mtls")]
+        async fn request_customer_data_deletion(
+            &self,
+            _targets: &[crate::customer_data_deletion::CustomerDataDeletionTarget],
+        ) -> Result<(), anyhow::Error> {
+            anyhow::bail!("not expected to be called")
+        }
+
         async fn send_agent_specific_internal_networks(
             &self,
             _networks: &[NetworksTargetAgentLookupKeysPair],
