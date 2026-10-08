@@ -14,7 +14,7 @@ mod mtls_integration {
     use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
     use rcgen::{
         BasicConstraints, Certificate, CertificateParams, DnType, IsCa, Issuer, KeyPair,
-        PKCS_ECDSA_P256_SHA256, SanType,
+        PKCS_ECDSA_P256_SHA256, PKCS_RSA_SHA256, SanType,
     };
     use reqwest::Certificate as ReqwestCertificate;
     use review_database::{BuildSelector, ListenerBinding, Store};
@@ -64,36 +64,6 @@ mod mtls_integration {
     const ERR_MTLS_REQUIRED: &str = "mTLS is required";
     const WS_RECV_TIMEOUT: Duration = Duration::from_secs(5);
     static INSTALL_CRYPTO_PROVIDER: Once = Once::new();
-    // Fixed RSA private key used only to produce an RS256 JWT for alg-mismatch tests.
-    const RSA_PRIVATE_KEY_PEM: &str = r"-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDL3Xrm3ySgvLcF
-NcrMRfz9SN/DtjLfQzCU9kJWFXP42tcTrvFiOtZJoNzolSHLsc5QSXjlob5geTni
-IO9Ter6tlNoaHxcFGlG8PCp2v8KRjHqUfctuW588tAKkPrO0pIkQpY119U/dSM/3
-lNU7MNMjIgBKVqJX/kLMyqgFxbKNKZ+VFvbW5okDW3dth0QkGo2tyLQRmxv9lgHi
-fE4/rmhR1ZrPlMhOj0fT/PZJGVdWl6+AxMmMulVby/EOWDupNGDhV3KnPlzesM0B
-hFWeiRj4KpjJR2tk/YLIxhlxPBEf+7qSmIDc9oslpjmZ/GzPIjLdN62oskhw5874
-0STjvcgZAgMBAAECggEAIecReQL7aaKwkhR9xwZNmgaMNdUfNStMkT05z2yOZoBo
-O50AhfwwZjqy+hfQ8Lm/THFHgnKpQQxv8JfXDQww2ReTxLvOXXogxRvBWRGvRvq0
-aOzZj577hoIOHWfTBVPGeob5lTgIQc3JzgvJgSgvuJw/LZ2mLll5nOqH0jvsI1bQ
-VA54E71dV1kwe29MedHM76WRC0Y47OFuVHQfgPuiRl8ItpmuOkkvuN5UvOrcp09E
-6xm8RGuG8UzfwxkppVxltjcSSue6jLFcCDMRmMtj4958YQa+fWWMHPEI5ow4lz5F
-WZEWobWe7M2Ar1qXTRZIoCQmd6L7B7tAOggnWIUlLQKBgQDyy/czT+RzAqO7dQhK
-Cxjr83uw/liYDpTV7P8z1gYwnsMPvaRQtqDVuXJ+yww4nE0KwRdXFimGeVjSI55B
-llbYBjQ1GYEDICWUfMFl8V0+jGRdg5S9ph6xFtFSBCtlDEcExKdz6Nk8FE47EaHq
-zTgd3G9cXHE9yVzuLA3NX5iTxQKBgQDW84nBI2qcG5ygSrxkDzF5AsshoFb/t8YT
-Ebq3NGkLPZ7aNn8Yk17nmBIDVXLCxrgSuJqPKzlPKWP8jyIV91vbOqMSqdZ5GRcF
-iNQchqHT8ZZ8BOsgyoOfhGVaef+xOk6tjUouOXos0RprFxDZScVaI3ydtl3VyyOl
-LyY1q6FkRQKBgH7hJ+WgsnmHv5iOqC5JblSfgNwVjqanuA+zMgocpk9yJ+1p5Rxo
-09PcfYDVCyXqSDh+f3v7EOg9MbVe96y+q9NoKpA1K74+ZmUabNahM2EkbK6RvID+
-9rsEeY6qryK3L8XGHtvrqtpCoj8sD7lsVQ8FywwxItxvBilQzEWu10UhAoGBAIm+
-ZN9Un8PL2fHKErGYHt7qEFvLERUrog2kRd+TAWGHql0xoP6RqbaFd72VK0Zv65Nr
-ovft/fqhjoZQ/snOyplRGSEjnuHZVyxfw3VIPTnBTerJiBdqTzCQuhZhqZ3bvIFw
-0kGO6aEAmopXrJ9hq8sYhInYTIdtdrkq3rRz+Kd1AoGAWYvxWQwFNoEjiL9LbMuS
-PmV8OpeHDzsyUuOvrwtAP2OPJNWCoHEYP1pUx0QIrJ3tFYMjY1sFPszwiPpRWoVf
-HjWmrn5yIWqDPDXNy8gnGe1eOPX1lUJZHgHPcuSuRZFocd6cK/OUVKyWAv4yFjJd
-xvcNsYaYqk6sRk/INvcaN2E=
------END PRIVATE KEY-----";
-
     struct StaticCertManager {
         cert_path: PathBuf,
         key_path: PathBuf,
@@ -880,9 +850,11 @@ xvcNsYaYqk6sRk/INvcaN2E=
         let server = start_test_server()?;
         let (client, _client_key) =
             build_client_with_identity(&server.issuer, &server.ca_cert, SERVICE_DNS)?;
+        let rsa_key = KeyPair::generate_for(&PKCS_RSA_SHA256)
+            .context("generate RSA key for JWT algorithm mismatch")?;
         let token = sign_context_jwt_with_key(
-            &EncodingKey::from_rsa_pem(RSA_PRIVATE_KEY_PEM.as_bytes())
-                .context("parse RSA private key")?,
+            &EncodingKey::from_rsa_pem(rsa_key.serialize_pem().as_bytes())
+                .context("parse generated RSA private key")?,
             Algorithm::RS256,
             Some(vec![CUSTOMER_ID]),
             ROLE,
