@@ -117,6 +117,10 @@ impl EventStream {
         &self,
         ctx: &Context<'_>,
         start: Timestamp,
+        #[graphql(validator(
+            minimum = 1,
+            custom = "|value: &u64| async_graphql::validators::maximum(value, super::MAX_STREAM_FETCH_INTERVAL_SECS)"
+        ))]
         fetch_interval: Option<u64>,
         event_stuck_check_interval: Option<u64>,
     ) -> Result<impl Stream<Item = Event> + use<>> {
@@ -1969,6 +1973,33 @@ mod tests {
                 .expect("test timestamp must fit in i64 nanoseconds"),
         ))
         .expect("chrono's timestamp range must fit in jiff")
+    }
+
+    #[tokio::test]
+    async fn event_stream_fetch_interval_range() {
+        let schema = TestSchema::new().await;
+        for (interval, range) in [
+            (0, "must be greater than or equal to 1"),
+            (86_401, "must be less than or equal to 86400"),
+        ] {
+            let query = format!(
+                r#"subscription {{ eventStream(start: "2018-01-28T00:00:00Z", fetchInterval: {interval}) {{ __typename }} }}"#
+            );
+            let mut stream = schema.execute_stream(&query).await;
+            let response = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(response.errors.len(), 1, "{response:?}");
+            let error = response.errors.first().unwrap();
+            assert!(error.message.contains(range), "{error:?}");
+            // Identify fetchInterval by the reported argument value location.
+            let column = query.find("fetchInterval: ").unwrap() + "fetchInterval: ".len() + 1;
+            assert_eq!(
+                error.locations,
+                vec![async_graphql::Pos { line: 1, column }]
+            );
+        }
     }
 
     #[tokio::test]
@@ -4438,22 +4469,33 @@ mod tests {
             .and_local_timezone(Utc)
             .unwrap();
         db.put(&event_message_at(ts3, 5, 6)).unwrap();
-        let query = r#"
-        subscription {
-            eventStream(start:"2018-01-28T00:00:00.000000000Z"){
-              __typename
-              ... on DnsCovertChannel{
-                origAddr,
-              }
-            }
+        for argument in [
+            "",
+            ", fetchInterval: null",
+            ", fetchInterval: 1",
+            ", fetchInterval: 86400",
+        ] {
+            let query = format!(
+                r#"
+                subscription {{
+                    eventStream(start: "2018-01-28T00:00:00.000000000Z"{argument}) {{
+                        __typename
+                        ... on DnsCovertChannel {{ origAddr }}
+                    }}
+                }}
+            "#
+            );
+            let mut stream = schema.execute_stream(&query).await;
+            let response = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(response.errors.is_empty(), "{response:?}");
+            assert_eq!(
+                response.data.to_string(),
+                r#"{eventStream: {__typename: "DnsCovertChannel", origAddr: "0.0.0.5"}}"#
+            );
         }
-        "#;
-        let mut stream = schema.execute_stream(query).await;
-        let res = stream.next().await;
-        assert_eq!(
-            res.unwrap().data.to_string(),
-            r#"{eventStream: {__typename: "DnsCovertChannel", origAddr: "0.0.0.5"}}"#
-        );
     }
 
     #[tokio::test]

@@ -11,8 +11,9 @@ use num_traits::ToPrimitive;
 use review_database::{self as database, Store};
 
 use super::{
-    DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, Role, RoleGuard, cluster::TimeCount,
-    data_source::DataSource, fill_vacant_time_slots, get_trend, slicing,
+    DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, MAX_TRENDI_ORDER, PositiveCutoffRate, Role,
+    RoleGuard, cluster::TimeCount, data_source::DataSource, fill_vacant_time_slots, get_trend,
+    slicing,
 };
 use crate::graphql::{query, statistics::i64_to_naive_date_time};
 
@@ -123,8 +124,12 @@ impl ModelQuery {
         size: Option<i32>,
         time: Option<NaiveDateTime>,
         min_slope: Option<f64>,
+        #[graphql(validator(
+            minimum = 1,
+            custom = "|value: &i32| async_graphql::validators::maximum(value, MAX_TRENDI_ORDER)"
+        ))]
         trendi_order: Option<i32>,
-        cutoff_rate: Option<f64>,
+        #[graphql(validator(custom = "PositiveCutoffRate"))] cutoff_rate: Option<f64>,
         trend_category: Option<String>,
         start: Option<i64>,
         end: Option<i64>,
@@ -1082,6 +1087,104 @@ fn load_cluster_ids_with_size_limit(
 #[cfg(test)]
 mod tests {
     use crate::graphql::TestSchema;
+
+    #[tokio::test]
+    async fn trend_argument_ranges() {
+        let schema = TestSchema::new().await;
+        for (resolver, selection) in [
+            ("topTimeSeries(model: 1", "countIndex trends { trend }"),
+            (
+                "topTimeSeriesOfCluster(model: 1, clusterId: 1",
+                "series { seriesTrend { count } }",
+            ),
+        ] {
+            for (argument, range) in [
+                ("trendiOrder: 0", "must be greater than or equal to 1"),
+                ("trendiOrder: -1", "must be greater than or equal to 1"),
+                ("trendiOrder: 21", "must be less than or equal to 20"),
+                ("cutoffRate: 0", "must be greater than 0"),
+                ("cutoffRate: -0.1", "must be greater than 0"),
+            ] {
+                let query = format!("{{ {resolver}, {argument}) {{ {selection} }} }}");
+                let response = schema.execute_as_system_admin(&query).await;
+                assert_eq!(response.errors.len(), 1, "{response:?}");
+                let error = response.errors.first().unwrap();
+                assert!(error.message.contains(range), "{error:?}");
+                // The validator reports the argument value's source location.
+                let column = query.find(argument).unwrap() + argument.find(": ").unwrap() + 3;
+                assert_eq!(
+                    error.locations,
+                    vec![async_graphql::Pos { line: 1, column }]
+                );
+            }
+            // Empty data checks acceptance without exercising out-of-scope filter failures.
+            for argument in ["trendiOrder: 1", "trendiOrder: 20", "cutoffRate: 0.01"] {
+                let query = format!("{{ {resolver}, {argument}) {{ {selection} }} }}");
+                let response = schema.execute_as_system_admin(&query).await;
+                assert!(response.errors.is_empty(), "{response:?}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn trend_argument_defaults() {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            let map = store.time_series_map();
+            for index in 0..100_u32 {
+                map.insert(&review_database::TimeSeries {
+                    model_id: 1,
+                    cluster_id: 1,
+                    time: 0,
+                    value: i64::from(index) * 1_000_000_000,
+                    count_index: Some(0),
+                    count: usize::try_from((20 - (index % 40).abs_diff(20)) * 100 + 100).unwrap(),
+                })
+                .unwrap();
+            }
+        }
+        for (resolver, selection, trend_path) in [
+            (
+                "topTimeSeries(model: 1",
+                "countIndex trends { trend }",
+                "/topTimeSeries/0/trends/0/trend",
+            ),
+            (
+                "topTimeSeriesOfCluster(model: 1, clusterId: 1",
+                "series { seriesTrend { count } }",
+                "/topTimeSeriesOfCluster/series/0/seriesTrend",
+            ),
+        ] {
+            let query =
+                format!("{{ {resolver}, trendiOrder: 4, cutoffRate: 0.1) {{ {selection} }} }}");
+            let explicit = schema.execute_as_system_admin(&query).await;
+            assert!(explicit.errors.is_empty(), "{explicit:?}");
+            let data = explicit.data.clone().into_json().unwrap();
+            assert!(
+                !data
+                    .pointer(trend_path)
+                    .unwrap()
+                    .as_array()
+                    .unwrap()
+                    .is_empty(),
+                "{data}"
+            );
+            for arguments in [
+                "",
+                ", trendiOrder: null, cutoffRate: null",
+                ", cutoffRate: 0.1",
+                ", trendiOrder: null, cutoffRate: 0.1",
+                ", trendiOrder: 4",
+                ", trendiOrder: 4, cutoffRate: null",
+            ] {
+                let query = format!("{{ {resolver}{arguments}) {{ {selection} }} }}");
+                let response = schema.execute_as_system_admin(&query).await;
+                assert!(response.errors.is_empty(), "{response:?}");
+                assert_eq!(response.data, explicit.data, "{query}");
+            }
+        }
+    }
 
     #[tokio::test]
     async fn schema_does_not_expose_top_clusters_by_score() {
