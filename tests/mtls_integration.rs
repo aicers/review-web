@@ -61,7 +61,6 @@ mod mtls_integration {
     const ERR_SAN_SERVICE_MISMATCH: &str = "Client certificate SAN does not match service name";
     const ERR_JWT_ALG_EC_MISMATCH: &str = "JWT algorithm does not match EC key";
     const ERR_MISSING_CUSTOMER_IDS: &str = "Missing customer_ids claim for non-admin role";
-    const ERR_MTLS_REQUIRED: &str = "mTLS is required";
     const WS_RECV_TIMEOUT: Duration = Duration::from_secs(5);
     static INSTALL_CRYPTO_PROVIDER: Once = Once::new();
     // Fixed RSA private key used only to produce an RS256 JWT for alg-mismatch tests.
@@ -933,17 +932,49 @@ xvcNsYaYqk6sRk/INvcaN2E=
     #[tokio::test]
     async fn mtls_rejects_missing_client_cert() -> anyhow::Result<()> {
         let server = start_test_server()?;
-        let client = build_client_without_identity(&server.ca_cert)?;
-        let response = send_graphql_request(&client, &server.url, None).await?;
-        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+        let (client, client_key) =
+            build_client_with_identity(&server.issuer, &server.ca_cert, SERVICE_DNS)?;
+        let token = sign_context_jwt(client_key.serialize_der().as_slice())?;
+        let response = send_graphql_request(&client, &server.url, Some(&token)).await?;
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
         let body: serde_json::Value =
             serde_json::from_str(&response.text().await.context("read response body")?)
                 .context("parse response JSON")?;
-        let error = body
-            .get("error")
+        let typename = body
+            .get("data")
+            .and_then(|data| data.get("__typename"))
             .and_then(|value| value.as_str())
-            .context("read error")?;
-        assert!(error.contains(ERR_MTLS_REQUIRED));
+            .context("read __typename")?;
+        assert_eq!(typename, "Query");
+
+        let client = build_client_without_identity(&server.ca_cert)?;
+        // TLS 1.3 can report the server's rejection on the first read or write
+        // after the client considers the handshake complete.
+        let error = client
+            .post(&server.url)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(serde_json::to_vec(&json!({ "query": GRAPHQL_QUERY }))?)
+            .send()
+            .await
+            .expect_err("a client without a certificate must receive no HTTP response");
+        let error = anyhow::Error::new(error);
+        assert!(
+            error.chain().any(|cause| {
+                let tls_error = cause.downcast_ref::<rustls::Error>().or_else(|| {
+                    cause
+                        .downcast_ref::<std::io::Error>()?
+                        .get_ref()?
+                        .downcast_ref::<rustls::Error>()
+                });
+                matches!(
+                    tls_error,
+                    Some(rustls::Error::AlertReceived(
+                        rustls::AlertDescription::CertificateRequired
+                    ))
+                )
+            }),
+            "expected the certificate_required TLS alert, got: {error:?}"
+        );
         server.shutdown.notify_one();
         server.shutdown.notified().await;
         Ok(())
