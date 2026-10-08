@@ -41,6 +41,10 @@ impl OutlierStream {
         &self,
         ctx: &Context<'_>,
         start: DateTime<Utc>,
+        #[graphql(validator(
+            minimum = 1,
+            custom = "|value: &u64| async_graphql::validators::maximum(value, super::MAX_STREAM_FETCH_INTERVAL_SECS)"
+        ))]
         fetch_interval: Option<u64>,
     ) -> Result<impl Stream<Item = RankedOutlier> + use<>> {
         let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
@@ -770,6 +774,7 @@ async fn load_ranked_outliers_with_filter(
 mod tests {
     use async_graphql::Value;
     use chrono::{DateTime, Utc};
+    use futures_util::StreamExt;
     use num_traits::ToPrimitive;
     use review_database::OutlierInfo;
 
@@ -796,6 +801,77 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    #[tokio::test]
+    async fn ranked_outlier_stream_fetch_interval_defaults_and_bounds() {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            let model = store
+                .model_map()
+                .add_model(review_database::ModelDigest {
+                    id: 0,
+                    name: "stream-test".to_string(),
+                    version: 1,
+                    kind: "test".to_string(),
+                    max_event_id_num: 1,
+                    data_source_id: 0,
+                    classification_id: None,
+                })
+                .unwrap();
+            let timestamp = "2018-01-28T01:00:00Z".parse::<DateTime<Utc>>().unwrap();
+            for outlier in samples(model, timestamp.timestamp_nanos_opt().unwrap(), 5, 1) {
+                store.outlier_map().insert(&outlier).unwrap();
+            }
+        }
+        for argument in [
+            "",
+            ", fetchInterval: null",
+            ", fetchInterval: 1",
+            ", fetchInterval: 86400",
+        ] {
+            let query = format!(
+                r#"subscription {{ rankedOutlierStream(start: "2018-01-28T00:00:00Z"{argument}) {{ id }} }}"#
+            );
+            let mut stream = schema.execute_stream(&query).await;
+            let response = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(response.errors.is_empty(), "{response:?}");
+            assert_eq!(
+                response.data.to_string(),
+                r#"{rankedOutlierStream: {id: "5"}}"#
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn outlier_stream_fetch_interval_range() {
+        let schema = TestSchema::new().await;
+        for (interval, range) in [
+            (0, "must be greater than or equal to 1"),
+            (86_401, "must be less than or equal to 86400"),
+        ] {
+            let query = format!(
+                r#"subscription {{ rankedOutlierStream(start: "2018-01-28T00:00:00Z", fetchInterval: {interval}) {{ id }} }}"#
+            );
+            let mut stream = schema.execute_stream(&query).await;
+            let response = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(response.errors.len(), 1, "{response:?}");
+            let error = response.errors.first().unwrap();
+            assert!(error.message.contains(range), "{error:?}");
+            // Identify fetchInterval by the reported argument value location.
+            let column = query.find("fetchInterval: ").unwrap() + "fetchInterval: ".len() + 1;
+            assert_eq!(
+                error.locations,
+                vec![async_graphql::Pos { line: 1, column }]
+            );
+        }
     }
 
     #[tokio::test]

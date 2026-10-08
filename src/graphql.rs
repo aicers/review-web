@@ -441,6 +441,25 @@ fn extra_validate_pagination_params(
 // parameters for trend
 const DEFAULT_CUTOFF_RATE: f64 = 0.1;
 const DEFAULT_TRENDI_ORDER: i32 = 4;
+// 20 is an initial value chosen to limit trend-filter design cost and may be
+// changed if the allowed range needs to change.
+const MAX_TRENDI_ORDER: i32 = 20;
+// One day bounds streaming API update intervals and prevents period overflow.
+const MAX_STREAM_FETCH_INTERVAL_SECS: u64 = 86_400;
+
+struct PositiveCutoffRate;
+
+impl async_graphql::validators::CustomValidator<f64> for PositiveCutoffRate {
+    fn check(&self, value: &f64) -> Result<(), InputValueError<f64>> {
+        if *value > 0.0 {
+            Ok(())
+        } else {
+            Err(InputValueError::custom(format!(
+                "the value is {value}, must be greater than 0"
+            )))
+        }
+    }
+}
 
 pub(crate) fn get_store<'a>(ctx: &'a Context<'a>) -> Result<std::sync::RwLockReadGuard<'a, Store>> {
     Ok(ctx
