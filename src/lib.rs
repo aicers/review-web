@@ -909,7 +909,6 @@ fn build_mtls_server_config(
     }
 
     let client_verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(root_store))
-        .allow_unauthenticated()
         .build()
         .map_err(|e| anyhow::anyhow!("Invalid client auth config: {e:?}"))?;
 
