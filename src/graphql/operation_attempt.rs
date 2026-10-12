@@ -404,13 +404,80 @@ impl OperationAttemptQuery {
                 attempts.push(row);
             }
         }
-        attempts.sort_unstable_by(|left, right| {
-            left.started_at
-                .cmp(&right.started_at)
-                .then_with(|| left.idempotency_key.cmp(&right.idempotency_key))
-        });
+        attempts.sort_unstable_by(request_order);
         Ok(attempts.into_iter().map(Into::into).collect())
     }
+
+    /// Returns the latest install attempt for `(host, target)`, whatever its
+    /// phase or outcome, or null if the pair has none.
+    ///
+    /// "Latest" is the greatest `(startedAt, id)`, the order
+    /// `inFlightInstalls` lists by. The answer reads by its outcome: a null
+    /// `outcome` means the install is still running, as `inFlightInstalls`
+    /// also says; `SUCCEEDED` means the instance's service row is there or
+    /// about to be; and `FAILED`, `ROLLED_BACK` or `CANCELLED` is how the last
+    /// install of the module on the host ended, with `failureKind` and
+    /// `cleanupOwed` as the attempt carries them.
+    ///
+    /// A failed first install leaves no service row — one is created only on
+    /// terminal success — so no inline attempt reaches it, and this query is
+    /// the only way to find it without its id. The next install of the pair
+    /// supersedes it, so the answer clears itself and a history of failures
+    /// never shows more than one.
+    ///
+    /// Ordering rows by request is right here, although the inline latest
+    /// attempt refuses to: that field answers "the current attempt of an
+    /// instance", where a superseded attempt may still owe a teardown and
+    /// remains current until it is discharged. This query answers "the last
+    /// install request for the pair", and request order is exactly that. A
+    /// row that still owes cleanup is returned with `cleanupOwed` set, not
+    /// hidden.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the caller has no access to `host`, if `target` is
+    /// not a module package-id, or if the ledger cannot be read.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    async fn latest_install(
+        &self,
+        ctx: &Context<'_>,
+        host: String,
+        target: String,
+    ) -> Result<Option<OperationAttempt>> {
+        customer_access::check_hostname_access(ctx, &host)?;
+        bind_package_class(&target, &MODULE_PACKAGE_IDS)?;
+
+        let store = super::get_store(ctx)?;
+        let map = store.operation_attempt_map();
+        // Scanned for the reason `inFlightInstalls` scans, and with a decode
+        // failure propagated for the same one.
+        let mut latest: Option<database::OperationAttempt> = None;
+        for row in map.iter(Direction::Forward, None) {
+            let row = row?;
+            if row.action == database::OperationAction::Install
+                && row.host == host
+                && row.target == target
+                && latest
+                    .as_ref()
+                    .is_none_or(|held| request_order(held, &row).is_lt())
+            {
+                latest = Some(row);
+            }
+        }
+        Ok(latest.map(Into::into))
+    }
+}
+
+/// Orders two attempts by when they were requested: `started_at`, tie-broken
+/// by the idempotency key so that the order is total.
+fn request_order(
+    left: &database::OperationAttempt,
+    right: &database::OperationAttempt,
+) -> std::cmp::Ordering {
+    left.started_at
+        .cmp(&right.started_at)
+        .then_with(|| left.idempotency_key.cmp(&right.idempotency_key))
 }
 
 /// Returns the current attempt for `(host, target, instance)`, or `None` if
@@ -685,6 +752,22 @@ mod tests {
         format!(
             "{{ inFlightInstalls(host: \"{host}\", target: \"{target}\") {{ {ATTEMPT_FIELDS} }} }}"
         )
+    }
+
+    fn latest_install_query(host: &str, target: &str) -> String {
+        format!(
+            "{{ latestInstall(host: \"{host}\", target: \"{target}\") {{ {ATTEMPT_FIELDS} }} }}"
+        )
+    }
+
+    /// Returns the `latestInstall` answer for `(host, target)` as a system
+    /// administrator, asserting that it carries no error.
+    async fn latest_install(schema: &TestSchema, host: &str, target: &str) -> serde_json::Value {
+        let res = schema
+            .execute_as_system_admin(&latest_install_query(host, target))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        res.data.into_json().unwrap()["latestInstall"].take()
     }
 
     /// The four branches of the row-derived tier, and which of them consults
@@ -1367,6 +1450,288 @@ mod tests {
                 format!("{target} is not one of the package-ids this operation accepts"),
                 "{target}"
             );
+        }
+    }
+
+    /// A pair with no install attempt answers null, not an error.
+    #[tokio::test]
+    async fn latest_install_is_null_for_a_pair_with_none() {
+        let schema = TestSchema::new().await;
+        insert_node(&schema.store(), "node1", HOST, CUSTOMER, vec![], vec![]);
+
+        assert_eq!(latest_install(&schema, HOST, "hog").await, json!(null));
+    }
+
+    /// A running install is the latest install, and reads as running.
+    #[tokio::test]
+    async fn latest_install_returns_a_running_install() {
+        const KEY: &str = "0aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        let schema = TestSchema::new().await;
+        insert_node(&schema.store(), "node1", HOST, CUSTOMER, vec![], vec![]);
+        seed(
+            &schema.store(),
+            &attempt(KEY, OperationAction::Install, HOST, "hog", None),
+        );
+
+        let found = latest_install(&schema, HOST, "hog").await;
+        assert_eq!(found["id"], json!(KEY));
+        assert_eq!(found["action"], json!("INSTALL"));
+        assert_eq!(found["phase"], json!("DISPATCHED"));
+        assert_eq!(found["outcome"], json!(null));
+        assert_eq!(found["failureKind"], json!(null));
+        assert_eq!(found["host"], json!(HOST));
+        assert_eq!(found["target"], json!("hog"));
+    }
+
+    /// An install that failed after an earlier one succeeded is the answer,
+    /// with its failure kind.
+    ///
+    /// The keys run the other way from the instants, so the scan meets the
+    /// failed install first and the answer is chosen by `startedAt`.
+    #[tokio::test]
+    async fn latest_install_returns_a_failure_after_a_success() {
+        const SUCCEEDED: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        const FAILED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        let schema = TestSchema::new().await;
+        insert_node(&schema.store(), "node1", HOST, CUSTOMER, vec![], vec![]);
+        let succeeded = attempt(SUCCEEDED, OperationAction::Install, HOST, "hog", Some(1));
+        seed(&schema.store(), &succeeded);
+        seed(
+            &schema.store(),
+            &finished(succeeded, OperationOutcome::Succeeded),
+        );
+        let mut failure = attempt(FAILED, OperationAction::Install, HOST, "hog", Some(2));
+        failure.started_at = instant(30);
+        seed(&schema.store(), &failure);
+        seed(
+            &schema.store(),
+            &failed(failure, OperationFailureKind::HostNotPrepared),
+        );
+
+        let found = latest_install(&schema, HOST, "hog").await;
+        assert_eq!(found["id"], json!(FAILED));
+        assert_eq!(found["phase"], json!("COMPLETED"));
+        assert_eq!(found["outcome"], json!("FAILED"));
+        assert_eq!(found["failureKind"], json!("HOST_NOT_PREPARED"));
+        assert_eq!(found["cleanupOwed"], json!(null));
+    }
+
+    /// A failed install that still owes its teardown is returned, with the
+    /// teardown it owes, rather than hidden.
+    #[tokio::test]
+    async fn latest_install_returns_a_failure_that_owes_cleanup() {
+        const KEY: &str = "0aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        let schema = TestSchema::new().await;
+        insert_node(&schema.store(), "node1", HOST, CUSTOMER, vec![], vec![]);
+        let mut failure = attempt(KEY, OperationAction::Install, HOST, "giganto", Some(1));
+        seed(&schema.store(), &failure);
+        failure.cleanup_state = Some(OperationCleanupState::PendingDeregister);
+        seed(
+            &schema.store(),
+            &failed(failure, OperationFailureKind::ServiceFailed),
+        );
+
+        let found = latest_install(&schema, HOST, "giganto").await;
+        assert_eq!(found["id"], json!(KEY));
+        assert_eq!(found["outcome"], json!("FAILED"));
+        assert_eq!(found["failureKind"], json!("SERVICE_FAILED"));
+        assert_eq!(found["cleanupOwed"], json!("PENDING_DEREGISTER"));
+    }
+
+    /// A newer install of the pair supersedes a failed one, whatever state
+    /// the newer one is in.
+    #[tokio::test]
+    async fn latest_install_is_superseded_by_a_newer_install() {
+        const FAILED: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        const NEWER: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        let schema = TestSchema::new().await;
+        insert_node(&schema.store(), "node1", HOST, CUSTOMER, vec![], vec![]);
+        let failure = attempt(FAILED, OperationAction::Install, HOST, "hog", Some(1));
+        seed(&schema.store(), &failure);
+        seed(
+            &schema.store(),
+            &failed(failure, OperationFailureKind::Other),
+        );
+        assert_eq!(
+            latest_install(&schema, HOST, "hog").await["id"],
+            json!(FAILED)
+        );
+
+        let mut newer = attempt(NEWER, OperationAction::Install, HOST, "hog", None);
+        newer.started_at = instant(120);
+        seed(&schema.store(), &newer);
+
+        let found = latest_install(&schema, HOST, "hog").await;
+        assert_eq!(found["id"], json!(NEWER));
+        assert_eq!(found["outcome"], json!(null));
+        assert_eq!(found["failureKind"], json!(null));
+    }
+
+    /// Two installs that began in the same instant are told apart by the id,
+    /// and the greater one is the latest.
+    #[tokio::test]
+    async fn latest_install_breaks_a_tie_on_the_id() {
+        const LESSER: &str = "1aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        const GREATER: &str = "2bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        let schema = TestSchema::new().await;
+        insert_node(&schema.store(), "node1", HOST, CUSTOMER, vec![], vec![]);
+        // Seeded in the reverse of the order they compare in, and both under
+        // the instant `attempt` stamps.
+        seed(
+            &schema.store(),
+            &attempt(GREATER, OperationAction::Install, HOST, "hog", Some(2)),
+        );
+        seed(
+            &schema.store(),
+            &attempt(LESSER, OperationAction::Install, HOST, "hog", Some(1)),
+        );
+
+        assert_eq!(
+            latest_install(&schema, HOST, "hog").await["id"],
+            json!(GREATER)
+        );
+    }
+
+    /// Attempts of other actions, and installs on another host or of another
+    /// target, are never the answer, however recent.
+    #[tokio::test]
+    async fn latest_install_ignores_other_actions_hosts_and_targets() {
+        const MINE: &str = "0aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        const ELSEWHERE: &str = "0bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        const ANOTHER_TARGET: &str = "0ccccccc-cccc-4ccc-8ccc-cccccccccccc";
+        const OTHER_HOST: &str = "host2.example.com";
+        let schema = TestSchema::new().await;
+        insert_node(&schema.store(), "node1", HOST, CUSTOMER, vec![], vec![]);
+        insert_node(
+            &schema.store(),
+            "node2",
+            OTHER_HOST,
+            CUSTOMER,
+            vec![],
+            vec![],
+        );
+        let mine = attempt(MINE, OperationAction::Install, HOST, "hog", Some(1));
+        seed(&schema.store(), &mine);
+        seed(
+            &schema.store(),
+            &failed(mine, OperationFailureKind::BuildNotServable),
+        );
+        let newer = [
+            ("update-1", OperationAction::Update, HOST, "hog", Some(1)),
+            ("remove-1", OperationAction::Remove, HOST, "hog", Some(2)),
+            ("onboard-1", OperationAction::Onboard, HOST, "", None),
+            (ELSEWHERE, OperationAction::Install, OTHER_HOST, "hog", None),
+            (
+                ANOTHER_TARGET,
+                OperationAction::Install,
+                HOST,
+                "piglet",
+                None,
+            ),
+        ];
+        for (offset, (key, action, host, target, instance)) in (1..).zip(newer) {
+            let mut row = attempt(key, action, host, target, instance);
+            row.started_at = instant(offset * 60);
+            seed(&schema.store(), &row);
+        }
+
+        let found = latest_install(&schema, HOST, "hog").await;
+        assert_eq!(found["id"], json!(MINE));
+        assert_eq!(found["outcome"], json!("FAILED"));
+        assert_eq!(found["failureKind"], json!("BUILD_NOT_SERVABLE"));
+
+        // The other pairs are answered with their own installs.
+        assert_eq!(
+            latest_install(&schema, OTHER_HOST, "hog").await["id"],
+            json!(ELSEWHERE)
+        );
+        assert_eq!(
+            latest_install(&schema, HOST, "piglet").await["id"],
+            json!(ANOTHER_TARGET)
+        );
+        assert_eq!(latest_install(&schema, HOST, "giganto").await, json!(null));
+    }
+
+    /// A non-module target is refused with the error `inFlightInstalls`
+    /// gives, even where the ledger holds an install of it.
+    #[tokio::test]
+    async fn latest_install_refuses_a_non_module_target() {
+        const KEY: &str = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+        let schema = TestSchema::new().await;
+        insert_node(&schema.store(), "node1", HOST, CUSTOMER, vec![], vec![]);
+        seed(
+            &schema.store(),
+            &attempt(KEY, OperationAction::Install, HOST, "review", None),
+        );
+
+        for target in ["review", "roxyd", "bootroot", "nonesuch"] {
+            let res = schema
+                .execute_as_system_admin(&latest_install_query(HOST, target))
+                .await;
+            assert_eq!(res.errors.len(), 1, "{target}");
+            assert_eq!(
+                res.errors[0].message,
+                format!("{target} is not one of the package-ids this operation accepts"),
+                "{target}"
+            );
+            assert_eq!(
+                res.data.into_json().unwrap()["latestInstall"],
+                json!(null),
+                "{target}"
+            );
+        }
+    }
+
+    /// `latestInstall` holds a caller to the role floor and to its own
+    /// customers' hosts, as `inFlightInstalls` does.
+    #[tokio::test]
+    async fn latest_install_refuses_a_caller_without_access() {
+        const KEY: &str = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+        let schema = TestSchema::new().await;
+        insert_node(&schema.store(), "node1", HOST, CUSTOMER, vec![], vec![]);
+        seed(
+            &schema.store(),
+            &attempt(KEY, OperationAction::Install, HOST, "hog", Some(1)),
+        );
+
+        let allowed = schema
+            .execute_as_scoped_user(
+                &latest_install_query(HOST, "hog"),
+                Role::SecurityAdministrator,
+                Some(vec![CUSTOMER]),
+            )
+            .await;
+        assert!(allowed.errors.is_empty(), "{:?}", allowed.errors);
+        assert_eq!(
+            allowed.data.into_json().unwrap()["latestInstall"]["id"],
+            json!(KEY)
+        );
+
+        // The host-scoped check runs before the module-class one, so a caller
+        // outside the host's customer is told nothing about the target it
+        // named.
+        for target in ["hog", "roxyd"] {
+            let refused = schema
+                .execute_as_scoped_user(
+                    &latest_install_query(HOST, target),
+                    Role::SecurityAdministrator,
+                    Some(vec![OTHER_CUSTOMER]),
+                )
+                .await;
+            assert_eq!(refused.errors.len(), 1, "{target}: {:?}", refused.errors);
+            assert_eq!(refused.errors[0].message, "Forbidden", "{target}");
+        }
+
+        for role in [Role::SecurityManager, Role::SecurityMonitor] {
+            let refused = schema
+                .execute_as_scoped_user(
+                    &latest_install_query(HOST, "hog"),
+                    role,
+                    Some(vec![CUSTOMER]),
+                )
+                .await;
+            assert_eq!(refused.errors.len(), 1, "{role:?}");
+            assert_eq!(refused.errors[0].message, "Forbidden", "{role:?}");
         }
     }
 

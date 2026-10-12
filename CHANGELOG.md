@@ -6,6 +6,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- Added the `latestInstall(host:, target:)` query for System and Security
+  Administrators, accepting module package-ids only. It returns the most recent
+  install attempt of a module on a host, running or finished, or null when
+  there is none, so a client can show an install that failed after it stopped
+  watching it, with its `failureKind` and any `cleanupOwed`.
+
 ### Changed
 
 - **Breaking change:** `ServerConfig.document_root`, `client_cert_path` and

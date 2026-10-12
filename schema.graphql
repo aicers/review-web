@@ -8148,6 +8148,38 @@ type Query {
 	"""
 	inFlightInstalls(host: String!, target: String!): [OperationAttempt!]!
 	"""
+	Returns the latest install attempt for `(host, target)`, whatever its
+	phase or outcome, or null if the pair has none.
+	
+	"Latest" is the greatest `(startedAt, id)`, the order
+	`inFlightInstalls` lists by. The answer reads by its outcome: a null
+	`outcome` means the install is still running, as `inFlightInstalls`
+	also says; `SUCCEEDED` means the instance's service row is there or
+	about to be; and `FAILED`, `ROLLED_BACK` or `CANCELLED` is how the last
+	install of the module on the host ended, with `failureKind` and
+	`cleanupOwed` as the attempt carries them.
+	
+	A failed first install leaves no service row — one is created only on
+	terminal success — so no inline attempt reaches it, and this query is
+	the only way to find it without its id. The next install of the pair
+	supersedes it, so the answer clears itself and a history of failures
+	never shows more than one.
+	
+	Ordering rows by request is right here, although the inline latest
+	attempt refuses to: that field answers "the current attempt of an
+	instance", where a superseded attempt may still owe a teardown and
+	remains current until it is discharged. This query answers "the last
+	install request for the pair", and request order is exactly that. A
+	row that still owes cleanup is returned with `cleanupOwed` set, not
+	hidden.
+	
+	# Errors
+	
+	Returns an error if the caller has no access to `host`, if `target` is
+	not a module package-id, or if the ledger cannot be read.
+	"""
+	latestInstall(host: String!, target: String!): OperationAttempt
+	"""
 	A list of triage responses.
 	"""
 	triageResponseList(after: String, before: String, first: Int, last: Int): TriageResponseConnection!
