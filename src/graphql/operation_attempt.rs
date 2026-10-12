@@ -1575,8 +1575,8 @@ mod tests {
         const GREATER: &str = "2bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
         let schema = TestSchema::new().await;
         insert_node(&schema.store(), "node1", HOST, CUSTOMER, vec![], vec![]);
-        // Seeded in the reverse of the order they compare in, and both under
-        // the instant `attempt` stamps.
+        // Both under the instant `attempt` stamps. The scan meets the lesser
+        // key first, so an answer that kept the first of a tie would be wrong.
         seed(
             &schema.store(),
             &attempt(GREATER, OperationAction::Install, HOST, "hog", Some(2)),
