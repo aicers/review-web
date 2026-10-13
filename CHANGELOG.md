@@ -12,6 +12,30 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `auth-mtls` builds. It lists the names events from the node's sensors carry
   in `Event.sensor`, such as `piglet.sensor.example.com`; in these builds
   `hostFqdn` no longer equals `Event.sensor`, and its description now says so.
+- Added the `customerNetworks` query and the `replaceCustomerNetworks` and
+  `removeCustomerNetworks` mutations in `auth-mtls` builds, for System and
+  Security Administrators scoped to the customer. They read and write the
+  networks a customer owns, keyed by customer ID alone, without requiring a
+  `customers` entry. A replacement carries the customer's full set and a
+  revision; a revision lower than the stored one is refused with the error code
+  `STALE_REVISION`. A replacement or removal that changes the customer's
+  networks is sent to the hog agents of the customer's nodes.
+
+### Changed
+
+- In `auth-mtls` builds, the `directions` filter of `EventListFilterInput`
+  treats as internal only the `Intranet` and `Gateway` networks of the event's
+  own customer, taken from the customer networks table, instead of those of
+  every customer. Events from a sensor with no node or customer match no
+  direction.
+- **Breaking change:** In `auth-mtls` builds, hog's internal network list, both
+  pulled and pushed, comes from the customer networks table instead of the
+  `customers` table (`get_customer_networks` reads that table), and
+  `updateCustomer` no longer sends networks to hog. A deployment sends hog an
+  empty list until its customer networks are written.
+- Bumped `review-database` dependency to 0.50.0. Its store format moves to the
+  0.50 series, so a store written by 0.49 must be migrated through
+  `review-database` before this version serves it.
 
 ### Changed
 

@@ -13,6 +13,8 @@ mod cluster;
 mod core_component;
 pub mod customer;
 pub mod customer_access;
+#[cfg(feature = "auth-mtls")]
+mod customer_network;
 mod data_source;
 mod db_management;
 mod event;
@@ -195,6 +197,7 @@ struct SubQueryOneA(
 #[cfg(feature = "auth-mtls")]
 #[derive(MergedObject, Default)]
 struct SubQueryOneB(
+    customer_network::CustomerNetworkQuery,
     indicator::IndicatorQuery,
     ip_location::IpLocationQuery,
     model::ModelQuery,
@@ -280,6 +283,7 @@ struct SubMutationOneA(
 #[cfg(feature = "auth-mtls")]
 #[derive(MergedObject, Default)]
 struct SubMutationOneB(
+    customer_network::CustomerNetworkMutation,
     indicator::IndicatorMutation,
     model::ModelMutation,
     network::NetworkMutation,
