@@ -8770,9 +8770,14 @@ type Sensor {
 	nodeId: ID!
 	"""
 	The fully-qualified hostname of the host on which the sensor runs.
-	Equal to `Event.sensor` for events emitted by this sensor.
+	Not the name events carry in `Event.sensor`; see `eventSensorNames`.
 	"""
 	hostFqdn: String!
+	"""
+	The sensor names events emitted by this node's sensors carry in
+	`Event.sensor`, each `<service>.<hostFqdn>`.
+	"""
+	eventSensorNames: [String!]!
 }
 
 type SensorConnection {

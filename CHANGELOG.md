@@ -4,6 +4,26 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `eventSensorNames` to the `Sensor` rows of `customerSensorList` in
+  `auth-mtls` builds. It lists the names events from the node's sensors carry
+  in `Event.sensor`, such as `piglet.sensor.example.com`; in these builds
+  `hostFqdn` no longer equals `Event.sensor`, and its description now says so.
+
+### Fixed
+
+- In `auth-mtls` builds, the `sensors` filter of `EventListFilterInput`, used
+  by `eventList` and the other event queries, now matches the sensor service
+  names events carry (`<service>.<hostname>`, for example
+  `piglet.sensor.example.com`) instead of the node hostname, which no event
+  carries. Customer-scoped access to `event(id:)` uses the same names.
+- In `auth-mtls` builds, a customer-scoped caller that does not pass `sensors`
+  in `EventListFilterInput` now sees only events of its customers' sensors;
+  it previously saw events of every sensor.
+
 ## [0.38.0] - 2026-10-13
 
 ### Added
@@ -2052,6 +2072,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.38.0...main
 [0.38.0]: https://github.com/aicers/review-web/compare/0.37.0...0.38.0
 [0.37.0]: https://github.com/aicers/review-web/compare/0.36.0...0.37.0
 [0.36.0]: https://github.com/aicers/review-web/compare/0.35.0...0.36.0
