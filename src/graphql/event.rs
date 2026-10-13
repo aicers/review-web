@@ -119,10 +119,13 @@ impl EventStream {
         &self,
         ctx: &Context<'_>,
         start: Timestamp,
-        #[graphql(validator(
-            minimum = 1,
-            custom = "|value: &u64| async_graphql::validators::maximum(value, super::MAX_STREAM_FETCH_INTERVAL_SECS)"
-        ))]
+        #[graphql(
+            desc = "The fetch interval in seconds, from 1 to 86400 (one day) inclusive. Omitted or null values use 20 seconds.",
+            validator(
+                minimum = 1,
+                custom = "|value: &u64| async_graphql::validators::maximum(value, super::MAX_STREAM_FETCH_INTERVAL_SECS)"
+            )
+        )]
         fetch_interval: Option<u64>,
         event_stuck_check_interval: Option<u64>,
     ) -> Result<impl Stream<Item = Event> + use<>> {

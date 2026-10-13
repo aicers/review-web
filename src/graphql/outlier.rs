@@ -41,10 +41,13 @@ impl OutlierStream {
         &self,
         ctx: &Context<'_>,
         start: DateTime<Utc>,
-        #[graphql(validator(
-            minimum = 1,
-            custom = "|value: &u64| async_graphql::validators::maximum(value, super::MAX_STREAM_FETCH_INTERVAL_SECS)"
-        ))]
+        #[graphql(
+            desc = "The fetch interval in seconds, from 1 to 86400 (one day) inclusive. Omitted or null values use 60 seconds.",
+            validator(
+                minimum = 1,
+                custom = "|value: &u64| async_graphql::validators::maximum(value, super::MAX_STREAM_FETCH_INTERVAL_SECS)"
+            )
+        )]
         fetch_interval: Option<u64>,
     ) -> Result<impl Stream<Item = RankedOutlier> + use<>> {
         let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
