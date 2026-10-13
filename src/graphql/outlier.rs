@@ -28,6 +28,16 @@ const MAX_EVENT_NUM_OF_OUTLIER: usize = 50;
 const DEFAULT_RANKED_OUTLIER_FETCH_TIME: u64 = 60;
 const MAX_MODEL_LIST_SIZE: usize = 100;
 
+/// Converts a time to nanoseconds since the Unix epoch.
+///
+/// # Errors
+///
+/// Returns an error if the time is outside the i64 nanosecond range.
+pub(super) fn timestamp_nanos(time: DateTime<Utc>) -> Result<i64> {
+    time.timestamp_nanos_opt()
+        .ok_or_else(|| "time is out of range for i64 nanoseconds".into())
+}
+
 #[derive(Default)]
 pub(super) struct OutlierStream;
 
@@ -50,6 +60,7 @@ impl OutlierStream {
         )]
         fetch_interval: Option<u64>,
     ) -> Result<impl Stream<Item = RankedOutlier> + use<>> {
+        let start = timestamp_nanos(start)?;
         let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
         let fetch_time = fetch_interval.unwrap_or(DEFAULT_RANKED_OUTLIER_FETCH_TIME);
         let username = ctx
@@ -58,14 +69,7 @@ impl OutlierStream {
             .unwrap_or("<unknown user>".to_string());
         let (tx, rx) = unbounded();
         tokio::spawn(async move {
-            if let Err(e) = fetch_ranked_outliers(
-                store,
-                start.timestamp_nanos_opt().unwrap_or_default(),
-                tx,
-                fetch_time,
-            )
-            .await
-            {
+            if let Err(e) = fetch_ranked_outliers(store, start, tx, fetch_time).await {
                 error_with_username!(username: username, "Fetch failed: {e:?}");
             }
         });
@@ -227,6 +231,7 @@ impl OutlierQuery {
     ) -> Result<
         Connection<OpaqueCursor<Vec<u8>>, RankedOutlier, RankedOutlierTotalCount, EmptyFields>,
     > {
+        let time = time.map(|t| timestamp_nanos(t.and_utc())).transpose()?;
         let filter = |node: RankedOutlier| if node.saved { Some(node) } else { None };
         query(
             after,
@@ -260,6 +265,17 @@ impl OutlierQuery {
     ) -> Result<
         Connection<OpaqueCursor<Vec<u8>>, RankedOutlier, RankedOutlierTotalCount, EmptyFields>,
     > {
+        let time = time.map(|t| timestamp_nanos(t.and_utc())).transpose()?;
+        let time_range = filter
+            .as_ref()
+            .and_then(|filter| filter.time.as_ref())
+            .map(|range| {
+                Ok::<_, async_graphql::Error>((
+                    range.start.map(timestamp_nanos).transpose()?,
+                    range.end.map(timestamp_nanos).transpose()?,
+                ))
+            })
+            .transpose()?;
         query(
             after,
             before,
@@ -267,7 +283,7 @@ impl OutlierQuery {
             last,
             |after, before, first, last| async move {
                 load_ranked_outliers_with_filter(
-                    ctx, model_id, time, after, before, first, last, filter,
+                    ctx, model_id, time, after, before, first, last, filter, time_range,
                 )
                 .await
             },
@@ -280,7 +296,7 @@ impl OutlierQuery {
 async fn load_outliers(
     ctx: &Context<'_>,
     model_id: ID,
-    time: Option<NaiveDateTime>,
+    timestamp: Option<i64>,
     after: Option<OpaqueCursor<Vec<u8>>>,
     before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
@@ -289,7 +305,6 @@ async fn load_outliers(
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, RankedOutlier, RankedOutlierTotalCount, EmptyFields>>
 {
     let model_id: u32 = model_id.as_str().parse()?;
-    let timestamp = time.map(|t| t.and_utc().timestamp_nanos_opt().unwrap_or_default());
 
     let prefix = {
         let mut buf = model_id.to_be_bytes().to_vec();
@@ -605,6 +620,7 @@ fn check_filter_to_ranked_outlier(
     node: &OutlierInfo,
     filter: Option<&SearchFilterInput>,
     tag_id_list: Option<&Vec<u32>>,
+    time_range: Option<(Option<i64>, Option<i64>)>,
     remarks_map: &IndexedTable<'_, TriageResponse>,
 ) -> Result<bool> {
     if let Some(filter) = filter {
@@ -624,22 +640,11 @@ fn check_filter_to_ranked_outlier(
                 return Ok(false);
             }
         }
-        if let Some(time) = &filter.time {
-            if let Some(start) = time.start {
-                if let Some(end) = time.end {
-                    if node.timestamp < start.timestamp_nanos_opt().unwrap_or_default()
-                        || node.timestamp > end.timestamp_nanos_opt().unwrap_or_default()
-                    {
-                        return Ok(false);
-                    }
-                } else if node.timestamp < start.timestamp_nanos_opt().unwrap_or_default() {
-                    return Ok(false);
-                }
-            } else if let Some(end) = time.end
-                && node.timestamp > end.timestamp_nanos_opt().unwrap_or_default()
-            {
-                return Ok(false);
-            }
+        if let Some((start, end)) = time_range
+            && (start.is_some_and(|start| node.timestamp < start)
+                || end.is_some_and(|end| node.timestamp > end))
+        {
+            return Ok(false);
         }
 
         if let Some(distance) = &filter.distance
@@ -661,16 +666,16 @@ fn check_filter_to_ranked_outlier(
 async fn load_ranked_outliers_with_filter(
     ctx: &Context<'_>,
     model_id: ID,
-    time: Option<NaiveDateTime>,
+    timestamp: Option<i64>,
     after: Option<OpaqueCursor<Vec<u8>>>,
     before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
     filter: Option<SearchFilterInput>,
+    time_range: Option<(Option<i64>, Option<i64>)>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, RankedOutlier, RankedOutlierTotalCount, EmptyFields>>
 {
     let model_id: u32 = model_id.as_str().parse()?;
-    let timestamp = time.map(|t| t.and_utc().timestamp_nanos_opt().unwrap_or_default());
     let after = after.map(|cursor| cursor.0);
     let before = before.map(|cursor| cursor.0);
     let (direction, count, from) = if let Some(first) = first {
@@ -734,6 +739,7 @@ async fn load_ranked_outliers_with_filter(
             &node,
             filter.as_ref(),
             tag_id_list.as_ref(),
+            time_range,
             &remarks_map,
         )? {
             nodes.push((OpaqueCursor(key), node));
@@ -748,6 +754,7 @@ async fn load_ranked_outliers_with_filter(
             &node,
             filter.as_ref(),
             tag_id_list.as_ref(),
+            time_range,
             &remarks_map,
         )? {
             if nodes.len() >= count {
@@ -804,6 +811,192 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    const OUT_OF_RANGE_TIMES: [&str; 2] = [
+        "1677-09-21T00:12:43.145224191",
+        "2262-04-11T23:47:16.854775808",
+    ];
+    const BOUNDARY_TIMES: [&str; 2] = [
+        "1677-09-21T00:12:43.145224192",
+        "2262-04-11T23:47:16.854775807",
+    ];
+
+    fn time_queries(time: &str) -> Vec<String> {
+        let mut queries = vec![format!(
+            "{{topTimeSeries(model: 3, time: \"{time}\") {{countIndex}}}}"
+        )];
+        for field in ["savedOutliers", "rankedOutliers"] {
+            queries.push(format!(
+                "{{{field}(modelId: 3, time: \"{time}\") {{nodes {{id}}}}}}"
+            ));
+        }
+        for bound in ["start", "end"] {
+            for tag in ["", ", tag: \"no matching tag\""] {
+                queries.push(format!(
+                    "{{rankedOutliers(modelId: 3, filter: {{time: {{{bound}: \"{time}Z\"}}{tag}}}) {{nodes {{id}}}}}}"
+                ));
+            }
+        }
+        queries
+    }
+
+    #[tokio::test]
+    async fn reject_out_of_range_query_times() {
+        let schema = TestSchema::new().await;
+        for time in OUT_OF_RANGE_TIMES {
+            for query in time_queries(time) {
+                let response = schema.execute_as_system_admin(&query).await;
+                assert!(
+                    response
+                        .errors
+                        .iter()
+                        .any(|error| error.message.contains("time is out of range")),
+                    "{query}: {response:?}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn accept_query_time_boundaries() {
+        let schema = TestSchema::new().await;
+        for time in BOUNDARY_TIMES {
+            for query in time_queries(time) {
+                let response = schema.execute_as_system_admin(&query).await;
+                assert!(response.errors.is_empty(), "{query}: {response:?}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn reject_out_of_range_stream_start() {
+        let schema = TestSchema::new().await;
+        for time in OUT_OF_RANGE_TIMES {
+            let query = format!("subscription {{rankedOutlierStream(start: \"{time}Z\") {{id}}}}");
+            let mut stream = schema.execute_stream(&query).await;
+            let response = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(
+                response
+                    .errors
+                    .iter()
+                    .any(|error| error.message.contains("time is out of range")),
+                "{response:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn representable_times_return_stored_data() {
+        let schema = TestSchema::new().await;
+        let time = "2025-01-01T00:00:00";
+        let timestamp = format!("{time}Z")
+            .parse::<DateTime<Utc>>()
+            .unwrap()
+            .timestamp_nanos_opt()
+            .unwrap();
+        {
+            let store = schema.store();
+            for batch in [timestamp - 1, timestamp, timestamp + 1] {
+                for outlier in samples(3, batch, 0, 2) {
+                    store.outlier_map().insert(&outlier).unwrap();
+                }
+            }
+            store
+                .time_series_map()
+                .insert(&review_database::TimeSeries {
+                    model_id: 3,
+                    cluster_id: 1,
+                    time: timestamp,
+                    value: timestamp,
+                    count_index: Some(0),
+                    count: 1,
+                })
+                .unwrap();
+        }
+        for (field, ids) in [
+            ("savedOutliers", "[{id: \"0\"}]"),
+            ("rankedOutliers", "[{id: \"0\"}, {id: \"1\"}]"),
+        ] {
+            let query = format!("{{{field}(modelId: 3, time: \"{time}\") {{nodes {{id}}}}}}");
+            let response = schema.execute_as_system_admin(&query).await;
+            assert!(response.errors.is_empty(), "{response:?}");
+            assert_eq!(
+                response.data.to_string(),
+                format!("{{{field}: {{nodes: {ids}}}}}")
+            );
+        }
+        let query = format!(
+            "{{rankedOutliers(modelId: 3, filter: {{time: {{start: \"{time}Z\", end: \"{time}Z\"}}}}) {{nodes {{timestamp}}}}}}"
+        );
+        let response = schema.execute_as_system_admin(&query).await;
+        assert!(response.errors.is_empty(), "{response:?}");
+        assert_eq!(
+            response.data.to_string(),
+            format!(
+                "{{rankedOutliers: {{nodes: [{{timestamp: {timestamp}}}, {{timestamp: {timestamp}}}]}}}}"
+            )
+        );
+        let query = format!("{{topTimeSeries(model: 3, time: \"{time}\") {{countIndex}}}}");
+        let response = schema.execute_as_system_admin(&query).await;
+        assert!(response.errors.is_empty(), "{response:?}");
+        assert_eq!(
+            response.data.to_string(),
+            "{topTimeSeries: [{countIndex: 0}]}"
+        );
+    }
+
+    #[tokio::test]
+    async fn valid_stream_start_returns_outliers() {
+        let schema = TestSchema::new().await;
+        let time = "2025-01-01T00:00:00Z";
+        let timestamp = time
+            .parse::<DateTime<Utc>>()
+            .unwrap()
+            .timestamp_nanos_opt()
+            .unwrap();
+        let model_id = {
+            let store = schema.store();
+            let model_id = store
+                .model_map()
+                .add_model(review_database::ModelDigest {
+                    id: 0,
+                    name: "stream model".to_string(),
+                    version: 1,
+                    kind: "test".to_string(),
+                    max_event_id_num: 100,
+                    data_source_id: 0,
+                    classification_id: None,
+                })
+                .unwrap();
+            for (batch, id) in [(timestamp - 1, 0), (timestamp, 1), (timestamp + 1, 2)] {
+                store
+                    .outlier_map()
+                    .insert(samples(model_id, batch, id, 1).first().unwrap())
+                    .unwrap();
+            }
+            model_id
+        };
+        let query = format!(
+            "subscription {{rankedOutlierStream(start: \"{time}\") {{id modelId timestamp}}}}"
+        );
+        let mut stream = schema.execute_stream(&query).await;
+        for (id, batch) in [(1, timestamp), (2, timestamp + 1)] {
+            let response = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(response.errors.is_empty(), "{response:?}");
+            assert_eq!(
+                response.data.to_string(),
+                format!(
+                    "{{rankedOutlierStream: {{id: \"{id}\", modelId: \"{model_id}\", timestamp: {batch}}}}}"
+                )
+            );
+        }
     }
 
     #[tokio::test]
