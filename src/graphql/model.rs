@@ -1065,15 +1065,16 @@ fn load_cluster_ids_with_size_limit(
         return Ok(Vec::new());
     }
 
-    let total_sizes: i64 = clusters.iter().map(|c| c.size).sum();
+    let total_sizes: i128 = clusters.iter().map(|c| i128::from(c.size)).sum();
     let portion_of_clusters = portion_of_clusters.unwrap_or(DEFAULT_PORTION_OF_CLUSTER);
+    // Preserve the existing floating-point rounding and truncation for the portion.
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-    let size_including_clusters = ((total_sizes as f64) * portion_of_clusters).trunc() as i64;
+    let size_including_clusters = ((total_sizes as f64) * portion_of_clusters).trunc() as i128;
 
-    let mut sum_sizes: i64 = 0;
+    let mut sum_sizes: i128 = 0;
     let mut index_included: usize = 0;
     for (index, c) in clusters.iter().enumerate() {
-        sum_sizes += c.size;
+        sum_sizes += i128::from(c.size);
         index_included = index;
         if sum_sizes > size_including_clusters {
             break;
@@ -1093,7 +1094,67 @@ fn load_cluster_ids_with_size_limit(
 
 #[cfg(test)]
 mod tests {
+    use review_database::{Cluster, Store};
+
     use crate::graphql::TestSchema;
+
+    fn selected_cluster_ids(sizes: &[i64], portion: Option<f64>) -> Vec<u32> {
+        let db_dir = tempfile::tempdir().unwrap();
+        let backup_dir = tempfile::tempdir().unwrap();
+        let store = Store::new(db_dir.path(), backup_dir.path(), None).unwrap();
+        for (index, &size) in sizes.iter().enumerate() {
+            store
+                .cluster_map()
+                .put(&Cluster {
+                    model_id: 1,
+                    id: u32::try_from(index).unwrap(),
+                    category_id: 1,
+                    detector_id: 1,
+                    event_ids: Vec::new(),
+                    sensors: Vec::new(),
+                    labels: None,
+                    qualifier_id: 1,
+                    status_id: 1,
+                    signature: String::new(),
+                    size,
+                    score: None,
+                    last_modification_time: None,
+                })
+                .unwrap();
+        }
+        super::load_cluster_ids_with_size_limit(&store, 1, portion).unwrap()
+    }
+
+    #[test]
+    fn cluster_size_limit_default_portion() {
+        let ids = selected_cluster_ids(&[1; 40], None);
+        assert_eq!(ids, (0..13).collect::<Vec<u32>>());
+    }
+
+    #[test]
+    fn cluster_size_limit_overflowing_total_default_portion() {
+        let ids = selected_cluster_ids(&[1_i64 << 59; 40], None);
+        assert_eq!(ids, (0..13).collect::<Vec<u32>>());
+    }
+
+    #[test]
+    fn cluster_size_limit_overflowing_total_large_portion() {
+        let ids = selected_cluster_ids(&[1_i64 << 59; 40], Some(0.8));
+        assert_eq!(ids, (0..33).collect::<Vec<u32>>());
+    }
+
+    #[test]
+    fn cluster_size_limit_preserves_size_order_and_minimum() {
+        let sizes: Vec<i64> = (1..=40).collect();
+        let ids = selected_cluster_ids(&sizes, None);
+        assert_eq!(ids, (30..40).rev().collect::<Vec<u32>>());
+        let ids = selected_cluster_ids(&sizes, Some(0.8));
+        assert_eq!(ids, (17..40).rev().collect::<Vec<u32>>());
+        let ids = selected_cluster_ids(&sizes, Some(0.0));
+        assert_eq!(ids, (30..40).rev().collect::<Vec<u32>>());
+        assert_eq!(selected_cluster_ids(&[1; 3], None), vec![0, 1, 2]);
+        assert_eq!(selected_cluster_ids(&[], None), Vec::<u32>::new());
+    }
 
     #[tokio::test]
     async fn trend_argument_ranges() {
