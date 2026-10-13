@@ -13,6 +13,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   in `Event.sensor`, such as `piglet.sensor.example.com`; in these builds
   `hostFqdn` no longer equals `Event.sensor`, and its description now says so.
 
+### Changed
+
+- `auth-mtls` builds now require a client certificate during the TLS handshake;
+  previously, connections without one were accepted at the TLS layer.
+
 ### Fixed
 
 - In `auth-mtls` builds, the `sensors` filter of `EventListFilterInput`, used
