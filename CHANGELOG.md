@@ -36,9 +36,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Bumped `review-database` dependency to 0.50.0. Its store format moves to the
   0.50 series, so a store written by 0.49 must be migrated through
   `review-database` before this version serves it.
-
-### Changed
-
 - `auth-mtls` builds now require a client certificate during the TLS handshake;
   previously, connections without one were accepted at the TLS layer.
 
