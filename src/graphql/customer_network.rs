@@ -651,7 +651,11 @@ mod tests {
                 let res = schema
                     .execute_as_scoped_user(&query, role, Some(vec![7]))
                     .await;
-                assert!(!res.errors.is_empty(), "{role:?} was not refused: {query}");
+                assert_eq!(
+                    error_message(&res),
+                    "Forbidden",
+                    "{role:?} was not refused: {query}"
+                );
             }
         }
         let stored = schema.store().customer_networks_map().get(7).unwrap();
