@@ -220,7 +220,11 @@ impl CustomerMutation {
                 new.name
             );
 
-            if let Some(new_networks) = new.networks {
+            // Under `auth-mtls`, hog's list is built from the customer networks
+            // table; pushing this row's networks would overwrite it.
+            if !cfg!(feature = "auth-mtls")
+                && let Some(new_networks) = new.networks
+            {
                 let customer_id_hash = agent_lookup_keys_by_customer_id(&store)?;
                 if let Some(agent_lookup_keys) = customer_id_hash.get(&i) {
                     let (hosts, networks, ip_ranges) = new_networks.iter().fold(
@@ -606,7 +610,7 @@ struct IpRange {
 
 #[derive(Clone, Copy, Enum, Eq, PartialEq)]
 #[graphql(remote = "database::event::NetworkType")]
-enum NetworkType {
+pub(super) enum NetworkType {
     Intranet,
     Extranet,
     Gateway,
@@ -640,6 +644,7 @@ async fn load(
 /// # Errors
 ///
 /// Returns an error if the customer database could not be retrieved.
+#[cfg(feature = "auth-jwt")]
 pub fn get_customer_networks(db: &Store, customer_id: u32) -> Result<database::HostNetworkGroup> {
     let map = db.customer_map();
     let mut hosts = vec![];
@@ -653,6 +658,23 @@ pub fn get_customer_networks(db: &Store, customer_id: u32) -> Result<database::H
         });
     }
     Ok(database::HostNetworkGroup::new(hosts, networks, ip_ranges))
+}
+
+/// Returns the networks the customer owns, merged into one group whatever
+/// their type, as stored in the customer networks table.
+///
+/// A customer with no stored row owns no networks, and gets an empty group.
+///
+/// # Errors
+///
+/// Returns an error if the stored row could not be read or decoded.
+#[cfg(feature = "auth-mtls")]
+pub fn get_customer_networks(db: &Store, customer_id: u32) -> Result<database::HostNetworkGroup> {
+    Ok(db
+        .customer_networks_map()
+        .get(customer_id)?
+        .map(|set| set.merged_group())
+        .unwrap_or_default())
 }
 
 /// Returns a list of agents that received the internal networks.
@@ -722,6 +744,38 @@ mod tests {
 
         let pair = NetworksTargetAgentLookupKeysPair::new(networks, agent_lookup_keys, "piglet");
         assert_eq!(pair.target_agent_lookup_keys().len(), 0);
+    }
+
+    #[cfg(feature = "auth-jwt")]
+    #[tokio::test]
+    async fn get_customer_networks_merges_customers_row() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation { insertCustomer(name: "c0", description: "", networks: [
+                    { name: "office", description: "", networkType: INTRANET,
+                      networkGroup: { hosts: ["192.168.0.1"], networks: [], ranges: [] } },
+                    { name: "partner", description: "", networkType: EXTRANET,
+                      networkGroup: { hosts: [], networks: ["172.16.0.0/12"],
+                                      ranges: [{ start: "10.1.0.1", end: "10.1.0.9" }] } }
+                ]) }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+
+        let store = schema.store();
+        assert_eq!(
+            super::get_customer_networks(&store, 0).unwrap(),
+            database::HostNetworkGroup::new(
+                vec!["192.168.0.1".parse().unwrap()],
+                vec!["172.16.0.0/12".parse().unwrap()],
+                vec!["10.1.0.1".parse().unwrap()..="10.1.0.9".parse().unwrap()],
+            )
+        );
+        assert_eq!(
+            super::get_customer_networks(&store, 1).unwrap(),
+            database::HostNetworkGroup::default()
+        );
     }
 
     #[tokio::test]

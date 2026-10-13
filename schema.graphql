@@ -6474,6 +6474,21 @@ type Mutation {
 	"""
 	updateBackupConfig(old: BackupConfigInput!, new: BackupConfigInput!): BackupConfig!
 	"""
+	Replaces the networks the customer owns with `networks`, returning the
+	stored revision.
+	
+	`networks` is the customer's full set; an empty list means it owns
+	none. A `revision` lower than the stored one is refused with the error
+	code `STALE_REVISION`, whose `storedRevision` extension holds the stored
+	revision.
+	"""
+	replaceCustomerNetworks(customerId: ID!, revision: StringNumber!, networks: [OwnedNetworkInput!]!): StringNumber!
+	"""
+	Removes the networks the customer owns, returning whether any were
+	stored.
+	"""
+	removeCustomerNetworks(customerId: ID!): Boolean!
+	"""
 	Inserts a new Indicator, overwriting any existing Indicator if same name and version exist already.
 	Returns the inserted db's name and version.
 	"""
@@ -7610,6 +7625,46 @@ input OutlierTimeRange {
 	end: DateTime
 }
 
+type OwnedNetwork {
+	"""
+	The name of the network, unique within its customer's set.
+	"""
+	name: String!
+	"""
+	The type of the network.
+	"""
+	networkType: NetworkType!
+	"""
+	The hosts, networks and ranges of the network.
+	"""
+	networkGroup: HostNetworkGroup!
+}
+
+input OwnedNetworkInput {
+	name: String!
+	networkType: NetworkType!
+	networkGroup: HostNetworkGroupInput!
+}
+
+type OwnedNetworkSet {
+	"""
+	The ID of the customer.
+	"""
+	customerId: ID!
+	"""
+	The writer's revision of this set.
+	"""
+	revision: StringNumber!
+	"""
+	The networks the customer owns.
+	"""
+	networks: [OwnedNetwork!]!
+	"""
+	The time when this set was last written.
+	"""
+	updatedAt: DateTime!
+}
+
 input PacketAttrInput {
 	rawEventKind: RawEventKind!
 	attrName: String!
@@ -7975,6 +8030,10 @@ type Query {
 	increase `period` or narrow the time range for bucket-limit errors.
 	"""
 	eventFrequencySeries(filter: EventListFilterInput!, period: Int!): [Int!]!
+	"""
+	The networks the customer owns, or null if none were stored for it.
+	"""
+	customerNetworks(customerId: ID!): OwnedNetworkSet
 	"""
 	Look up an Indicator by the given name.
 	"""

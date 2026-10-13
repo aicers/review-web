@@ -41,7 +41,7 @@ use review_database::AgentKind;
 use review_database::{
     self as database, EventKind, ExclusionReason, IndexedTable, Iterable, Store, TriageExclusion,
     TriagePolicyInput as DbTriagePolicyInput,
-    event::{Direction, EventFilter, EventIterator, RecordType},
+    event::{Direction, EventFilter, EventIterator, InternalNetworks, RecordType},
     types::{Endpoint, EventCategory, HostNetworkGroup},
 };
 use tokio::time;
@@ -1162,8 +1162,7 @@ fn from_filter_input(
     };
 
     let directions = if let Some(directions) = &input.directions {
-        let map = store.customer_map();
-        Some((directions.clone(), internal_customer_networks(&map)?))
+        Some((directions.clone(), internal_networks(store)?))
     } else {
         None
     };
@@ -1353,6 +1352,47 @@ fn convert_endpoint_input(
     Ok(networks)
 }
 
+/// Returns the networks every event is tested against for `directions`: the
+/// `Intranet` and `Gateway` networks of every customer.
+#[cfg(feature = "auth-jwt")]
+fn internal_networks(store: &Store) -> anyhow::Result<InternalNetworks> {
+    Ok(InternalNetworks::Shared(internal_customer_networks(
+        &store.customer_map(),
+    )?))
+}
+
+/// Returns the networks each event is tested against for `directions`: the
+/// `Intranet` and `Gateway` networks its own customer owns, found through the
+/// node its sensor belongs to.
+///
+/// An event whose sensor maps to no node has no internal network, so it
+/// matches no direction.
+#[cfg(feature = "auth-mtls")]
+fn internal_networks(store: &Store) -> anyhow::Result<InternalNetworks> {
+    use std::collections::{HashMap, hash_map::Entry};
+
+    let sensor_customers = crate::graphql::customer_access::event_sensor_customer_id_map(store)
+        .map_err(|e| anyhow!("{}", e.message))?;
+    let table = store.customer_networks_map();
+    let mut by_customer = HashMap::<u32, Vec<HostNetworkGroup>>::new();
+    let mut by_sensor = HashMap::with_capacity(sensor_customers.len());
+    for (sensor, customer_id) in sensor_customers {
+        let groups = match by_customer.entry(customer_id) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => {
+                let groups = table
+                    .get(customer_id)?
+                    .map(|set| set.internal_groups())
+                    .unwrap_or_default();
+                entry.insert(groups).clone()
+            }
+        };
+        by_sensor.insert(sensor, groups);
+    }
+    Ok(InternalNetworks::PerSensor(by_sensor))
+}
+
+#[cfg(feature = "auth-jwt")]
 fn internal_customer_networks(
     map: &IndexedTable<database::Customer>,
 ) -> anyhow::Result<Vec<HostNetworkGroup>> {
@@ -1917,6 +1957,18 @@ mod tests {
     const SENSOR1_EVENT_SENSOR: &str = "sensor1";
     #[cfg(feature = "auth-mtls")]
     const SENSOR1_EVENT_SENSOR: &str = "piglet.sensor1";
+
+    /// The `directions` filters of the blocklist tests. Their events come from
+    /// sensor `sensor1`, which maps to no node, so under `auth-mtls` they would
+    /// match no direction; there the tests run without the filter.
+    #[cfg(feature = "auth-jwt")]
+    const OUTBOUND_FILTER: &str = "directions: [\"OUTBOUND\"],";
+    #[cfg(feature = "auth-mtls")]
+    const OUTBOUND_FILTER: &str = "";
+    #[cfg(feature = "auth-jwt")]
+    const INBOUND_FILTER: &str = "directions: [\"INBOUND\"],";
+    #[cfg(feature = "auth-mtls")]
+    const INBOUND_FILTER: &str = "";
 
     /// Creates an event message at `timestamp` emitted by the `sensor1` test
     /// node.
@@ -4285,6 +4337,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "auth-jwt")]
     #[tokio::test]
     async fn filter_by_direction() {
         let schema = TestSchema::new().await;
@@ -4598,7 +4651,7 @@ mod tests {
                 eventList(filter: {{
                     start:\"{timestamp}\"
                     customers: [0],
-                    directions: [\"OUTBOUND\"],
+                    {OUTBOUND_FILTER}
                 }}) {{ \
                     edges {{ node {{ id, ... on BlocklistDhcp {{ origAddr,giaddr,reqIpAddr,classId,clientId,options {{ code,value }} }} }} }} \
                 }} \
@@ -4696,7 +4749,7 @@ mod tests {
                 eventList(filter: {{
                     start:\"{timestamp}\"
                     customers: [0],
-                    directions: [\"INBOUND\"],
+                    {INBOUND_FILTER}
                 }}) {{ \
                     edges {{ node {{ id, ... on BlocklistBootp {{ origAddr,ciaddr,chaddr }} }} }} \
                 }} \
@@ -4954,7 +5007,7 @@ mod tests {
                 eventList(filter: {{
                     start:\"{timestamp}\"
                     customers: [0],
-                    directions: [\"OUTBOUND\"],
+                    {OUTBOUND_FILTER}
                 }}) {{ \
                     edges {{ node {{ id, ... on BlocklistRadius {{ origAddr,nasIp,userName,message }} }} }} \
                 }} \
@@ -5055,7 +5108,7 @@ mod tests {
                 eventList(filter: {{
                     start:\"{timestamp}\"
                     customers: [0],
-                    directions: [\"OUTBOUND\"],
+                    {OUTBOUND_FILTER}
                 }}) {{ \
                     edges {{ node {{ id, ... on BlocklistMalformedDns {{ origAddr,respAddr,transId,queryBody,respBody }} }} }} \
                 }} \
@@ -6110,5 +6163,294 @@ mod tests {
                 .await;
             assert_eq!(sensor(res), json!({ "sensor": STALE_SENSOR }));
         }
+    }
+
+    /// The `directions` filter under `auth-mtls`, which tests each event
+    /// against the networks of its own customer.
+    #[cfg(feature = "auth-mtls")]
+    mod directions_by_customer {
+        use review_database::{
+            Agent, AgentKind, AgentStatus, HostNetworkGroup, Lifecycle, Node, NodeProfile,
+            OwnedNetwork, Store, event::NetworkType,
+        };
+
+        use super::*;
+
+        const SENSOR_A: &str = "piglet.a.example.com";
+        const SENSOR_B: &str = "piglet.b.example.com";
+        const SENSOR_C: &str = "piglet.c.example.com";
+        const UNMAPPED_SENSOR: &str = "piglet.unmapped.example.com";
+
+        fn insert_sensor_node(store: &Store, customer_id: u32, hostname: &str) {
+            let node = Node {
+                id: u32::MAX,
+                name: hostname.to_string(),
+                name_draft: Some(hostname.to_string()),
+                profile: Some(NodeProfile {
+                    customer_id,
+                    description: String::new(),
+                    hostname: hostname.to_string(),
+                }),
+                profile_draft: None,
+                agents: vec![Agent {
+                    node_id: u32::MAX,
+                    key: "001.piglet".to_string(),
+                    kind: AgentKind::Sensor,
+                    status: AgentStatus::Enabled,
+                    config: None,
+                    draft: None,
+                    installed_version: None,
+                    installed_commit: None,
+                    lifecycle: Lifecycle::NotInstalled,
+                    bound_addrs: vec![],
+                    instance: None,
+                }],
+                external_services: vec![],
+                creation_time: Utc::now(),
+            };
+            store.node_map().put(&node).expect("insert node");
+        }
+
+        fn owned(name: &str, network_type: NetworkType, cidr: &str) -> OwnedNetwork {
+            OwnedNetwork {
+                name: name.to_string(),
+                network_type,
+                group: HostNetworkGroup::new(vec![], vec![cidr.parse().unwrap()], vec![]),
+            }
+        }
+
+        fn put_event(store: &Store, day: u32, sensor: &str, src: &str, dst: &str) {
+            let timestamp = NaiveDate::from_ymd_opt(2018, 1, day)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_local_timezone(Utc)
+                .unwrap();
+            let src: Ipv4Addr = src.parse().unwrap();
+            let dst: Ipv4Addr = dst.parse().unwrap();
+            store
+                .events()
+                .put(&event_message_with_category(
+                    timestamp,
+                    src.into(),
+                    dst.into(),
+                    Some(EventCategory::CommandAndControl),
+                    sensor,
+                ))
+                .unwrap();
+        }
+
+        /// Seeds customer 1 (sensor A) owning Intranet `10.0.0.0/8` and
+        /// Extranet `8.0.0.0/8`, customer 2 (sensor B) owning nothing, and
+        /// customer 0 (sensor C) with Intranet `10.0.0.0/8` only in the
+        /// `customers` table; and one `10.1.1.1 -> 8.8.8.8` event on each of
+        /// them and on a sensor that maps to no node.
+        fn seed(schema: &TestSchema) {
+            let store = schema.store();
+            insert_sensor_node(&store, 1, "a.example.com");
+            insert_sensor_node(&store, 2, "b.example.com");
+            insert_sensor_node(&store, 0, "c.example.com");
+            let table = store.customer_networks_map();
+            table
+                .replace(
+                    1,
+                    1,
+                    vec![
+                        owned("office", NetworkType::Intranet, "10.0.0.0/8"),
+                        owned("partner", NetworkType::Extranet, "8.0.0.0/8"),
+                    ],
+                )
+                .unwrap();
+            put_event(&store, 1, SENSOR_A, "10.1.1.1", "8.8.8.8");
+            put_event(&store, 2, SENSOR_B, "10.1.1.1", "8.8.8.8");
+            put_event(&store, 3, SENSOR_C, "10.1.1.1", "8.8.8.8");
+            put_event(&store, 4, UNMAPPED_SENSOR, "10.1.1.1", "8.8.8.8");
+        }
+
+        async fn insert_customer_c(schema: &TestSchema) {
+            let res = schema
+                .execute_as_system_admin(
+                    r#"mutation {
+                        insertCustomer(name: "c", description: "", networks: [{
+                            name: "n", description: "", networkType: INTRANET,
+                            networkGroup: { hosts: [], networks: ["10.0.0.0/8"], ranges: [] }
+                        }])
+                    }"#,
+                )
+                .await;
+            assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
+        }
+
+        async fn sensors_matching(schema: &TestSchema, directions: &str) -> Vec<String> {
+            let res = schema
+                .execute_as_system_admin(&format!(
+                    "{{ eventList(filter: {{ directions: [{directions}] }}) {{ \
+                        edges {{ node {{ ... on DnsCovertChannel {{ sensor }} }} }} \
+                    }} }}"
+                ))
+                .await;
+            assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+            let data = res.data.into_json().unwrap();
+            data["eventList"]["edges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|edge| edge["node"]["sensor"].as_str().unwrap().to_string())
+                .collect()
+        }
+
+        #[tokio::test]
+        async fn event_is_classified_by_its_own_customer() {
+            let schema = TestSchema::new().await;
+            insert_customer_c(&schema).await;
+            seed(&schema);
+
+            assert_eq!(sensors_matching(&schema, "OUTBOUND").await, vec![SENSOR_A]);
+            assert_eq!(
+                sensors_matching(&schema, "INBOUND").await,
+                Vec::<String>::new()
+            );
+            assert_eq!(
+                sensors_matching(&schema, "INTERNAL").await,
+                Vec::<String>::new()
+            );
+            assert_eq!(
+                sensors_matching(&schema, "OUTBOUND, INBOUND, INTERNAL").await,
+                vec![SENSOR_A]
+            );
+        }
+
+        #[tokio::test]
+        async fn internal_and_inbound_follow_the_owner() {
+            let schema = TestSchema::new().await;
+            let store = schema.store();
+            insert_sensor_node(&store, 1, "a.example.com");
+            insert_sensor_node(&store, 2, "b.example.com");
+            let table = store.customer_networks_map();
+            table
+                .replace(
+                    1,
+                    0,
+                    vec![
+                        owned("office", NetworkType::Intranet, "10.0.0.0/8"),
+                        owned("edge", NetworkType::Gateway, "192.168.0.0/16"),
+                    ],
+                )
+                .unwrap();
+            table
+                .replace(2, 0, vec![owned("lab", NetworkType::Intranet, "8.0.0.0/8")])
+                .unwrap();
+            // Internal for customer 1: both sides are in its networks.
+            put_event(&store, 1, SENSOR_A, "10.1.1.1", "192.168.1.1");
+            // Inbound for customer 2: only the responder is its own.
+            put_event(&store, 2, SENSOR_B, "10.1.1.1", "8.8.8.8");
+            drop(store);
+
+            assert_eq!(sensors_matching(&schema, "INTERNAL").await, vec![SENSOR_A]);
+            assert_eq!(sensors_matching(&schema, "INBOUND").await, vec![SENSOR_B]);
+            assert_eq!(
+                sensors_matching(&schema, "OUTBOUND").await,
+                Vec::<String>::new()
+            );
+        }
+
+        #[tokio::test]
+        async fn extranet_only_customer_has_no_internal_side() {
+            let schema = TestSchema::new().await;
+            let store = schema.store();
+            insert_sensor_node(&store, 1, "a.example.com");
+            store
+                .customer_networks_map()
+                .replace(
+                    1,
+                    0,
+                    vec![owned("partner", NetworkType::Extranet, "10.0.0.0/8")],
+                )
+                .unwrap();
+            put_event(&store, 1, SENSOR_A, "10.1.1.1", "8.8.8.8");
+            drop(store);
+
+            assert_eq!(
+                sensors_matching(&schema, "OUTBOUND, INBOUND, INTERNAL").await,
+                Vec::<String>::new()
+            );
+        }
+    }
+
+    /// The `directions` filter under `auth-jwt`, which tests every event
+    /// against the internal networks of every customer.
+    #[cfg(feature = "auth-jwt")]
+    #[tokio::test]
+    async fn directions_use_every_customers_networks() {
+        let schema = TestSchema::new().await;
+        for (name, network) in [("c0", "10.0.0.0/8"), ("c1", "172.16.0.0/12")] {
+            let res = schema
+                .execute_as_system_admin(&format!(
+                    r#"mutation {{
+                        insertCustomer(name: "{name}", description: "", networks: [{{
+                            name: "n", description: "", networkType: INTRANET,
+                            networkGroup: {{ hosts: [], networks: ["{network}"], ranges: [] }}
+                        }}])
+                    }}"#
+                ))
+                .await;
+            assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        }
+        {
+            let store = schema.store();
+            let db = store.events();
+            let ts = |day| {
+                NaiveDate::from_ymd_opt(2018, 1, day)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .and_local_timezone(Utc)
+                    .unwrap()
+            };
+            let addr = |s: &str| u32::from(s.parse::<Ipv4Addr>().unwrap());
+            let category = Some(EventCategory::CommandAndControl);
+            // Sensors that map to no node: under `auth-jwt` the sensor plays
+            // no part.
+            db.put(&event_message_with_category(
+                ts(1),
+                addr("10.1.1.1"),
+                addr("8.8.8.8"),
+                category,
+                "sensor-x",
+            ))
+            .unwrap();
+            db.put(&event_message_with_category(
+                ts(2),
+                addr("10.1.1.1"),
+                addr("172.16.0.1"),
+                category,
+                "sensor-y",
+            ))
+            .unwrap();
+        }
+
+        let sensors = |directions: &'static str| {
+            let schema = &schema;
+            async move {
+                let res = schema
+                    .execute_as_system_admin(&format!(
+                        "{{ eventList(filter: {{ directions: [{directions}] }}) {{ \
+                            edges {{ node {{ ... on DnsCovertChannel {{ sensor }} }} }} \
+                        }} }}"
+                    ))
+                    .await;
+                assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+                res.data.to_string()
+            }
+        };
+        assert_eq!(
+            sensors("OUTBOUND").await,
+            r#"{eventList: {edges: [{node: {sensor: "sensor-x"}}]}}"#
+        );
+        assert_eq!(
+            sensors("INTERNAL").await,
+            r#"{eventList: {edges: [{node: {sensor: "sensor-y"}}]}}"#
+        );
+        assert_eq!(sensors("INBOUND").await, r"{eventList: {edges: []}}");
     }
 }
