@@ -17,9 +17,22 @@ pub(super) struct Sensor {
     /// `EventListFilterInput.sensors`.
     node_id: ID,
 
-    /// The fully-qualified hostname of the host on which the sensor runs.
-    /// Equal to `Event.sensor` for events emitted by this sensor.
+    #[cfg_attr(
+        not(feature = "auth-mtls"),
+        doc = "The fully-qualified hostname of the host on which the sensor runs.\n\
+               Equal to `Event.sensor` for events emitted by this sensor."
+    )]
+    #[cfg_attr(
+        feature = "auth-mtls",
+        doc = "The fully-qualified hostname of the host on which the sensor runs.\n\
+               Not the name events carry in `Event.sensor`; see `eventSensorNames`."
+    )]
     host_fqdn: String,
+
+    /// The sensor names events emitted by this node's sensors carry in
+    /// `Event.sensor`, each `<service>.<hostFqdn>`.
+    #[cfg(feature = "auth-mtls")]
+    event_sensor_names: Vec<String>,
 }
 
 pub(super) struct SensorTotalCount {
@@ -126,6 +139,8 @@ fn collect_sensors(
                 customer_id,
                 node_id: ID(node.id.to_string()),
                 host_fqdn: profile.hostname.clone(),
+                #[cfg(feature = "auth-mtls")]
+                event_sensor_names: super::super::customer_access::event_sensor_names(&node),
             },
         ));
     }
@@ -918,5 +933,47 @@ mod tests {
         assert!(names.contains(&"nodeId"));
         assert!(names.contains(&"hostFqdn"));
         assert!(!names.contains(&"agentKey"));
+    }
+
+    #[cfg(feature = "auth-mtls")]
+    #[tokio::test]
+    async fn rows_carry_event_sensor_names() {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            insert_node(
+                &store,
+                "node-a",
+                Some(profile(1, "a.example.com")),
+                None,
+                vec![
+                    agent(AgentKind::Sensor, "001.piglet", Some(""), None),
+                    agent(AgentKind::Sensor, "002.piglet", Some(""), None),
+                    agent(AgentKind::SemiSupervised, "001.hog", Some(""), None),
+                ],
+            );
+            insert_node(
+                &store,
+                "node-b",
+                Some(profile(2, "b.example.com")),
+                None,
+                vec![agent(AgentKind::Sensor, "001.piglet", Some(""), None)],
+            );
+        }
+
+        let res = schema
+            .execute_as_system_admin(
+                r"{customerSensorList(first: 10) { edges { node { hostFqdn eventSensorNames } } } }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        assert_eq!(
+            data["customerSensorList"]["edges"],
+            json!([
+                { "node": { "hostFqdn": "a.example.com", "eventSensorNames": ["piglet.a.example.com"] } },
+                { "node": { "hostFqdn": "b.example.com", "eventSensorNames": ["piglet.b.example.com"] } },
+            ])
+        );
     }
 }

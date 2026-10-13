@@ -1,9 +1,13 @@
 //! Customer-scoping utilities for GraphQL authorization.
 
+#[cfg(feature = "auth-mtls")]
+mod event_sensor;
 mod hostname;
 mod node;
 mod scope;
 
+#[cfg(feature = "auth-mtls")]
+pub(crate) use event_sensor::{event_sensor_customer_id_map, event_sensor_names};
 pub(crate) use hostname::{
     check_hostname_access, derive_customer_id_from_hostname, hostname_customer_id_map,
     sensor_from_key,

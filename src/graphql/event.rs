@@ -36,9 +36,11 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
 use jiff::Timestamp;
 use num_traits::FromPrimitive;
+#[cfg(feature = "auth-jwt")]
+use review_database::AgentKind;
 use review_database::{
-    self as database, AgentKind, EventKind, ExclusionReason, IndexedTable, Iterable, Store,
-    TriageExclusion, TriagePolicyInput as DbTriagePolicyInput,
+    self as database, EventKind, ExclusionReason, IndexedTable, Iterable, Store, TriageExclusion,
+    TriagePolicyInput as DbTriagePolicyInput,
     event::{Direction, EventFilter, EventIterator, RecordType},
     types::{Endpoint, EventCategory, HostNetworkGroup},
 };
@@ -1234,6 +1236,13 @@ fn from_filter_input(
         let map = store.node_map();
         Some(convert_sensors(&map, sensors_input, scope.as_deref())?)
     } else {
+        #[cfg(feature = "auth-mtls")]
+        {
+            // There is no account under mTLS; the caller's scope comes from
+            // `CustomerIds`, which `sensors_for_user` reads.
+            sensors_for_user(ctx, store).map_err(|e| anyhow!("{}", e.message))?
+        }
+        #[cfg(feature = "auth-jwt")]
         match ctx
             .data::<String>()
             .ok()
@@ -1387,17 +1396,21 @@ fn convert_sensors(
             }
         }
 
+        #[cfg(feature = "auth-jwt")]
         if let Some(node_profile) = node.profile
             && !node_profile.hostname.is_empty()
         {
             converted_sensors.push(node_profile.hostname.clone());
         }
+        #[cfg(feature = "auth-mtls")]
+        converted_sensors.extend(crate::graphql::customer_access::event_sensor_names(&node));
     }
     Ok(converted_sensors)
 }
 
 /// Returns the list of sensor hostnames the caller is allowed to see, or
 /// `None` for unscoped (administrator) callers.
+#[cfg(feature = "auth-jwt")]
 fn sensors_for_user(ctx: &Context<'_>, store: &Store) -> Result<Option<Vec<String>>> {
     let Some(customer_ids) = crate::graphql::customer_access::users_customers(ctx)? else {
         return Ok(None);
@@ -1419,6 +1432,27 @@ fn sensors_for_user(ctx: &Context<'_>, store: &Store) -> Result<Option<Vec<Strin
                     .is_some_and(|profile| customer_ids.contains(&profile.customer_id))
         })
         .filter_map(|node| node.profile.map(|profile| profile.hostname))
+        .collect::<Vec<_>>();
+    Ok(Some(sensors))
+}
+
+/// Returns the event sensor names the caller is allowed to see, or `None` for
+/// unscoped (administrator) callers.
+///
+/// A sensor name that maps to no node, such as one left behind in stored
+/// events by a removed node, is never accessible to a scoped caller.
+#[cfg(feature = "auth-mtls")]
+fn sensors_for_user(ctx: &Context<'_>, store: &Store) -> Result<Option<Vec<String>>> {
+    let Some(customer_ids) = crate::graphql::customer_access::users_customers(ctx)? else {
+        return Ok(None);
+    };
+    if customer_ids.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+    let sensors = crate::graphql::customer_access::event_sensor_customer_id_map(store)?
+        .into_iter()
+        .filter(|(_, customer_id)| customer_ids.contains(customer_id))
+        .map(|(sensor, _)| sensor)
         .collect::<Vec<_>>();
     Ok(Some(sensors))
 }
@@ -1876,6 +1910,25 @@ mod tests {
     };
 
     use crate::graphql::{Role, RoleGuard, TestSchema};
+
+    /// The `Event.sensor` of events emitted by the test node whose hostname is
+    /// `sensor1`.
+    #[cfg(feature = "auth-jwt")]
+    const SENSOR1_EVENT_SENSOR: &str = "sensor1";
+    #[cfg(feature = "auth-mtls")]
+    const SENSOR1_EVENT_SENSOR: &str = "piglet.sensor1";
+
+    /// Creates an event message at `timestamp` emitted by the `sensor1` test
+    /// node.
+    fn sensor1_event_at(timestamp: DateTime<Utc>, src: u32, dst: u32) -> EventMessage {
+        event_message_with_category(
+            timestamp,
+            src,
+            dst,
+            Some(EventCategory::CommandAndControl),
+            SENSOR1_EVENT_SENSOR,
+        )
+    }
 
     async fn connection_page(
         schema: &TestSchema,
@@ -3361,7 +3414,7 @@ mod tests {
             .unwrap()
             .and_local_timezone(Utc)
             .unwrap();
-        let key = db.put(&event_message_at(ts, 1, 2)).unwrap();
+        let key = db.put(&sensor1_event_at(ts, 1, 2)).unwrap();
         drop(store);
 
         let query =
@@ -3371,7 +3424,10 @@ mod tests {
         let res = schema
             .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![0]))
             .await;
-        assert_eq!(res.data.to_string(), r#"{event: {sensor: "sensor1"}}"#);
+        assert_eq!(
+            res.data.to_string(),
+            format!(r#"{{event: {{sensor: "{SENSOR1_EVENT_SENSOR}"}}}}"#)
+        );
 
         // Scoped user assigned to customer 1 (not owning sensor1) cannot.
         let res = schema
@@ -3897,6 +3953,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn filter_by_categories_and_sensors() {
         let schema = TestSchema::new().await;
         let res = schema
@@ -3964,21 +4021,21 @@ mod tests {
             .unwrap()
             .and_local_timezone(Utc)
             .unwrap();
-        db.put(&event_message_at(ts1, 1, 2)).unwrap();
+        db.put(&sensor1_event_at(ts1, 1, 2)).unwrap();
         let ts2 = NaiveDate::from_ymd_opt(2018, 1, 27)
             .unwrap()
             .and_hms_micro_opt(18, 30, 9, 453_829)
             .unwrap()
             .and_local_timezone(Utc)
             .unwrap();
-        db.put(&event_message_at(ts2, 3, 4)).unwrap();
+        db.put(&sensor1_event_at(ts2, 3, 4)).unwrap();
         let ts3 = NaiveDate::from_ymd_opt(2018, 1, 28)
             .unwrap()
             .and_hms_micro_opt(18, 30, 9, 453_829)
             .unwrap()
             .and_local_timezone(Utc)
             .unwrap();
-        db.put(&event_message_at(ts3, 5, 6)).unwrap();
+        db.put(&sensor1_event_at(ts3, 5, 6)).unwrap();
 
         let ts2 = jiff_timestamp(ts2);
         let ts3 = jiff_timestamp(ts3);
@@ -3999,7 +4056,9 @@ mod tests {
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
             res.data.to_string(),
-            r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829Z", sensor: "sensor1"}}], totalCount: "1"}}"#
+            format!(
+                r#"{{eventList: {{edges: [{{node: {{time: "2018-01-27T18:30:09.453829Z", sensor: "{SENSOR1_EVENT_SENSOR}"}}}}], totalCount: "1"}}}}"#
+            )
         );
     }
 
@@ -5771,5 +5830,285 @@ mod tests {
         assert!(data.contains(r#"totalCount: "2""#), "got: {data}");
         // Both surviving events should be in edges (count of "time:" occurrences = 2).
         assert_eq!(data.matches("time:").count(), 2, "got: {data}");
+    }
+
+    #[cfg(feature = "auth-mtls")]
+    mod event_sensor_names {
+        use review_database::{Agent, AgentKind, AgentStatus, Lifecycle, Node, NodeProfile, Store};
+        use serde_json::{Value, json};
+
+        use super::*;
+
+        const SENSOR_A: &str = "piglet.a.example.com";
+        const SENSOR_B: &str = "piglet.b.example.com";
+        const STALE_SENSOR: &str = "piglet.removed.example.com";
+
+        struct Fixture {
+            node_a: u32,
+            node_b: u32,
+            hog_only: u32,
+            event_a: i128,
+            event_b: i128,
+            event_stale: i128,
+        }
+
+        fn agent(kind: AgentKind, key: &str) -> Agent {
+            Agent {
+                node_id: u32::MAX,
+                key: key.to_string(),
+                kind,
+                status: AgentStatus::Enabled,
+                config: Some(String::new().try_into().expect("empty TOML is valid")),
+                draft: None,
+                installed_version: None,
+                installed_commit: None,
+                lifecycle: Lifecycle::NotInstalled,
+                bound_addrs: vec![],
+                instance: None,
+            }
+        }
+
+        fn insert_node(store: &Store, customer_id: u32, hostname: &str, agents: Vec<Agent>) -> u32 {
+            let node = Node {
+                id: u32::MAX,
+                name: hostname.to_string(),
+                name_draft: Some(hostname.to_string()),
+                profile: Some(NodeProfile {
+                    customer_id,
+                    description: String::new(),
+                    hostname: hostname.to_string(),
+                }),
+                profile_draft: None,
+                agents,
+                external_services: vec![],
+                creation_time: Utc::now(),
+            };
+            store.node_map().put(&node).expect("insert node")
+        }
+
+        /// Seeds two customers, each with one sensor node, a customer-1 node
+        /// without a sensor, and events of both sensors, of a removed node's
+        /// sensor, and one carrying a bare node hostname.
+        fn seed(schema: &TestSchema) -> Fixture {
+            let store = schema.store();
+            let node_a = insert_node(
+                &store,
+                1,
+                "a.example.com",
+                vec![
+                    agent(AgentKind::Sensor, "001.piglet"),
+                    agent(AgentKind::SemiSupervised, "001.hog"),
+                ],
+            );
+            let node_b = insert_node(
+                &store,
+                2,
+                "b.example.com",
+                vec![agent(AgentKind::Sensor, "001.piglet")],
+            );
+            let hog_only = insert_node(
+                &store,
+                1,
+                "hog.example.com",
+                vec![agent(AgentKind::SemiSupervised, "001.hog")],
+            );
+
+            let db = store.events();
+            let ts = |day| {
+                NaiveDate::from_ymd_opt(2018, 1, day)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .and_local_timezone(Utc)
+                    .unwrap()
+            };
+            let put = |day, sensor| {
+                db.put(&event_message_with_category(
+                    ts(day),
+                    1,
+                    2,
+                    Some(EventCategory::CommandAndControl),
+                    sensor,
+                ))
+                .unwrap()
+            };
+            let event_a = put(1, SENSOR_A);
+            let event_b = put(2, SENSOR_B);
+            let event_stale = put(3, STALE_SENSOR);
+            // A bare hostname is not a name events carry under bootroot, and
+            // must never match a node.
+            put(4, "a.example.com");
+
+            Fixture {
+                node_a,
+                node_b,
+                hog_only,
+                event_a,
+                event_b,
+                event_stale,
+            }
+        }
+
+        fn sensors_of(res: async_graphql::Response) -> Vec<String> {
+            assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+            let data = res.data.into_json().unwrap();
+            data["eventList"]["edges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|edge| edge["node"]["sensor"].as_str().unwrap().to_string())
+                .collect()
+        }
+
+        fn event_list_query(filter: &str) -> String {
+            format!(
+                "{{ eventList(filter: {{ {filter} }}) {{ \
+                    edges {{ node {{ ... on DnsCovertChannel {{ sensor }} }} }} \
+                }} }}"
+            )
+        }
+
+        #[tokio::test]
+        async fn sensors_filter_matches_service_fqdn() {
+            let schema = TestSchema::new().await;
+            let fixture = seed(&schema);
+
+            let res = schema
+                .execute_as_system_admin(&event_list_query(&format!(
+                    "sensors: [\"{}\"]",
+                    fixture.node_a
+                )))
+                .await;
+            assert_eq!(sensors_of(res), vec![SENSOR_A]);
+
+            let res = schema
+                .execute_as_scoped_user(
+                    &event_list_query(&format!("sensors: [\"{}\"]", fixture.node_b)),
+                    Role::SecurityMonitor,
+                    Some(vec![2]),
+                )
+                .await;
+            assert_eq!(sensors_of(res), vec![SENSOR_B]);
+
+            let res = schema
+                .execute_as_system_admin(&format!(
+                    "{{ eventCountsByCategory(filter: {{ sensors: [\"{}\"] }}, first: 10) \
+                        {{ counts }} }}",
+                    fixture.node_a
+                ))
+                .await;
+            assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+            let data = res.data.into_json().unwrap();
+            assert_eq!(data["eventCountsByCategory"]["counts"], json!([1]));
+        }
+
+        #[tokio::test]
+        async fn sensors_filter_on_node_without_sensor_matches_nothing() {
+            let schema = TestSchema::new().await;
+            let fixture = seed(&schema);
+
+            let res = schema
+                .execute_as_system_admin(&event_list_query(&format!(
+                    "sensors: [\"{}\"]",
+                    fixture.hog_only
+                )))
+                .await;
+            assert_eq!(sensors_of(res), Vec::<String>::new());
+        }
+
+        #[tokio::test]
+        async fn sensors_filter_outside_scope_is_forbidden() {
+            let schema = TestSchema::new().await;
+            let fixture = seed(&schema);
+
+            let res = schema
+                .execute_as_scoped_user(
+                    &event_list_query(&format!("sensors: [\"{}\"]", fixture.node_b)),
+                    Role::SecurityMonitor,
+                    Some(vec![1]),
+                )
+                .await;
+            assert_eq!(res.errors.len(), 1, "errors: {:?}", res.errors);
+            assert!(res.errors[0].message.contains("Forbidden"));
+        }
+
+        #[tokio::test]
+        async fn scoped_caller_without_sensors_sees_only_its_customers() {
+            let schema = TestSchema::new().await;
+            seed(&schema);
+            let query = event_list_query("");
+
+            let res = schema
+                .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![1]))
+                .await;
+            assert_eq!(sensors_of(res), vec![SENSOR_A]);
+
+            let res = schema
+                .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![2]))
+                .await;
+            assert_eq!(sensors_of(res), vec![SENSOR_B]);
+
+            let res = schema
+                .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![]))
+                .await;
+            assert_eq!(sensors_of(res), Vec::<String>::new());
+
+            let res = schema
+                .execute_as_scoped_user(
+                    "{ eventCountsByCategory(filter: {}, first: 10) { counts } }",
+                    Role::SecurityMonitor,
+                    Some(vec![2]),
+                )
+                .await;
+            assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+            let data = res.data.into_json().unwrap();
+            assert_eq!(data["eventCountsByCategory"]["counts"], json!([1]));
+        }
+
+        #[tokio::test]
+        async fn administrator_without_sensors_sees_every_sensor() {
+            let schema = TestSchema::new().await;
+            seed(&schema);
+
+            let res = schema.execute_as_system_admin(&event_list_query("")).await;
+            assert_eq!(
+                sensors_of(res),
+                vec![SENSOR_A, SENSOR_B, STALE_SENSOR, "a.example.com"]
+            );
+        }
+
+        #[tokio::test]
+        async fn event_lookup_uses_event_sensor_names() {
+            let schema = TestSchema::new().await;
+            let fixture = seed(&schema);
+            let lookup = |key: i128| {
+                format!("{{ event(id: \"{key}\") {{ ... on DnsCovertChannel {{ sensor }} }} }}")
+            };
+            let sensor = |res: async_graphql::Response| -> Value {
+                assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+                res.data.into_json().unwrap()["event"].clone()
+            };
+
+            let res = schema
+                .execute_as_scoped_user(
+                    &lookup(fixture.event_a),
+                    Role::SecurityMonitor,
+                    Some(vec![1]),
+                )
+                .await;
+            assert_eq!(sensor(res), json!({ "sensor": SENSOR_A }));
+
+            for key in [fixture.event_b, fixture.event_stale] {
+                let res = schema
+                    .execute_as_scoped_user(&lookup(key), Role::SecurityMonitor, Some(vec![1]))
+                    .await;
+                assert_eq!(sensor(res), Value::Null);
+            }
+
+            let res = schema
+                .execute_as_system_admin(&lookup(fixture.event_stale))
+                .await;
+            assert_eq!(sensor(res), json!({ "sensor": STALE_SENSOR }));
+        }
     }
 }
