@@ -4,6 +4,19 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `topTimeSeries` and `topTimeSeriesOfCluster` now reject `trendiOrder`
+  outside 1–20 inclusive and `cutoffRate` at or below 0. Both arguments are
+  dimensionless; `cutoffRate` has no upper limit. Omitted or null values
+  retain defaults of 4 and 0.1, respectively.
+- `eventStream` and `rankedOutlierStream` now reject `fetchInterval` outside
+  1–86400 seconds (one day) inclusive. Omitted or null values retain defaults
+  of 20 and 60 seconds, respectively. Invalid ranges return GraphQL argument
+  validation errors before resolver execution.
+
 ## [0.39.0] - 2026-10-13
 
 ### Added
@@ -2098,6 +2111,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.39.0...main
 [0.39.0]: https://github.com/aicers/review-web/compare/0.38.0...0.39.0
 [0.38.0]: https://github.com/aicers/review-web/compare/0.37.0...0.38.0
 [0.37.0]: https://github.com/aicers/review-web/compare/0.36.0...0.37.0

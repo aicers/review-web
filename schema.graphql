@@ -7902,7 +7902,16 @@ type Query {
 	"""
 	clusters(model: ID!, categories: [ID!], detectors: [ID!], qualifiers: [ID!], statuses: [ID!], after: String, before: String, first: Int, last: Int): ClusterConnection!
 	topIpAddressesOfCluster(model: ID!, clusterId: ID!, size: Int): [TopElementCountsByColumn!]!
-	topTimeSeriesOfCluster(model: ID!, clusterId: ID!, cutoffRate: Float, trendiOrder: Int, start: Int, end: Int): TimeSeriesResult!
+	topTimeSeriesOfCluster(		model: ID!,		clusterId: ID!,
+		"""
+		The dimensionless cutoff rate, strictly greater than 0 with no upper limit. Omitted or null values use 0.1.
+		"""
+		cutoffRate: Float,
+		"""
+		The dimensionless trend filter order, from 1 to 20 inclusive. Omitted or null values use 4.
+		"""
+		trendiOrder: Int,		start: Int,		end: Int
+	): TimeSeriesResult!
 	"""
 	A list of customers.
 	"""
@@ -8057,7 +8066,16 @@ type Query {
 	csvColumnExtra(model: ID!): CsvColumnExtraConfig
 	structuredColumnTypes(model: ID!): [StructuredColumnType!]!
 	timeRangeOfModel(model: ID!): TimeRange!
-	topTimeSeries(model: ID!, size: Int, time: NaiveDateTime, minSlope: Float, trendiOrder: Int, cutoffRate: Float, trendCategory: String, start: Int, end: Int): [TopTrendsByColumn!]!
+	topTimeSeries(		model: ID!,		size: Int,		time: NaiveDateTime,		minSlope: Float,
+		"""
+		The dimensionless trend filter order, from 1 to 20 inclusive. Omitted or null values use 4.
+		"""
+		trendiOrder: Int,
+		"""
+		The dimensionless cutoff rate, strictly greater than 0 with no upper limit. Omitted or null values use 0.1.
+		"""
+		cutoffRate: Float,		trendCategory: String,		start: Int,		end: Int
+	): [TopTrendsByColumn!]!
 	topColumns(model: ID!, size: Int, time: NaiveDateTime, portionOfClusters: Float, portionOfTopN: Float): [TopElementCountsByColumn!]!
 	topIpAddresses(model: ID!, size: Int, time: NaiveDateTime, portionOfClusters: Float, portionOfTopElements: Float): [TopElementCountsByColumn!]!
 	topMultimaps(model: ID!, size: Int, minMapSize: Int, time: NaiveDateTime): [TopMultimaps!]!
@@ -8992,8 +9010,18 @@ type Subscription {
 	"""
 	A stream of events with timestamp on.
 	"""
-	eventStream(start: DateTime!, fetchInterval: Int, eventStuckCheckInterval: Int): Event!
-	rankedOutlierStream(start: DateTime!, fetchInterval: Int): RankedOutlier!
+	eventStream(		start: DateTime!,
+		"""
+		The fetch interval in seconds, from 1 to 86400 (one day) inclusive. Omitted or null values use 20 seconds.
+		"""
+		fetchInterval: Int,		eventStuckCheckInterval: Int
+	): Event!
+	rankedOutlierStream(		start: DateTime!,
+		"""
+		The fetch interval in seconds, from 1 to 86400 (one day) inclusive. Omitted or null values use 60 seconds.
+		"""
+		fetchInterval: Int
+	): RankedOutlier!
 }
 
 type SuspiciousTlsTraffic implements Event {
