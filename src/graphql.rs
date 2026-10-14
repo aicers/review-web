@@ -1004,13 +1004,9 @@ fn get_trend(
         .map(|s| s.1.to_f64().expect("safe: usize -> f64"))
         .collect();
     let cutoff_len = cutoff_rate * original.len().to_f64().expect("safe: usize -> f64");
-    let cutoff_frequency = if cutoff_len < 1.0 {
-        1.0
-    } else {
-        1.0 / cutoff_len
-    };
-    let (b, a) = signal::filter::design::butter(trendi_order, cutoff_frequency);
-    signal::filter::filtfilt(&b, &a, &original)
+    let cutoff_frequency = 1.0 / cutoff_len;
+    let sections = signal::filter::design::butter(trendi_order, cutoff_frequency)?;
+    signal::filter::filtfilt(&sections, &original)
 }
 
 #[cfg(test)]
@@ -1918,6 +1914,37 @@ impl TestSchema {
 #[cfg(test)]
 mod tests {
     use super::{AgentManager, Direction, MockPackageDeployer, OpaqueCursor, TestSchema, database};
+
+    #[test]
+    fn trend_is_finite_for_large_cutoff_rates() {
+        let series = vec![(0, 1); 100];
+        for (order, cutoff_rate) in [(3, 10_000.0), (8, 40.0)] {
+            let result = std::panic::catch_unwind(|| super::get_trend(&series, cutoff_rate, order));
+            let trend = result.expect("trend computation must not panic").unwrap();
+            assert_eq!(trend.len(), 100);
+            assert!(trend.iter().all(|value| value.is_finite()));
+        }
+    }
+
+    #[test]
+    fn trend_rejects_cutoff_products_at_or_below_one() {
+        let series = vec![(0, 1); 20];
+        for cutoff_rate in [0.01, 0.05] {
+            assert!(super::get_trend(&series, cutoff_rate, 4).is_err());
+        }
+        let trend = super::get_trend(&series, 0.1, 4).unwrap();
+        assert_eq!(trend.len(), 20);
+    }
+
+    #[test]
+    fn trend_is_finite_at_order_boundaries() {
+        let series = vec![(0, 1); 100];
+        for order in [1, 20] {
+            let trend = super::get_trend(&series, 0.1, order).unwrap();
+            assert_eq!(trend.len(), 100);
+            assert!(trend.iter().all(|value| value.is_finite()));
+        }
+    }
 
     #[derive(Clone, Debug)]
     struct MockRow {

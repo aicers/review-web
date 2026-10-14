@@ -412,3 +412,18 @@ fn the_inline_latest_attempt_is_on_the_three_entry_types() {
     assert!(!sdl.contains("operationAttemptList"), "{REGENERATE}");
     assert!(!sdl.contains("operationAttemptHistory"), "{REGENERATE}");
 }
+
+/// Both time-series queries document the inclusive trend order range.
+#[test]
+fn trend_order_descriptions_include_zero() {
+    let sdl = rendered_sdl();
+    let query = definition(&sdl, "type Query {");
+    for field in ["topTimeSeries(", "topTimeSeriesOfCluster("] {
+        let arguments = query.split_once(field).unwrap().1;
+        let order_description = arguments.split_once("trendiOrder:").unwrap().0;
+        assert!(
+            order_description.contains("from 0 to 20 inclusive"),
+            "{field}: {REGENERATE}"
+        );
+    }
+}

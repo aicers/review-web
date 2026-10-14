@@ -125,9 +125,9 @@ impl ModelQuery {
         time: Option<NaiveDateTime>,
         min_slope: Option<f64>,
         #[graphql(
-            desc = "The dimensionless trend filter order, from 1 to 20 inclusive. Omitted or null values use 4.",
+            desc = "The dimensionless trend filter order, from 0 to 20 inclusive. Omitted or null values use 4.",
             validator(
-                minimum = 1,
+                minimum = 0,
                 custom = "|value: &i32| async_graphql::validators::maximum(value, MAX_TRENDI_ORDER)"
             )
         )]
@@ -1203,8 +1203,7 @@ mod tests {
             ),
         ] {
             for (argument, range) in [
-                ("trendiOrder: 0", "must be greater than or equal to 1"),
-                ("trendiOrder: -1", "must be greater than or equal to 1"),
+                ("trendiOrder: -1", "must be greater than or equal to 0"),
                 ("trendiOrder: 21", "must be less than or equal to 20"),
                 ("cutoffRate: 0", "must be greater than 0"),
                 ("cutoffRate: -0.1", "must be greater than 0"),
@@ -1222,12 +1221,121 @@ mod tests {
                 );
             }
             // Empty data checks acceptance without exercising out-of-scope filter failures.
-            for argument in ["trendiOrder: 1", "trendiOrder: 20", "cutoffRate: 0.01"] {
+            for argument in [
+                "trendiOrder: 0",
+                "trendiOrder: 1",
+                "trendiOrder: 20",
+                "cutoffRate: 0.01",
+            ] {
                 let query = format!("{{ {resolver}, {argument}) {{ {selection} }} }}");
                 let response = schema.execute_as_system_admin(&query).await;
                 assert!(response.errors.is_empty(), "{response:?}");
             }
         }
+    }
+
+    async fn schema_with_constant_time_series(points: u32) -> TestSchema {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            let map = store.time_series_map();
+            for index in 0..points {
+                map.insert(&review_database::TimeSeries {
+                    model_id: 1,
+                    cluster_id: 1,
+                    time: 0,
+                    value: i64::from(index) * 1_000_000_000,
+                    count_index: Some(0),
+                    count: 1,
+                })
+                .unwrap();
+            }
+        }
+        schema
+    }
+
+    #[tokio::test]
+    async fn trends_support_large_cutoff_rates() {
+        let schema = schema_with_constant_time_series(100).await;
+        for (order, cutoff_rate) in [(3, 10_000), (8, 40)] {
+            let arguments = format!("trendiOrder: {order}, cutoffRate: {cutoff_rate}");
+            let query = format!(
+                "{{ topTimeSeries(model: 1, {arguments}) {{ countIndex trends {{ trend }} }} }}"
+            );
+            let response = schema.execute_as_system_admin(&query).await;
+            assert!(response.errors.is_empty(), "{response:?}");
+
+            let query = format!(
+                "{{ topTimeSeriesOfCluster(model: 1, clusterId: 1, {arguments}) {{
+                    series {{ seriesTrend {{ count }} }}
+                }} }}"
+            );
+            let response = schema.execute_as_system_admin(&query).await;
+            assert!(response.errors.is_empty(), "{response:?}");
+            let data = response.data.into_json().unwrap();
+            let trend = data
+                .pointer("/topTimeSeriesOfCluster/series/0/seriesTrend")
+                .unwrap()
+                .as_array()
+                .unwrap();
+            assert_eq!(trend.len(), 100, "{data}");
+        }
+    }
+
+    #[tokio::test]
+    async fn cluster_trend_preserves_cutoff_failure_handling() {
+        let schema = schema_with_constant_time_series(20).await;
+        for (cutoff_rate, expected_points) in [(0.01, 0), (0.05, 0), (0.1, 20)] {
+            let query = format!(
+                "{{ topTimeSeriesOfCluster(model: 1, clusterId: 1,
+                    trendiOrder: 4, cutoffRate: {cutoff_rate}) {{
+                    series {{ series {{ count }} seriesTrend {{ count }} }}
+                }} }}"
+            );
+            let response = schema.execute_as_system_admin(&query).await;
+            assert!(response.errors.is_empty(), "{response:?}");
+            let data = response.data.into_json().unwrap();
+            for (field, expected) in [("series", 20), ("seriesTrend", expected_points)] {
+                let path = format!("/topTimeSeriesOfCluster/series/0/{field}");
+                assert_eq!(
+                    data.pointer(&path).unwrap().as_array().unwrap().len(),
+                    expected,
+                    "{data}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn zero_order_trend_preserves_series() {
+        let schema = schema_with_constant_time_series(20).await;
+        let response = schema
+            .execute_as_system_admin(
+                "{ topTimeSeries(model: 1, trendiOrder: 0, cutoffRate: 0.1) {
+                    countIndex trends { trend }
+                } }",
+            )
+            .await;
+        assert!(response.errors.is_empty(), "{response:?}");
+
+        let response = schema
+            .execute_as_system_admin(
+                "{ topTimeSeriesOfCluster(model: 1, clusterId: 1,
+                    trendiOrder: 0, cutoffRate: 0.1) {
+                    series { series { time count } seriesTrend { time count } }
+                } }",
+            )
+            .await;
+        assert!(response.errors.is_empty(), "{response:?}");
+        let data = response.data.into_json().unwrap();
+        let series = data
+            .pointer("/topTimeSeriesOfCluster/series/0/series")
+            .unwrap();
+        let trend = data
+            .pointer("/topTimeSeriesOfCluster/series/0/seriesTrend")
+            .unwrap();
+        assert_eq!(series.as_array().unwrap().len(), 20);
+        assert_eq!(trend, series);
     }
 
     #[tokio::test]

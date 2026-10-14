@@ -29,9 +29,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Changed
 
 - `topTimeSeries` and `topTimeSeriesOfCluster` now reject `trendiOrder`
-  outside 1–20 inclusive and `cutoffRate` at or below 0. Both arguments are
+  outside 0–20 inclusive and `cutoffRate` at or below 0. Both arguments are
   dimensionless; `cutoffRate` has no upper limit. Omitted or null values
-  retain defaults of 4 and 0.1, respectively.
+  retain defaults of 4 and 0.1, respectively. Trend computation uses vinum
+  2.0.0; order 0 preserves the original series without smoothing. Computation
+  fails when `cutoffRate` multiplied by the number of points is 1 or less,
+  retaining each query's existing handling of trend failures. Other trend
+  values may change with the new computation method.
 - `eventStream` and `rankedOutlierStream` now reject `fetchInterval` outside
   1–86400 seconds (one day) inclusive. Omitted or null values retain defaults
   of 20 and 60 seconds, respectively. Invalid ranges return GraphQL argument
