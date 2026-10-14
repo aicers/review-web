@@ -96,8 +96,8 @@ pub(super) struct CoreComponent {
 
 #[ComplexObject]
 impl CoreComponent {
-    /// Whether the store holds a build newer than the installed one for this
-    /// row's component.
+    /// Whether the store's most recently accepted build for this row's
+    /// component differs from the installed one.
     ///
     /// It is inequality of build identity against `latest_build(component)`,
     /// not an ordering comparison, so a hotfix carrying the same version and a
@@ -117,8 +117,8 @@ impl CoreComponent {
         Ok(self.update_state(ctx).await?.available)
     }
 
-    /// Whether this response's lookup of the newest build for this row's
-    /// component failed.
+    /// Whether this response's lookup of the most recently accepted build for
+    /// this row's component failed.
     ///
     /// When it is `true`, `updateAvailable` is `false` because nothing was
     /// answered to compare against, and a client must not render that pair as

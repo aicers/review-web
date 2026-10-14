@@ -226,14 +226,14 @@ pub(crate) const CORE_PACKAGE_IDS: [&str; 6] = [
 //   *terminal* result of an apply as persisted (`Succeeded`, `Failed`,
 //   `RolledBack`, `Cancelled`). This enum answers a different question —
 //   whether the call returned a terminal outcome at all, or only an
-//   acknowledgement that a self-disrupting apply owes a later reconciliation
-//   — so it is not that type under another name. On the protocol side
-//   `review_protocol::server::node::InstallOutcome` is the closest name, and
-//   it answers a third question: which branch of one install exchange
-//   terminated, a preflight refusal or a streamed apply. Its `Applied` says
-//   the agent returned a `NodePackageResponse` rather than refusing before
-//   the bytes moved, which is not the terminal-versus-acknowledged
-//   distinction this enum draws.
+//   acknowledgement that an update answered before its outcome was known owes
+//   a later reconciliation — so it is not that type under another name. On
+//   the protocol side `review_protocol::server::node::InstallOutcome` is the
+//   closest name, and it answers a third question: which branch of one install
+//   exchange terminated, a preflight refusal or a streamed apply. Its
+//   `Applied` says the agent returned a `NodePackageResponse` rather than
+//   refusing before the bytes moved, which is not the
+//   terminal-versus-acknowledged distinction this enum draws.
 // - `JoinToken` and `HostOnboardingTicket` — the nearest upstream surface is
 //   `review_protocol::types::node::BootstrapMaterial`, which this crate
 //   imports. `NodeEnrollRequest::Register` does cover new-host onboarding as
@@ -339,9 +339,9 @@ impl fmt::Display for OperationId {
 pub enum DeployOutcome {
     /// The agent finished the apply and reported a terminal outcome.
     Applied,
-    /// A self-disrupting apply answered before the swap tore the response
-    /// channel down — roxyd's own binary, or `REview` itself — so the true
-    /// outcome is reconciled later.
+    /// An update of `REview`, roxyd or aice-web-next, answered as soon as it
+    /// was sent because the response path does not survive the update, so the
+    /// true outcome is read from the operation later.
     ///
     /// A resolver must not report this as done.
     Accepted,

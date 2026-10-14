@@ -164,8 +164,8 @@ impl Agent {
         self.instance.map(StringNumber)
     }
 
-    /// Whether the store holds a build newer than the installed one for this
-    /// entry's package.
+    /// Whether the store's most recently accepted build for this entry's
+    /// package differs from the installed one.
     ///
     /// It is inequality of build identity, not an ordering comparison, so a
     /// hotfix carrying the same version and a different commit is `true`. An
@@ -184,8 +184,8 @@ impl Agent {
         Ok(self.update_state(ctx).await?.available)
     }
 
-    /// Whether this response's lookup of the newest build for this entry's
-    /// package failed.
+    /// Whether this response's lookup of the most recently accepted build for
+    /// this entry's package failed.
     ///
     /// When it is `true`, `updateAvailable` is `false` because nothing was
     /// answered to compare against, and a client must not render that pair as
@@ -371,8 +371,8 @@ impl ExternalService {
         self.instance.map(StringNumber)
     }
 
-    /// Whether the store holds a build newer than the installed one for this
-    /// entry's package.
+    /// Whether the store's most recently accepted build for this entry's
+    /// package differs from the installed one.
     ///
     /// It is inequality of build identity, not an ordering comparison, so a
     /// hotfix carrying the same version and a different commit is `true`. An
@@ -391,8 +391,8 @@ impl ExternalService {
         Ok(self.update_state(ctx).await?.available)
     }
 
-    /// Whether this response's lookup of the newest build for this entry's
-    /// package failed.
+    /// Whether this response's lookup of the most recently accepted build for
+    /// this entry's package failed.
     ///
     /// When it is `true`, `updateAvailable` is `false` because nothing was
     /// answered to compare against, and a client must not render that pair as
@@ -682,8 +682,8 @@ impl AgentSnapshot {
         self.instance.map(StringNumber)
     }
 
-    /// Whether the store holds a build newer than the installed one for this
-    /// entry's package.
+    /// Whether the store's most recently accepted build for this entry's
+    /// package differs from the installed one.
     ///
     /// # Errors
     ///
@@ -694,8 +694,8 @@ impl AgentSnapshot {
         Ok(self.update_state(ctx).await?.available)
     }
 
-    /// Whether this response's lookup of the newest build for this entry's
-    /// package failed.
+    /// Whether this response's lookup of the most recently accepted build for
+    /// this entry's package failed.
     ///
     /// When it is `true`, `updateAvailable` is `false`, and a client must not
     /// render that pair as "up to date".
@@ -828,8 +828,8 @@ impl ExternalServiceSnapshot {
         self.instance.map(StringNumber)
     }
 
-    /// Whether the store holds a build newer than the installed one for this
-    /// entry's package.
+    /// Whether the store's most recently accepted build for this entry's
+    /// package differs from the installed one.
     ///
     /// # Errors
     ///
@@ -840,8 +840,8 @@ impl ExternalServiceSnapshot {
         Ok(self.update_state(ctx).await?.available)
     }
 
-    /// Whether this response's lookup of the newest build for this entry's
-    /// package failed.
+    /// Whether this response's lookup of the most recently accepted build for
+    /// this entry's package failed.
     ///
     /// When it is `true`, `updateAvailable` is `false`, and a client must not
     /// render that pair as "up to date".
