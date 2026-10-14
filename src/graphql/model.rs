@@ -1065,6 +1065,8 @@ fn load_cluster_ids_with_size_limit(
         return Ok(Vec::new());
     }
 
+    // On supported 32/64-bit targets, this Vec has at most isize::MAX elements.
+    // Each size has magnitude at most 2^63, so the total and every prefix sum fit in i128.
     let total_sizes: i128 = clusters.iter().map(|c| i128::from(c.size)).sum();
     let portion_of_clusters = portion_of_clusters.unwrap_or(DEFAULT_PORTION_OF_CLUSTER);
     // Preserve the existing floating-point rounding and truncation for the portion.
@@ -1141,6 +1143,42 @@ mod tests {
     fn cluster_size_limit_overflowing_total_large_portion() {
         let ids = selected_cluster_ids(&[1_i64 << 59; 40], Some(0.8));
         assert_eq!(ids, (0..33).collect::<Vec<u32>>());
+    }
+
+    #[test]
+    fn cluster_size_limit_i64_max() {
+        assert_eq!(
+            selected_cluster_ids(&[i64::MAX; 40], None),
+            (0..13).collect::<Vec<u32>>()
+        );
+        assert_eq!(
+            selected_cluster_ids(&[i64::MAX; 40], Some(0.8)),
+            (0..33).collect::<Vec<u32>>()
+        );
+    }
+
+    #[test]
+    fn cluster_size_limit_i64_min() {
+        assert_eq!(
+            selected_cluster_ids(&[i64::MIN; 40], None),
+            (0..10).collect::<Vec<u32>>()
+        );
+        assert_eq!(
+            selected_cluster_ids(&[i64::MIN; 40], Some(0.0)),
+            (0..40).collect::<Vec<u32>>()
+        );
+    }
+
+    #[test]
+    fn cluster_size_limit_negative_total() {
+        assert_eq!(
+            selected_cluster_ids(&[-1; 40], None),
+            (0..10).collect::<Vec<u32>>()
+        );
+        assert_eq!(
+            selected_cluster_ids(&[-1; 40], Some(0.0)),
+            (0..40).collect::<Vec<u32>>()
+        );
     }
 
     #[test]
