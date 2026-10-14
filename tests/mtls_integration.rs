@@ -496,7 +496,7 @@ mod mtls_integration {
 
     fn start_test_server() -> anyhow::Result<TestServer> {
         INSTALL_CRYPTO_PROVIDER.call_once(|| {
-            rustls::crypto::ring::default_provider()
+            rustls::crypto::aws_lc_rs::default_provider()
                 .install_default()
                 .expect("no TLS configuration exists before test initialization");
         });
