@@ -64,9 +64,9 @@ pub(crate) enum FailurePolicy {
 
 /// Whether the apply finished or was accepted for later reconciliation.
 ///
-/// A client must not read `ACCEPTED` as done: it means the apply tore down its
-/// own response channel and the true outcome is reconciled later, which is what
-/// an operation query is for.
+/// A client must not read `ACCEPTED` as done: it means the update was answered
+/// before its outcome was known and the true outcome is reconciled later, which
+/// is what an operation query is for.
 // It mirrors `crate::backend::DeployOutcome` through the derived conversion, for
 // the same reason as `FailurePolicy` above.
 #[derive(Clone, Copy, Enum, Eq, PartialEq)]
@@ -74,8 +74,9 @@ pub(crate) enum FailurePolicy {
 pub(crate) enum DeployDisposition {
     /// The agent finished the apply and reported a terminal outcome.
     Applied,
-    /// A self-disrupting apply answered before the swap tore the response
-    /// channel down, so the true outcome is reconciled later.
+    /// An update of `REview`, roxyd or aice-web-next, answered as soon as it
+    /// was sent because the response path does not survive the update, so the
+    /// true outcome is read from the operation later.
     Accepted,
 }
 

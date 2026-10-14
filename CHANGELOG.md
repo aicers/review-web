@@ -17,6 +17,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   of 20 and 60 seconds, respectively. Invalid ranges return GraphQL argument
   validation errors before resolver execution.
 
+### Fixed
+
+- Corrected the descriptions of `DeployDisposition` and its `ACCEPTED` value,
+  which covers any update answered before its outcome is known, such as an
+  update of REview, roxyd or aice-web-next, of `updateAvailable`, which
+  compares the installed build with the store's most recently accepted build
+  rather than with a newer one, and of `updateCheckFailed`, which reports
+  whether looking up that build failed.
+
 ## [0.39.0] - 2026-10-13
 
 ### Added

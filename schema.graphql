@@ -41,8 +41,8 @@ type Agent {
 	"""
 	instance: StringNumber
 	"""
-	Whether the store holds a build newer than the installed one for this
-	entry's package.
+	Whether the store's most recently accepted build for this entry's
+	package differs from the installed one.
 	
 	It is inequality of build identity, not an ordering comparison, so a
 	hotfix carrying the same version and a different commit is `true`. An
@@ -60,8 +60,8 @@ type Agent {
 	"""
 	updateAvailable: Boolean!
 	"""
-	Whether this response's lookup of the newest build for this entry's
-	package failed.
+	Whether this response's lookup of the most recently accepted build for
+	this entry's package failed.
 	
 	When it is `true`, `updateAvailable` is `false` because nothing was
 	answered to compare against, and a client must not render that pair as
@@ -231,8 +231,8 @@ type AgentSnapshot {
 	"""
 	instance: StringNumber
 	"""
-	Whether the store holds a build newer than the installed one for this
-	entry's package.
+	Whether the store's most recently accepted build for this entry's
+	package differs from the installed one.
 	
 	# Errors
 	
@@ -242,8 +242,8 @@ type AgentSnapshot {
 	"""
 	updateAvailable: Boolean!
 	"""
-	Whether this response's lookup of the newest build for this entry's
-	package failed.
+	Whether this response's lookup of the most recently accepted build for
+	this entry's package failed.
 	
 	When it is `true`, `updateAvailable` is `false`, and a client must not
 	render that pair as "up to date".
@@ -3632,8 +3632,8 @@ type CoreComponent {
 	"""
 	installerManaged: Boolean!
 	"""
-	Whether the store holds a build newer than the installed one for this
-	row's component.
+	Whether the store's most recently accepted build for this row's
+	component differs from the installed one.
 	
 	It is inequality of build identity against `latest_build(component)`,
 	not an ordering comparison, so a hotfix carrying the same version and a
@@ -3652,8 +3652,8 @@ type CoreComponent {
 	"""
 	updateAvailable: Boolean!
 	"""
-	Whether this response's lookup of the newest build for this row's
-	component failed.
+	Whether this response's lookup of the most recently accepted build for
+	this row's component failed.
 	
 	When it is `true`, `updateAvailable` is `false` because nothing was
 	answered to compare against, and a client must not render that pair as
@@ -4110,9 +4110,9 @@ type DceRpcContext {
 """
 Whether the apply finished or was accepted for later reconciliation.
 
-A client must not read `ACCEPTED` as done: it means the apply tore down its
-own response channel and the true outcome is reconciled later, which is what
-an operation query is for.
+A client must not read `ACCEPTED` as done: it means the update was answered
+before its outcome was known and the true outcome is reconciled later, which
+is what an operation query is for.
 """
 enum DeployDisposition {
 	"""
@@ -4120,8 +4120,9 @@ enum DeployDisposition {
 	"""
 	APPLIED
 	"""
-	A self-disrupting apply answered before the swap tore the response
-	channel down, so the true outcome is reconciled later.
+	An update of `REview`, roxyd or aice-web-next, answered as soon as it
+	was sent because the response path does not survive the update, so the
+	true outcome is read from the operation later.
 	"""
 	ACCEPTED
 }
@@ -4776,8 +4777,8 @@ type ExternalService {
 	"""
 	instance: StringNumber
 	"""
-	Whether the store holds a build newer than the installed one for this
-	entry's package.
+	Whether the store's most recently accepted build for this entry's
+	package differs from the installed one.
 	
 	It is inequality of build identity, not an ordering comparison, so a
 	hotfix carrying the same version and a different commit is `true`. An
@@ -4795,8 +4796,8 @@ type ExternalService {
 	"""
 	updateAvailable: Boolean!
 	"""
-	Whether this response's lookup of the newest build for this entry's
-	package failed.
+	Whether this response's lookup of the most recently accepted build for
+	this entry's package failed.
 	
 	When it is `true`, `updateAvailable` is `false` because nothing was
 	answered to compare against, and a client must not render that pair as
@@ -4923,8 +4924,8 @@ type ExternalServiceSnapshot {
 	"""
 	instance: StringNumber
 	"""
-	Whether the store holds a build newer than the installed one for this
-	entry's package.
+	Whether the store's most recently accepted build for this entry's
+	package differs from the installed one.
 	
 	# Errors
 	
@@ -4934,8 +4935,8 @@ type ExternalServiceSnapshot {
 	"""
 	updateAvailable: Boolean!
 	"""
-	Whether this response's lookup of the newest build for this entry's
-	package failed.
+	Whether this response's lookup of the most recently accepted build for
+	this entry's package failed.
 	
 	When it is `true`, `updateAvailable` is `false`, and a client must not
 	render that pair as "up to date".

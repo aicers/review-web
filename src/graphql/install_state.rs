@@ -2,12 +2,12 @@
 //!
 //! The state itself is a projection of what `review-database` stores on an
 //! agent, an external service or a core-component row. Two things are not.
-//! Whether a newer build is available needs the store's newest accepted build
-//! for the row's package, and that answer is memoized per request by
-//! [`LatestBuildMemo`] so that a package installed on fifty hosts costs one
-//! lookup rather than fifty. Whether the installed build has been withdrawn
-//! needs the active trust generation's answer for that build, memoized per
-//! request by [`WithdrawalMemo`] in the same way.
+//! Whether the store's most recently accepted build for the row's package
+//! differs from the installed one needs a lookup of that build, and that answer
+//! is memoized per request by [`LatestBuildMemo`] so that a package installed
+//! on fifty hosts costs one lookup rather than fifty. Whether the installed
+//! build has been withdrawn needs the active trust generation's answer for that
+//! build, memoized per request by [`WithdrawalMemo`] in the same way.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -44,8 +44,8 @@ pub enum Lifecycle {
     Unknown,
 }
 
-/// Whether a newer build is available for one row, and whether the check that
-/// would have said so failed.
+/// Whether the store's most recently accepted build differs from the installed
+/// one for one row, and whether the check that would have said so failed.
 ///
 /// The two never disagree: `check_failed` is only ever `true` beside an
 /// `available` of `false`, because a lookup that failed answered nothing to
@@ -193,7 +193,8 @@ pub(super) fn installed_identity<'a>(
     }
 }
 
-/// Returns whether a newer build is available for one row.
+/// Returns whether the store's most recently accepted build differs from the
+/// installed one for one row.
 ///
 /// `package_id` is `None` for a row no package deploys and for a core
 /// component excluded from update; both answer [`UpdateState::NOT_CHECKED`]
