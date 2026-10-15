@@ -21,6 +21,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   with the Trust Anchor update they belong to, or through a package ingest on
   the REview host itself. `updateCoreComponent` and `storeBuildList` still
   accept both, and System Administrators can still upload `bootler-security`.
+- Bumped `review-database` dependency to 0.51.0. The new version uses
+  `aws-lc-rs` instead of `ring` for password hashing and still verifies hashes
+  made with `ring`. Its store format stays in the 0.50 series, so a store
+  written by 0.50 is served without migration.
+- review-web now enables the `aws_lc_rs` feature of `rustls` instead of `ring`,
+  and the `minireview` executable selects the `aws-lc-rs` provider at startup.
+  An application embedding `review-web` that selects `rustls::crypto::ring`
+  must enable the `ring` feature of `rustls` itself.
 
 ### Fixed
 
@@ -32,6 +40,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   for `filter.time.start` and `filter.time.end`, and `rankedOutlierStream`
   for `start`. These values previously fell back to the Unix epoch; they
   now return a GraphQL range error before query or subscription work begins.
+- `topColumns` and `topIpAddresses` no longer panic or select the wrong
+  clusters when the sizes of a model's clusters sum past the signed 64-bit
+  range. Selection is unchanged when the sum fits.
+- `eventListWithTriage` now returns an error for an IP address exclusion whose
+  network filter cannot be built, such as a range from an IPv4 to an IPv6
+  address, instead of applying an exclusion that excludes nothing. A domain
+  exclusion list too large to compile now returns an error instead of
+  panicking.
 
 ## [0.40.0] - 2026-10-15
 
