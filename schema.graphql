@@ -7911,7 +7911,7 @@ type Query {
 		"""
 		The dimensionless trend filter order, from 0 to 20 inclusive. Omitted or null values use 4.
 		"""
-		trendiOrder: Int,		start: Int,		end: Int
+		trendiOrder: Int,		start: DateTime,		end: DateTime
 	): TimeSeriesResult!
 	"""
 	A list of customers.
@@ -8075,7 +8075,7 @@ type Query {
 		"""
 		The dimensionless cutoff rate, strictly greater than 0 with no upper limit. Omitted or null values use 0.1.
 		"""
-		cutoffRate: Float,		trendCategory: String,		start: Int,		end: Int
+		cutoffRate: Float,		trendCategory: String,		start: DateTime,		end: DateTime
 	): [TopTrendsByColumn!]!
 	topColumns(model: ID!, size: Int, time: NaiveDateTime, portionOfClusters: Float, portionOfTopN: Float): [TopElementCountsByColumn!]!
 	topIpAddresses(model: ID!, size: Int, time: NaiveDateTime, portionOfClusters: Float, portionOfTopElements: Float): [TopElementCountsByColumn!]!
@@ -9297,13 +9297,13 @@ type TimeCount {
 }
 
 type TimeRange {
-	lower: NaiveDateTime
-	upper: NaiveDateTime
+	lower: DateTime
+	upper: DateTime
 }
 
 type TimeSeriesResult {
-	earliest: NaiveDateTime
-	latest: NaiveDateTime
+	earliest: DateTime
+	latest: DateTime
 	series: [ColumnTimeSeries!]!
 }
 

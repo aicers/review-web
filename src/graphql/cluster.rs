@@ -126,9 +126,11 @@ impl ClusterQuery {
             )
         )]
         trendi_order: Option<i32>,
-        start: Option<i64>,
-        end: Option<i64>,
+        start: Option<DateTime<Utc>>,
+        end: Option<DateTime<Utc>>,
     ) -> Result<TimeSeriesResult> {
+        let start = start.map(super::outlier::timestamp_nanos).transpose()?;
+        let end = end.map(super::outlier::timestamp_nanos).transpose()?;
         let store = crate::graphql::get_store(ctx)?;
         let map = store.time_series_map();
         let id = cluster_id
@@ -298,12 +300,12 @@ struct TimeSeriesResult {
 
 #[Object]
 impl TimeSeriesResult {
-    async fn earliest(&self) -> Option<NaiveDateTime> {
-        self.inner.0.map(i64_to_naive_date_time)
+    async fn earliest(&self) -> Option<DateTime<Utc>> {
+        self.inner.0.map(DateTime::from_timestamp_nanos)
     }
 
-    async fn latest(&self) -> Option<NaiveDateTime> {
-        self.inner.1.map(i64_to_naive_date_time)
+    async fn latest(&self) -> Option<DateTime<Utc>> {
+        self.inner.1.map(DateTime::from_timestamp_nanos)
     }
 
     async fn series(&self) -> Vec<ColumnTimeSeries<'_>> {
