@@ -6,6 +6,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- `eventListWithTriage` errors for an exclusion that cannot be built now name
+  the failing `triage.exclusions[i]` entry and field, and include the
+  underlying cause.
+
 ### Fixed
 
 - Corrected nanosecond zero-filling in `topTimeSeries` and aligned trends and

@@ -721,7 +721,8 @@ impl EventQuery {
             .as_ref()
             .and_then(|t| t.exclusions.as_deref())
             .map(convert_event_triage_exclusions)
-            .transpose()?
+            .transpose()
+            .map_err(|error| async_graphql::Error::new(format!("{error:#}")))?
             .unwrap_or_default();
         query(
             after,
@@ -1772,40 +1773,51 @@ fn convert_event_triage_exclusions(
     exclusions: &[EventTriageExclusionInput],
 ) -> anyhow::Result<Vec<TriageExclusion>> {
     let mut result = Vec::new();
-    for exclusion in exclusions {
+    for (index, exclusion) in exclusions.iter().enumerate() {
         let mut populated = false;
         if let Some(group) = &exclusion.ip_address
             && !(group.hosts.is_empty() && group.networks.is_empty() && group.ranges.is_empty())
         {
             populated = true;
-            let host_network_group: HostNetworkGroup = group.try_into()?;
-            result.push(TriageExclusion::try_from(ExclusionReason::IpAddress(
-                host_network_group,
-            ))?);
+            let host_network_group: HostNetworkGroup = group
+                .try_into()
+                .with_context(|| format!("invalid triage.exclusions[{index}].ipAddress"))?;
+            result.push(
+                TriageExclusion::try_from(ExclusionReason::IpAddress(host_network_group))
+                    .with_context(|| {
+                        format!("failed to build triage.exclusions[{index}].ipAddress")
+                    })?,
+            );
         }
         if let Some(domains) = &exclusion.domain
             && !domains.is_empty()
         {
             populated = true;
-            result.push(TriageExclusion::try_from(ExclusionReason::Domain(
-                domains.clone(),
-            ))?);
+            result.push(
+                TriageExclusion::try_from(ExclusionReason::Domain(domains.clone())).with_context(
+                    || format!("failed to build triage.exclusions[{index}].domain"),
+                )?,
+            );
         }
         if let Some(hostnames) = &exclusion.hostname
             && !hostnames.is_empty()
         {
             populated = true;
-            result.push(TriageExclusion::try_from(ExclusionReason::Hostname(
-                hostnames.clone(),
-            ))?);
+            result.push(
+                TriageExclusion::try_from(ExclusionReason::Hostname(hostnames.clone()))
+                    .with_context(|| {
+                        format!("failed to build triage.exclusions[{index}].hostname")
+                    })?,
+            );
         }
         if let Some(uris) = &exclusion.uri
             && !uris.is_empty()
         {
             populated = true;
-            result.push(TriageExclusion::try_from(ExclusionReason::Uri(
-                uris.clone(),
-            ))?);
+            result.push(
+                TriageExclusion::try_from(ExclusionReason::Uri(uris.clone()))
+                    .with_context(|| format!("failed to build triage.exclusions[{index}].uri"))?,
+            );
         }
         if !populated {
             bail!("triage exclusion must have at least one populated field");
@@ -5660,6 +5672,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn event_list_with_triage_rejects_oversized_domain_exclusion() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        store
+            .events()
+            .put(&event_message_at(Utc::now(), 1, 2))
+            .unwrap();
+        let domains: Vec<_> = (0..5_000)
+            .map(|index| format!("host{index:06}.sub.example-domain.com"))
+            .collect();
+        let domains = serde_json::to_string(&domains).unwrap();
+        let query = format!(
+            "{{ eventListWithTriage( \
+                filter: {{}}, \
+                triage: {{ exclusions: [{{ domain: {domains} }}] }} \
+            ) {{ edges {{ cursor }} totalCount }} }}",
+        );
+
+        let res = schema.execute_as_system_admin(&query).await;
+        assert_eq!(res.data, async_graphql::Value::Null);
+        let error = res.errors.first().expect("expected an exclusion error");
+        assert!(
+            error.message.contains("triage.exclusions[0].domain"),
+            "{error:?}"
+        );
+        assert!(error.message.contains("size limit"), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn event_list_with_triage_rejects_unbuildable_ip_address_exclusion() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        store
+            .events()
+            .put(&event_message_at(Utc::now(), 1, 2))
+            .unwrap();
+        // A buildable exclusion before the invalid one must not hide the failure.
+        let query = r#"{ eventListWithTriage(
+            filter: {},
+            triage: { exclusions: [
+                { domain: ["domain"] },
+                { ipAddress: { hosts: [], networks: [], ranges: [
+                    { start: "192.0.2.1", end: "2001:db8::1" }
+                ] } }
+            ] }
+        ) { edges { cursor } totalCount } }"#;
+
+        let res = schema.execute_as_system_admin(query).await;
+        assert_eq!(res.data, async_graphql::Value::Null);
+        let error = res.errors.first().expect("expected an exclusion error");
+        assert!(
+            error.message.contains("triage.exclusions[1].ipAddress"),
+            "{error:?}",
+        );
+        assert!(
+            error
+                .message
+                .contains("building IP triage exclusion filter"),
+            "{error:?}",
+        );
+        assert!(
+            error.message.contains("Invalid ip address format"),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn event_list_with_triage_first_plus_one_on_surviving_events() {
         let schema = TestSchema::new().await;
         let store = schema.store();
@@ -5804,6 +5883,7 @@ mod tests {
             ) {{ totalCount }} }}",
         );
         let res_combined = schema.execute_as_system_admin(&query_combined).await;
+        assert!(res_combined.errors.is_empty(), "{:?}", res_combined.errors);
         assert_eq!(
             res_combined.data.to_string(),
             r#"{eventListWithTriage: {totalCount: "0"}}"#
@@ -5820,6 +5900,7 @@ mod tests {
             ) {{ totalCount }} }}",
         );
         let res_split = schema.execute_as_system_admin(&query_split).await;
+        assert!(res_split.errors.is_empty(), "{:?}", res_split.errors);
         assert_eq!(
             res_split.data.to_string(),
             r#"{eventListWithTriage: {totalCount: "0"}}"#
@@ -5853,41 +5934,6 @@ mod tests {
             !res_empty_group.errors.is_empty(),
             "expected error for exclusion with empty ipAddress group"
         );
-    }
-
-    #[tokio::test]
-    async fn event_list_with_triage_rejects_unbuildable_ip_exclusion() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-        db.put(&event_message_at(ts, 1, 2)).unwrap();
-
-        // A range from an IPv4 to an IPv6 address cannot be built into a
-        // network filter, so the exclusion is rejected rather than applied
-        // as a filter that excludes nothing.
-        let ts = jiff_timestamp(ts);
-        let query = format!(
-            "{{ eventListWithTriage( \
-                filter: {{ start:\"{ts}\" }}, \
-                triage: {{ exclusions: [{{ \
-                    ipAddress: {{ hosts: [], networks: [], ranges: [ \
-                        {{ start: \"192.0.2.1\", end: \"2001:db8::1\" }} \
-                    ] }} \
-                }}] }} \
-            ) {{ totalCount }} }}",
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert!(
-            !res.errors.is_empty(),
-            "expected error for mixed-family IP range exclusion"
-        );
-        assert_eq!(res.data, async_graphql::Value::Null);
     }
 
     #[tokio::test]
