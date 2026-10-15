@@ -407,8 +407,18 @@ pub(crate) fn authenticate(
     })
 }
 
+/// The core package-ids no role may upload: the installer stages each
+/// into the store together with the Trust Anchor move it belongs to,
+/// and a build of either uploaded ahead of that move would run against
+/// a Trust Anchor no compatibility declaration covers.
+const INSTALLER_STAGED_PACKAGE_IDS: [&str; 2] = ["bootroot-agent", "bootroot-remote"];
+
 /// Expands a role into the package-ids it may write, or `None` if it may write
 /// none.
+///
+/// A `SystemAdministrator` may write every core package-id except the
+/// installer-staged ones ([`INSTALLER_STAGED_PACKAGE_IDS`]), plus every module
+/// package-id; a `SecurityAdministrator` may write the module package-ids only.
 ///
 /// Both lists are read from [`crate::backend`] rather than restated, so "core"
 /// has one definition in one place. The match is exhaustive on purpose: a role
@@ -419,6 +429,7 @@ fn permitted_package_ids(role: Role) -> Option<Vec<&'static str>> {
         Role::SystemAdministrator => Some(
             CORE_PACKAGE_IDS
                 .iter()
+                .filter(|id| !INSTALLER_STAGED_PACKAGE_IDS.contains(id))
                 .chain(MODULE_PACKAGE_IDS.iter())
                 .copied()
                 .collect(),
@@ -722,11 +733,11 @@ mod tests {
         ERR_SIGNATURE_INVALID, ERR_TOO_LARGE, ERR_TRANSPORT, ERR_TRUST_EPOCH_NOT_NEWER,
         ERR_TRUST_MALFORMED, ERR_TRUST_ROLE_NOT_PERMITTED, ERR_TRUST_SIGNATURE_INVALID,
         ERR_TRUST_TOO_LARGE, ERR_TRUST_TRANSPORT, ERR_TRUST_UNAVAILABLE, ERR_UNAVAILABLE,
-        Extension, IntoResponse, PACKAGE_UPLOAD_PATH, PackageUploadLimit, Refusal, RefusalCode,
-        Role, Router, StreamExt, TRUST_GENERATION_PATH, TRUST_OUTCOME_ACTIVATED,
-        TRUST_OUTCOME_FORBIDDEN, TrustGenerationLimit, TrustRefusalCode, UploadRefusalCode,
-        VARIANT_EPOCH_NOT_NEWER, VARIANT_MALFORMED, VARIANT_SIGNATURE_INVALID, VARIANT_TOO_LARGE,
-        VARIANT_TRANSPORT, VARIANT_UNAVAILABLE, capped_stream, router,
+        Extension, INSTALLER_STAGED_PACKAGE_IDS, IntoResponse, PACKAGE_UPLOAD_PATH,
+        PackageUploadLimit, Refusal, RefusalCode, Role, Router, StreamExt, TRUST_GENERATION_PATH,
+        TRUST_OUTCOME_ACTIVATED, TRUST_OUTCOME_FORBIDDEN, TrustGenerationLimit, TrustRefusalCode,
+        UploadRefusalCode, VARIANT_EPOCH_NOT_NEWER, VARIANT_MALFORMED, VARIANT_SIGNATURE_INVALID,
+        VARIANT_TOO_LARGE, VARIANT_TRANSPORT, VARIANT_UNAVAILABLE, capped_stream, router,
     };
     use crate::backend::{
         AcceptedPackage, BuildId, CORE_PACKAGE_IDS, IngressStream, IngressStreamError,
@@ -1451,7 +1462,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_system_administrator_may_write_core_and_module_packages() {
+    async fn a_system_administrator_may_write_core_and_module_packages_except_the_installer_staged()
+    {
         let stub = stub(Outcome::Accept);
         let sent = send(
             &Caller::Role(Role::SystemAdministrator),
@@ -1462,11 +1474,32 @@ mod tests {
         .await;
 
         assert_eq!(sent.status, StatusCode::OK);
-        let mut expected = ids(&CORE_PACKAGE_IDS);
-        expected.extend(ids(&MODULE_PACKAGE_IDS));
         let observed = stub.observed();
-        assert_eq!(observed.permitted, expected);
+        assert_eq!(
+            observed.permitted,
+            ids(&[
+                "review",
+                "aice-web-next",
+                "roxyd",
+                "bootler-security",
+                "piglet",
+                "giganto",
+                "hog",
+                "reconverge",
+                "crusher",
+            ])
+        );
         assert!(!observed.permitted.iter().any(|id| id == "bootroot"));
+        assert!(!observed.permitted.iter().any(|id| id == "bootroot-agent"));
+        assert!(!observed.permitted.iter().any(|id| id == "bootroot-remote"));
+        assert!(observed.permitted.iter().any(|id| id == "bootler-security"));
+    }
+
+    #[test]
+    fn installer_staged_ids_are_core_ids() {
+        for staged in INSTALLER_STAGED_PACKAGE_IDS {
+            assert!(CORE_PACKAGE_IDS.contains(&staged), "{staged}");
+        }
     }
 
     #[tokio::test]
@@ -1513,6 +1546,37 @@ mod tests {
         let observed = stub.observed();
         for core in CORE_PACKAGE_IDS {
             assert!(!observed.permitted.iter().any(|id| id == core), "{core}");
+        }
+    }
+
+    /// As above, the store-side assertions belong to the receiver; what is
+    /// asserted here is that the installer-staged id never reached it in the
+    /// permitted set, so its commit was refused before it happened.
+    #[tokio::test]
+    async fn a_system_administrator_uploading_a_bootroot_program_is_forbidden() {
+        for staged in INSTALLER_STAGED_PACKAGE_IDS {
+            let stub = stub(Outcome::NotPermitted(staged));
+            let sent = send(
+                &Caller::Role(Role::SystemAdministrator),
+                CAP,
+                &stub,
+                small_body(),
+            )
+            .await;
+
+            assert_eq!(sent.status, StatusCode::FORBIDDEN, "{staged}");
+            assert_eq!(
+                sent.error(),
+                format!("uploading {staged} is not permitted for this role"),
+                "{staged}"
+            );
+            assert_eq!(sent.field("code"), "PACKAGE_NOT_PERMITTED", "{staged}");
+            assert!(sent.logs.contains("PackageNotPermitted"), "{staged}");
+            let observed = stub.observed();
+            assert!(
+                !observed.permitted.iter().any(|id| id == staged),
+                "{staged}"
+            );
         }
     }
 

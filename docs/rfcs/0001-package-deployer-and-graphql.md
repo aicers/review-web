@@ -10,7 +10,8 @@
 §5b, §5c, §7 issues 6–9 and §9 decisions 25–28 — for RFC-E's signed-file
 intake, withdrawn-build mark and failure kind. Amended 2026-10-05 — §4, §5a,
 §5a-bis, §6 and §7 issue 10 — for reconverge's first-install configuration
-template.
+template. Amended 2026-10-15 — §3, §5c, §6 and §9 decision 24 — to refuse
+uploads of `bootroot-agent` and `bootroot-remote` for every role.
 `aicers/review-web` is an aicers repo (in-repo issue flow,
 AgentCoop-decomposable, no external gate). Derived from the RFC-D scope
 (the review-web slice). This
@@ -95,7 +96,9 @@ model (**no `desiredVersion`**):
   `aice-web-next`/`roxyd`/`bootroot-agent`/`bootroot-remote`/
   `bootler-security` (core), `bootroot` (core, **not** updatable —
   installer-managed). The last three are the programs a join host's operator
-  places, core targets since 2026-10-04 (§9, decision 24).
+  places, core targets since 2026-10-04 (§9, decision 24). The upload route
+  refuses the two bootroot programs for every role (§5c, decision 24,
+  2026-10-15).
 - **Upload** is a streaming binary transfer (the signed `.pkg`), **not** base64
   in GraphQL; review-web relays the bytes to review's store receiver (D2 §4a),
   which verifies and stores.
@@ -914,6 +917,17 @@ part.
   `SecurityAdministrator` cannot forge a core build's release signature, and an
   authentic core `.pkg` reveals `component ∈ {review, aice-web-next, roxyd}` and
   is rejected).
+- **[DECISION] The upload route refuses `bootroot-agent` and `bootroot-remote`
+  for every role (2026-10-15).** The `SystemAdministrator` permitted set is
+  every core package-id except these two, plus every module package-id; the
+  `SecurityAdministrator` set is unchanged. The receiver therefore refuses
+  either with `PACKAGE_NOT_PERMITTED` (403) after verification, as it refuses a
+  module-only role's core upload, and leaves `accepted/`, `index.json` and
+  `latest_build` unchanged. A build of either must not reach the store ahead of
+  the Trust Anchor move it belongs to (bootler RFC 0004 §4); the installer
+  stages both with that move. `bootler-security` stays uploadable by a
+  `SystemAdministrator`, and `updateCoreComponent`, `storeBuildList` and
+  operation-attempt visibility still admit all three.
 - **[DECISION] Authorization precedes the store commit — it never follows it.**
   The class is known only **after** the receiver verifies the signature (D2 §4a),
   and the receiver commits by renaming `pending/` → `accepted/` and updating
@@ -1120,6 +1134,11 @@ by the resolver.
   package-id requires the module tier), relays to the store receiver, and
   returns the build id or a typed error; **no base64-in-GraphQL** path exists.
   A `SecurityAdministrator` uploading a core-component build is **rejected**.
+  A `SystemAdministrator` uploading a validly signed `bootroot-agent` or
+  `bootroot-remote` package is **rejected** with `PACKAGE_NOT_PERMITTED`,
+  because neither id is in the permitted set passed to the receiver, and
+  `accepted/`, `index.json` and `latest_build` are unchanged; a
+  `bootler-security` upload by the same role is accepted.
 - The **trust-plane ingress route** accepts a signed generation only for
   `SystemAdministrator`, hands it to review's trust manager, and **never**
   writes to the module store: a test asserts that after posting a generation,
@@ -1648,9 +1667,14 @@ supersedes.
       them like any core package-id.
     - The `rollback-supervisor` gate (§5a) applies to them unchanged. It is
       a host-level gate on every mutation, not a property of the target.
-    - The sets built from `CORE_PACKAGE_IDS` admit them with no text change:
-      the upload route's permitted set, `storeBuildList`, and
-      operation-attempt visibility.
+    - `storeBuildList` and operation-attempt visibility, which are built
+      from `CORE_PACKAGE_IDS`, admit all three with no text change. The
+      upload route's permitted set does not admit `bootroot-agent` or
+      `bootroot-remote` for any role (2026-10-15, §5c): the installer stages
+      both into the store with the Trust Anchor move they belong to, and a
+      build of either uploaded ahead of that move would run against a Trust
+      Anchor no declaration covers. `bootler-security` stays uploadable by a
+      `SystemAdministrator`.
     - The core-component read path already lists whatever rows the registry
       holds.
 
