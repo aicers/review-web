@@ -1779,31 +1779,33 @@ fn convert_event_triage_exclusions(
         {
             populated = true;
             let host_network_group: HostNetworkGroup = group.try_into()?;
-            result.push(TriageExclusion::from(ExclusionReason::IpAddress(
+            result.push(TriageExclusion::try_from(ExclusionReason::IpAddress(
                 host_network_group,
-            )));
+            ))?);
         }
         if let Some(domains) = &exclusion.domain
             && !domains.is_empty()
         {
             populated = true;
-            result.push(TriageExclusion::from(ExclusionReason::Domain(
+            result.push(TriageExclusion::try_from(ExclusionReason::Domain(
                 domains.clone(),
-            )));
+            ))?);
         }
         if let Some(hostnames) = &exclusion.hostname
             && !hostnames.is_empty()
         {
             populated = true;
-            result.push(TriageExclusion::from(ExclusionReason::Hostname(
+            result.push(TriageExclusion::try_from(ExclusionReason::Hostname(
                 hostnames.clone(),
-            )));
+            ))?);
         }
         if let Some(uris) = &exclusion.uri
             && !uris.is_empty()
         {
             populated = true;
-            result.push(TriageExclusion::from(ExclusionReason::Uri(uris.clone())));
+            result.push(TriageExclusion::try_from(ExclusionReason::Uri(
+                uris.clone(),
+            ))?);
         }
         if !populated {
             bail!("triage exclusion must have at least one populated field");
@@ -5850,6 +5852,83 @@ mod tests {
         assert!(
             !res_empty_group.errors.is_empty(),
             "expected error for exclusion with empty ipAddress group"
+        );
+    }
+
+    #[tokio::test]
+    async fn event_list_with_triage_rejects_unbuildable_ip_exclusion() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        db.put(&event_message_at(ts, 1, 2)).unwrap();
+
+        // A range from an IPv4 to an IPv6 address cannot be built into a
+        // network filter, so the exclusion is rejected rather than applied
+        // as a filter that excludes nothing.
+        let ts = jiff_timestamp(ts);
+        let query = format!(
+            "{{ eventListWithTriage( \
+                filter: {{ start:\"{ts}\" }}, \
+                triage: {{ exclusions: [{{ \
+                    ipAddress: {{ hosts: [], networks: [], ranges: [ \
+                        {{ start: \"192.0.2.1\", end: \"2001:db8::1\" }} \
+                    ] }} \
+                }}] }} \
+            ) {{ totalCount }} }}",
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        assert!(
+            !res.errors.is_empty(),
+            "expected error for mixed-family IP range exclusion"
+        );
+        assert_eq!(res.data, async_graphql::Value::Null);
+    }
+
+    #[tokio::test]
+    async fn event_list_with_triage_hostname_and_uri_exclusions() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        // The default DnsCovertChannel test event has `query: "domain"`,
+        // whose first label `TriageExclusion::Hostname(["domain"])` matches.
+        db.put(&event_message_at(ts, 1, 2)).unwrap();
+
+        let ts = jiff_timestamp(ts);
+        let query_hostname = format!(
+            "{{ eventListWithTriage( \
+                filter: {{ start:\"{ts}\" }}, \
+                triage: {{ exclusions: [{{ hostname: [\"domain\"] }}] }} \
+            ) {{ totalCount }} }}",
+        );
+        let res_hostname = schema.execute_as_system_admin(&query_hostname).await;
+        assert_eq!(
+            res_hostname.data.to_string(),
+            r#"{eventListWithTriage: {totalCount: "0"}}"#
+        );
+
+        // DNS events never match a URI exclusion, so the event survives.
+        let query_uri = format!(
+            "{{ eventListWithTriage( \
+                filter: {{ start:\"{ts}\" }}, \
+                triage: {{ exclusions: [{{ uri: [\"/domain\"] }}] }} \
+            ) {{ totalCount }} }}",
+        );
+        let res_uri = schema.execute_as_system_admin(&query_uri).await;
+        assert_eq!(
+            res_uri.data.to_string(),
+            r#"{eventListWithTriage: {totalCount: "1"}}"#
         );
     }
 
