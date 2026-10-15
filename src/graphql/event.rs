@@ -5891,6 +5891,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn event_list_with_triage_hostname_and_uri_exclusions() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        let db = store.events();
+        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Utc)
+            .unwrap();
+        // The default DnsCovertChannel test event has `query: "domain"`,
+        // whose first label `TriageExclusion::Hostname(["domain"])` matches.
+        db.put(&event_message_at(ts, 1, 2)).unwrap();
+
+        let ts = jiff_timestamp(ts);
+        let query_hostname = format!(
+            "{{ eventListWithTriage( \
+                filter: {{ start:\"{ts}\" }}, \
+                triage: {{ exclusions: [{{ hostname: [\"domain\"] }}] }} \
+            ) {{ totalCount }} }}",
+        );
+        let res_hostname = schema.execute_as_system_admin(&query_hostname).await;
+        assert_eq!(
+            res_hostname.data.to_string(),
+            r#"{eventListWithTriage: {totalCount: "0"}}"#
+        );
+
+        // DNS events never match a URI exclusion, so the event survives.
+        let query_uri = format!(
+            "{{ eventListWithTriage( \
+                filter: {{ start:\"{ts}\" }}, \
+                triage: {{ exclusions: [{{ uri: [\"/domain\"] }}] }} \
+            ) {{ totalCount }} }}",
+        );
+        let res_uri = schema.execute_as_system_admin(&query_uri).await;
+        assert_eq!(
+            res_uri.data.to_string(),
+            r#"{eventListWithTriage: {totalCount: "1"}}"#
+        );
+    }
+
+    #[tokio::test]
     async fn event_list_with_triage_total_count_matches_surviving() {
         let schema = TestSchema::new().await;
         let store = schema.store();
