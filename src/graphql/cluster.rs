@@ -119,9 +119,9 @@ impl ClusterQuery {
         )]
         cutoff_rate: Option<f64>,
         #[graphql(
-            desc = "The dimensionless trend filter order, from 1 to 20 inclusive. Omitted or null values use 4.",
+            desc = "The dimensionless trend filter order, from 0 to 20 inclusive. Omitted or null values use 4.",
             validator(
-                minimum = 1,
+                minimum = 0,
                 custom = "|value: &i32| async_graphql::validators::maximum(value, MAX_TRENDI_ORDER)"
             )
         )]

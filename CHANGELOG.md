@@ -8,6 +8,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- `topTimeSeries` and `topTimeSeriesOfCluster` now accept `trendiOrder: 0`
+  for an identity trend filter without smoothing. Trend computation uses
+  vinum 2.0.0, so other computed trend values may change. When `cutoffRate`
+  multiplied by the number of points is 1 or less, trend computation fails;
+  `topTimeSeries` omits the affected cluster and `topTimeSeriesOfCluster`
+  returns an empty `seriesTrend`.
 - `POST /api/package/upload` now refuses a `bootroot-agent` or
   `bootroot-remote` package for every role, System Administrators included,
   with `PACKAGE_NOT_PERMITTED` (403), and leaves the store unchanged. Builds of
@@ -18,6 +24,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- Fixed panics in `topTimeSeries` and `topTimeSeriesOfCluster` when computing
+  trends with small cutoff frequencies, including those produced by large
+  `cutoffRate` values.
 - `topTimeSeries`, `savedOutliers`, and `rankedOutliers` now reject `time`
   values outside the signed 64-bit nanosecond range, as do `rankedOutliers`
   for `filter.time.start` and `filter.time.end`, and `rankedOutlierStream`
