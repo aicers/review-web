@@ -960,38 +960,65 @@ impl ScalarType for IpAddress {
     }
 }
 
-const A_BILLION: i64 = 1_000_000_000;
 type TimeCount = (i64, usize); // (utc_timestamp_nano, count)
 
-fn fill_vacant_time_slots(series: &[TimeCount]) -> Vec<TimeCount> {
-    let mut filled_series: Vec<TimeCount> = Vec::new();
+// Validate even two-point series, which do not otherwise need filling.
+fn minimum_time_interval(series: &[TimeCount]) -> anyhow::Result<Option<i64>> {
+    series.windows(2).try_fold(None, |minimum, pair| {
+        let interval = pair[1]
+            .0
+            .checked_sub(pair[0].0)
+            .ok_or_else(|| anyhow::anyhow!("timestamp interval overflow"))?;
+        anyhow::ensure!(
+            interval > 0,
+            "timestamps must be strictly increasing (no duplicates)"
+        );
+        Ok(Some(
+            minimum.map_or(interval, |value: i64| value.min(interval)),
+        ))
+    })
+}
 
-    if series.len() <= 2 {
-        return series.to_vec();
-    }
-    let mut min_diff = series[1].0 - series[0].0;
-    for index in 2..series.len() {
-        let diff = series[index].0 - series[index - 1].0;
-        if diff < min_diff {
-            min_diff = diff;
+fn zero_filled_length(series: &[TimeCount]) -> anyhow::Result<u128> {
+    let interval = minimum_time_interval(series)?;
+    let mut length = u128::try_from(series.len())?;
+    if series.len() >= 3
+        && let Some(interval) = interval
+    {
+        for pair in series.windows(2) {
+            // Subtraction and ordering were checked by minimum_time_interval.
+            let slots = (pair[1].0 - pair[0].0) / interval;
+            length += u128::try_from(slots - 1)?;
         }
     }
+    Ok(length)
+}
 
+fn fill_vacant_time_slots(series: &[TimeCount]) -> anyhow::Result<Vec<TimeCount>> {
+    let length = usize::try_from(zero_filled_length(series)?)?;
+    let mut filled = Vec::new();
+    filled.try_reserve_exact(length)?;
+    let interval = minimum_time_interval(series)?;
     for (index, element) in series.iter().enumerate() {
-        if index == 0 {
-            filled_series.push(*element);
-            continue;
-        }
-        let min_diff_seconds = min_diff / A_BILLION;
-        let time_diff = ((element.0 - series[index - 1].0) / A_BILLION) / min_diff_seconds;
-        if time_diff > 1 {
-            for d in 1..time_diff {
-                filled_series.push((series[index - 1].0 + d * min_diff_seconds, 0));
+        if series.len() >= 3
+            && index > 0
+            && let Some(interval) = interval
+        {
+            let previous = series[index - 1].0;
+            let slots = (element.0 - previous) / interval;
+            for slot in 1..slots {
+                let offset = slot
+                    .checked_mul(interval)
+                    .ok_or_else(|| anyhow::anyhow!("timestamp offset overflow"))?;
+                let time = previous
+                    .checked_add(offset)
+                    .ok_or_else(|| anyhow::anyhow!("filled timestamp overflow"))?;
+                filled.push((time, 0));
             }
         }
-        filled_series.push(*element);
+        filled.push(*element);
     }
-    filled_series
+    Ok(filled)
 }
 
 fn get_trend(
@@ -1914,6 +1941,68 @@ impl TestSchema {
 #[cfg(test)]
 mod tests {
     use super::{AgentManager, Direction, MockPackageDeployer, OpaqueCursor, TestSchema, database};
+
+    #[test]
+    fn vacant_slots_use_nanoseconds() {
+        for (times, expected) in [
+            (vec![], vec![]),
+            (vec![1], vec![1]),
+            (vec![0, 4], vec![0, 4]),
+            (
+                vec![0, 60_000_000_000, 180_000_000_000],
+                vec![0, 60_000_000_000, 120_000_000_000, 180_000_000_000],
+            ),
+            (
+                vec![0, 1_900_000_000, 5_700_000_000],
+                vec![0, 1_900_000_000, 3_800_000_000, 5_700_000_000],
+            ),
+            (
+                vec![0, 500_000_000, 1_500_000_000, 2_500_000_000],
+                vec![
+                    0,
+                    500_000_000,
+                    1_000_000_000,
+                    1_500_000_000,
+                    2_000_000_000,
+                    2_500_000_000,
+                ],
+            ),
+            (
+                vec![0, 2_000_000_000, 7_000_000_000],
+                vec![0, 2_000_000_000, 4_000_000_000, 7_000_000_000],
+            ),
+        ] {
+            let series: Vec<_> = times.iter().map(|&time| (time, 7)).collect();
+            let filled = super::fill_vacant_time_slots(&series).unwrap();
+            assert_eq!(
+                super::zero_filled_length(&series).unwrap(),
+                u128::try_from(filled.len()).unwrap()
+            );
+            assert_eq!(
+                filled.iter().map(|point| point.0).collect::<Vec<_>>(),
+                expected
+            );
+            for point in filled {
+                assert_eq!(point.1, if times.contains(&point.0) { 7 } else { 0 });
+            }
+        }
+    }
+
+    #[test]
+    fn vacant_slots_reject_invalid_timestamps() {
+        for times in [
+            vec![0, 0],
+            vec![1, 0],
+            vec![0, 1, 1],
+            vec![0, 2, 1],
+            vec![i64::MIN, 0, i64::MAX],
+            vec![i64::MIN, i64::MAX],
+        ] {
+            let series: Vec<_> = times.into_iter().map(|time| (time, 1)).collect();
+            assert!(super::zero_filled_length(&series).is_err());
+            assert!(super::fill_vacant_time_slots(&series).is_err());
+        }
+    }
 
     #[test]
     fn trend_is_finite_for_large_cutoff_rates() {

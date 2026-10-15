@@ -32,6 +32,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- Corrected nanosecond zero-filling in `topTimeSeries` and aligned trends and
+  line regressions with the filled series. Invalid timestamps and aggregate
+  computation or response series budget overruns now return GraphQL errors.
+
 - Fixed panics in `topTimeSeries` and `topTimeSeriesOfCluster` when computing
   trends with small cutoff frequencies, including those produced by large
   `cutoffRate` values.
