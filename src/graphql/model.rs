@@ -142,6 +142,9 @@ impl ModelQuery {
         end: Option<i64>,
     ) -> Result<Vec<TopTrendsByColumn>> {
         const DEFAULT_SIZE: i32 = 20;
+        let time = time
+            .map(|t| super::outlier::timestamp_nanos(t.and_utc()))
+            .transpose()?;
         let size = size
             .unwrap_or(DEFAULT_SIZE)
             .to_usize()
@@ -153,12 +156,7 @@ impl ModelQuery {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid model id")?;
-        let time_series = map.get_top_time_series_of_model(
-            model,
-            time.map(|t| t.and_utc().timestamp_nanos_opt().unwrap_or_default()),
-            start,
-            end,
-        )?;
+        let time_series = map.get_top_time_series_of_model(model, time, start, end)?;
 
         let mut time_series = time_series
             .into_iter()

@@ -16,6 +16,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   the REview host itself. `updateCoreComponent` and `storeBuildList` still
   accept both, and System Administrators can still upload `bootler-security`.
 
+### Fixed
+
+- `topTimeSeries`, `savedOutliers`, and `rankedOutliers` now reject `time`
+  values outside the signed 64-bit nanosecond range, as do `rankedOutliers`
+  for `filter.time.start` and `filter.time.end`, and `rankedOutlierStream`
+  for `start`. These values previously fell back to the Unix epoch; they
+  now return a GraphQL range error before query or subscription work begins.
+
 ## [0.40.0] - 2026-10-15
 
 ### Changed
