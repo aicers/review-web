@@ -553,7 +553,7 @@ impl Config {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    rustls::crypto::ring::default_provider()
+    rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .map_err(|_| anyhow!("a rustls crypto provider is already installed"))?;
 
