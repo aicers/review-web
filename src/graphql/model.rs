@@ -13,9 +13,12 @@ use review_database::{self as database, Store};
 use super::{
     DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, MAX_TRENDI_ORDER, PositiveCutoffRate, Role,
     RoleGuard, cluster::TimeCount, data_source::DataSource, fill_vacant_time_slots, get_trend,
-    slicing,
+    slicing, zero_filled_length,
 };
 use crate::graphql::{query, statistics::i64_to_naive_date_time};
+
+const COMPUTATION_SERIES_BUDGET: u128 = 1_000_000;
+const RESPONSE_SERIES_BUDGET: u128 = 100_000;
 
 const DEFAULT_MIN_SLOPE: f64 = 10.0;
 const DEFAULT_MIN_ZERO_COUNT_FOR_TREND: u32 = 5;
@@ -158,6 +161,8 @@ impl ModelQuery {
             .map_err(|_| "invalid model id")?;
         let time_series = map.get_top_time_series_of_model(model, time, start, end)?;
 
+        check_computation_budget(&time_series, time.is_some())?;
+
         let mut time_series = time_series
             .into_iter()
             .map(|s| {
@@ -168,13 +173,14 @@ impl ModelQuery {
                     min_slope.unwrap_or(DEFAULT_MIN_SLOPE),
                 )
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         if let Some(category) = trend_category.as_ref() {
             sort_on_category(category, &mut time_series);
         }
         for s in &mut time_series {
             s.trends.truncate(size);
         }
+        check_response_budget(&time_series, time.is_some())?;
         time_series.sort_by_key(|elem| elem.count_index);
         Ok(time_series)
     }
@@ -604,6 +610,57 @@ impl From<database::TopMultimaps> for TopMultimaps {
     }
 }
 
+fn zero_fill_error(cluster_id: u32, error: &anyhow::Error) -> async_graphql::Error {
+    async_graphql::Error::new(format!("cannot zero-fill cluster {cluster_id}: {error}"))
+}
+
+#[derive(Clone, Copy)]
+enum SeriesBudget {
+    Computation,
+    Response,
+}
+
+fn check_series_budget(sum: u128, budget: SeriesBudget, has_time: bool) -> Result<()> {
+    let (name, limit) = match budget {
+        SeriesBudget::Computation => ("computation", COMPUTATION_SERIES_BUDGET),
+        SeriesBudget::Response => ("response", RESPONSE_SERIES_BUDGET),
+    };
+    if sum > limit {
+        let mut message = format!("{name} budget exceeded: series length sum {sum}, limit {limit}");
+        if !has_time {
+            message.push_str("; narrow the query period using start and end");
+        }
+        if matches!(budget, SeriesBudget::Response) {
+            message.push_str("; lower size");
+        }
+        return Err(async_graphql::Error::new(message));
+    }
+    Ok(())
+}
+
+fn check_computation_budget(
+    columns: &[(Option<i32>, Vec<database::ClusterTimeSeries>)],
+    has_time: bool,
+) -> Result<()> {
+    // Each series has at most 2^64 slots over i64 timestamps. The in-memory
+    // collection has fewer than 2^64 series, so u128 preserves the exact sum.
+    let mut sum = 0_u128;
+    for cluster in columns.iter().flat_map(|column| &column.1) {
+        sum += zero_filled_length(&cluster.time_counts)
+            .map_err(|error| zero_fill_error(cluster.id, &error))?;
+    }
+    check_series_budget(sum, SeriesBudget::Computation, has_time)
+}
+
+fn check_response_budget(columns: &[TopTrendsByColumn], has_time: bool) -> Result<()> {
+    let sum = columns
+        .iter()
+        .flat_map(|column| &column.trends)
+        .map(|cluster| u128::try_from(cluster.series.len()).expect("usize fits in u128"))
+        .sum();
+    check_series_budget(sum, SeriesBudget::Response, has_time)
+}
+
 #[derive(SimpleObject)]
 struct TopTrendsByColumn {
     count_index: usize,
@@ -616,7 +673,7 @@ impl TopTrendsByColumn {
         cutoff_rate: f64,
         trendi_order: i32,
         min_slope: f64,
-    ) -> Self {
+    ) -> Result<Self> {
         // 100_000 means counting events themselves, not any other column values.
         let count_index = inner
             .0
@@ -624,12 +681,15 @@ impl TopTrendsByColumn {
         let trends = inner
             .1
             .into_iter()
-            .filter_map(|t| ClusterTrend::from_database(t, cutoff_rate, trendi_order, min_slope))
+            .map(|t| ClusterTrend::from_database(t, cutoff_rate, trendi_order, min_slope))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
             .collect();
-        Self {
+        Ok(Self {
             count_index,
             trends,
-        }
+        })
     }
 }
 
@@ -705,20 +765,21 @@ impl ClusterTrend {
         cutoff_rate: f64,
         trendi_order: i32,
         min_slope: f64,
-    ) -> Option<Self> {
+    ) -> Result<Option<Self>> {
         let cluster_id = inner.id;
         let series = inner.time_counts;
+        let series =
+            fill_vacant_time_slots(&series).map_err(|error| zero_fill_error(cluster_id, &error))?;
         let Ok(trend) = get_trend(&series, cutoff_rate, trendi_order) else {
-            return None;
+            return Ok(None);
         };
         let trend = trend
             .iter()
             .map(|t| t.trunc().to_usize().unwrap_or(0)) // unwrap_or is for minus
             .collect::<Vec<_>>();
-        let series = fill_vacant_time_slots(&series);
         let lines = find_lines(&series, &trend, min_slope);
         if lines.is_empty() {
-            return None;
+            return Ok(None);
         }
         let (
             number_of_ups,
@@ -729,7 +790,7 @@ impl ClusterTrend {
             longest_down_span,
         ) = analyze_lines(&lines);
         let series = series.iter().map(Into::into).collect();
-        Some(Self {
+        Ok(Some(Self {
             cluster_id,
             series,
             trend,
@@ -740,7 +801,7 @@ impl ClusterTrend {
             minimum_slope,
             longest_up_span,
             longest_down_span,
-        })
+        }))
     }
 }
 
@@ -1097,6 +1158,220 @@ mod tests {
     use review_database::{Cluster, Store};
 
     use crate::graphql::TestSchema;
+
+    #[test]
+    fn computation_budget_counts_all_series_without_filling() {
+        for (end, passes) in [(499_999, true), (500_000, false)] {
+            let columns = vec![(
+                None,
+                vec![
+                    review_database::ClusterTimeSeries {
+                        id: 1,
+                        time_counts: vec![(0, 1), (1, 1), (end, 1)],
+                    },
+                    review_database::ClusterTimeSeries {
+                        id: 2,
+                        time_counts: vec![(0, 1), (1, 1), (499_999, 1)],
+                    },
+                ],
+            )];
+            let result = super::check_computation_budget(&columns, false);
+            assert_eq!(result.is_ok(), passes);
+            if let Err(error) = result {
+                assert!(error.message.contains("1000001"), "{error:?}");
+            }
+        }
+        let columns = vec![(
+            None,
+            (0..19)
+                .map(|id| review_database::ClusterTimeSeries {
+                    id,
+                    time_counts: vec![(0, 1), (1, 1), (1_000_000_000_000_000_000, 1)],
+                })
+                .collect(),
+        )];
+        let error = super::check_computation_budget(&columns, false).unwrap_err();
+        assert!(error.message.contains("19000000000000000019"), "{error:?}");
+        assert!(
+            super::check_computation_budget(
+                &[(
+                    None,
+                    vec![review_database::ClusterTimeSeries {
+                        id: 9,
+                        time_counts: vec![(0, 1), (1, 1), (1_000_000_000_000_000_000, 1)],
+                    }]
+                )],
+                false
+            )
+            .is_err()
+        );
+    }
+
+    fn trend_with_length(length: usize) -> super::ClusterTrend {
+        super::ClusterTrend {
+            cluster_id: 1,
+            series: (0..length)
+                .map(|_| super::TimeCount {
+                    time: chrono::DateTime::UNIX_EPOCH.naive_utc(),
+                    count: 1,
+                })
+                .collect(),
+            trend: Vec::new(),
+            lines: Vec::new(),
+            number_of_ups: 0,
+            number_of_downs: 0,
+            maximum_slope: 0.0,
+            minimum_slope: 0.0,
+            longest_up_span: 0,
+            longest_down_span: 0,
+        }
+    }
+
+    #[test]
+    fn response_budget_applies_after_truncation() {
+        let mut columns = vec![super::TopTrendsByColumn {
+            count_index: 0,
+            trends: vec![trend_with_length(100_000), trend_with_length(1)],
+        }];
+        let error = super::check_response_budget(&columns, false).unwrap_err();
+        for text in ["response", "100001", "100000", "start", "end", "lower size"] {
+            assert!(error.message.contains(text), "{error:?}");
+        }
+        columns[0].trends.truncate(1);
+        assert!(super::check_response_budget(&columns, false).is_ok());
+    }
+
+    #[test]
+    fn cluster_trends_and_regressions_use_filled_counts() {
+        let inner = review_database::ClusterTimeSeries {
+            id: 1,
+            time_counts: (0..100)
+                .filter(|i| i % 3 != 2)
+                .map(|i| (i, usize::try_from(i * 10 + 1).unwrap()))
+                .collect(),
+        };
+        let cluster = super::ClusterTrend::from_database(inner, 0.1, 0, -1_000_000.0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(cluster.series.len(), cluster.trend.len());
+        assert!(cluster.series.iter().any(|point| point.count == 0));
+        assert!(!cluster.lines.is_empty());
+        for line in cluster.lines {
+            assert!(line.last_index < cluster.series.len());
+            let x: Vec<_> = (line.first_index..=line.last_index)
+                .map(|i| f64::from(u32::try_from(i).unwrap()))
+                .collect();
+            let y: Vec<_> = cluster.series[line.first_index..=line.last_index]
+                .iter()
+                .map(|point| f64::from(u32::try_from(point.count).unwrap()))
+                .collect();
+            let (slope, intercept, r_square) = super::linear_regression(&x, &y);
+            assert_eq!(
+                (
+                    line.reg_original.slope,
+                    line.reg_original.intercept,
+                    line.reg_original.r_square
+                ),
+                (slope, intercept, r_square)
+            );
+        }
+    }
+
+    async fn schema_with_sparse_series(
+        end: i64,
+        second_column: bool,
+        overflow: bool,
+    ) -> TestSchema {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            let map = store.time_series_map();
+            for cluster_id in 1..=2 {
+                let times = if overflow {
+                    vec![i64::MIN, 0, i64::MAX]
+                } else {
+                    vec![0, 1, end]
+                };
+                for value in times {
+                    map.insert(&review_database::TimeSeries {
+                        model_id: 1,
+                        cluster_id,
+                        time: 0,
+                        value,
+                        count_index: Some(if second_column {
+                            i32::try_from(cluster_id).unwrap()
+                        } else {
+                            0
+                        }),
+                        count: 100,
+                    })
+                    .unwrap();
+                }
+            }
+        }
+        schema
+    }
+
+    #[tokio::test]
+    async fn top_time_series_computation_errors() {
+        let schema = schema_with_sparse_series(599_999, true, false).await;
+        for (time, has_time) in [("", false), (", time: \"1970-01-01T00:00:00\"", true)] {
+            let response = schema
+                .execute_as_system_admin(&format!(
+                    "{{ topTimeSeries(model: 1, start: 0, end: 599999{time}) {{ countIndex }} }}"
+                ))
+                .await;
+            assert_eq!(response.errors.len(), 1, "{response:?}");
+            let message = &response.errors[0].message;
+            for text in ["computation", "1200000", "1000000"] {
+                assert!(message.contains(text), "{message}");
+            }
+            assert_eq!(message.contains("start"), !has_time, "{message}");
+            assert_eq!(message.contains("end"), !has_time, "{message}");
+        }
+        let schema = schema_with_sparse_series(0, false, true).await;
+        let response = schema
+            .execute_as_system_admin("{ topTimeSeries(model: 1, start: -9223372036854775808, end: 9223372036854775807) { countIndex } }")
+            .await;
+        assert_eq!(response.errors.len(), 1, "{response:?}");
+        let message = &response.errors[0].message;
+        assert!(
+            message.contains("cluster 1:") || message.contains("cluster 2:"),
+            "{message}"
+        );
+        assert!(message.contains("overflow"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn top_time_series_response_budget_and_size() {
+        let schema = schema_with_sparse_series(59_999, false, false).await;
+        for time in ["", ", time: \"1970-01-01T00:00:00\""] {
+            let arguments =
+                format!("model: 1, start: 0, end: 59999, trendiOrder: 0, minSlope: -1000000{time}");
+            let response = schema.execute_as_system_admin(&format!("{{ topTimeSeries({arguments}, size: 1) {{ trends {{ series {{ count }} }} }} }}")).await;
+            assert!(response.errors.is_empty(), "{response:?}");
+            let data = response.data.into_json().unwrap();
+            assert_eq!(
+                data["topTimeSeries"][0]["trends"][0]["series"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                60_000
+            );
+            // The budget also applies when no series fields are selected.
+            let response = schema
+                .execute_as_system_admin(&format!(
+                    "{{ topTimeSeries({arguments}, size: 2) {{ countIndex }} }}"
+                ))
+                .await;
+            assert_eq!(response.errors.len(), 1, "{response:?}");
+            let message = &response.errors[0].message;
+            for text in ["response", "120000", "100000", "lower size"] {
+                assert!(message.contains(text), "{message}");
+            }
+            assert_eq!(message.contains("start"), time.is_empty(), "{message}");
+        }
+    }
 
     fn selected_cluster_ids(sizes: &[i64], portion: Option<f64>) -> Vec<u32> {
         let db_dir = tempfile::tempdir().unwrap();
