@@ -126,6 +126,30 @@ async fn datetime_bounds_preserve_selection_counts_trends_and_offsets() {
 }
 
 #[tokio::test]
+async fn datetime_bounds_filter_with_nanosecond_precision() {
+    let schema = TestSchema::new().await;
+    for (nanos, count) in [(0, 100), (1, 200), (2, 300)] {
+        insert(&schema, nanos, 0, count);
+    }
+    let (resolver, selection, path) = QUERIES[0];
+    for (bounds, expected) in [
+        (", start: \"1970-01-01T00:00:00.000000002Z\"", 300),
+        (", end: \"1970-01-01T00:00:00Z\"", 100),
+        (
+            ", start: \"1970-01-01T00:00:00.000000001Z\", end: \"1970-01-01T00:00:00.000000001Z\"",
+            200,
+        ),
+    ] {
+        let result = data(&schema, &query(resolver, selection, bounds)).await;
+        assert_eq!(
+            result.pointer(path).unwrap(),
+            &json!([{"count": expected}]),
+            "{bounds}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn datetime_ranges_round_trip_with_trends() {
     let schema = populated().await;
     let ranges = data(&schema, RANGE_QUERY).await;

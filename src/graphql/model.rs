@@ -1323,7 +1323,7 @@ mod tests {
         for (time, has_time) in [("", false), (", time: \"1970-01-01T00:00:00\"", true)] {
             let response = schema
                 .execute_as_system_admin(&format!(
-                    "{{ topTimeSeries(model: 1, start: 0, end: 599999{time}) {{ countIndex }} }}"
+                    "{{ topTimeSeries(model: 1, start: \"1970-01-01T00:00:00Z\", end: \"1970-01-01T00:00:00.000599999Z\"{time}) {{ countIndex }} }}"
                 ))
                 .await;
             assert_eq!(response.errors.len(), 1, "{response:?}");
@@ -1336,7 +1336,7 @@ mod tests {
         }
         let schema = schema_with_sparse_series(0, false, true).await;
         let response = schema
-            .execute_as_system_admin("{ topTimeSeries(model: 1, start: -9223372036854775808, end: 9223372036854775807) { countIndex } }")
+            .execute_as_system_admin("{ topTimeSeries(model: 1, start: \"1677-09-21T00:12:43.145224192Z\", end: \"2262-04-11T23:47:16.854775807Z\") { countIndex } }")
             .await;
         assert_eq!(response.errors.len(), 1, "{response:?}");
         let message = &response.errors[0].message;
@@ -1351,8 +1351,9 @@ mod tests {
     async fn top_time_series_response_budget_and_size() {
         let schema = schema_with_sparse_series(59_999, false, false).await;
         for time in ["", ", time: \"1970-01-01T00:00:00\""] {
-            let arguments =
-                format!("model: 1, start: 0, end: 59999, trendiOrder: 0, minSlope: -1000000{time}");
+            let arguments = format!(
+                "model: 1, start: \"1970-01-01T00:00:00Z\", end: \"1970-01-01T00:00:00.000059999Z\", trendiOrder: 0, minSlope: -1000000{time}"
+            );
             let response = schema.execute_as_system_admin(&format!("{{ topTimeSeries({arguments}, size: 1) {{ trends {{ series {{ count }} }} }} }}")).await;
             assert!(response.errors.is_empty(), "{response:?}");
             let data = response.data.into_json().unwrap();
