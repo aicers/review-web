@@ -343,7 +343,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use crate::graphql::{
-        AgentManager, BoxedAgentManager, Role, SamplingPolicy, TestSchema,
+        AgentManager, Role, SamplingPolicy, SharedAgentManager, TestSchema,
         customer::NetworksTargetAgentLookupKeysPair, get_customer_networks,
     };
 
@@ -357,17 +357,25 @@ mod tests {
     }
 
     impl RecordingAgentManager {
-        fn boxed() -> (BoxedAgentManager, Arc<Mutex<Vec<Push>>>) {
+        fn shared() -> (SharedAgentManager, Arc<Mutex<Vec<Push>>>) {
             let pushes = Arc::new(Mutex::new(Vec::new()));
             let manager = Self {
                 pushes: Arc::clone(&pushes),
             };
-            (Box::new(manager), pushes)
+            (Arc::new(manager), pushes)
         }
     }
 
     #[async_trait]
     impl AgentManager for RecordingAgentManager {
+        #[cfg(feature = "auth-mtls")]
+        async fn request_customer_data_deletion(
+            &self,
+            _targets: &[crate::customer_data_deletion::CustomerDataDeletionTarget],
+        ) -> Result<(), anyhow::Error> {
+            anyhow::bail!("not expected to be called")
+        }
+
         async fn send_agent_specific_internal_networks(
             &self,
             networks: &[NetworksTargetAgentLookupKeysPair],
@@ -458,7 +466,7 @@ mod tests {
     }
 
     async fn recording_schema() -> (TestSchema, Arc<Mutex<Vec<Push>>>) {
-        let (agent_manager, pushes) = RecordingAgentManager::boxed();
+        let (agent_manager, pushes) = RecordingAgentManager::shared();
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
         (schema, pushes)
     }
