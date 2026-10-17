@@ -614,6 +614,46 @@ mod tests {
         assert_eq!(reads.count(), 2);
     }
 
+    /// An embedding without a Data Store plane keeps the trait's default,
+    /// which refuses every read; the query still succeeds.
+    #[tokio::test]
+    async fn default_backend_yields_empty_endpoints() {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            put_node(
+                &store,
+                "n1",
+                Some("host1.example.com"),
+                vec![],
+                vec![data_store("host1.example.com", 1)],
+            );
+            put_node(
+                &store,
+                "n2",
+                Some("host2.example.com"),
+                vec![],
+                vec![data_store("host2.example.com", 2)],
+            );
+        }
+
+        assert_eq!(
+            endpoints(&schema).await,
+            json!([
+                {
+                    "serverName": "001.giganto.host1.example.com",
+                    "port": 0,
+                    "addrs": [],
+                },
+                {
+                    "serverName": "002.giganto.host2.example.com",
+                    "port": 0,
+                    "addrs": [],
+                },
+            ])
+        );
+    }
+
     #[tokio::test]
     async fn refuses_unauthenticated_and_local() {
         let host = "host1.example.com";
