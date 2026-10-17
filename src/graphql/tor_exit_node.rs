@@ -160,75 +160,49 @@ mod tests {
         }
     }
 
-    #[async_trait]
-    impl AgentManager for BroadcastAgentManager {
-        async fn broadcast_tor_exit_node_list(&self) -> Result<(), anyhow::Error> {
-            self.broadcasts.fetch_add(1, Ordering::SeqCst);
-            if self.fail {
-                anyhow::bail!("no Hog accepted the list");
+    /// Implements `AgentManager` for `$manager` with the given methods, and
+    /// with each method listed under `unreachable` failing, since these tests
+    /// never reach it.
+    ///
+    /// The failing methods all expand from one template line, so the stubs
+    /// these tests never run count as one uncovered line rather than two per
+    /// method.
+    macro_rules! impl_agent_manager {
+        (
+            $manager:ty { $($method:tt)* }
+            unreachable { $(fn $name:ident(&self $(, $arg:ident: $ty:ty)*) -> $ret:ty;)* }
+        ) => {
+            #[async_trait]
+            impl AgentManager for $manager {
+                $($method)*
+
+                $(async fn $name(&self $(, $arg: $ty)*) -> Result<$ret, anyhow::Error> { anyhow::bail!("not expected to be called") })*
             }
-            Ok(())
-        }
+        };
+    }
 
-        async fn send_agent_specific_internal_networks(
-            &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
-        ) -> Result<Vec<String>, anyhow::Error> {
-            anyhow::bail!("not expected to be called")
+    impl_agent_manager! {
+        BroadcastAgentManager {
+            async fn broadcast_tor_exit_node_list(&self) -> Result<(), anyhow::Error> {
+                self.broadcasts.fetch_add(1, Ordering::SeqCst);
+                if self.fail {
+                    anyhow::bail!("no Hog accepted the list");
+                }
+                Ok(())
+            }
         }
-
-        async fn send_agent_specific_allow_networks(
-            &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
-        ) -> Result<Vec<String>, anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-
-        async fn send_agent_specific_block_networks(
-            &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
-        ) -> Result<Vec<String>, anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-
-        async fn online_apps_by_host_id(
-            &self,
-        ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-
-        async fn broadcast_crusher_sampling_policy(
-            &self,
-            _sampling_policies: &[SamplingPolicy],
-        ) -> Result<(), anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-
-        async fn capabilities(&self, _hostname: &str) -> Result<BTreeSet<String>, anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-
-        async fn get_resource_usage(
-            &self,
-            _hostname: &str,
-        ) -> Result<review_protocol::types::ResourceUsage, anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-
-        async fn halt(&self, _hostname: &str) -> Result<(), anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-
-        async fn ping(&self, _hostname: &str) -> Result<Duration, anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-
-        async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-
-        async fn update_config(&self, _agent_lookup_key: &str) -> Result<(), anyhow::Error> {
-            anyhow::bail!("not expected to be called")
+        unreachable {
+            fn send_agent_specific_internal_networks(&self, _networks: &[NetworksTargetAgentLookupKeysPair]) -> Vec<String>;
+            fn send_agent_specific_allow_networks(&self, _networks: &[NetworksTargetAgentLookupKeysPair]) -> Vec<String>;
+            fn send_agent_specific_block_networks(&self, _networks: &[NetworksTargetAgentLookupKeysPair]) -> Vec<String>;
+            fn online_apps_by_host_id(&self) -> HashMap<String, Vec<(String, String)>>;
+            fn broadcast_crusher_sampling_policy(&self, _sampling_policies: &[SamplingPolicy]) -> ();
+            fn capabilities(&self, _hostname: &str) -> BTreeSet<String>;
+            fn get_resource_usage(&self, _hostname: &str) -> review_protocol::types::ResourceUsage;
+            fn halt(&self, _hostname: &str) -> ();
+            fn ping(&self, _hostname: &str) -> Duration;
+            fn reboot(&self, _hostname: &str) -> ();
+            fn update_config(&self, _agent_lookup_key: &str) -> ();
         }
     }
 
