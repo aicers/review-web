@@ -4,6 +4,14 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `dataStoreEndpoints` lists every installed Data Store (Giganto) instance with
+  the certificate name, port and addresses REview uses to reach it, so a client
+  can read a Data Store without resolving names itself.
+
 ## [0.42.0] - 2026-10-17
 
 ### Changed
@@ -2190,6 +2198,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.42.0...main
 [0.42.0]: https://github.com/aicers/review-web/compare/0.41.0...0.42.0
 [0.41.0]: https://github.com/aicers/review-web/compare/0.40.0...0.41.0
 [0.40.0]: https://github.com/aicers/review-web/compare/0.39.0...0.40.0

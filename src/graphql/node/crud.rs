@@ -15,6 +15,7 @@ use super::{
     super::{Role, RoleGuard, customer_access},
     Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, customer_sensor_list,
     customer_sensor_list::{Sensor, SensorTotalCount},
+    data_store_endpoint::{self, DataStoreEndpoint},
     gen_agent_lookup_key,
     input::{AgentDraftInput, ExternalServiceInput, NodeDraftInput},
     installed_guard,
@@ -83,6 +84,23 @@ impl NodeQuery {
             },
         )
         .await
+    }
+
+    /// A list of the endpoints at which `REview` reaches every installed Data
+    /// Store (Giganto) instance, sorted by `serverName`.
+    ///
+    /// An instance is listed when its node has an applied profile, it has an
+    /// instance number and an installed version, and its lifecycle is neither
+    /// `NOT_INSTALLED` nor `REMOVING`. A listed instance may still be
+    /// unreachable; that is decided by dialing it. The list is not filtered by
+    /// customer, since a Data Store is shared across customers.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))
+        .or(RoleGuard::new(Role::SecurityManager))
+        .or(RoleGuard::new(Role::SecurityMonitor))")]
+    async fn data_store_endpoints(&self, ctx: &Context<'_>) -> Result<Vec<DataStoreEndpoint>> {
+        info_with_username!(ctx, "Data Store endpoints requested");
+        data_store_endpoint::load(ctx).await
     }
 }
 

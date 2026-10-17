@@ -4070,6 +4070,31 @@ input DataSourceUpdateInput {
 	description: String
 }
 
+"""
+The endpoint at which `REview` reaches one installed Data Store (Giganto)
+instance.
+"""
+type DataStoreEndpoint {
+	"""
+	The certificate name `REview`'s configuration plane verifies when it
+	dials this instance, `<instance:03>.giganto.<hostname>`.
+	"""
+	serverName: String!
+	"""
+	The GraphQL port `REview`'s configuration plane dials on this instance.
+	
+	`0` means `REview` could not compute this instance's endpoint.
+	"""
+	port: Int!
+	"""
+	The IP addresses, as text, `REview`'s configuration plane dials for
+	this instance's host.
+	
+	`[]` means `REview` could not compute this instance's endpoint.
+	"""
+	addrs: [String!]!
+}
+
 enum DataType {
 	"""
 	comma-separated values
@@ -8104,6 +8129,17 @@ type Query {
 	can access. Nodes whose `profile` is `None` are excluded.
 	"""
 	customerSensorList(customerIds: [Int!], after: String, before: String, first: Int, last: Int): SensorConnection!
+	"""
+	A list of the endpoints at which `REview` reaches every installed Data
+	Store (Giganto) instance, sorted by `serverName`.
+	
+	An instance is listed when its node has an applied profile, it has an
+	instance number and an installed version, and its lifecycle is neither
+	`NOT_INSTALLED` nor `REMOVING`. A listed instance may still be
+	unreachable; that is decided by dialing it. The list is not filtered by
+	customer, since a Data Store is shared across customers.
+	"""
+	dataStoreEndpoints: [DataStoreEndpoint!]!
 	"""
 	A list of status of nodes.
 	"""

@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeSet, HashMap},
     fmt,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     path::PathBuf,
     pin::Pin,
     time::Duration,
@@ -111,6 +111,29 @@ pub trait AgentManager: Send + Sync {
     /// service's stored configuration (`ExternalService.draft`).
     async fn update_config(&self, _agent_lookup_key: &str) -> Result<(), anyhow::Error>;
 
+    /// Returns the endpoint `REview`'s configuration plane dials to reach the
+    /// given Data Store (Giganto) instance on the given host.
+    ///
+    /// The endpoint is the certificate name the plane verifies, the GraphQL
+    /// port allocated to the instance, and the addresses the plane resolves
+    /// for `hostname` on `REview`'s host. It is never derived from the
+    /// instance's bound addresses or from a draft.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the endpoint cannot be computed, for example when
+    /// the hostname is not under the placement domain, no GraphQL port is
+    /// allocated to the instance, or the hostname does not resolve. The
+    /// default implementation always returns an error, for an embedding
+    /// application without a Data Store configuration plane.
+    async fn data_store_read_endpoint(
+        &self,
+        _hostname: &str,
+        _instance: u32,
+    ) -> Result<DataStoreReadEndpoint, anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
+
     /// Updates the traffic filter rules for the given host.
     async fn update_traffic_filter_rules(
         &self,
@@ -119,6 +142,19 @@ pub trait AgentManager: Send + Sync {
     ) -> Result<(), anyhow::Error> {
         Err(anyhow!("Not supported"))
     }
+}
+
+/// The endpoint at which `REview`'s configuration plane reaches one Data Store
+/// (Giganto) instance's GraphQL API.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DataStoreReadEndpoint {
+    /// The certificate name the plane verifies,
+    /// `<instance:03>.giganto.<hostname>`.
+    pub server_name: String,
+    /// The GraphQL port allocated to the instance.
+    pub port: u16,
+    /// The addresses the plane resolves for the instance's host.
+    pub addrs: Vec<IpAddr>,
 }
 
 pub trait CertManager: Send + Sync {
