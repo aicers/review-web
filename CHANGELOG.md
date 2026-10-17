@@ -8,6 +8,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- `topTimeSeries` and `topTimeSeriesOfCluster` now accept `DateTime` for
+  `start` and `end` instead of integer nanoseconds. Clients must replace
+  integer bounds with RFC 3339 timestamp strings and change GraphQL `Int`
+  variables for these bounds to `DateTime`. `TimeSeriesResult.earliest`/`latest`
+  and `TimeRange.lower`/`upper` now use `DateTime` instead of `NaiveDateTime`,
+  returning RFC 3339 strings with an explicit UTC offset; clients must update
+  their response handling.
 - `eventListWithTriage` errors for an exclusion that cannot be built now name
   the failing `triage.exclusions[i]` entry and field, and include the
   underlying cause.

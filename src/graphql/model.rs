@@ -6,7 +6,7 @@ use async_graphql::{
     connection::{Connection, Edge, EmptyFields, OpaqueCursor},
     types::ID,
 };
-use chrono::NaiveDateTime;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use num_traits::ToPrimitive;
 use review_database::{self as database, Store};
 
@@ -15,7 +15,7 @@ use super::{
     RoleGuard, cluster::TimeCount, data_source::DataSource, fill_vacant_time_slots, get_trend,
     slicing, zero_filled_length,
 };
-use crate::graphql::{query, statistics::i64_to_naive_date_time};
+use crate::graphql::query;
 
 const COMPUTATION_SERIES_BUDGET: u128 = 1_000_000;
 const RESPONSE_SERIES_BUDGET: u128 = 100_000;
@@ -108,8 +108,8 @@ impl ModelQuery {
         let time_range = map.get_time_range_of_model(model)?;
         let (lower, upper) = time_range.map_or((None, None), |(l, u)| {
             (
-                Some(i64_to_naive_date_time(l)),
-                Some(i64_to_naive_date_time(u)),
+                Some(DateTime::from_timestamp_nanos(l)),
+                Some(DateTime::from_timestamp_nanos(u)),
             )
         });
         Ok(TimeRange { lower, upper })
@@ -141,10 +141,12 @@ impl ModelQuery {
         )]
         cutoff_rate: Option<f64>,
         trend_category: Option<String>,
-        start: Option<i64>,
-        end: Option<i64>,
+        start: Option<DateTime<Utc>>,
+        end: Option<DateTime<Utc>>,
     ) -> Result<Vec<TopTrendsByColumn>> {
         const DEFAULT_SIZE: i32 = 20;
+        let start = start.map(super::outlier::timestamp_nanos).transpose()?;
+        let end = end.map(super::outlier::timestamp_nanos).transpose()?;
         let time = time
             .map(|t| super::outlier::timestamp_nanos(t.and_utc()))
             .transpose()?;
@@ -513,8 +515,8 @@ impl From<database::StructuredColumnType> for StructuredColumnType {
 
 #[derive(SimpleObject)]
 struct TimeRange {
-    lower: Option<NaiveDateTime>,
-    upper: Option<NaiveDateTime>,
+    lower: Option<DateTime<Utc>>,
+    upper: Option<DateTime<Utc>>,
 }
 
 struct ElementCount<'a> {
@@ -1154,6 +1156,9 @@ fn load_cluster_ids_with_size_limit(
 }
 
 #[cfg(test)]
+mod time_bounds_tests;
+
+#[cfg(test)]
 mod tests {
     use review_database::{Cluster, Store};
 
@@ -1318,7 +1323,7 @@ mod tests {
         for (time, has_time) in [("", false), (", time: \"1970-01-01T00:00:00\"", true)] {
             let response = schema
                 .execute_as_system_admin(&format!(
-                    "{{ topTimeSeries(model: 1, start: 0, end: 599999{time}) {{ countIndex }} }}"
+                    "{{ topTimeSeries(model: 1, start: \"1970-01-01T00:00:00Z\", end: \"1970-01-01T00:00:00.000599999Z\"{time}) {{ countIndex }} }}"
                 ))
                 .await;
             assert_eq!(response.errors.len(), 1, "{response:?}");
@@ -1331,7 +1336,7 @@ mod tests {
         }
         let schema = schema_with_sparse_series(0, false, true).await;
         let response = schema
-            .execute_as_system_admin("{ topTimeSeries(model: 1, start: -9223372036854775808, end: 9223372036854775807) { countIndex } }")
+            .execute_as_system_admin("{ topTimeSeries(model: 1, start: \"1677-09-21T00:12:43.145224192Z\", end: \"2262-04-11T23:47:16.854775807Z\") { countIndex } }")
             .await;
         assert_eq!(response.errors.len(), 1, "{response:?}");
         let message = &response.errors[0].message;
@@ -1346,8 +1351,9 @@ mod tests {
     async fn top_time_series_response_budget_and_size() {
         let schema = schema_with_sparse_series(59_999, false, false).await;
         for time in ["", ", time: \"1970-01-01T00:00:00\""] {
-            let arguments =
-                format!("model: 1, start: 0, end: 59999, trendiOrder: 0, minSlope: -1000000{time}");
+            let arguments = format!(
+                "model: 1, start: \"1970-01-01T00:00:00Z\", end: \"1970-01-01T00:00:00.000059999Z\", trendiOrder: 0, minSlope: -1000000{time}"
+            );
             let response = schema.execute_as_system_admin(&format!("{{ topTimeSeries({arguments}, size: 1) {{ trends {{ series {{ count }} }} }} }}")).await;
             assert!(response.errors.is_empty(), "{response:?}");
             let data = response.data.into_json().unwrap();
