@@ -5,8 +5,9 @@ use async_graphql::{
 };
 use chrono::{DateTime, Utc};
 use review_database::{Iterable, event::Direction};
+use tracing::warn;
 
-use super::{Role, RoleGuard};
+use super::{BoxedAgentManager, Role, RoleGuard};
 use crate::graphql::query_with_constraints;
 
 #[derive(Default)]
@@ -44,7 +45,9 @@ pub(super) struct TorExitNodeMutation;
 
 #[Object]
 impl TorExitNodeMutation {
-    /// Deletes all existing entries and add new IP address(es)
+    /// Deletes all existing entries and adds new IP address(es), then sends the
+    /// stored list to every connected Hog. A failed send does not fail the
+    /// mutation; a Hog that missed it receives the list when it next connects.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn update_tor_exit_node_list(
@@ -52,17 +55,27 @@ impl TorExitNodeMutation {
         ctx: &Context<'_>,
         ip_addresses: Vec<String>,
     ) -> Result<Vec<String>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.tor_exit_node_map();
-        let updated_at = Utc::now();
-        map.replace_all(
-            ip_addresses
-                .iter()
-                .map(|ip_address| review_database::TorExitNode {
-                    ip_address: ip_address.to_owned(),
-                    updated_at,
-                }),
-        )?;
+        {
+            let store = crate::graphql::get_store(ctx)?;
+            let map = store.tor_exit_node_map();
+            let updated_at = Utc::now();
+            map.replace_all(
+                ip_addresses
+                    .iter()
+                    .map(|ip_address| review_database::TorExitNode {
+                        ip_address: ip_address.to_owned(),
+                        updated_at,
+                    }),
+            )?;
+        }
+
+        // The table is already written, and a Hog that misses this push pulls
+        // the list at its next setup, so a failed send is not the caller's
+        // failure.
+        let agent_manager = ctx.data::<BoxedAgentManager>()?;
+        if let Err(e) = agent_manager.broadcast_tor_exit_node_list().await {
+            warn!("cannot broadcast the Tor exit node list: {e:#}");
+        }
         Ok(ip_addresses)
     }
 }
@@ -110,7 +123,140 @@ async fn load(
 
 #[cfg(test)]
 mod tests {
-    use crate::graphql::TestSchema;
+    use std::{
+        collections::{BTreeSet, HashMap},
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
+
+    use async_trait::async_trait;
+
+    use crate::graphql::{
+        AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema,
+        customer::NetworksTargetAgentLookupKeysPair,
+    };
+
+    const TOR_EXIT_NODE_LIST_QUERY: &str =
+        r"query{torExitNodeList(first:10){edges{node{ipAddress}}}}";
+
+    /// An `AgentManager` that counts `broadcast_tor_exit_node_list` calls and
+    /// answers each one with an error when `fail` is set.
+    struct BroadcastAgentManager {
+        broadcasts: Arc<AtomicUsize>,
+        fail: bool,
+    }
+
+    impl BroadcastAgentManager {
+        fn boxed(fail: bool) -> (BoxedAgentManager, Arc<AtomicUsize>) {
+            let broadcasts = Arc::new(AtomicUsize::new(0));
+            let manager = Self {
+                broadcasts: Arc::clone(&broadcasts),
+                fail,
+            };
+            (Box::new(manager), broadcasts)
+        }
+    }
+
+    /// Implements `AgentManager` for `$manager` with the given methods, and
+    /// with each method listed under `unreachable` failing, since these tests
+    /// never reach it.
+    ///
+    /// The failing methods all expand from one template line, so the stubs
+    /// these tests never run count as one uncovered line rather than two per
+    /// method.
+    macro_rules! impl_agent_manager {
+        (
+            $manager:ty { $($method:tt)* }
+            unreachable { $(fn $name:ident(&self $(, $arg:ident: $ty:ty)*) -> $ret:ty;)* }
+        ) => {
+            #[async_trait]
+            impl AgentManager for $manager {
+                $($method)*
+
+                $(async fn $name(&self $(, $arg: $ty)*) -> Result<$ret, anyhow::Error> { anyhow::bail!("not expected to be called") })*
+            }
+        };
+    }
+
+    impl_agent_manager! {
+        BroadcastAgentManager {
+            async fn broadcast_tor_exit_node_list(&self) -> Result<(), anyhow::Error> {
+                self.broadcasts.fetch_add(1, Ordering::SeqCst);
+                if self.fail {
+                    anyhow::bail!("no Hog accepted the list");
+                }
+                Ok(())
+            }
+        }
+        unreachable {
+            fn send_agent_specific_internal_networks(&self, _networks: &[NetworksTargetAgentLookupKeysPair]) -> Vec<String>;
+            fn send_agent_specific_allow_networks(&self, _networks: &[NetworksTargetAgentLookupKeysPair]) -> Vec<String>;
+            fn send_agent_specific_block_networks(&self, _networks: &[NetworksTargetAgentLookupKeysPair]) -> Vec<String>;
+            fn online_apps_by_host_id(&self) -> HashMap<String, Vec<(String, String)>>;
+            fn broadcast_crusher_sampling_policy(&self, _sampling_policies: &[SamplingPolicy]) -> ();
+            fn capabilities(&self, _hostname: &str) -> BTreeSet<String>;
+            fn get_resource_usage(&self, _hostname: &str) -> review_protocol::types::ResourceUsage;
+            fn halt(&self, _hostname: &str) -> ();
+            fn ping(&self, _hostname: &str) -> Duration;
+            fn reboot(&self, _hostname: &str) -> ();
+            fn update_config(&self, _agent_lookup_key: &str) -> ();
+        }
+    }
+
+    #[tokio::test]
+    async fn update_broadcasts_the_stored_list_once() {
+        let (agent_manager, broadcasts) = BroadcastAgentManager::boxed(false);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation{updateTorExitNodeList(ipAddresses:["192.168.1.1"])}"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{updateTorExitNodeList: ["192.168.1.1"]}"#
+        );
+        assert_eq!(broadcasts.load(Ordering::SeqCst), 1);
+
+        let res = schema
+            .execute_as_system_admin(TOR_EXIT_NODE_LIST_QUERY)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{torExitNodeList: {edges: [{node: {ipAddress: "192.168.1.1"}}]}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn update_succeeds_when_broadcast_fails() {
+        let (agent_manager, broadcasts) = BroadcastAgentManager::boxed(true);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation{updateTorExitNodeList(ipAddresses:["192.168.1.1","192.168.1.2"])}"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(
+            res.data.to_string(),
+            r#"{updateTorExitNodeList: ["192.168.1.1", "192.168.1.2"]}"#
+        );
+        assert_eq!(broadcasts.load(Ordering::SeqCst), 1);
+
+        let res = schema
+            .execute_as_system_admin(TOR_EXIT_NODE_LIST_QUERY)
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{torExitNodeList: {edges: [{node: {ipAddress: "192.168.1.1"}}, {node: {ipAddress: "192.168.1.2"}}]}}"#
+        );
+    }
 
     #[tokio::test]
     async fn test_query_and_mutation() {

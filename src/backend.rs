@@ -28,6 +28,21 @@ pub trait AgentManager: Send + Sync {
         Err(anyhow!("Not supported"))
     }
 
+    /// Sends the stored Tor exit node list to every connected Hog.
+    ///
+    /// An implementor is expected to start the send and return without
+    /// waiting for every Hog to receive the list, so a caller's latency does
+    /// not grow with the number of connected Hogs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the send cannot be started. The default
+    /// implementation always returns an error, for an embedding application
+    /// that does not support the broadcast.
+    async fn broadcast_tor_exit_node_list(&self) -> Result<(), anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
+
     async fn send_agent_specific_internal_networks(
         &self,
         networks: &[NetworksTargetAgentLookupKeysPair],
