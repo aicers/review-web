@@ -18,6 +18,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `eventListWithTriage` errors for an exclusion that cannot be built now name
   the failing `triage.exclusions[i]` entry and field, and include the
   underlying cause.
+- `updateTorExitNodeList` now also sends the stored list to connected Hogs
+  when the embedding application supports it, so a running Hog receives an
+  update without reconnecting. A failed send is logged and does not fail the
+  mutation.
 
 ### Fixed
 

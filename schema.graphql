@@ -6679,7 +6679,9 @@ type Mutation {
 	"""
 	updateTemplate(oldStructured: StructuredClusteringTemplateInput, oldUnstructured: UnstructuredClusteringTemplateInput, newStructured: StructuredClusteringTemplateInput, newUnstructured: UnstructuredClusteringTemplateInput): Boolean!
 	"""
-	Deletes all existing entries and add new IP address(es)
+	Deletes all existing entries and adds new IP address(es), then sends the
+	stored list to every connected Hog. A failed send does not fail the
+	mutation; a Hog that missed it receives the list when it next connects.
 	"""
 	updateTorExitNodeList(ipAddresses: [String!]!): [String!]!
 	"""
