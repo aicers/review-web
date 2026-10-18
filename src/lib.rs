@@ -1,15 +1,8 @@
-#[cfg(feature = "auth-jwt")]
-pub mod archive;
 pub mod auth;
 pub mod backend;
 pub mod graphql;
 pub mod ingress;
 pub mod maintenance;
-
-#[cfg(all(feature = "auth-mtls", feature = "auth-jwt"))]
-compile_error!("features \"auth-mtls\" and \"auth-jwt\" are mutually exclusive");
-#[cfg(not(any(feature = "auth-mtls", feature = "auth-jwt")))]
-compile_error!("either feature \"auth-mtls\" or \"auth-jwt\" must be enabled");
 
 use std::sync::RwLock;
 use std::{
@@ -21,15 +14,7 @@ use std::{
 };
 
 use async_graphql::Data;
-#[cfg(feature = "auth-jwt")]
-use async_graphql::http::{GraphQLPlaygroundConfig, playground_source};
 use async_graphql_axum::{GraphQLProtocol, GraphQLRequest, GraphQLResponse, GraphQLWebSocket};
-#[cfg(feature = "auth-jwt")]
-use axum::extract::ConnectInfo;
-#[cfg(feature = "auth-jwt")]
-use axum::response::Html;
-#[cfg(feature = "auth-jwt")]
-use axum::routing::get_service;
 use axum::{
     Json, Router,
     extract::{Extension, WebSocketUpgrade},
@@ -41,51 +26,30 @@ use axum_extra::{
     headers::{Authorization, authorization::Bearer},
     typed_header::TypedHeaderRejection,
 };
-#[cfg(feature = "auth-mtls")]
 use futures::future::BoxFuture;
-#[cfg(feature = "auth-mtls")]
 use graphql::CustomerIds;
 use graphql::RoleGuard;
 use review_database::Store;
-#[cfg(feature = "auth-jwt")]
-use rustls::ClientConfig;
 use rustls::{
     RootCertStore,
     pki_types::{CertificateDer, PrivateKeyDer},
 };
 use serde_json::json;
 use tokio::{sync::Notify, task::JoinHandle};
-#[cfg(feature = "auth-mtls")]
 use tower::Service;
-#[cfg(feature = "auth-jwt")]
-use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing::error;
-#[cfg(feature = "auth-jwt")]
-use tracing::warn;
 
-#[cfg(feature = "auth-jwt")]
-use crate::auth::AuthError;
-#[cfg(feature = "auth-mtls")]
 use crate::auth::MtlsAuthError;
-#[cfg(feature = "auth-mtls")]
 use crate::auth::MtlsAuthenticator;
-#[cfg(feature = "auth-mtls")]
 use crate::auth::validate_context_jwt;
-#[cfg(feature = "auth-jwt")]
-use crate::auth::validate_token;
 use crate::backend::{
     AgentManager, CertManager, HostOnboarder, PackageDeployer, PackageStoreReceiver, TrustManager,
 };
 use crate::ingress::{PackageUploadLimit, TrustGenerationLimit};
 
-#[cfg(feature = "auth-mtls")]
 const ERR_MTLS_REQUIRED: &str = "mTLS is required";
-#[cfg(feature = "auth-mtls")]
 const ERR_MTLS_MISSING_CERT: &str = "mTLS client certificate is missing";
-#[cfg(feature = "auth-mtls")]
 const ERR_MISSING_AUTHORIZATION: &str = "Missing Authorization";
-#[cfg(feature = "auth-jwt")]
-const DISABLE_LOCAL_AUTH_BYPASS_ENV: &str = "REVIEW_WEB_DISABLE_LOCAL_AUTH_BYPASS";
 
 /// The default maximum request-body size, in bytes, for the package-upload
 /// route: 2 GiB.
@@ -160,24 +124,12 @@ const _: () =
 /// Parameters for a web server.
 pub struct ServerConfig {
     pub addr: SocketAddr,
-    #[cfg(feature = "auth-jwt")]
-    pub document_root: PathBuf,
     pub cert_manager: Arc<dyn CertManager>,
     pub tls_reload_handle: Arc<Notify>,
     pub ca_certs: Vec<PathBuf>,
-    #[cfg(feature = "auth-jwt")]
-    pub reverse_proxies: Vec<archive::Config>,
-    #[cfg(feature = "auth-jwt")]
-    pub client_cert_path: Option<PathBuf>,
-    #[cfg(feature = "auth-jwt")]
-    pub client_key_path: Option<PathBuf>,
-    #[cfg(feature = "auth-mtls")]
     pub authenticator: Arc<dyn MtlsAuthenticator>,
     /// Takes a signed package streamed to the package-upload route into the
     /// build store.
-    ///
-    /// It is not feature-gated: the route it serves is reachable under both
-    /// authentication configurations.
     pub package_store: Arc<dyn PackageStoreReceiver>,
     /// The maximum request-body size, in bytes, the package-upload route
     /// accepts.
@@ -189,9 +141,6 @@ pub struct ServerConfig {
     pub package_upload_max_bytes: u64,
     /// Verifies and activates a trust generation streamed to the trust-plane
     /// ingress route.
-    ///
-    /// It is not feature-gated: the route it serves is reachable under both
-    /// authentication configurations.
     pub trust_manager: Arc<dyn TrustManager>,
     /// The maximum request-body size, in bytes, the trust-generation route
     /// accepts.
@@ -257,34 +206,11 @@ where
     );
     let web_srv_shutdown_handle = Arc::new(Notify::new());
     let shutdown_handle = web_srv_shutdown_handle.clone();
-    #[cfg(feature = "auth-jwt")]
-    let client = client(
-        &config.ca_certs,
-        config.client_cert_path.as_ref(),
-        config.client_key_path.as_ref(),
-    );
     let server: JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
         loop {
-            #[cfg(feature = "auth-jwt")]
-            let static_files = get_service(ServeDir::new(config.document_root.clone()));
-
-            #[cfg(feature = "auth-jwt")]
-            let proxies_config = crate::archive::Config::configure_reverse_proxies(
-                &store,
-                client.as_ref(),
-                &config.reverse_proxies,
-            );
-
             let router =
                 Router::new().route("/graphql", get(graphql_ws_handler).post(graphql_handler));
-            #[cfg(feature = "auth-jwt")]
-            let router = router.route(
-                "/graphql/playground",
-                get(graphql_playground).post(graphql_handler),
-            );
             let router = router.merge(ingress::router());
-            #[cfg(feature = "auth-jwt")]
-            let router = router.fallback_service(static_files.layer(TraceLayer::new_for_http()));
             let router = router
                 .layer(Extension(schema.clone()))
                 .layer(Extension(store.clone()))
@@ -296,16 +222,7 @@ where
                 .layer(Extension(TrustGenerationLimit(
                     config.trust_generation_max_bytes,
                 )));
-            #[cfg(feature = "auth-mtls")]
             let router = router.layer(Extension(config.authenticator.clone()));
-            #[cfg(feature = "auth-jwt")]
-            let router = {
-                let mut router = router;
-                for (s, p) in proxies_config {
-                    router = router.nest(&s.base(), p.with_state(s));
-                }
-                router
-            };
 
             let handle = Handle::new();
             let notify_shutdown = Arc::new(Notify::new());
@@ -314,9 +231,6 @@ where
                 config.cert_manager.cert_path()?,
                 config.cert_manager.key_path()?,
             );
-            #[cfg(feature = "auth-jwt")]
-            let tls_config = RustlsConfig::from_pem_file(cert_path, key_path).await?;
-            #[cfg(feature = "auth-mtls")]
             let tls_config = {
                 let server_config = build_mtls_server_config(
                     cert_path.as_path(),
@@ -330,9 +244,6 @@ where
             let completed = shutdown_completed.clone();
             tokio::spawn(graceful_shutdown(handle.clone(), wait_shutdown));
             tokio::spawn(async move {
-                #[cfg(feature = "auth-jwt")]
-                let server = axum_server::bind_rustls(config.addr, tls_config);
-                #[cfg(feature = "auth-mtls")]
                 let server = axum_server::Server::bind(config.addr)
                     .acceptor(TlsPeerAcceptor::new(tls_config));
 
@@ -379,55 +290,29 @@ where
     shutdown_handle
 }
 
-#[cfg(feature = "auth-jwt")]
-pub(crate) fn client<P: AsRef<std::path::Path>>(
-    ca_certs: &[P],
-    client_cert_path: Option<&PathBuf>,
-    client_key_path: Option<&PathBuf>,
-) -> Option<reqwest::Client> {
-    let with_platform_root = false;
-    let tls_config = build_client_config(
-        ca_certs,
-        with_platform_root,
-        client_cert_path,
-        client_key_path,
-    )
-    .expect("failed to add cert to store");
-
-    reqwest::ClientBuilder::new()
-        .use_preconfigured_tls(tls_config)
-        .build()
-        .ok()
-}
-
-#[cfg(feature = "auth-mtls")]
 #[derive(Debug)]
 struct TlsPeerInfo {
     certs: Vec<CertificateDer<'static>>,
 }
 
-#[cfg(feature = "auth-mtls")]
 impl TlsPeerInfo {
     fn leaf_cert(&self) -> Option<&CertificateDer<'static>> {
         self.certs.first()
     }
 }
 
-#[cfg(feature = "auth-mtls")]
 #[derive(Clone)]
 struct InjectTlsPeer<S> {
     inner: S,
     peer: Option<Arc<TlsPeerInfo>>,
 }
 
-#[cfg(feature = "auth-mtls")]
 impl<S> InjectTlsPeer<S> {
     fn new(inner: S, peer: Option<Arc<TlsPeerInfo>>) -> Self {
         Self { inner, peer }
     }
 }
 
-#[cfg(feature = "auth-mtls")]
 impl<S, B> Service<http::Request<B>> for InjectTlsPeer<S>
 where
     S: Service<http::Request<B>>,
@@ -451,14 +336,12 @@ where
     }
 }
 
-#[cfg(feature = "auth-mtls")]
 #[derive(Clone)]
 struct TlsPeerAcceptor {
     config: axum_server::tls_rustls::RustlsConfig,
     handshake_timeout: std::time::Duration,
 }
 
-#[cfg(feature = "auth-mtls")]
 impl TlsPeerAcceptor {
     fn new(config: axum_server::tls_rustls::RustlsConfig) -> Self {
         Self {
@@ -468,7 +351,6 @@ impl TlsPeerAcceptor {
     }
 }
 
-#[cfg(feature = "auth-mtls")]
 impl<S> axum_server::accept::Accept<tokio::net::TcpStream, S> for TlsPeerAcceptor
 where
     S: Send + 'static,
@@ -509,62 +391,6 @@ async fn graceful_shutdown(handle: axum_server::Handle<SocketAddr>, notify: Arc<
     handle.graceful_shutdown(Some(Duration::from_secs(1)));
 }
 
-#[cfg(feature = "auth-jwt")]
-#[allow(clippy::unused_async)]
-async fn graphql_playground() -> Result<impl IntoResponse, Error> {
-    Ok(Html(playground_source(
-        GraphQLPlaygroundConfig::new("/graphql").subscription_endpoint("/graphql"),
-    )))
-}
-
-#[cfg(feature = "auth-jwt")]
-fn is_local(addr: SocketAddr) -> bool {
-    if std::env::var_os(DISABLE_LOCAL_AUTH_BYPASS_ENV).is_some() {
-        return false;
-    }
-    addr.ip().is_loopback()
-}
-
-#[cfg(feature = "auth-jwt")]
-async fn graphql_handler(
-    Extension(schema): Extension<graphql::Schema>,
-    Extension(store): Extension<Arc<RwLock<Store>>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
-    request: GraphQLRequest,
-) -> Result<Response, Error> {
-    let request = request.into_inner();
-    match auth {
-        Ok(auth) => {
-            let (username, role) = {
-                let store = store
-                    .read()
-                    .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
-                validate_token(&store, auth.token())?
-            };
-            Ok(graphql_http_response(
-                schema
-                    .execute(request.data(username).data(RoleGuard::Role(role)))
-                    .await,
-            ))
-        }
-        Err(_e) => {
-            if is_local(addr) {
-                Ok(graphql_http_response(
-                    schema
-                        .execute(request.data(RoleGuard::Local).data(addr))
-                        .await,
-                ))
-            } else {
-                Ok(graphql_http_response(
-                    schema.execute(request.data(addr)).await,
-                ))
-            }
-        }
-    }
-}
-
-#[cfg(feature = "auth-mtls")]
 async fn graphql_handler(
     Extension(schema): Extension<graphql::Schema>,
     Extension(_store): Extension<Arc<RwLock<Store>>>,
@@ -614,44 +440,6 @@ fn graphql_http_response(response: async_graphql::Response) -> Response {
     }
 }
 
-#[cfg(feature = "auth-jwt")]
-#[allow(clippy::unused_async)]
-async fn graphql_ws_handler(
-    Extension(schema): Extension<graphql::Schema>,
-    Extension(store): Extension<Arc<RwLock<Store>>>,
-    protocol: GraphQLProtocol,
-    websocket: WebSocketUpgrade,
-) -> Response {
-    websocket
-        .protocols(["graphql-ws"])
-        .on_upgrade(move |socket| {
-            GraphQLWebSocket::new(socket, schema.clone(), protocol)
-                .on_connection_init(|value| async move {
-                    #[derive(serde::Deserialize)]
-                    struct AuthData {
-                        #[serde(rename = "Authorization")]
-                        auth: String,
-                    }
-                    let auth_data = serde_json::from_value::<AuthData>(value)?;
-                    let mut data = Data::default();
-                    if let Some(token) = auth_data.auth.split_ascii_whitespace().last() {
-                        let (username, role) = {
-                            let store = store
-                                .read()
-                                .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
-                            validate_token(&store, token)?
-                        };
-
-                        data.insert(RoleGuard::Role(role));
-                        data.insert(username);
-                    }
-                    Ok(data)
-                })
-                .serve()
-        })
-}
-
-#[cfg(feature = "auth-mtls")]
 #[allow(clippy::unused_async)]
 async fn graphql_ws_handler(
     Extension(schema): Extension<graphql::Schema>,
@@ -754,14 +542,6 @@ impl IntoResponse for Error {
     }
 }
 
-#[cfg(feature = "auth-jwt")]
-impl From<AuthError> for Error {
-    fn from(err: AuthError) -> Self {
-        Self::Unauthorized(err.to_string())
-    }
-}
-
-#[cfg(feature = "auth-mtls")]
 impl From<MtlsAuthError> for Error {
     fn from(err: MtlsAuthError) -> Self {
         Self::Unauthorized(err.to_string())
@@ -803,48 +583,6 @@ impl From<http::Error> for Error {
     fn from(err: http::Error) -> Self {
         Self::ServiceUnavailable(format!("Fail to route: {err}"))
     }
-}
-
-#[cfg(feature = "auth-jwt")]
-fn build_client_config<P: AsRef<Path>>(
-    root_ca: &[P],
-    with_platform_root: bool,
-    client_cert_path: Option<&PathBuf>,
-    client_key_path: Option<&PathBuf>,
-) -> Result<ClientConfig, anyhow::Error> {
-    let mut root_store = RootCertStore::empty();
-    if with_platform_root {
-        let certs = rustls_native_certs::load_native_certs();
-        for c in certs.certs {
-            root_store.add(c)?;
-        }
-        for e in certs.errors {
-            warn!("Could not load platform certificate: {:#}", e);
-        }
-    }
-    for root in root_ca {
-        let certs = read_certificate_from_path(root)?;
-        for cert in certs {
-            root_store.add(cert)?;
-        }
-    }
-
-    let mut builder = match (client_cert_path, client_key_path) {
-        (Some(cert_path), Some(key_path)) => {
-            let client_certs = read_certificate_from_path(cert_path)?;
-            let client_key = read_private_key_from_path(key_path)?;
-
-            rustls::ClientConfig::builder()
-                .with_root_certificates(root_store)
-                .with_client_auth_cert(client_certs, client_key)?
-        }
-        _ => rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth(),
-    };
-
-    builder.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
-    Ok(builder)
 }
 
 fn read_certificate_from_path<P: AsRef<Path>>(
@@ -891,7 +629,6 @@ fn read_private_key_from_path<P: AsRef<Path>>(
     )
 }
 
-#[cfg(feature = "auth-mtls")]
 fn build_mtls_server_config(
     cert_path: &Path,
     key_path: &Path,

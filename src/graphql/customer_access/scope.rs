@@ -21,45 +21,23 @@ pub(crate) fn is_member(users_customers: Option<&[u32]>, customer_id: u32) -> bo
 /// Returns `Ok(None)` for administrators (full access), or `Ok(Some(Vec<u32>))` for
 /// scoped users.
 ///
-/// The function treats system administrators and local auth as unscoped first.
-/// Otherwise, it checks an explicit `CustomerIds` in the context (mTLS auth),
-/// then falls back to account lookup by username (JWT auth).
+/// A system administrator's `RoleGuard` is treated as unscoped. Otherwise, the
+/// function returns the `CustomerIds` the request carries.
 ///
 /// # Errors
 ///
-/// Returns an error if required context data is missing (e.g., username),
-/// the store cannot be accessed, account lookup fails, or the user account
-/// does not exist.
+/// Returns an error if the request carries no `CustomerIds` and its role is not
+/// system administrator.
 pub(crate) fn users_customers(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
-    // System administrators (and local auth bypass) are always unscoped.
-    // This also keeps test schemas (which may not populate account data) aligned
-    // with production behavior where system admins have full access.
-    if let Some(guard) = ctx.data_opt::<crate::graphql::RoleGuard>() {
-        match guard {
-            crate::graphql::RoleGuard::Role(Role::SystemAdministrator)
-            | crate::graphql::RoleGuard::Local => {
-                return Ok(None);
-            }
-            crate::graphql::RoleGuard::Role(_) => {}
-        }
+    // System administrators are always unscoped. This also keeps test schemas
+    // (which may not populate `CustomerIds`) aligned with production behavior
+    // where system admins have full access.
+    if ctx.data_opt::<crate::graphql::RoleGuard>()
+        == Some(&crate::graphql::RoleGuard::Role(Role::SystemAdministrator))
+    {
+        return Ok(None);
     }
 
-    users_customers_by_feature(ctx)
-}
-
-#[cfg(feature = "auth-jwt")]
-fn users_customers_by_feature(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
-    let username = ctx.data::<String>()?;
-    let store = crate::graphql::get_store(ctx)?;
-    let account_map = store.account_map();
-    let user = account_map
-        .get(username)?
-        .ok_or_else::<async_graphql::Error, _>(|| "User not found".into())?;
-    Ok(user.customer_ids)
-}
-
-#[cfg(feature = "auth-mtls")]
-fn users_customers_by_feature(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
     let customer_ids = ctx.data::<crate::graphql::CustomerIds>()?;
     Ok(customer_ids.0.clone())
 }
@@ -92,11 +70,7 @@ mod tests {
     use async_graphql::{
         Context, EmptyMutation, EmptySubscription, Object, Request, Result, Schema,
     };
-    #[cfg(feature = "auth-jwt")]
-    use review_database::Role;
     use review_database::Store;
-    #[cfg(feature = "auth-jwt")]
-    use review_database::types;
     use serde_json::json;
 
     use super::*;
@@ -147,40 +121,6 @@ mod tests {
     }
 
     impl TestContext {
-        #[cfg(feature = "auth-jwt")]
-        fn new_with_account(username: &str, customer_ids: Option<Vec<u32>>) -> Self {
-            let db_dir = tempfile::tempdir().expect("create data dir");
-            let backup_dir = tempfile::tempdir().expect("create backup dir");
-            let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("create store");
-            let account = types::Account::new(
-                username,
-                "password",
-                Role::SecurityMonitor,
-                "Test User".to_string(),
-                "Testing".to_string(),
-                None,
-                None,
-                None,
-                None,
-                customer_ids,
-            )
-            .expect("create account");
-            store
-                .account_map()
-                .insert(&account)
-                .expect("insert account");
-            let store = Arc::new(RwLock::new(store));
-            let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
-                .data(store)
-                .data(username.to_string())
-                .finish();
-            Self {
-                _dir: db_dir,
-                _backup_dir: backup_dir,
-                schema,
-            }
-        }
-
         fn new_without_account(username: &str) -> Self {
             let db_dir = tempfile::tempdir().expect("create data dir");
             let backup_dir = tempfile::tempdir().expect("create backup dir");
@@ -197,27 +137,6 @@ mod tests {
             }
         }
 
-        #[cfg(feature = "auth-jwt")]
-        fn new_without_username() -> Self {
-            let db_dir = tempfile::tempdir().expect("create data dir");
-            let backup_dir = tempfile::tempdir().expect("create backup dir");
-            let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("create store");
-            let store = Arc::new(RwLock::new(store));
-            let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
-                .data(store)
-                .finish();
-            Self {
-                _dir: db_dir,
-                _backup_dir: backup_dir,
-                schema,
-            }
-        }
-
-        #[cfg(feature = "auth-jwt")]
-        async fn execute(&self, query: &str) -> async_graphql::Response {
-            self.schema.execute(query).await
-        }
-
         async fn execute_with_guard_and_customer_ids(
             &self,
             query: &str,
@@ -230,19 +149,6 @@ mod tests {
             self.schema.execute(request).await
         }
 
-        #[cfg(feature = "auth-jwt")]
-        async fn execute_check_customer_membership(
-            &self,
-            customer_id: &str,
-        ) -> async_graphql::Response {
-            self.schema
-                .execute(format!(
-                    "{{ checkCustomerMembership(customerId: \"{customer_id}\") }}"
-                ))
-                .await
-        }
-
-        #[cfg(feature = "auth-mtls")]
         async fn execute_with_guard(
             &self,
             query: &str,
@@ -253,19 +159,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "auth-jwt")]
-    #[tokio::test]
-    async fn test_users_customers_scoped_user() {
-        let test_ctx = TestContext::new_with_account("scoped_user", Some(vec![1, 2, 3]));
-        let res = test_ctx.execute("{ usersCustomers }").await;
-        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
-        assert_eq!(
-            res.data.into_json().unwrap(),
-            json!({"usersCustomers": [1, 2, 3]})
-        );
-    }
-
-    #[cfg(feature = "auth-mtls")]
     #[tokio::test]
     async fn test_users_customers_scoped_user() {
         let test_ctx = TestContext::new_without_account("scoped_user");
@@ -283,19 +176,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "auth-jwt")]
-    #[tokio::test]
-    async fn test_users_customers_admin_user() {
-        let test_ctx = TestContext::new_with_account("admin_user", None);
-        let res = test_ctx.execute("{ usersCustomers }").await;
-        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
-        assert_eq!(
-            res.data.into_json().unwrap(),
-            json!({"usersCustomers": null})
-        );
-    }
-
-    #[cfg(feature = "auth-mtls")]
     #[tokio::test]
     async fn test_users_customers_admin_user() {
         let test_ctx = TestContext::new_without_account("admin_user");
@@ -330,28 +210,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "auth-jwt")]
-    #[tokio::test]
-    async fn test_users_customers_missing_user() {
-        let test_ctx = TestContext::new_without_account("missing_user");
-        let res = test_ctx.execute("{ usersCustomers }").await;
-        assert_eq!(res.errors.len(), 1);
-        assert_eq!(res.errors[0].message, "User not found");
-    }
-
-    #[cfg(feature = "auth-jwt")]
-    #[tokio::test]
-    async fn test_users_customers_missing_username_context() {
-        let test_ctx = TestContext::new_without_username();
-        let res = test_ctx.execute("{ usersCustomers }").await;
-        assert_eq!(res.errors.len(), 1);
-        assert_eq!(
-            res.errors[0].message,
-            "Data `alloc::string::String` does not exist."
-        );
-    }
-
-    #[cfg(feature = "auth-mtls")]
     #[tokio::test]
     async fn test_users_customers_mtls_scoped_user() {
         let test_ctx = TestContext::new_without_account("scoped_user");
@@ -369,7 +227,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "auth-mtls")]
     #[tokio::test]
     async fn test_users_customers_missing_customer_ids_context() {
         let test_ctx = TestContext::new_without_account("scoped_user");
@@ -386,16 +243,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "auth-jwt")]
-    #[tokio::test]
-    async fn test_check_customer_membership_scoped_user_allowed() {
-        let test_ctx = TestContext::new_with_account("scoped_user", Some(vec![1, 2, 3]));
-        let res = test_ctx.execute_check_customer_membership("2").await;
-
-        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
-    }
-
-    #[cfg(feature = "auth-mtls")]
     #[tokio::test]
     async fn test_check_customer_membership_scoped_user_allowed() {
         let test_ctx = TestContext::new_without_account("scoped_user");
@@ -409,17 +256,6 @@ mod tests {
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
     }
 
-    #[cfg(feature = "auth-jwt")]
-    #[tokio::test]
-    async fn test_check_customer_membership_scoped_user_forbidden() {
-        let test_ctx = TestContext::new_with_account("scoped_user", Some(vec![1]));
-        let res = test_ctx.execute_check_customer_membership("2").await;
-
-        assert_eq!(res.errors.len(), 1);
-        assert_eq!(res.errors[0].message, "Forbidden");
-    }
-
-    #[cfg(feature = "auth-mtls")]
     #[tokio::test]
     async fn test_check_customer_membership_scoped_user_forbidden() {
         let test_ctx = TestContext::new_without_account("scoped_user");
@@ -434,17 +270,6 @@ mod tests {
         assert_eq!(res.errors[0].message, "Forbidden");
     }
 
-    #[cfg(feature = "auth-jwt")]
-    #[tokio::test]
-    async fn test_check_customer_membership_invalid_customer_id() {
-        let test_ctx = TestContext::new_with_account("scoped_user", Some(vec![1]));
-        let res = test_ctx.execute_check_customer_membership("abc").await;
-
-        assert_eq!(res.errors.len(), 1);
-        assert_eq!(res.errors[0].message, "invalid customer ID");
-    }
-
-    #[cfg(feature = "auth-mtls")]
     #[tokio::test]
     async fn test_check_customer_membership_invalid_customer_id() {
         let test_ctx = TestContext::new_without_account("scoped_user");
@@ -459,16 +284,6 @@ mod tests {
         assert_eq!(res.errors[0].message, "invalid customer ID");
     }
 
-    #[cfg(feature = "auth-jwt")]
-    #[tokio::test]
-    async fn test_check_customer_membership_admin_allowed() {
-        let test_ctx = TestContext::new_with_account("admin_user", None);
-        let res = test_ctx.execute_check_customer_membership("999").await;
-
-        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
-    }
-
-    #[cfg(feature = "auth-mtls")]
     #[tokio::test]
     async fn test_check_customer_membership_admin_allowed() {
         let test_ctx = TestContext::new_without_account("admin_user");

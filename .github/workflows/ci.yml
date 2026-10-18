@@ -1,7 +1,7 @@
 # CHANGE FILTER: `changes` classifies the run's diff and the expensive jobs
 # gate on its `docs_only` output, so a pull request that only touches inert
 # documentation does not build and test the crate across the operating-system
-# and feature matrix. `markdown` is deliberately ungated — a docs-only change
+# matrix. `markdown` is deliberately ungated — a docs-only change
 # is exactly the change that needs the Markdown lint to run.
 #
 # THE GATE IS FAIL-CLOSED. Each gated job's `if:` runs the job whenever the
@@ -13,7 +13,7 @@
 #
 # `CI Gate` IS THE REQUIRED STATUS CHECK, not the individual jobs. A matrix job
 # skipped at the job level is never expanded, so a docs-only run reports
-# `test`, not `test (ubuntu-latest, auth-jwt)` — and a protection rule naming
+# `test`, not `test (ubuntu-latest)` — and a protection rule naming
 # the expanded contexts would wait forever for statuses that are never coming.
 # `CI Gate` always reports, under one stable name, and it also stops protection
 # from having to track matrix leg names at all.
@@ -113,8 +113,6 @@ jobs:
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # Lifting this out of `check` also drops a duplicate: `check` is a two-leg
-  # feature matrix, and both legs used to lint the same Markdown.
   markdown:
     name: Markdown
     runs-on: ubuntu-latest
@@ -182,9 +180,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') }}
-    strategy:
-      matrix:
-        features: [auth-jwt, auth-mtls]
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust
@@ -193,10 +188,10 @@ jobs:
           components: clippy, rustfmt
       - name: Check formatting
         run: cargo fmt -- --check --config group_imports=StdExternalCrate
-      - name: Clippy (${{ matrix.features }})
-        run: cargo clippy --no-default-features --features ${{ matrix.features }} --tests --examples -- -D warnings
-      - name: Check (${{ matrix.features }})
-        run: cargo check --no-default-features --features ${{ matrix.features }} --examples
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Check
+        run: cargo check --examples
 
   test:
     runs-on: ${{ matrix.os }}
@@ -205,7 +200,6 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macOS-latest]
-        features: [auth-jwt, auth-mtls]
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust
@@ -213,21 +207,15 @@ jobs:
       - name: Set PQ_LIB_DIR
         if: runner.os == 'macOS'
         run: echo "PQ_LIB_DIR=$(brew --prefix libpq)/lib" >> $GITHUB_ENV
-      - name: Build examples (${{ matrix.features }})
-        run: cargo build --no-default-features --features ${{ matrix.features }} --examples --verbose
-      - name: Smoke test minireview (${{ matrix.features }})
-        run: cargo run --no-default-features --features ${{ matrix.features }} --example minireview -- --help
-      - name: Run tests (${{ matrix.features }})
-        run: cargo test --no-default-features --features ${{ matrix.features }} --verbose
+      - name: Build examples
+        run: cargo build --examples --verbose
+      - name: Run tests
+        run: cargo test --verbose
 
   coverage:
     runs-on: ubuntu-latest
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') }}
-    strategy:
-      fail-fast: false
-      matrix:
-        features: [auth-jwt, auth-mtls]
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust
@@ -237,7 +225,7 @@ jobs:
         with:
           tool: cargo-llvm-cov
       - name: Generate code coverage
-        run: cargo llvm-cov --no-default-features --features ${{ matrix.features }} --workspace --lcov --output-path lcov-${{ matrix.features }}.info
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
         id: codecov
         uses: codecov/codecov-action@v7
@@ -245,7 +233,7 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          files: lcov-${{ matrix.features }}.info
+          files: lcov.info
           fail_ci_if_error: true
       - name: Wait before Codecov retry
         if: steps.codecov.outcome == 'failure'
@@ -256,7 +244,7 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          files: lcov-${{ matrix.features }}.info
+          files: lcov.info
           fail_ci_if_error: true
 
   # `always()`, deliberately, and not `!cancelled()`: a cancelled run would

@@ -2,7 +2,6 @@ use std::{collections::HashMap, time::Duration};
 
 use async_trait::async_trait;
 use chrono::Utc;
-use review_database::{Role, types};
 use review_protocol::types::ResourceUsage;
 
 use crate::graphql::{AgentManager, SamplingPolicy, customer::NetworksTargetAgentLookupKeysPair};
@@ -91,40 +90,6 @@ pub(super) fn insert_apps(
         .map(|&app| (format!("{app}@{host}"), app.to_string()))
         .collect();
     map.insert(host.to_string(), entries);
-}
-
-pub(super) fn create_account_with_customers(
-    store: &review_database::Store,
-    username: &str,
-    customer_ids: Option<Vec<u32>>,
-) {
-    let account = types::Account::new(
-        username,
-        "password",
-        Role::SecurityAdministrator,
-        "Test User".to_string(),
-        "Testing".to_string(),
-        None,
-        None,
-        None,
-        None,
-        customer_ids,
-    )
-    .expect("create account");
-    store
-        .account_map()
-        .insert(&account)
-        .expect("insert account");
-}
-
-pub(super) fn update_account_customers(
-    store: &review_database::Store,
-    username: &str,
-    customer_ids: Option<Vec<u32>>,
-) {
-    let account_map = store.account_map();
-    let _ = account_map.delete(username);
-    create_account_with_customers(store, username, customer_ids);
 }
 
 pub(super) fn insert_active_node(

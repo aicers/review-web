@@ -8,9 +8,9 @@
 //!
 //! The pieces every ingress route needs are module-level rather than folded
 //! into a handler: the byte-counting adapter `capped_stream`, and
-//! `authenticate`, which turns whichever credential the build's feature
-//! configuration uses into an `IngressActor`. A route added here calls them
-//! rather than carrying a second copy.
+//! `authenticate`, which turns the caller's client certificate and context JWT
+//! into an `IngressActor`. A route added here calls them rather than carrying a
+//! second copy.
 //!
 //! What the tier check here guarantees is about this **route**, not about the
 //! bytes on disk. The build store is writable by `REView`'s own service
@@ -35,17 +35,11 @@ use axum_extra::{
     typed_header::TypedHeaderRejection,
 };
 use futures::{Stream, StreamExt};
-#[cfg(feature = "auth-jwt")]
-use review_database::Store;
 use review_database::types::Role;
 use serde::Serialize;
 use tracing::{info, warn};
 
-#[cfg(feature = "auth-mtls")]
 use crate::TlsPeerInfo;
-#[cfg(feature = "auth-jwt")]
-use crate::auth::validate_token;
-#[cfg(feature = "auth-mtls")]
 use crate::auth::{MtlsAuthenticator, validate_context_jwt};
 use crate::{
     Error,
@@ -329,60 +323,28 @@ where
 ///
 /// Every route in this module needs the same two things out of a credential:
 /// the role its tier check reads, and a name to record a rejection against.
-/// Which credential carries them differs by feature, not by route, so the
+/// The credential that carries them is the same for every route, so the
 /// extraction lives here rather than in a handler — a second ingress route
 /// calls [`authenticate`] instead of repeating it.
 pub(crate) struct IngressActor {
-    /// The name a rejection is logged against — a username under `auth-jwt`,
-    /// the peer's `instance.service.host` identity under `auth-mtls`.
+    /// The name a rejection is logged against: the peer's
+    /// `instance.service.host` identity.
     pub(crate) name: String,
     pub(crate) role: Role,
-}
-
-/// Authenticates a bearer-token caller and reads its role.
-///
-/// Role extraction happens inside the handler rather than in a `route_layer`
-/// because the two feature configurations authenticate through different
-/// paths; this is the `auth-jwt` one, validating the token exactly as the JWT
-/// GraphQL handler does.
-///
-/// # Errors
-///
-/// Returns [`Error::Unauthorized`] if the request carries no bearer token or
-/// if the token does not validate against the store.
-///
-/// # Panics
-///
-/// Panics if the store lock is poisoned, which means another thread panicked
-/// while holding it and the store's contents can no longer be trusted.
-#[cfg(feature = "auth-jwt")]
-pub(crate) fn authenticate(
-    store: &std::sync::RwLock<Store>,
-    auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
-) -> Result<IngressActor, Error> {
-    let auth = auth?;
-    let (name, role) = {
-        let store = store
-            .read()
-            .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
-        validate_token(&store, auth.token())?
-    };
-    Ok(IngressActor { name, role })
 }
 
 /// Authenticates an mTLS peer and reads its role.
 ///
 /// The peer's leaf certificate authenticates the caller and the context JWT
 /// bound to it carries the role, exactly as the mTLS GraphQL handler does.
-/// This is the `auth-mtls` counterpart of the `auth-jwt` helper above, and
-/// the reason role extraction is not a `route_layer`.
+/// Each ingress handler calls it rather than a `route_layer` doing so, so the
+/// handler holds the resulting [`IngressActor`] it records a rejection against.
 ///
 /// # Errors
 ///
 /// Returns [`Error::Unauthorized`] if the connection carried no peer
 /// certificate, if the leaf certificate does not authenticate, or if the
 /// context JWT is absent or not bound to that certificate.
-#[cfg(feature = "auth-mtls")]
 pub(crate) fn authenticate(
     authenticator: &dyn MtlsAuthenticator,
     peer: Option<Extension<Arc<TlsPeerInfo>>>,
@@ -647,42 +609,10 @@ async fn accept_trust_generation(
     Ok(Json(activation.into()))
 }
 
-/// Accepts a signed package from a bearer-authenticated caller.
-///
-/// The role is extracted here rather than in a `route_layer` because the two
-/// feature configurations authenticate through different paths, and the
-/// `auth-jwt` archive middleware is scoped to a proxy's own role list.
-#[cfg(feature = "auth-jwt")]
-async fn upload_package(
-    Extension(store): Extension<Arc<std::sync::RwLock<Store>>>,
-    Extension(receiver): Extension<Arc<dyn PackageStoreReceiver>>,
-    Extension(PackageUploadLimit(limit)): Extension<PackageUploadLimit>,
-    auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
-    body: Body,
-) -> Result<Json<AcceptedBuild>, IngressError<UploadRefusalCode>> {
-    let actor = authenticate(&store, auth).map_err(IngressError::Unauthenticated)?;
-    Ok(accept(&receiver, limit, &actor, body).await?)
-}
-
-/// Accepts a trust generation from a bearer-authenticated system
-/// administrator.
-#[cfg(feature = "auth-jwt")]
-async fn submit_trust_generation(
-    Extension(store): Extension<Arc<std::sync::RwLock<Store>>>,
-    Extension(manager): Extension<Arc<dyn TrustManager>>,
-    Extension(TrustGenerationLimit(limit)): Extension<TrustGenerationLimit>,
-    auth: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
-    body: Body,
-) -> Result<Json<ActivatedTrustGeneration>, IngressError<TrustRefusalCode>> {
-    let actor = authenticate(&store, auth).map_err(IngressError::Unauthenticated)?;
-    Ok(accept_trust_generation(&manager, limit, &actor, body).await?)
-}
-
 /// Accepts a signed package from an mTLS peer.
 ///
 /// The peer's leaf certificate authenticates the caller and the context JWT
 /// bound to it carries the role, exactly as the mTLS GraphQL handler does.
-#[cfg(feature = "auth-mtls")]
 async fn upload_package(
     Extension(authenticator): Extension<Arc<dyn MtlsAuthenticator>>,
     Extension(receiver): Extension<Arc<dyn PackageStoreReceiver>>,
@@ -698,7 +628,6 @@ async fn upload_package(
 
 /// Accepts a trust generation from an mTLS-authenticated system
 /// administrator.
-#[cfg(feature = "auth-mtls")]
 async fn submit_trust_generation(
     Extension(authenticator): Extension<Arc<dyn MtlsAuthenticator>>,
     Extension(manager): Extension<Arc<dyn TrustManager>>,
@@ -746,8 +675,6 @@ mod tests {
     };
     use crate::{DEFAULT_PACKAGE_UPLOAD_MAX_BYTES, DEFAULT_TRUST_GENERATION_MAX_BYTES};
 
-    #[cfg(feature = "auth-jwt")]
-    const USERNAME: &str = "uploader";
     const ACCEPTED_PACKAGE_ID: &str = "piglet";
     const VERSION: &str = "0.21.0";
     const COMMIT: &str = "a1b2c3d";
@@ -761,11 +688,7 @@ mod tests {
     const HUGE_CHUNK_LEN: usize = 64 * 1024;
     const HUGE_CHUNKS: usize = 4096;
     const MARKER: &str = "leak-marker-9f3a1c";
-    #[cfg(feature = "auth-mtls")]
     const CLIENT_DNS: &str = "001.aice-web-next.node-01.example.com";
-    #[cfg(feature = "auth-jwt")]
-    const EXPECTED_TRUST_ACTOR: &str = USERNAME;
-    #[cfg(feature = "auth-mtls")]
     const EXPECTED_TRUST_ACTOR: &str = "001.aice-web-next.node-01";
 
     /// The route answers at the published path and nowhere else. Every other
@@ -1242,73 +1165,8 @@ mod tests {
         ]))
     }
 
-    #[cfg(feature = "auth-jwt")]
-    async fn send_authenticated(
-        caller: &Caller,
-        path: &str,
-        body: Body,
-        configure: impl FnOnce(Router) -> Router,
-    ) -> Sent {
-        use std::sync::RwLock;
-
-        use review_database::Store;
-
-        let db_dir = tempfile::tempdir().expect("a temporary directory");
-        let backup_dir = tempfile::tempdir().expect("a temporary directory");
-        let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("a store");
-        crate::auth::update_jwt_secret(crate::graphql::test_jwt_secret_der().to_vec())
-            .expect("the test secret is settable");
-
-        let token = match caller {
-            Caller::Anonymous => None,
-            Caller::Invalid => Some("not.a.token".to_string()),
-            Caller::Role(role) => {
-                let (token, _) = crate::auth::create_token(USERNAME.to_string(), role.to_string())
-                    .expect("a token for the role");
-                crate::auth::insert_token(&store, &token, USERNAME).expect("the token is stored");
-                Some(token)
-            }
-        };
-        let store = Arc::new(RwLock::new(store));
-        let router = configure(router().layer(Extension(store)));
-
-        let mut builder = Request::builder().method("POST").uri(path);
-        if let Some(token) = token {
-            builder = builder.header("authorization", format!("Bearer {token}"));
-        }
-        let request = builder.body(body).expect("a well-formed request");
-        run(router, request).await
-    }
-
-    #[cfg(feature = "auth-jwt")]
-    async fn send(caller: &Caller, limit: u64, stub: &Stub, body: Body) -> Sent {
-        let receiver: Arc<dyn PackageStoreReceiver> = stub.receiver.clone();
-        send_authenticated(caller, PACKAGE_UPLOAD_PATH, body, |router| {
-            router
-                .layer(Extension(receiver))
-                .layer(Extension(PackageUploadLimit(limit)))
-        })
-        .await
-    }
-
-    #[cfg(feature = "auth-jwt")]
-    async fn send_trust(caller: &Caller, limit: u64, stub: &TrustStub, body: Body) -> Sent {
-        let manager: Arc<dyn TrustManager> = stub.manager.clone();
-        let package_store: Arc<dyn PackageStoreReceiver> =
-            Arc::new(CountingPackageStore(stub.package_calls.clone()));
-        send_authenticated(caller, TRUST_GENERATION_PATH, body, |router| {
-            router
-                .layer(Extension(manager))
-                .layer(Extension(package_store))
-                .layer(Extension(TrustGenerationLimit(limit)))
-        })
-        .await
-    }
-
-    #[cfg(feature = "auth-mtls")]
     struct StubAuthenticator;
 
-    #[cfg(feature = "auth-mtls")]
     impl crate::auth::MtlsAuthenticator for StubAuthenticator {
         fn authenticate(
             &self,
@@ -1323,7 +1181,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "auth-mtls")]
     async fn send_authenticated(
         caller: &Caller,
         path: &str,
@@ -1388,7 +1245,6 @@ mod tests {
         run(router, request).await
     }
 
-    #[cfg(feature = "auth-mtls")]
     async fn send(caller: &Caller, limit: u64, stub: &Stub, body: Body) -> Sent {
         let receiver: Arc<dyn PackageStoreReceiver> = stub.receiver.clone();
         send_authenticated(caller, PACKAGE_UPLOAD_PATH, body, |router| {
@@ -1399,7 +1255,6 @@ mod tests {
         .await
     }
 
-    #[cfg(feature = "auth-mtls")]
     async fn send_trust(caller: &Caller, limit: u64, stub: &TrustStub, body: Body) -> Sent {
         let manager: Arc<dyn TrustManager> = stub.manager.clone();
         let package_store: Arc<dyn PackageStoreReceiver> =

@@ -3,8 +3,6 @@
 // Remove `unused_async_trait_impl` after async-graphql issue #1832 is fixed and released.
 #![allow(clippy::unused_async, clippy::unused_async_trait_impl)]
 
-#[cfg(not(feature = "auth-mtls"))]
-pub mod account;
 mod allow_network;
 mod block_network;
 mod category;
@@ -13,7 +11,6 @@ mod cluster;
 mod core_component;
 pub mod customer;
 pub mod customer_access;
-#[cfg(feature = "auth-mtls")]
 mod customer_network;
 mod data_source;
 mod db_management;
@@ -85,8 +82,6 @@ pub use self::sampling::{
     Interval as SamplingInterval, Kind as SamplingKind, Period as SamplingPeriod,
     Policy as SamplingPolicy, get_sampling_policies,
 };
-#[cfg(feature = "auth-jwt")]
-use crate::auth::{ProductionTokenSigner, TokenSigner};
 use crate::backend::{AgentManager, CertManager, HostOnboarder, PackageDeployer};
 #[cfg(test)]
 use crate::backend::{
@@ -141,10 +136,6 @@ where
     .data(tls_reload_handle)
     .extension(install_state::LatestBuildMemoExtension)
     .extension(MaintenanceExtension::new(maintenance_gate));
-    #[cfg(feature = "auth-jwt")]
-    {
-        builder = builder.data(Arc::new(ProductionTokenSigner) as Arc<dyn TokenSigner>);
-    }
     if let Some(ip_locator) = ip_locator {
         builder = builder.data(ip_locator);
     }
@@ -155,33 +146,6 @@ where
 #[derive(MergedObject, Default)]
 pub struct Query(SubQueryOneA, SubQueryOneB, SubQueryTwoA, SubQueryTwoB);
 
-#[cfg(not(feature = "auth-mtls"))]
-#[derive(MergedObject, Default)]
-struct SubQueryOneA(
-    account::AccountQuery,
-    category::CategoryQuery,
-    cluster::ClusterQuery,
-    data_source::DataSourceQuery,
-    db_management::DbManagementQuery,
-    event::EventQuery,
-    event::EventGroupQuery,
-);
-
-#[cfg(not(feature = "auth-mtls"))]
-#[derive(MergedObject, Default)]
-struct SubQueryOneB(
-    filter::FilterQuery,
-    indicator::IndicatorQuery,
-    ip_location::IpLocationQuery,
-    model::ModelQuery,
-    network::NetworkQuery,
-    node::NodeQuery,
-    node::NodeStatusQuery,
-    qualifier::QualifierQuery,
-    outlier::OutlierQuery,
-);
-
-#[cfg(feature = "auth-mtls")]
 #[derive(MergedObject, Default)]
 struct SubQueryOneA(
     category::CategoryQuery,
@@ -192,7 +156,6 @@ struct SubQueryOneA(
     event::EventGroupQuery,
 );
 
-#[cfg(feature = "auth-mtls")]
 #[derive(MergedObject, Default)]
 struct SubQueryOneB(
     customer_network::CustomerNetworkQuery,
@@ -239,30 +202,6 @@ pub struct Mutation(
     SubMutationTwoB,
 );
 
-#[cfg(not(feature = "auth-mtls"))]
-#[derive(MergedObject, Default)]
-struct SubMutationOneA(
-    account::AccountMutation,
-    category::CategoryMutation,
-    cert::CertMutation,
-    cluster::ClusterMutation,
-    data_source::DataSourceMutation,
-    db_management::DbManagementMutation,
-);
-
-#[cfg(not(feature = "auth-mtls"))]
-#[derive(MergedObject, Default)]
-struct SubMutationOneB(
-    filter::FilterMutation,
-    indicator::IndicatorMutation,
-    model::ModelMutation,
-    network::NetworkMutation,
-    node::NodeControlMutation,
-    node::NodeMutation,
-    outlier::OutlierMutation,
-);
-
-#[cfg(feature = "auth-mtls")]
 #[derive(MergedObject, Default)]
 struct SubMutationOneA(
     category::CategoryMutation,
@@ -272,7 +211,6 @@ struct SubMutationOneA(
     db_management::DbManagementMutation,
 );
 
-#[cfg(feature = "auth-mtls")]
 #[derive(MergedObject, Default)]
 struct SubMutationOneB(
     customer_network::CustomerNetworkMutation,
@@ -749,11 +687,6 @@ where
 #[derive(Debug, PartialEq)]
 pub(crate) enum RoleGuard {
     Role(database::Role),
-    // The `Local` variant is constructed only by the `auth-jwt` loopback bypass
-    // in `lib.rs`, but is referenced as a guard in resolvers that compile under
-    // both feature flags.
-    #[cfg_attr(not(feature = "auth-jwt"), allow(dead_code))]
-    Local,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1424,21 +1357,6 @@ struct TestSchema {
     next_customer_id: AtomicU32,   // handed out by `setup_customer_and_node`
 }
 
-#[cfg(all(test, feature = "auth-jwt"))]
-pub(crate) fn test_jwt_secret_der() -> &'static [u8] {
-    // All schemas share the JWT secret, so parallel tests must use the same key.
-    static KEY_PAIR: std::sync::OnceLock<rcgen::KeyPair> = std::sync::OnceLock::new();
-    KEY_PAIR
-        .get_or_init(|| {
-            rcgen::KeyPair::generate_for(&rcgen::PKCS_RSA_SHA256)
-                .expect("AWS-LC supports RSA test key generation")
-        })
-        .serialized_der()
-}
-
-#[cfg(all(test, feature = "auth-jwt"))]
-const TEST_SCOPED_USERNAME: &str = "scoped-user";
-
 #[cfg(test)]
 impl TestSchema {
     async fn new() -> Self {
@@ -1504,11 +1422,6 @@ impl TestSchema {
         let store = Store::new(db_dir.path(), backup_dir.path(), event_country_locator).unwrap();
         let store = Arc::new(RwLock::new(store));
 
-        #[cfg(feature = "auth-jwt")]
-        {
-            crate::auth::update_jwt_secret(test_jwt_secret_der().to_vec()).unwrap();
-        }
-
         let builder = Schema::build(
             Query::default(),
             Mutation::default(),
@@ -1521,8 +1434,6 @@ impl TestSchema {
         .data(username.to_string())
         .extension(install_state::LatestBuildMemoExtension)
         .extension(MaintenanceExtension::new(MaintenanceGate::new()));
-        #[cfg(feature = "auth-jwt")]
-        let builder = builder.data(Arc::new(ProductionTokenSigner) as Arc<dyn TokenSigner>);
         let schema = builder.finish();
 
         Self {
@@ -1588,17 +1499,6 @@ impl TestSchema {
         role: Role,
         customer_ids: Option<Vec<u32>>,
     ) -> async_graphql::Response {
-        #[cfg(feature = "auth-jwt")]
-        {
-            self.upsert_test_account(TEST_SCOPED_USERNAME, role, customer_ids);
-            let request: async_graphql::Request = query.into();
-            let request = self
-                .request_with_guard(request, RoleGuard::Role(role))
-                .data(TEST_SCOPED_USERNAME.to_string());
-            return self.schema.execute(request).await;
-        }
-
-        #[cfg(feature = "auth-mtls")]
         self.execute_with_context(
             query,
             RoleGuard::Role(role),
@@ -1619,18 +1519,6 @@ impl TestSchema {
         customer_ids: Option<Vec<u32>>,
         data: impl Send + Sync + 'static,
     ) -> async_graphql::Response {
-        #[cfg(feature = "auth-jwt")]
-        {
-            self.upsert_test_account(TEST_SCOPED_USERNAME, role, customer_ids);
-            let request: async_graphql::Request = query.into();
-            let request = self
-                .request_with_guard(request, RoleGuard::Role(role))
-                .data(TEST_SCOPED_USERNAME.to_string())
-                .data(data);
-            return self.schema.execute(request).await;
-        }
-
-        #[cfg(feature = "auth-mtls")]
         {
             let request: async_graphql::Request = query.into();
             let request = self
@@ -1642,41 +1530,6 @@ impl TestSchema {
                 .data(data);
             self.schema.execute(request).await
         }
-    }
-
-    #[cfg(feature = "auth-jwt")]
-    fn upsert_test_account(&self, username: &str, role: Role, customer_ids: Option<Vec<u32>>) {
-        let account = database::types::Account::new(
-            username,
-            "password",
-            role,
-            "Test User".to_string(),
-            "Testing".to_string(),
-            None,
-            None,
-            None,
-            None,
-            customer_ids,
-        )
-        .expect("test account construction should always succeed");
-        let store = self
-            .store
-            .write()
-            .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
-        if store
-            .account_map()
-            .contains(username)
-            .expect("test account lookup should always succeed")
-        {
-            store
-                .account_map()
-                .delete(username)
-                .expect("test account delete should always succeed");
-        }
-        store
-            .account_map()
-            .insert(&account)
-            .expect("test account insert should always succeed");
     }
 
     /// Allocates a customer ID and creates an applied node with the provided

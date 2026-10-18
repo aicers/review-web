@@ -6,6 +6,23 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking change:** For embedders that used `auth-jwt`:
+  `ServerConfig.authenticator` is required, `serve` requires a client
+  certificate during the TLS handshake, agent lookup keys use `.`
+  (`001.hog.<host>`), `get_customer_networks` reads the customer networks
+  table, `Event.sensor` names a sensor `<service>.<hostname>`, and the
+  `directions` filter classifies each event by its own customer's networks.
+- `get_allow_networks` and `get_block_networks` return an empty group for every
+  customer, because review-database no longer stores allow or block networks;
+  their signatures are unchanged.
+- Bumped `review-database` dependency to 0.52.0. Its store format moves to
+  0.52.0, so a store written by 0.51 must be migrated through
+  `review-database` before this version serves it; the migration deletes every
+  stored account, access token, saved filter, customer, allow network, block
+  network and network tag, and keeps customer networks.
+
 ### Removed
 
 - The customer API: the `customerList` and `customer` queries, the
@@ -24,14 +41,39 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `AllowNetworkConnection`, `AllowNetworkEdge`, `AllowNetworkInput`,
   `BlockNetwork`, `BlockNetworkConnection`, `BlockNetworkEdge` and
   `BlockNetworkInput` types. Allow and block lists can no longer be changed
-  through REview's GraphQL API, so review-web no longer sends them to Hogs;
-  `get_allow_networks` and `get_block_networks` still return the lists REview
-  holds.
+  through REview's GraphQL API, so review-web no longer sends them to Hogs.
 - The network tag API: the `networkTagList` query, the `insertNetworkTag`,
   `removeNetworkTag` and `updateNetworkTag` mutations, the `networkTags` field
   of `EventListFilterInput` and `EventStandardFilterInput`, the `tagIds`
   argument of `insertNetwork`, and the `tagIds` fields of `NetworkUpdateInput`
   and `Network`.
+- **Breaking change:** The `auth-jwt` and `auth-mtls` features. review-web now
+  always authenticates with a client certificate and a Context JWT, as
+  `auth-mtls` builds did; embedders remove the feature from their dependency
+  declaration.
+- The sign-in, account and saved-filter GraphQL API that `auth-jwt` builds
+  served: the `account`, `myAccount`, `accountList`, `signedInAccountList`,
+  `comprehensiveUserList`, `expirationTime`, `accountLockoutPolicy`,
+  `filterList` and `filter` queries, and the `signIn`,
+  `signInWithNewPassword`, `signOut`, `forceSignOut`, `refreshToken`,
+  `issueAimerToken`, `insertAccount`, `resetAdminPassword`, `removeAccounts`,
+  `removeAccountsExact`, `updateAccount`, `updateExpirationTime`,
+  `updateAccountLockoutPolicy`, `updateLanguage`, `updateTheme`,
+  `updateMyAccount`, `unlockAccount`, `unsuspendAccount`, `insertFilter`,
+  `removeFilters` and `replaceFilter` mutations.
+- The GraphQL Playground, static file serving, the reverse proxies, the
+  loopback authentication bypass with `REVIEW_WEB_DISABLE_LOCAL_AUTH_BYPASS`,
+  and the `REVIEW_ADMIN` initial administrator.
+- The public Rust items only `auth-jwt` builds had: `review_web::archive` with
+  `archive::Config`; `review_web::auth::create_token`, `decode_token`,
+  `update_jwt_expires_in`, `update_jwt_secret`, `validate_token`,
+  `insert_token`, `revoke_token`, `AuthError` and the `Claims` type
+  `decode_token` returns; `review_web::graphql::account` and everything in it
+  (`set_initial_admin_password`, `expiration_time`, `init_expiration_time`,
+  `SignedInAccount`, `MyAccount` and `ComprehensiveUserAccount`); the
+  `document_root`, `reverse_proxies`, `client_cert_path` and `client_key_path`
+  fields of `ServerConfig`; and `impl From<AuthError> for review_web::Error`.
+- The `minireview` example.
 
 ## [0.42.1] - 2026-10-18
 

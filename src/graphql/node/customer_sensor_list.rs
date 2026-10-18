@@ -17,21 +17,12 @@ pub(super) struct Sensor {
     /// `EventListFilterInput.sensors`.
     node_id: ID,
 
-    #[cfg_attr(
-        not(feature = "auth-mtls"),
-        doc = "The fully-qualified hostname of the host on which the sensor runs.\n\
-               Equal to `Event.sensor` for events emitted by this sensor."
-    )]
-    #[cfg_attr(
-        feature = "auth-mtls",
-        doc = "The fully-qualified hostname of the host on which the sensor runs.\n\
-               Not the name events carry in `Event.sensor`; see `eventSensorNames`."
-    )]
+    /// The fully-qualified hostname of the host on which the sensor runs.
+    /// Not the name events carry in `Event.sensor`; see `eventSensorNames`.
     host_fqdn: String,
 
     /// The sensor names events emitted by this node's sensors carry in
     /// `Event.sensor`, each `<service>.<hostFqdn>`.
-    #[cfg(feature = "auth-mtls")]
     event_sensor_names: Vec<String>,
 }
 
@@ -139,7 +130,6 @@ fn collect_sensors(
                 customer_id,
                 node_id: ID(node.id.to_string()),
                 host_fqdn: profile.hostname.clone(),
-                #[cfg(feature = "auth-mtls")]
                 event_sensor_names: super::super::customer_access::event_sensor_names(&node),
             },
         ));
@@ -935,7 +925,6 @@ mod tests {
         assert!(!names.contains(&"agentKey"));
     }
 
-    #[cfg(feature = "auth-mtls")]
     #[tokio::test]
     async fn rows_carry_event_sensor_names() {
         let schema = TestSchema::new().await;

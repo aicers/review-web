@@ -1123,54 +1123,30 @@ pub fn matches_manager_hostname(hostname: &str) -> bool {
 
 /// Builds the runtime agent lookup key from an agent key and node hostname.
 ///
-/// The separator between `agent_key` and `host_fqdn` depends on the auth feature:
-/// `@` for `auth-jwt`, `.` for `auth-mtls`.
-///
-/// For `auth-mtls`, `agent_key` is the certificate identity prefix
-/// (`{instance}.{service}`, e.g. `001.hog`) before the DNS SAN hostname.
-/// For `auth-jwt`, `agent_key` uses the legacy agent name form (e.g. `hog`).
+/// The key has the form `{instance}.{service}.{host}`: `agent_key` is the
+/// certificate identity prefix (`{instance}.{service}`, e.g. `001.hog`), and
+/// `host_fqdn` is the DNS SAN hostname that follows it.
 #[must_use]
 pub fn gen_agent_lookup_key(agent_key: &str, host_fqdn: &str) -> String {
-    #[cfg(feature = "auth-jwt")]
-    let separator = '@';
-    #[cfg(feature = "auth-mtls")]
-    let separator = '.';
-
-    format!("{agent_key}{separator}{host_fqdn}")
+    format!("{agent_key}.{host_fqdn}")
 }
 
 #[must_use]
 pub fn agent_lookup_key_service_token(agent_lookup_key: &str) -> Option<&str> {
-    #[cfg(feature = "auth-jwt")]
-    {
-        agent_lookup_key
-            .split_once('@')
-            .map(|(agent_key, _)| agent_key)
-    }
-    #[cfg(feature = "auth-mtls")]
-    {
-        agent_lookup_key.split('.').nth(1)
-    }
+    agent_lookup_key.split('.').nth(1)
 }
 
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::test_support::{MockAgentManager, insert_active_node, update_account_customers};
+    use super::test_support::{MockAgentManager, insert_active_node};
     use crate::graphql::{
         BoxedAgentManager, CustomerIds, Role, RoleGuard, TestSchema,
         agent_lookup_key_service_token, gen_agent_lookup_key,
     };
 
     #[test]
-    #[cfg(feature = "auth-jwt")]
-    fn gen_agent_lookup_key_uses_jwt_separator() {
-        assert_eq!(gen_agent_lookup_key("hog", "node-01"), "hog@node-01");
-    }
-
-    #[test]
-    #[cfg(feature = "auth-mtls")]
     fn gen_agent_lookup_key_uses_mtls_separator() {
         assert_eq!(
             gen_agent_lookup_key("001.hog", "node-01.customer.internal"),
@@ -1179,13 +1155,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "auth-jwt")]
-    fn agent_lookup_key_service_token_extracts_jwt_agent_key() {
-        assert_eq!(agent_lookup_key_service_token("hog@node-01"), Some("hog"));
-    }
-
-    #[test]
-    #[cfg(feature = "auth-mtls")]
     fn agent_lookup_key_service_token_extracts_mtls_service_token() {
         assert_eq!(
             agent_lookup_key_service_token("001.hog.node-01.customer.internal"),
@@ -1253,8 +1222,6 @@ mod tests {
         assert_eq!(id0, 0);
         assert_eq!(id1, 1);
 
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
-
         let res = schema
             .execute_with_guard_and_data(
                 r"{nodeStatusList(first: 10){totalCount edges{node{name}}}}",
@@ -1286,8 +1253,6 @@ mod tests {
             "host2.example.com",
         );
         assert_eq!(id0, 0);
-
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
             .execute_with_guard_and_data(

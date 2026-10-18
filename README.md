@@ -7,64 +7,12 @@ for flexible data querying and manipulation.
 
 [![Coverage Status](https://codecov.io/gh/aicers/review-web/branch/main/graphs/badge.svg)](https://codecov.io/gh/aicers/review-web)
 
-## Minireview
-
-### Build
-
-Build as follows:
-
-```sh
-cargo build --example minireview
-```
-
-To build with mTLS + Context JWT:
-
-```sh
-cargo build --example minireview --features auth-mtls
-```
-
-### Test
-
-Test as follows:
-
-```sh
-target/debug/examples/minireview <path to a config file>
-```
-
-The config file has the following options:
-
-```toml
-backup_dir = "/path/to/backup"              # path to a backup directory
-ca_certs = ["/path/to/cert.pem"]            # paths to CA certificate files
-cert = "/path/to/cert.pem"                  # path to a certificate file
-client_cert = "/path/to/client.pem"         # client cert for mTLS (auth-jwt only)
-client_key = "/path/to/client-key.pem"      # client key for mTLS (auth-jwt only)
-data_dir = "/path/to/data"                  # path to a RocksDB data directory
-database_url = "postgres://id:pw@host/db"   # PostgreSQL URL
-graphql_srv_addr = "127.0.0.1:8442"         # GraphQL address
-htdocs_dir = "/path/to/htdocs"              # web files directory (auth-jwt only)
-ip2location = "/path/to/IP2LOCATON"         # path to a IP2LOCATION file
-key = "/path/to/key.pem"                    # path to a key file
-log_dir = "/path/to/log"                    # path to a log directory
-
-# <SERVER_NAME>: Name of the central management server. This must match with
-# the DNS name in the certificate.
-
-[[reverse_proxies]]
-base = "archive"                            # proxy name for Giganto
-uri = "https://<SERVER_NAME>:8443/graphql"  # Giganto's GraphQL address
-
-[[reverse_proxies]]
-base = "ti-container"                       # proxy name for TI container
-uri = "https://<SERVER_NAME>:8444/graphql"  # TI container's GraphQL address
-```
-
 ## Generate schema.graphql
 
-Generate the GraphQL SDL with the `auth-mtls` feature as follows:
+Generate the GraphQL SDL as follows:
 
 ```sh
-cargo run --example schema_sdl --no-default-features --features auth-mtls > schema.graphql
+cargo run --example schema_sdl > schema.graphql
 ```
 
 The example writes the schema to stdout, so redirect it to the desired output
@@ -74,9 +22,7 @@ file.
 compares the rendered schema against it, so a change to the GraphQL surface
 fails the test until the artifact is regenerated with the command above and the
 regenerated file is committed alongside the change. That is what turns a schema
-change into a reviewable diff. The artifact is the `auth-mtls` schema and the
-test is gated on that feature, so regenerate it with those flags and not with
-the default ones.
+change into a reviewable diff.
 
 ## License
 

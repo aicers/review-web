@@ -1,5 +1,3 @@
-#![cfg(feature = "auth-mtls")]
-
 use review_web::graphql::{Mutation, Query, Schema, Subscription};
 
 fn main() {

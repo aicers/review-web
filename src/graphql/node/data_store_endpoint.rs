@@ -143,7 +143,7 @@ mod tests {
     use crate::{
         backend::DataStoreReadEndpoint,
         graphql::{
-            AgentManager, BoxedAgentManager, RoleGuard, SamplingPolicy, TestSchema,
+            AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema,
             customer::NetworksTargetAgentLookupKeysPair,
         },
     };
@@ -655,7 +655,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refuses_unauthenticated_and_local() {
+    async fn refuses_unauthenticated() {
         let host = "host1.example.com";
         let (schema, reads) = schema_with(&[(
             host,
@@ -672,10 +672,6 @@ mod tests {
         );
 
         let res = schema.schema.execute(QUERY).await;
-        assert_eq!(res.errors.len(), 1, "errors: {:?}", res.errors);
-        assert_eq!(res.errors[0].message, "Forbidden");
-
-        let res = schema.execute_with_guard(QUERY, RoleGuard::Local).await;
         assert_eq!(res.errors.len(), 1, "errors: {:?}", res.errors);
         assert_eq!(res.errors[0].message, "Forbidden");
 
