@@ -48,12 +48,14 @@ use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::RwLock;
+#[cfg(test)]
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use async_graphql::connection::{
     Connection, ConnectionNameType, CursorType, Edge, EdgeNameType, EmptyFields, OpaqueCursor,
 };
 use async_graphql::{
-    Context, Guard, ID, InputValueError, InputValueResult, MergedObject, MergedSubscription,
+    Context, Guard, InputValueError, InputValueResult, MergedObject, MergedSubscription,
     ObjectType, OutputType, Result, Scalar, ScalarType, Value,
 };
 use num_traits::ToPrimitive;
@@ -157,10 +159,8 @@ pub struct Query(SubQueryOneA, SubQueryOneB, SubQueryTwoA, SubQueryTwoB);
 #[derive(MergedObject, Default)]
 struct SubQueryOneA(
     account::AccountQuery,
-    block_network::BlockNetworkQuery,
     category::CategoryQuery,
     cluster::ClusterQuery,
-    customer::CustomerQuery,
     data_source::DataSourceQuery,
     db_management::DbManagementQuery,
     event::EventQuery,
@@ -184,10 +184,8 @@ struct SubQueryOneB(
 #[cfg(feature = "auth-mtls")]
 #[derive(MergedObject, Default)]
 struct SubQueryOneA(
-    block_network::BlockNetworkQuery,
     category::CategoryQuery,
     cluster::ClusterQuery,
-    customer::CustomerQuery,
     data_source::DataSourceQuery,
     db_management::DbManagementQuery,
     event::EventQuery,
@@ -214,7 +212,6 @@ struct SubQueryTwoA(
     statistics::StatisticsQuery,
     status::StatusQuery,
     tags::EventTagQuery,
-    tags::NetworkTagQuery,
     tags::WorkflowTagQuery,
     template::TemplateQuery,
     tor_exit_node::TorExitNodeQuery,
@@ -228,7 +225,6 @@ struct SubQueryTwoB(
     triage::TriageResponseQuery,
     trusted_domain::TrustedDomainQuery,
     traffic_filter::TrafficFilterQuery,
-    allow_network::AllowNetworkQuery,
     trusted_user_agent::UserAgentQuery,
     node::BindAddrQuery,
     node::OnboardingQuery,
@@ -247,11 +243,9 @@ pub struct Mutation(
 #[derive(MergedObject, Default)]
 struct SubMutationOneA(
     account::AccountMutation,
-    block_network::BlockNetworkMutation,
     category::CategoryMutation,
     cert::CertMutation,
     cluster::ClusterMutation,
-    customer::CustomerMutation,
     data_source::DataSourceMutation,
     db_management::DbManagementMutation,
 );
@@ -271,11 +265,9 @@ struct SubMutationOneB(
 #[cfg(feature = "auth-mtls")]
 #[derive(MergedObject, Default)]
 struct SubMutationOneA(
-    block_network::BlockNetworkMutation,
     category::CategoryMutation,
     cert::CertMutation,
     cluster::ClusterMutation,
-    customer::CustomerMutation,
     data_source::DataSourceMutation,
     db_management::DbManagementMutation,
 );
@@ -298,7 +290,6 @@ struct SubMutationTwoA(
     sampling::SamplingPolicyMutation,
     status::StatusMutation,
     tags::EventTagMutation,
-    tags::NetworkTagMutation,
     tags::WorkflowTagMutation,
     template::TemplateMutation,
     tor_exit_node::TorExitNodeMutation,
@@ -311,7 +302,6 @@ struct SubMutationTwoB(
     triage::TriageResponseMutation,
     trusted_domain::TrustedDomainMutation,
     traffic_filter::TrafficFilterMutation,
-    allow_network::AllowNetworkMutation,
     trusted_user_agent::UserAgentMutation,
 );
 
@@ -472,85 +462,6 @@ pub(crate) fn get_store<'a>(ctx: &'a Context<'a>) -> Result<std::sync::RwLockRea
         .unwrap_or_else(|e| panic!("RwLock poisoned: {e}")))
 }
 
-/// Computes the intersection of the requested customer IDs with the
-/// user's accessible customer IDs. Admins (`None`) keep all requested
-/// IDs. Returns an error if the intersection is empty.
-fn intersect_accessible_customer_ids(
-    users_customers: Option<&[u32]>,
-    requested_customer_ids: &[u32],
-) -> Result<Vec<u32>> {
-    let filtered = match users_customers {
-        None => requested_customer_ids.to_vec(), // admin
-        Some(users) => requested_customer_ids
-            .iter()
-            .copied()
-            .filter(|id| users.contains(id))
-            .collect(),
-    };
-
-    if filtered.is_empty() {
-        return Err("access denied: all requested customers are not accessible".into());
-    }
-
-    Ok(filtered)
-}
-
-/// Parses, deduplicates, sorts, and validates customer IDs from a
-/// GraphQL `Option<Vec<ID>>`, enforcing customer scoping for
-/// non-admin users.
-///
-/// When `customer_ids` is `None`, admins see all customers while
-/// scoped users are automatically restricted to their own customers.
-/// When `customer_ids` is `Some`, the requested IDs are intersected
-/// with the user's accessible customers (admins keep all requested IDs).
-///
-/// # Errors
-///
-/// Returns an error if any ID cannot be parsed as `u32`, if a
-/// customer with the given ID does not exist in the store, if an
-/// empty customer ID list is provided, or if none of the requested
-/// customers are accessible to the user.
-fn parse_and_validate_customer_ids(
-    ctx: &Context<'_>,
-    customer_ids: Option<Vec<ID>>,
-) -> Result<Option<Vec<u32>>> {
-    let users_cids = customer_access::users_customers(ctx)?;
-
-    let Some(ids) = customer_ids else {
-        // No explicit filter: admins see all, scoped users see their own.
-        return Ok(users_cids);
-    };
-
-    if ids.is_empty() {
-        return Err("at least one ID value must be provided".into());
-    }
-
-    let mut parsed = Vec::with_capacity(ids.len());
-    for id in &ids {
-        parsed.push(
-            id.as_str()
-                .parse::<u32>()
-                .map_err(|_| "invalid customer ID")?,
-        );
-    }
-
-    parsed.sort_unstable();
-    parsed.dedup();
-
-    // Intersect requested IDs with the user's accessible set.
-    let parsed = intersect_accessible_customer_ids(users_cids.as_deref(), &parsed)?;
-
-    let store = get_store(ctx)?;
-    let customer_map = store.customer_map();
-    for &id in &parsed {
-        if customer_map.get_by_id(id)?.is_none() {
-            return Err(format!("no such customer: {id}").into());
-        }
-    }
-
-    Ok(Some(parsed))
-}
-
 #[allow(clippy::type_complexity)]
 fn process_load_edges<'a, T, I, R>(
     table: &'a T,
@@ -672,82 +583,6 @@ where
 {
     let (nodes, has_previous, has_next) =
         process_load_edges(table, after, before, first, last, None);
-
-    for node in &nodes {
-        let Err(e) = node else { continue };
-        warn!("Failed to load from DB: {}", e);
-        return Err("database error".into());
-    }
-
-    let mut connection =
-        Connection::with_additional_fields(has_previous, has_next, additional_fields);
-    connection.edges.extend(nodes.into_iter().map(|node| {
-        let Ok(node) = node else { unreachable!() };
-        let key = node.unique_key().as_ref().to_vec();
-        Edge::new(OpaqueCursor(key), node.into())
-    }));
-    Ok(connection)
-}
-
-#[allow(clippy::type_complexity)]
-fn load_edges_with_prefix<'a, T, I, R, N, A, NodesField>(
-    table: &'a T,
-    after: Option<OpaqueCursor<Vec<u8>>>,
-    before: Option<OpaqueCursor<Vec<u8>>>,
-    first: Option<usize>,
-    last: Option<usize>,
-    prefix: Option<&[u8]>,
-    additional_fields: A,
-) -> Result<Connection<OpaqueCursor<Vec<u8>>, N, A, EmptyFields, NodesField>>
-where
-    T: database::Iterable<'a, I>,
-    I: Iterator<Item = anyhow::Result<R>>,
-    R: database::UniqueKey,
-    N: From<R> + OutputType,
-    A: ObjectType,
-    NodesField: ConnectionNameType,
-{
-    let (nodes, has_previous, has_next) =
-        process_load_edges(table, after, before, first, last, prefix);
-
-    for node in &nodes {
-        let Err(e) = node else { continue };
-        warn!("Failed to load from DB: {}", e);
-        return Err("database error".into());
-    }
-
-    let mut connection =
-        Connection::with_additional_fields(has_previous, has_next, additional_fields);
-    connection.edges.extend(nodes.into_iter().map(|node| {
-        let Ok(node) = node else { unreachable!() };
-        let key = node.unique_key().as_ref().to_vec();
-        Edge::new(OpaqueCursor(key), node.into())
-    }));
-    Ok(connection)
-}
-
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn load_edges_with_prefix_filtered<'a, T, I, R, N, A, NodesField, P>(
-    table: &'a T,
-    after: Option<OpaqueCursor<Vec<u8>>>,
-    before: Option<OpaqueCursor<Vec<u8>>>,
-    first: Option<usize>,
-    last: Option<usize>,
-    prefix: Option<&[u8]>,
-    additional_fields: A,
-    predicate: P,
-) -> Result<Connection<OpaqueCursor<Vec<u8>>, N, A, EmptyFields, NodesField>>
-where
-    T: database::Iterable<'a, I>,
-    I: Iterator<Item = anyhow::Result<R>>,
-    R: database::UniqueKey,
-    N: From<R> + OutputType,
-    A: ObjectType,
-    NodesField: ConnectionNameType,
-    P: Fn(&R) -> bool,
-{
-    let (nodes, has_previous, has_next) =
-        process_load_edges_filtered(table, after, before, first, last, prefix, predicate);
 
     for node in &nodes {
         let Err(e) = node else { continue };
@@ -1586,6 +1421,7 @@ struct TestSchema {
     store: Arc<RwLock<Store>>,
     schema: Schema,
     test_addr: Option<SocketAddr>, // to simulate the client address
+    next_customer_id: AtomicU32,   // handed out by `setup_customer_and_node`
 }
 
 #[cfg(all(test, feature = "auth-jwt"))]
@@ -1695,6 +1531,7 @@ impl TestSchema {
             store,
             schema,
             test_addr,
+            next_customer_id: AtomicU32::new(0),
         }
     }
 
@@ -1842,21 +1679,15 @@ impl TestSchema {
             .expect("test account insert should always succeed");
     }
 
-    /// Creates a customer and an applied node with the provided hostname.
+    /// Allocates a customer ID and creates an applied node with the provided
+    /// hostname for it.
     ///
-    /// Returns the newly created customer ID.
-    async fn setup_customer_and_node(&self, customer_name: &str, hostname: &str) -> String {
-        let query = format!(
-            r#"mutation {{ insertCustomer(name: "{customer_name}", description: "", networks: []) }}"#,
-        );
-        let res = self.execute_as_system_admin(&query).await;
-        assert!(res.errors.is_empty(), "insert customer: {:?}", res.errors);
-        let cid = res
-            .data
-            .to_string()
-            .split('"')
-            .nth(1)
-            .expect("customer insert response always contains a quoted id")
+    /// Customer IDs are handed out as `0`, `1`, … in call order. Returns the
+    /// allocated customer ID.
+    async fn setup_customer_and_node(&self, _customer_name: &str, hostname: &str) -> String {
+        let cid = self
+            .next_customer_id
+            .fetch_add(1, Ordering::Relaxed)
             .to_string();
 
         let query = format!(

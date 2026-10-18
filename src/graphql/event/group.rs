@@ -890,8 +890,7 @@ mod tests {
                             hosts: ["0.0.0.4"],
                             networks: [],
                             ranges: []
-                        },
-                        tagIds: []
+                        }
                     )
                 }"#,
             )
@@ -1180,7 +1179,6 @@ mod tests {
                             networks: []
                             ranges: []
                         }
-                        tagIds: []
                     )
                 }"#,
             )

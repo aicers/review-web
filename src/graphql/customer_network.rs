@@ -2,20 +2,19 @@
 //!
 //! The customer networks table holds a copy of every customer's owned networks
 //! as the writer last sent them, and is the source of the internal network list
-//! hog receives. It keeps no other customer data, so nothing here requires a
-//! row in the `customers` table.
+//! hog receives. It keeps no other customer data.
 
 use std::collections::HashSet;
 
 use async_graphql::{
-    Context, ErrorExtensions, InputObject, Object, Result, StringNumber, types::ID,
+    Context, Enum, ErrorExtensions, InputObject, Object, Result, StringNumber, types::ID,
 };
 use chrono::{DateTime, Utc};
 use review_database::{self as database, ReplaceOutcome, Store};
 use tracing::{error, info};
 
 use super::customer::{
-    HostNetworkGroup, HostNetworkGroupInput, NetworkType, NetworksTargetAgentLookupKeysPair,
+    HostNetworkGroup, HostNetworkGroupInput, NetworksTargetAgentLookupKeysPair,
     send_agent_specific_customer_networks,
 };
 use super::customer_access::check_customer_membership;
@@ -202,6 +201,14 @@ struct OwnedNetworkInput {
     name: String,
     network_type: NetworkType,
     network_group: HostNetworkGroupInput,
+}
+
+#[derive(Clone, Copy, Enum, Eq, PartialEq)]
+#[graphql(remote = "database::event::NetworkType")]
+enum NetworkType {
+    Intranet,
+    Extranet,
+    Gateway,
 }
 
 fn parse_customer_id(customer_id: &ID) -> Result<u32> {
@@ -595,15 +602,6 @@ mod tests {
                 ],
             } })
         );
-        assert!(
-            schema
-                .store()
-                .customer_map()
-                .get_by_id(7)
-                .unwrap()
-                .is_none()
-        );
-
         let res = as_admin(REMOVE_7.to_string()).await;
         assert_eq!(data(res), json!({ "removeCustomerNetworks": true }));
         let res = as_admin(REMOVE_7.to_string()).await;
@@ -1061,41 +1059,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_customer_does_not_push() {
-        let (schema, pushes) = recording_schema().await;
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
-            )
-            .await;
-        assert_eq!(data(res), json!({ "insertCustomer": "0" }));
-        insert_node(&schema, 0, "n0.example.com");
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation { updateCustomer(id: "0", old: { networks: [] }, new: { networks: [{
-                    name: "n", description: "", networkType: INTRANET,
-                    networkGroup: { hosts: [], networks: ["10.0.0.0/8"], ranges: [] }
-                }] }) }"#,
-            )
-            .await;
-        assert_eq!(data(res), json!({ "updateCustomer": "0" }));
-        assert_eq!(recorded(&pushes), Vec::<Push>::new());
-    }
-
-    #[tokio::test]
     async fn get_customer_networks_reads_the_customer_networks_table() {
         let schema = TestSchema::new().await;
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c0", description: "", networks: [{
-                    name: "n", description: "", networkType: INTRANET,
-                    networkGroup: { hosts: [], networks: ["10.0.0.0/8"], ranges: [] }
-                }]) }"#,
-            )
-            .await;
-        assert_eq!(data(res), json!({ "insertCustomer": "0" }));
-
         let store = schema.store();
         assert_eq!(
             get_customer_networks(&store, 0).unwrap(),

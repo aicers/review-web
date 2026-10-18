@@ -2,10 +2,8 @@ use async_graphql::{Context, ID, Object, Result, StringNumber};
 use jiff::Timestamp;
 use review_database::event as database;
 
-use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
-use crate::graphql::{
-    customer::Customer, filter::LearningMethod, network::Network, triage::ThreatCategory,
-};
+use super::{ThreatLevel, TriageScore, country_code, find_ip_network};
+use crate::graphql::{filter::LearningMethod, network::Network, triage::ThreatCategory};
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct DnsCovertChannel {
@@ -44,13 +42,6 @@ impl DnsCovertChannel {
         country_code(&self.inner.orig_country_code)
     }
 
-    /// Originator Customer
-    async fn orig_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.customer_map();
-        find_ip_customer(&map, self.inner.orig_addr)
-    }
-
     /// Originator Network
     async fn orig_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx)?;
@@ -80,13 +71,6 @@ impl DnsCovertChannel {
     /// `"XX"` if no country information was recorded for this event.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
-    }
-
-    /// Responder Customer
-    async fn resp_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.customer_map();
-        find_ip_customer(&map, self.inner.resp_addr)
     }
 
     /// Responder Network
@@ -265,13 +249,6 @@ impl LockyRansomware {
         country_code(&self.inner.orig_country_code)
     }
 
-    /// Originator Customer
-    async fn orig_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.customer_map();
-        find_ip_customer(&map, self.inner.orig_addr)
-    }
-
     /// Originator Network
     async fn orig_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx)?;
@@ -296,13 +273,6 @@ impl LockyRansomware {
     /// `"XX"` if no country information was recorded for this event.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
-    }
-
-    /// Responder Customer
-    async fn resp_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.customer_map();
-        find_ip_customer(&map, self.inner.resp_addr)
     }
 
     /// Responder Network
@@ -480,13 +450,6 @@ impl CryptocurrencyMiningPool {
         country_code(&self.inner.orig_country_code)
     }
 
-    /// Originator Customer
-    async fn orig_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.customer_map();
-        find_ip_customer(&map, self.inner.orig_addr)
-    }
-
     /// Originator Network
     async fn orig_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx)?;
@@ -511,13 +474,6 @@ impl CryptocurrencyMiningPool {
     /// `"XX"` if no country information was recorded for this event.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
-    }
-
-    /// Responder Customer
-    async fn resp_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.customer_map();
-        find_ip_customer(&map, self.inner.resp_addr)
     }
 
     /// Responder Network
@@ -700,13 +656,6 @@ impl BlocklistDns {
         country_code(&self.inner.orig_country_code)
     }
 
-    /// Originator Customer
-    async fn orig_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.customer_map();
-        find_ip_customer(&map, self.inner.orig_addr)
-    }
-
     /// Originator Network
     async fn orig_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx)?;
@@ -731,13 +680,6 @@ impl BlocklistDns {
     /// `"XX"` if no country information was recorded for this event.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
-    }
-
-    /// Responder Customer
-    async fn resp_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.customer_map();
-        find_ip_customer(&map, self.inner.resp_addr)
     }
 
     /// Responder Network

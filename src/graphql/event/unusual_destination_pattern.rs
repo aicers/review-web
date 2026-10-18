@@ -2,10 +2,8 @@ use async_graphql::{Context, ID, Object, Result};
 use jiff::Timestamp;
 use review_database::event as database;
 
-use super::{ThreatLevel, TriageScore, country_codes, find_ip_customer, find_ip_network};
-use crate::graphql::{
-    customer::Customer, filter::LearningMethod, network::Network, triage::ThreatCategory,
-};
+use super::{ThreatLevel, TriageScore, country_codes, find_ip_network};
+use crate::graphql::{filter::LearningMethod, network::Network, triage::ThreatCategory};
 
 /// An event indicating an unusual pattern of connections to multiple
 /// responder IP addresses.
@@ -58,17 +56,6 @@ impl UnusualDestinationPattern {
     /// information was recorded for this event.
     async fn resp_countries(&self) -> Vec<&str> {
         country_codes(&self.inner.resp_country_codes)
-    }
-
-    /// Responder Customer List
-    async fn resp_customers(&self, ctx: &Context<'_>) -> Result<Vec<Option<Customer>>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.customer_map();
-        let mut customers = vec![];
-        for resp_addr in &self.inner.destination_ips {
-            customers.push(find_ip_customer(&map, *resp_addr)?);
-        }
-        Ok(customers)
     }
 
     /// Responder Network

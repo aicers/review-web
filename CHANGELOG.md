@@ -4,6 +4,35 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- The customer API: the `customerList` and `customer` queries, the
+  `insertCustomer`, `updateCustomer` and `removeCustomers` mutations, and the
+  `Customer`, `CustomerConnection`, `CustomerEdge`, `CustomerNetwork`,
+  `CustomerNetworkInput` and `CustomerUpdateInput` types. Customer networks
+  are managed with `customerNetworks`, `replaceCustomerNetworks` and
+  `removeCustomerNetworks`.
+- The `origCustomer`, `respCustomer`, `origCustomers` and `respCustomers`
+  fields of event types, and the `customers` field of `EventListFilterInput`
+  and `EventStandardFilterInput`.
+- The allow and block network GraphQL API: the `allowNetworkList` and
+  `blockNetworkList` queries, the `insertAllowNetwork`, `updateAllowNetwork`,
+  `removeAllowNetworks`, `insertBlockNetwork`, `updateBlockNetwork` and
+  `removeBlockNetworks` mutations, and the `AllowNetwork`,
+  `AllowNetworkConnection`, `AllowNetworkEdge`, `AllowNetworkInput`,
+  `BlockNetwork`, `BlockNetworkConnection`, `BlockNetworkEdge` and
+  `BlockNetworkInput` types. Allow and block lists can no longer be changed
+  through REview's GraphQL API, so review-web no longer sends them to Hogs;
+  `get_allow_networks` and `get_block_networks` still return the lists REview
+  holds.
+- The network tag API: the `networkTagList` query, the `insertNetworkTag`,
+  `removeNetworkTag` and `updateNetworkTag` mutations, the `networkTags` field
+  of `EventListFilterInput` and `EventStandardFilterInput`, the `tagIds`
+  argument of `insertNetwork`, and the `tagIds` fields of `NetworkUpdateInput`
+  and `Network`.
+
 ## [0.42.1] - 2026-10-18
 
 ### Added
@@ -2198,6 +2227,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.42.1...main
 [0.42.1]: https://github.com/aicers/review-web/compare/0.42.0...0.42.1
 [0.42.0]: https://github.com/aicers/review-web/compare/0.41.0...0.42.0
 [0.41.0]: https://github.com/aicers/review-web/compare/0.40.0...0.41.0

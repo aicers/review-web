@@ -8,15 +8,12 @@ use async_graphql::{
 };
 use chrono::{DateTime, Utc};
 use review_database::{self as database};
-use review_database::{Iterable, event::Direction};
 use tracing::info;
 
 use super::{
     Role, RoleGuard,
-    cluster::try_id_args_into_ints,
     customer::{HostNetworkGroup, HostNetworkGroupInput},
 };
-use crate::graphql::customer_access::{is_member, users_customers};
 use crate::graphql::query_with_constraints;
 use crate::info_with_username;
 
@@ -82,16 +79,15 @@ impl NetworkMutation {
         name: String,
         description: String,
         networks: HostNetworkGroupInput,
-        tag_ids: Vec<ID>,
     ) -> Result<ID> {
-        let tag_ids = id_args_into_uints(&tag_ids)?;
         let store = crate::graphql::get_store(ctx)?;
-        if !tag_ids.is_empty() {
-            check_tag_scope(ctx, &store, &tag_ids)?;
-        }
         let map = store.network_map();
-        let entry =
-            review_database::Network::new(name.clone(), description, networks.try_into()?, tag_ids);
+        let entry = review_database::Network::new(
+            name.clone(),
+            description,
+            networks.try_into()?,
+            Vec::new(),
+        );
         let id = map.insert(entry)?;
         info_with_username!(ctx, "Network {name} has been registered");
         Ok(ID(id.to_string()))
@@ -154,19 +150,17 @@ struct NetworkUpdateInput {
     name: Option<String>,
     description: Option<String>,
     networks: Option<HostNetworkGroupInput>,
-    tag_ids: Option<Vec<ID>>,
 }
 
 impl TryFrom<NetworkUpdateInput> for review_database::NetworkUpdate {
     type Error = async_graphql::Error;
 
     fn try_from(input: NetworkUpdateInput) -> Result<Self, Self::Error> {
-        let tag_ids = try_id_args_into_ints::<u32>(input.tag_ids)?;
         Ok(Self::new(
             input.name,
             input.description,
             input.networks.and_then(|v| v.try_into().ok()),
-            tag_ids,
+            None,
         ))
     }
 }
@@ -191,14 +185,6 @@ impl Network {
 
     async fn networks(&self) -> HostNetworkGroup<'_> {
         (&self.inner.networks).into()
-    }
-
-    async fn tag_ids(&self) -> Vec<ID> {
-        self.inner
-            .tag_ids()
-            .iter()
-            .map(|&id| ID(id.to_string()))
-            .collect()
     }
 
     async fn creation_time(&self) -> DateTime<Utc> {
@@ -245,40 +231,6 @@ async fn load(
     super::load_edges(&map, after, before, first, last, NetworkTotalCount)
 }
 
-/// Checks that every tag in `tag_ids` belongs to a customer the requester has
-/// access to. Admins (`users_customers == None`) bypass the check.
-fn check_tag_scope(
-    ctx: &Context<'_>,
-    store: &review_database::Store,
-    tag_ids: &[u32],
-) -> Result<()> {
-    let scope = users_customers(ctx)?;
-    let Some(scope) = scope else {
-        return Ok(()); // admin bypass
-    };
-
-    // Collect all tag IDs owned by customers in the requester's scope.
-    let mut accessible_tag_ids = std::collections::HashSet::new();
-    let customer_map = store.customer_map();
-    for customer in customer_map.iter(Direction::Forward, None) {
-        let customer = customer?;
-        if !is_member(Some(&scope), customer.id) {
-            continue;
-        }
-        let tags = store.network_tag_set(customer.id)?;
-        for tag in tags.tags() {
-            accessible_tag_ids.insert(tag.id);
-        }
-    }
-
-    for &tag_id in tag_ids {
-        if !accessible_tag_ids.contains(&tag_id) {
-            return Err("Forbidden".into());
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use crate::graphql::{Role, RoleGuard, TestSchema};
@@ -306,20 +258,18 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "desc", networks: {
                         hosts: ["1.1.1.1"], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
 
         let res = schema
-            .execute_as_system_admin(
-                r"{networkList{edges{node{name description tagIds}}totalCount}}",
-            )
+            .execute_as_system_admin(r"{networkList{edges{node{name description}}totalCount}}")
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{networkList: {edges: [{node: {name: "n1", description: "desc", tagIds: []}}], totalCount: "1"}}"#
+            r#"{networkList: {edges: [{node: {name: "n1", description: "desc"}}], totalCount: "1"}}"#
         );
     }
 
@@ -344,18 +294,18 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "desc", networks: {
                         hosts: ["1.1.1.1"], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
 
         let res = schema
-            .execute_as_system_admin(r#"{network(id: "0") {name description tagIds}}"#)
+            .execute_as_system_admin(r#"{network(id: "0") {name description}}"#)
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{network: {name: "n1", description: "desc", tagIds: []}}"#
+            r#"{network: {name: "n1", description: "desc"}}"#
         );
     }
 
@@ -387,7 +337,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "", networks: {
                         hosts: [], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
             )
             .await;
@@ -428,7 +378,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n0", description: "", networks: {
                         hosts: ["1.1.1.1"], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
             )
             .await;
@@ -446,7 +396,6 @@ mod tests {
                             networks: [],
                             ranges: []
                         }
-                        tagIds: []
                     },
                     new: {
                         name: "n0",
@@ -455,35 +404,12 @@ mod tests {
                             networks: [],
                             ranges: []
                         }
-                        tagIds: []
                     }
                 )
             }"#,
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{updateNetwork: "0"}"#);
-    }
-
-    #[tokio::test]
-    async fn select_networks() {
-        let schema = TestSchema::new().await;
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertNetwork(name: "n1", description: "", networks: {
-                        hosts: [], networks: [], ranges: []
-                    }, tagIds: [0, 1, 2])
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
-        let res = schema
-            .execute_as_system_admin(r"{networkList{edges{node{name tagIds}}totalCount}}")
-            .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{networkList: {edges: [{node: {name: "n1", tagIds: ["0", "1", "2"]}}], totalCount: "1"}}"#
-        );
     }
 
     async fn assert_forbidden(schema: &TestSchema, role: Role, query: &str) {
@@ -507,7 +433,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "d", networks: {
                         hosts: [], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
             )
             .await;
@@ -523,7 +449,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n0", description: "", networks: {
                         hosts: ["1.1.1.1"], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
             )
             .await;
@@ -535,10 +461,10 @@ mod tests {
                         id: "0",
                         old: { name: "n0", networks: {
                             hosts: ["1.1.1.1"], networks: [], ranges: []
-                        }, tagIds: [] },
+                        } },
                         new: { name: "n0-updated", networks: {
                             hosts: ["2.2.2.2"], networks: [], ranges: []
-                        }, tagIds: [] }
+                        } }
                     )
                 }"#,
             )
@@ -555,7 +481,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "", networks: {
                         hosts: [], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
             )
             .await;
@@ -577,7 +503,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "d", networks: {
                         hosts: [], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
                 RoleGuard::Role(Role::SecurityAdministrator),
             )
@@ -594,7 +520,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "d", networks: {
                         hosts: [], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
                 RoleGuard::Role(Role::SecurityManager),
             )
@@ -613,7 +539,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "d", networks: {
                         hosts: [], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
             )
             .await;
@@ -651,7 +577,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "d", networks: {
                         hosts: [], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
             )
             .await;
@@ -688,7 +614,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n0", description: "orig", networks: {
                         hosts: ["1.1.1.1"], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
             )
             .await;
@@ -698,10 +624,10 @@ mod tests {
                 id: "0",
                 old: { name: "n0", description: "orig", networks: {
                     hosts: ["1.1.1.1"], networks: [], ranges: []
-                }, tagIds: [] },
+                } },
                 new: { name: "hacked", description: "modified", networks: {
                     hosts: ["9.9.9.9"], networks: [], ranges: []
-                }, tagIds: [] }
+                } }
             )
         }"#;
 
@@ -734,7 +660,7 @@ mod tests {
                 r#"mutation {
                     insertNetwork(name: "n1", description: "", networks: {
                         hosts: [], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
             )
             .await;
@@ -760,43 +686,6 @@ mod tests {
         }
     }
 
-    // --- Preserve-current-behavior: insertNetwork with tagIds: [] ---
-
-    #[tokio::test]
-    async fn insert_network_with_empty_tag_ids_for_permitted_roles() {
-        let schema = TestSchema::new().await;
-
-        for (i, role) in [
-            Role::SystemAdministrator,
-            Role::SecurityAdministrator,
-            Role::SecurityManager,
-        ]
-        .iter()
-        .enumerate()
-        {
-            let name = format!("net{i}");
-            let query = format!(
-                r#"mutation {{
-                    insertNetwork(name: "{name}", description: "", networks: {{
-                        hosts: [], networks: [], ranges: []
-                    }}, tagIds: [])
-                }}"#
-            );
-            let res = schema
-                .execute_with_guard(&query, RoleGuard::Role(*role))
-                .await;
-            assert!(
-                res.errors.is_empty(),
-                "Role {role:?} should be allowed to insertNetwork with empty tagIds"
-            );
-        }
-
-        let res = schema
-            .execute_as_system_admin(r"{networkList{totalCount}}")
-            .await;
-        assert_eq!(res.data.to_string(), r#"{networkList: {totalCount: "3"}}"#);
-    }
-
     // --- SecurityMonitor cannot insertNetwork ---
 
     #[tokio::test]
@@ -808,165 +697,15 @@ mod tests {
             r#"mutation {
                 insertNetwork(name: "n1", description: "", networks: {
                     hosts: [], networks: [], ranges: []
-                }, tagIds: [])
+                })
             }"#,
         )
         .await;
     }
 
-    // --- Scoped insertNetwork: tag-based customer scope ---
-
     #[tokio::test]
-    async fn scoped_security_admin_can_insert_network_with_in_scope_tags() {
+    async fn scoped_users_can_insert_network() {
         let schema = TestSchema::new().await;
-
-        // Create customer 0 with a tag
-        schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
-            )
-            .await;
-        schema
-            .execute_as_system_admin(r#"mutation { insertNetworkTag(customerId: 0, name: "t0") }"#)
-            .await;
-
-        // Scoped SecurityAdministrator with access to customer 0
-        let res = schema
-            .execute_as_scoped_user(
-                r#"mutation {
-                    insertNetwork(name: "n1", description: "", networks: {
-                        hosts: [], networks: [], ranges: []
-                    }, tagIds: [0])
-                }"#,
-                Role::SecurityAdministrator,
-                Some(vec![0]),
-            )
-            .await;
-        assert!(
-            res.errors.is_empty(),
-            "Scoped SecurityAdministrator should insert network with in-scope tags: {:?}",
-            res.errors
-        );
-    }
-
-    #[tokio::test]
-    async fn scoped_security_manager_can_insert_network_with_in_scope_tags() {
-        let schema = TestSchema::new().await;
-
-        schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
-            )
-            .await;
-        schema
-            .execute_as_system_admin(r#"mutation { insertNetworkTag(customerId: 0, name: "t0") }"#)
-            .await;
-
-        let res = schema
-            .execute_as_scoped_user(
-                r#"mutation {
-                    insertNetwork(name: "n1", description: "", networks: {
-                        hosts: [], networks: [], ranges: []
-                    }, tagIds: [0])
-                }"#,
-                Role::SecurityManager,
-                Some(vec![0]),
-            )
-            .await;
-        assert!(
-            res.errors.is_empty(),
-            "Scoped SecurityManager should insert network with in-scope tags: {:?}",
-            res.errors
-        );
-    }
-
-    #[tokio::test]
-    async fn scoped_security_admin_cannot_insert_network_with_out_of_scope_tags() {
-        let schema = TestSchema::new().await;
-
-        // Create two customers with tags
-        schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
-            )
-            .await;
-        schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
-            )
-            .await;
-        schema
-            .execute_as_system_admin(r#"mutation { insertNetworkTag(customerId: 0, name: "t0") }"#)
-            .await;
-        schema
-            .execute_as_system_admin(r#"mutation { insertNetworkTag(customerId: 1, name: "t1") }"#)
-            .await;
-
-        // Scoped SecurityAdministrator with access to customer 0 only
-        let res = schema
-            .execute_as_scoped_user(
-                r#"mutation {
-                    insertNetwork(name: "n1", description: "", networks: {
-                        hosts: [], networks: [], ranges: []
-                    }, tagIds: [1])
-                }"#,
-                Role::SecurityAdministrator,
-                Some(vec![0]),
-            )
-            .await;
-        assert_ne!(res.errors, Vec::new());
-        assert_eq!(res.errors[0].message, "Forbidden");
-
-        // Verify no network was created
-        let res = schema
-            .execute_as_system_admin(r"{networkList{totalCount}}")
-            .await;
-        assert_eq!(res.data.to_string(), r#"{networkList: {totalCount: "0"}}"#);
-    }
-
-    #[tokio::test]
-    async fn scoped_security_manager_cannot_insert_network_with_out_of_scope_tags() {
-        let schema = TestSchema::new().await;
-
-        schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
-            )
-            .await;
-        schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c1", description: "", networks: []) }"#,
-            )
-            .await;
-        schema
-            .execute_as_system_admin(r#"mutation { insertNetworkTag(customerId: 1, name: "t1") }"#)
-            .await;
-
-        // Scoped SecurityManager with access to customer 0 only
-        let res = schema
-            .execute_as_scoped_user(
-                r#"mutation {
-                    insertNetwork(name: "n1", description: "", networks: {
-                        hosts: [], networks: [], ranges: []
-                    }, tagIds: [0])
-                }"#,
-                Role::SecurityManager,
-                Some(vec![0]),
-            )
-            .await;
-        assert_ne!(res.errors, Vec::new());
-        assert_eq!(res.errors[0].message, "Forbidden");
-    }
-
-    #[tokio::test]
-    async fn scoped_users_can_insert_network_with_empty_tag_ids() {
-        let schema = TestSchema::new().await;
-
-        schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
-            )
-            .await;
 
         for (i, role) in [Role::SecurityAdministrator, Role::SecurityManager]
             .iter()
@@ -977,7 +716,7 @@ mod tests {
                 r#"mutation {{
                     insertNetwork(name: "{name}", description: "", networks: {{
                         hosts: [], networks: [], ranges: []
-                    }}, tagIds: [])
+                    }})
                 }}"#
             );
             let res = schema
@@ -985,7 +724,7 @@ mod tests {
                 .await;
             assert!(
                 res.errors.is_empty(),
-                "Scoped {role:?} should insert network with empty tagIds: {:?}",
+                "Scoped {role:?} should insert network: {:?}",
                 res.errors
             );
         }
@@ -996,18 +735,12 @@ mod tests {
     #[tokio::test]
     async fn scoped_users_see_same_network_list_and_network_as_admin() {
         let schema = TestSchema::new().await;
-
-        schema
-            .execute_as_system_admin(
-                r#"mutation { insertCustomer(name: "c0", description: "", networks: []) }"#,
-            )
-            .await;
         schema
             .execute_as_system_admin(
                 r#"mutation {
                     insertNetwork(name: "n1", description: "d", networks: {
                         hosts: [], networks: [], ranges: []
-                    }, tagIds: [])
+                    })
                 }"#,
             )
             .await;

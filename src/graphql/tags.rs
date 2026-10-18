@@ -1,12 +1,9 @@
 mod event_tag;
-mod network_tag;
 mod workflow_tag;
 
 use async_graphql::{ComplexObject, ID, SimpleObject};
 pub(super) use event_tag::EventTagMutation;
 pub(super) use event_tag::EventTagQuery;
-pub(super) use network_tag::NetworkTagMutation;
-pub(super) use network_tag::NetworkTagQuery;
 pub(super) use workflow_tag::WorkflowTagMutation;
 pub(super) use workflow_tag::WorkflowTagQuery;
 

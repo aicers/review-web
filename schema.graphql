@@ -299,54 +299,6 @@ enum AgentStatus {
 	UNKNOWN
 }
 
-type AllowNetwork {
-	id: ID!
-	customerId: ID!
-	name: String!
-	description: String!
-	networks: HostNetworkGroup!
-}
-
-type AllowNetworkConnection {
-	"""
-	Information to aid in pagination.
-	"""
-	pageInfo: PageInfo!
-	"""
-	A list of edges.
-	"""
-	edges: [AllowNetworkEdge!]!
-	"""
-	A list of nodes.
-	"""
-	nodes: [AllowNetwork!]!
-	"""
-	The total number of edges.
-	"""
-	totalCount: StringNumber!
-}
-
-"""
-An edge in a connection.
-"""
-type AllowNetworkEdge {
-	"""
-	The item at the end of the edge
-	"""
-	node: AllowNetwork!
-	"""
-	A cursor for use in pagination
-	"""
-	cursor: String!
-}
-
-input AllowNetworkInput {
-	name: String
-	customerId: ID
-	networks: HostNetworkGroupInput
-	description: String
-}
-
 type ApplyAgentConfigOutput {
 	"""
 	One entry per agent or Giganto service for which a notify was attempted.
@@ -498,54 +450,6 @@ type BindAddrProposals {
 	proposals: [BindAddrProposal!]!
 }
 
-type BlockNetwork {
-	id: ID!
-	customerId: ID!
-	name: String!
-	description: String!
-	networks: HostNetworkGroup!
-}
-
-type BlockNetworkConnection {
-	"""
-	Information to aid in pagination.
-	"""
-	pageInfo: PageInfo!
-	"""
-	A list of edges.
-	"""
-	edges: [BlockNetworkEdge!]!
-	"""
-	A list of nodes.
-	"""
-	nodes: [BlockNetwork!]!
-	"""
-	The total number of edges.
-	"""
-	totalCount: StringNumber!
-}
-
-"""
-An edge in a connection.
-"""
-type BlockNetworkEdge {
-	"""
-	The item at the end of the edge
-	"""
-	node: BlockNetwork!
-	"""
-	A cursor for use in pagination
-	"""
-	cursor: String!
-}
-
-input BlockNetworkInput {
-	name: String
-	customerId: ID
-	networks: HostNetworkGroupInput
-	description: String
-}
-
 type BlocklistBootp implements Event {
 	"""
 	Opaque event identifier.
@@ -572,10 +476,6 @@ type BlocklistBootp implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -595,10 +495,6 @@ type BlocklistBootp implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -726,10 +622,6 @@ type BlocklistConn implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -749,10 +641,6 @@ type BlocklistConn implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -851,10 +739,6 @@ type BlocklistDceRpc implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -874,10 +758,6 @@ type BlocklistDceRpc implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -968,10 +848,6 @@ type BlocklistDhcp implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -991,10 +867,6 @@ type BlocklistDhcp implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -1153,10 +1025,6 @@ type BlocklistDns implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -1176,10 +1044,6 @@ type BlocklistDns implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -1310,10 +1174,6 @@ type BlocklistFtp implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -1333,10 +1193,6 @@ type BlocklistFtp implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -1431,10 +1287,6 @@ type BlocklistHttp implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -1454,10 +1306,6 @@ type BlocklistHttp implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -1624,10 +1472,6 @@ type BlocklistKerberos implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -1647,10 +1491,6 @@ type BlocklistKerberos implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -1769,10 +1609,6 @@ type BlocklistLdap implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -1792,10 +1628,6 @@ type BlocklistLdap implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -1906,10 +1738,6 @@ type BlocklistMalformedDns implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -1929,10 +1757,6 @@ type BlocklistMalformedDns implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -2063,10 +1887,6 @@ type BlocklistMqtt implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -2086,10 +1906,6 @@ type BlocklistMqtt implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -2196,10 +2012,6 @@ type BlocklistNfs implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -2219,10 +2031,6 @@ type BlocklistNfs implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -2313,10 +2121,6 @@ type BlocklistNtlm implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -2336,10 +2140,6 @@ type BlocklistNtlm implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -2442,10 +2242,6 @@ type BlocklistRadius implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -2465,10 +2261,6 @@ type BlocklistRadius implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -2599,10 +2391,6 @@ type BlocklistRdp implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -2622,10 +2410,6 @@ type BlocklistRdp implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -2712,10 +2496,6 @@ type BlocklistSmb implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -2735,10 +2515,6 @@ type BlocklistSmb implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -2865,10 +2641,6 @@ type BlocklistSmtp implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -2888,10 +2660,6 @@ type BlocklistSmtp implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -3002,10 +2770,6 @@ type BlocklistSsh implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -3025,10 +2789,6 @@ type BlocklistSsh implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -3163,10 +2923,6 @@ type BlocklistTls implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -3186,10 +2942,6 @@ type BlocklistTls implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -3745,10 +3497,6 @@ type CryptocurrencyMiningPool implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -3768,10 +3516,6 @@ type CryptocurrencyMiningPool implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -3888,94 +3632,6 @@ type CsvColumnExtraConfig {
 	columnTopN: [Boolean!]
 	column1: [Boolean!]
 	columnN: [Boolean!]
-}
-
-type Customer {
-	"""
-	The ID of the customer.
-	"""
-	id: ID!
-	"""
-	The name of the customer.
-	"""
-	name: String!
-	"""
-	The description of the customer.
-	"""
-	description: String!
-	"""
-	The networks this customer owns.
-	"""
-	networks: [CustomerNetwork!]!
-	"""
-	The time when this customer was created.
-	"""
-	creationTime: DateTime!
-}
-
-type CustomerConnection {
-	"""
-	Information to aid in pagination.
-	"""
-	pageInfo: PageInfo!
-	"""
-	A list of edges.
-	"""
-	edges: [CustomerEdge!]!
-	"""
-	A list of nodes.
-	"""
-	nodes: [Customer!]!
-	"""
-	The total number of edges.
-	"""
-	totalCount: StringNumber!
-}
-
-"""
-An edge in a connection.
-"""
-type CustomerEdge {
-	"""
-	The item at the end of the edge
-	"""
-	node: Customer!
-	"""
-	A cursor for use in pagination
-	"""
-	cursor: String!
-}
-
-type CustomerNetwork {
-	"""
-	The name of the network.
-	"""
-	name: String!
-	"""
-	The description of the network.
-	"""
-	description: String!
-	"""
-	The type of the network.
-	"""
-	networkType: NetworkType!
-	"""
-	The network group of the network.
-	"""
-	networkGroup: HostNetworkGroup!
-}
-
-input CustomerNetworkInput {
-	name: String!
-	description: String!
-	networkType: NetworkType!
-	networkGroup: HostNetworkGroupInput!
-}
-
-input CustomerUpdateInput {
-	name: String
-	description: String
-	networks: [CustomerNetworkInput!]
 }
 
 type DataSource {
@@ -4183,10 +3839,6 @@ type DnsCovertChannel implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -4210,10 +3862,6 @@ type DnsCovertChannel implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -4344,10 +3992,6 @@ type DomainGenerationAlgorithm implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -4367,10 +4011,6 @@ type DomainGenerationAlgorithm implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -4579,13 +4219,11 @@ type EventEdge {
 input EventListFilterInput {
 	start: DateTime
 	end: DateTime
-	customers: [ID!]
 	endpoints: [EndpointInput!]
 	directions: [FlowKind!]
 	source: String
 	destination: String
 	keywords: [String!]
-	networkTags: [ID!]
 	sensors: [ID!]
 	os: [ID!]
 	devices: [ID!]
@@ -4615,13 +4253,11 @@ separate `triage` argument as inline data.
 input EventStandardFilterInput {
 	start: DateTime
 	end: DateTime
-	customers: [ID!]
 	endpoints: [EndpointInput!]
 	directions: [FlowKind!]
 	source: String
 	destination: String
 	keywords: [String!]
-	networkTags: [ID!]
 	sensors: [ID!]
 	os: [ID!]
 	devices: [ID!]
@@ -4703,10 +4339,6 @@ type ExternalDdos implements Event {
 	"""
 	origCountries: [String!]!
 	"""
-	Originator Customer List
-	"""
-	origCustomers: [Customer]!
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -4722,10 +4354,6 @@ type ExternalDdos implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -5129,10 +4757,6 @@ type FtpBruteForce implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -5148,10 +4772,6 @@ type FtpBruteForce implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -5267,10 +4887,6 @@ type FtpPlainText implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -5290,10 +4906,6 @@ type FtpPlainText implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -5472,10 +5084,6 @@ type HttpThreat implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -5495,10 +5103,6 @@ type HttpThreat implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -5828,10 +5432,6 @@ type LdapBruteForce implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -5847,10 +5447,6 @@ type LdapBruteForce implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -5919,10 +5515,6 @@ type LdapPlainText implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -5942,10 +5534,6 @@ type LdapPlainText implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -6100,10 +5688,6 @@ type LockyRansomware implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -6123,10 +5707,6 @@ type LockyRansomware implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -6320,10 +5900,6 @@ type MultiHostPortScan implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -6340,10 +5916,6 @@ type MultiHostPortScan implements Event {
 	information was recorded for this event.
 	"""
 	respCountries: [String!]!
-	"""
-	Responder Customer List
-	"""
-	respCustomers: [Customer]!
 	"""
 	Responder Network
 	"""
@@ -6387,18 +5959,6 @@ A set of mutations defined in the schema.
 """
 type Mutation {
 	"""
-	Inserts a new blocked network, returning the ID of the new blocked network.
-	"""
-	insertBlockNetwork(customerId: ID!, name: String!, networks: HostNetworkGroupInput!, description: String!): ID!
-	"""
-	Removes blocked networks, returning the names of successfully removed networks.
-	"""
-	removeBlockNetworks(ids: [ID!]!): [String!]!
-	"""
-	Updates the given blocked network.
-	"""
-	updateBlockNetwork(id: ID!, old: BlockNetworkInput!, new: BlockNetworkInput!): ID!
-	"""
 	Adds a new category.
 	"""
 	addCategory(name: String!): ID!
@@ -6414,21 +5974,6 @@ type Mutation {
 	Updates the given cluster.
 	"""
 	updateCluster(model: ID!, id: ID!, category: ID, qualifier: ID, status: ID): ID!
-	"""
-	Inserts a new customer, returning the ID of the new customer.
-	"""
-	insertCustomer(name: String!, description: String!, networks: [CustomerNetworkInput!]!): ID!
-	"""
-	Removes customers, returning the customer names that no longer exist.
-	
-	Returns an error if any accounts or nodes still reference the customers to be removed.
-	On error, no customers will be removed.
-	"""
-	removeCustomers(ids: [ID!]!): [String!]!
-	"""
-	Updates the given customer.
-	"""
-	updateCustomer(id: ID!, old: CustomerUpdateInput!, new: CustomerUpdateInput!): ID!
 	"""
 	Inserts a new data source, returning the ID of the new data source.
 	"""
@@ -6537,7 +6082,7 @@ type Mutation {
 	"""
 	Inserts a new network, returning the ID of the network.
 	"""
-	insertNetwork(name: String!, description: String!, networks: HostNetworkGroupInput!, tagIds: [ID!]!): ID!
+	insertNetwork(name: String!, description: String!, networks: HostNetworkGroupInput!): ID!
 	"""
 	Removes networks, returning the networks names that no longer exist.
 	
@@ -6657,22 +6202,6 @@ type Mutation {
 	different or not found.
 	"""
 	updateEventTag(id: ID!, old: String!, new: String!): Boolean!
-	"""
-	Inserts a new network tag, returning the ID of the new tag.
-	"""
-	insertNetworkTag(customerId: ID!, name: String!): ID!
-	"""
-	Removes a network tag for the given ID, returning the name of the removed
-	tag.
-	"""
-	removeNetworkTag(customerId: ID!, id: ID!): String
-	"""
-	Updates the name of a network tag for the given ID.
-	
-	It returns `true` if the name was updated, `false` if the tag was
-	different or not found.
-	"""
-	updateNetworkTag(customerId: ID!, id: ID!, old: String!, new: String!): Boolean!
 	"""
 	Inserts a new workflow tag, returning the ID of the new tag.
 	"""
@@ -6832,18 +6361,6 @@ type Mutation {
 	"""
 	applyTrafficFilterRules(hostFqdns: [String!]!): [String!]!
 	"""
-	Inserts a new allowed network, returning the ID of the new allowed network.
-	"""
-	insertAllowNetwork(customerId: ID!, name: String!, networks: HostNetworkGroupInput!, description: String!): ID!
-	"""
-	Removes allowed networks, returning the names of successfully removed networks.
-	"""
-	removeAllowNetworks(ids: [ID!]!): [String!]!
-	"""
-	Updates the given allowed network.
-	"""
-	updateAllowNetwork(id: ID!, old: AllowNetworkInput!, new: AllowNetworkInput!): ID!
-	"""
 	Inserts a new trusted user agents, Returns true if the insertion was successful.
 	"""
 	insertTrustedUserAgents(userAgents: [String!]!): Boolean!
@@ -6871,7 +6388,6 @@ type Network {
 	name: String!
 	description: String!
 	networks: HostNetworkGroup!
-	tagIds: [ID!]!
 	creationTime: DateTime!
 }
 
@@ -6938,10 +6454,6 @@ type NetworkThreat implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -6961,10 +6473,6 @@ type NetworkThreat implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -7059,7 +6567,6 @@ input NetworkUpdateInput {
 	name: String
 	description: String
 	networks: HostNetworkGroupInput
-	tagIds: [ID!]
 }
 
 type Node {
@@ -7248,10 +6755,6 @@ type NonBrowser implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -7271,10 +6774,6 @@ type NonBrowser implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -7792,10 +7291,6 @@ type PortScan implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -7811,10 +7306,6 @@ type PortScan implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -7911,17 +7402,6 @@ A set of queries defined in the schema.
 """
 type Query {
 	"""
-	A list of blocked networks, optionally filtered by customer IDs.
-	
-	When `customerIds` is provided, results are filtered by the intersection
-	of requested customer IDs and the caller's accessible customer scope
-	(deduplicated and sorted for deterministic ordering and pagination).
-	If the intersection is empty, the request is denied.
-	When omitted, admins can access all customers, while scoped users can
-	access only their own customers.
-	"""
-	blockNetworkList(customerIds: [ID!], after: String, before: String, first: Int, last: Int): BlockNetworkConnection!
-	"""
 	A list of available alert categories.
 	"""
 	categories(after: String, before: String, first: Int, last: Int): CategoryConnection!
@@ -7940,14 +7420,6 @@ type Query {
 		"""
 		trendiOrder: Int,		start: DateTime,		end: DateTime
 	): TimeSeriesResult!
-	"""
-	A list of customers.
-	"""
-	customerList(after: String, before: String, first: Int, last: Int): CustomerConnection!
-	"""
-	A customer for the given ID.
-	"""
-	customer(id: ID!): Customer!
 	"""
 	A list of data sources.
 	"""
@@ -8182,10 +7654,6 @@ type Query {
 	"""
 	eventTagList: [Tag!]!
 	"""
-	A list of network tags.
-	"""
-	networkTagList(customerId: ID): [Tag!]!
-	"""
 	A list of workflow tags.
 	"""
 	workflowTagList: [Tag!]!
@@ -8311,17 +7779,6 @@ type Query {
 	traffic filtering rules of agents.
 	"""
 	trafficFilterList(hostFqdns: [String!]): [TrafficFilter!]
-	"""
-	A list of allowed networks, optionally filtered by customer IDs.
-	
-	When `customerIds` is provided, results are filtered by the intersection
-	of requested customer IDs and the caller's accessible customer scope
-	(deduplicated and sorted for deterministic ordering and pagination).
-	If the intersection is empty, the request is denied.
-	When omitted, admins can access all customers, while scoped users can
-	access only their own customers.
-	"""
-	allowNetworkList(customerIds: [ID!], after: String, before: String, first: Int, last: Int): AllowNetworkConnection!
 	"""
 	A list of trusted user agent list.
 	"""
@@ -8474,10 +7931,6 @@ type RdpBruteForce implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -8494,10 +7947,6 @@ type RdpBruteForce implements Event {
 	information was recorded for this event.
 	"""
 	respCountries: [String!]!
-	"""
-	Responder Customer List
-	"""
-	respCustomers: [Customer]!
 	"""
 	Protocol Number
 	"""
@@ -8590,10 +8039,6 @@ type RepeatedHttpSessions implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -8625,10 +8070,6 @@ type RepeatedHttpSessions implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -9089,10 +8530,6 @@ type SuspiciousTlsTraffic implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -9112,10 +8549,6 @@ type SuspiciousTlsTraffic implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -9399,10 +8832,6 @@ type TorConnection implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -9422,10 +8851,6 @@ type TorConnection implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -9592,10 +9017,6 @@ type TorConnectionConn implements Event {
 	"""
 	origCountry: String!
 	"""
-	Originator Customer
-	"""
-	origCustomer: Customer
-	"""
 	Originator Network
 	"""
 	origNetwork: Network
@@ -9615,10 +9036,6 @@ type TorConnectionConn implements Event {
 	`"XX"` if no country information was recorded for this event.
 	"""
 	respCountry: String!
-	"""
-	Responder Customer
-	"""
-	respCustomer: Customer
 	"""
 	Responder Network
 	"""
@@ -9970,10 +9387,6 @@ type UnusualDestinationPattern implements Event {
 	information was recorded for this event.
 	"""
 	respCountries: [String!]!
-	"""
-	Responder Customer List
-	"""
-	respCustomers: [Customer]!
 	"""
 	Responder Network
 	"""
