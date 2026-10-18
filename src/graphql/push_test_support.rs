@@ -81,15 +81,34 @@ fn record(
 /// blocklist push, and reaches no agent otherwise.
 pub(super) struct RecordingAgentManager {
     pushes: Pushes,
+    /// Whether every push fails after it is recorded.
+    failing: bool,
 }
 
 impl RecordingAgentManager {
     pub(super) fn boxed() -> (BoxedAgentManager, Pushes) {
+        Self::boxed_with(false)
+    }
+
+    fn boxed_with(failing: bool) -> (BoxedAgentManager, Pushes) {
         let pushes = Pushes::default();
         let manager = Self {
             pushes: pushes.clone(),
+            failing,
         };
         (Box::new(manager), pushes)
+    }
+
+    fn record(
+        &self,
+        pushes: &Mutex<Vec<Push>>,
+        networks: &[NetworksTargetAgentLookupKeysPair],
+    ) -> Result<Vec<String>, anyhow::Error> {
+        let sent = record(pushes, networks);
+        if self.failing {
+            anyhow::bail!("{} agents are unreachable", sent.len());
+        }
+        Ok(sent)
     }
 }
 
@@ -99,21 +118,21 @@ impl AgentManager for RecordingAgentManager {
         &self,
         networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
-        Ok(record(&self.pushes.internal, networks))
+        self.record(&self.pushes.internal, networks)
     }
 
     async fn send_agent_specific_allow_networks(
         &self,
         networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
-        Ok(record(&self.pushes.allow, networks))
+        self.record(&self.pushes.allow, networks)
     }
 
     async fn send_agent_specific_block_networks(
         &self,
         networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
-        Ok(record(&self.pushes.block, networks))
+        self.record(&self.pushes.block, networks)
     }
 
     async fn online_apps_by_host_id(
@@ -162,7 +181,16 @@ impl AgentManager for RecordingAgentManager {
 
 /// Returns a schema whose agent manager records every push.
 pub(super) async fn recording_schema() -> (TestSchema, Pushes) {
-    let (agent_manager, pushes) = RecordingAgentManager::boxed();
+    schema_with(false).await
+}
+
+/// Returns a schema whose agent manager records every push and then fails it.
+pub(super) async fn failing_schema() -> (TestSchema, Pushes) {
+    schema_with(true).await
+}
+
+async fn schema_with(failing: bool) -> (TestSchema, Pushes) {
+    let (agent_manager, pushes) = RecordingAgentManager::boxed_with(failing);
     let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
     (schema, pushes)
 }

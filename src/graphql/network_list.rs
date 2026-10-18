@@ -363,7 +363,7 @@ mod tests {
     use super::{get_allow_networks, get_block_networks};
     use crate::graphql::{
         Role, TestSchema,
-        push_test_support::{Push, group, insert_node, recording_schema},
+        push_test_support::{Push, failing_schema, group, insert_node, recording_schema},
     };
 
     fn replace(customer_id: &str, revision: &str, allowlist: &str, blocklist: &str) -> String {
@@ -885,6 +885,29 @@ mod tests {
         assert_eq!(data(res), json!({ "removeNetworkLists": true }));
         assert_eq!(pushes.allow(), Vec::<Push>::new());
         assert_eq!(pushes.block(), Vec::<Push>::new());
+    }
+
+    #[tokio::test]
+    async fn failed_push_does_not_fail_the_mutation() {
+        let (schema, pushes) = failing_schema().await;
+        insert_node(&schema, 7, "n7.example.com");
+
+        let res = schema
+            .execute_as_system_admin(&replace(
+                "7",
+                "1",
+                &entry("office", OFFICE),
+                &entry("scanner", SCANNER),
+            ))
+            .await;
+        assert_eq!(data(res), json!({ "replaceNetworkLists": "1" }));
+        let stored = schema.store().network_lists_map().get(7).unwrap();
+        assert_eq!(stored.map(|set| set.revision), Some(1));
+
+        let res = schema.execute_as_system_admin(&remove("7")).await;
+        assert_eq!(data(res), json!({ "removeNetworkLists": true }));
+        assert!(schema.store().network_lists_map().get(7).unwrap().is_none());
+        assert_eq!((pushes.allow().len(), pushes.block().len()), (2, 2));
     }
 
     /// Returns what `get_allow_networks` and `get_block_networks` return for
