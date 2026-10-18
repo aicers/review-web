@@ -4,6 +4,29 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- The `networkLists` query and the `replaceNetworkLists` and
+  `removeNetworkLists` mutations, which replace a customer's whole allowlist
+  and blocklist at a revision. A revision lower than the stored one is refused
+  with `STALE_REVISION`, and a change is pushed to the customer's
+  semi-supervised agents.
+
+### Changed
+
+- `get_allow_networks` and `get_block_networks` return the customer's lists
+  from the network lists table again (0.43.0 returned empty groups), so
+  semi-supervised agents and REconverge receive what `replaceNetworkLists`
+  stored.
+- A node whose customer changes now also receives the new customer's allowlist
+  and blocklist.
+- Bumped `review-database` dependency to 0.53.0. Its store format moves to
+  0.53.0, so a store written by 0.52 must be migrated through
+  `review-database` before this version serves it; the migration adds the
+  empty network lists table and changes nothing else.
+
 ## [0.43.0] - 2026-10-18
 
 ### Changed
@@ -2269,6 +2292,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.43.0...main
 [0.43.0]: https://github.com/aicers/review-web/compare/0.42.1...0.43.0
 [0.42.1]: https://github.com/aicers/review-web/compare/0.42.0...0.42.1
 [0.42.0]: https://github.com/aicers/review-web/compare/0.41.0...0.42.0

@@ -11,8 +11,11 @@ use super::{
     Node, NodeControlMutation, SEMI_SUPERVISED_AGENT, gen_agent_lookup_key,
 };
 use crate::graphql::{
-    customer::{NetworksTargetAgentLookupKeysPair, send_agent_specific_customer_networks},
-    get_customer_networks,
+    customer::{
+        NetworksTargetAgentLookupKeysPair, send_agent_specific_allow_networks,
+        send_agent_specific_block_networks, send_agent_specific_customer_networks,
+    },
+    get_allow_networks, get_block_networks, get_customer_networks,
     node::input::NodeInput,
 };
 use crate::{error_with_username, info_with_username, warn_with_username};
@@ -601,13 +604,30 @@ async fn send_customer_change(
     customer_id: u32,
     agent_lookup_keys: Vec<String>,
 ) -> Result<()> {
-    let network_list = {
+    // hog pulls its allowlist and blocklist only when it connects, so a node
+    // that changes customers is sent the new customer's lists, even empty ones.
+    let (network_list, allow_list, block_list) = {
         let store = crate::graphql::get_store(ctx)?;
         let networks = get_customer_networks(&store, customer_id)?;
-        NetworksTargetAgentLookupKeysPair::new(networks, agent_lookup_keys, SEMI_SUPERVISED_AGENT)
+        let allow_networks = get_allow_networks(&store, customer_id)?;
+        let block_networks = get_block_networks(&store, customer_id)?;
+        let pair = |networks| {
+            NetworksTargetAgentLookupKeysPair::new(
+                networks,
+                agent_lookup_keys.clone(),
+                SEMI_SUPERVISED_AGENT,
+            )
+        };
+        (pair(networks), pair(allow_networks), pair(block_networks))
     };
     if let Err(e) = send_agent_specific_customer_networks(ctx, &[network_list]).await {
         error_with_username!(ctx, "Failed to broadcast internal networks: {e:?}");
+    }
+    if let Err(e) = send_agent_specific_allow_networks(ctx, &[allow_list]).await {
+        error_with_username!(ctx, "Failed to broadcast allowlist: {e:?}");
+    }
+    if let Err(e) = send_agent_specific_block_networks(ctx, &[block_list]).await {
+        error_with_username!(ctx, "Failed to broadcast blocklist: {e:?}");
     }
 
     Ok(())
@@ -634,7 +654,9 @@ mod tests {
     };
     use crate::graphql::{
         AgentManager, BoxedAgentManager, Role, SamplingPolicy, TestSchema,
-        customer::NetworksTargetAgentLookupKeysPair, gen_agent_lookup_key,
+        customer::NetworksTargetAgentLookupKeysPair,
+        gen_agent_lookup_key,
+        push_test_support::{RecordingAgentManager as PushRecordingAgentManager, group},
     };
 
     fn test_agent_lookup_key(agent_key: &str, hostname: &str) -> String {
@@ -3769,90 +3791,134 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)] // two nodes and the three pushes each receives
     async fn test_apply_node_draft_customer_change() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
-            online_apps_by_host_id: HashMap::new(),
-            available_agents: vec![],
-        });
+        let (agent_manager, pushes) = PushRecordingAgentManager::boxed();
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
-        // Seed a node whose profile (customer 0) differs from its profile_draft (customer 1) so
-        // that applyNodeDraft promotes a customer_id change and broadcasts customer networks.
-        let id = {
-            let store = schema.store();
+        // Customer 1 has an allowlist and a blocklist; customer 2 has none.
+        let allowlist = group(&[], &["10.0.0.0/8"], &[]);
+        let blocklist = group(&["192.0.2.1"], &[], &[]);
+        schema
+            .store()
+            .network_lists_map()
+            .replace(
+                1,
+                1,
+                vec![review_database::NetworkListEntry {
+                    name: "office".to_string(),
+                    group: allowlist.clone(),
+                }],
+                vec![review_database::NetworkListEntry {
+                    name: "scanner".to_string(),
+                    group: blocklist.clone(),
+                }],
+            )
+            .unwrap();
+
+        // Seed nodes whose profile (customer 0) differs from their profile_draft (customers 1
+        // and 2) so that applyNodeDraft promotes a customer_id change and broadcasts the new
+        // customer's networks, allowlist and blocklist.
+        for (name, hostname, customer_id) in [("node-a", "host-a", 1), ("node-b", "host-b", 2)] {
             let node = review_database::Node {
                 id: u32::MAX,
-                name: "node-a".to_string(),
-                name_draft: Some("node-a".to_string()),
+                name: name.to_string(),
+                name_draft: Some(name.to_string()),
                 profile: Some(review_database::NodeProfile {
                     customer_id: 0,
                     description: "desc".to_string(),
-                    hostname: "host-a".to_string(),
+                    hostname: hostname.to_string(),
                 }),
                 profile_draft: Some(review_database::NodeProfile {
-                    customer_id: 1,
+                    customer_id,
                     description: "desc".to_string(),
-                    hostname: "host-a".to_string(),
+                    hostname: hostname.to_string(),
                 }),
                 agents: vec![make_agent(
-                    "hog",
+                    "001.hog",
                     review_database::AgentKind::SemiSupervised,
                     Some("test = 'toml'"),
                 )],
                 external_services: vec![],
                 creation_time: chrono::Utc::now(),
             };
-            store.node_map().put(&node).expect("insert node")
-        };
-        assert_eq!(id, 0);
+            schema.store().node_map().put(&node).expect("insert node");
+        }
 
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    applyNodeDraft(
-                        id: "0"
-                        node: {
-                            name: "node-a",
-                            nameDraft: "node-a",
-                            profile: {
-                                customerId: "0",
-                                description: "desc",
-                                hostname: "host-a"
-                            },
-                            profileDraft: {
-                                customerId: "1",
-                                description: "desc",
-                                hostname: "host-a"
-                            },
-                            agents: [{
-                                key: "hog",
-                                kind: SEMI_SUPERVISED,
-                                status: ENABLED,
-                                config: "test = 'toml'",
-                                draft: "test = 'toml'"
-                            }],
-                            externalServices: []
-                        }
-                    ) {
-                        id
-                        profile { customerId }
+        for (id, name, hostname, customer_id) in [
+            ("0", "node-a", "host-a", "1"),
+            ("1", "node-b", "host-b", "2"),
+        ] {
+            let res = schema
+                .execute_as_system_admin(&format!(
+                    r#"mutation {{
+                        applyNodeDraft(
+                            id: "{id}"
+                            node: {{
+                                name: "{name}",
+                                nameDraft: "{name}",
+                                profile: {{
+                                    customerId: "0",
+                                    description: "desc",
+                                    hostname: "{hostname}"
+                                }},
+                                profileDraft: {{
+                                    customerId: "{customer_id}",
+                                    description: "desc",
+                                    hostname: "{hostname}"
+                                }},
+                                agents: [{{
+                                    key: "001.hog",
+                                    kind: SEMI_SUPERVISED,
+                                    status: ENABLED,
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                }}],
+                                externalServices: []
+                            }}
+                        ) {{
+                            id
+                            profile {{ customerId }}
+                        }}
+                    }}"#
+                ))
+                .await;
+            assert!(
+                res.errors.is_empty(),
+                "Expected no errors: {:?}",
+                res.errors
+            );
+            assert_json_eq!(
+                res.data.into_json().unwrap(),
+                json!({
+                    "applyNodeDraft": {
+                        "id": id,
+                        "profile": { "customerId": customer_id }
                     }
-                }"#,
-            )
-            .await;
-        assert!(
-            res.errors.is_empty(),
-            "Expected no errors: {:?}",
-            res.errors
+                })
+            );
+        }
+
+        let host_a = vec!["001.hog.host-a".to_string()];
+        let host_b = vec!["001.hog.host-b".to_string()];
+        let empty = review_database::HostNetworkGroup::default();
+        assert_eq!(
+            pushes.internal(),
+            vec![
+                vec![(host_a.clone(), empty.clone())],
+                vec![(host_b.clone(), empty.clone())],
+            ]
         );
-        assert_json_eq!(
-            res.data.into_json().unwrap(),
-            json!({
-                "applyNodeDraft": {
-                    "id": "0",
-                    "profile": { "customerId": "1" }
-                }
-            })
+        assert_eq!(
+            pushes.allow(),
+            vec![
+                vec![(host_a.clone(), allowlist)],
+                vec![(host_b.clone(), empty.clone())],
+            ]
+        );
+        assert_eq!(
+            pushes.block(),
+            vec![vec![(host_a, blocklist)], vec![(host_b, empty)]]
         );
     }
 

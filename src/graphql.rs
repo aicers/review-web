@@ -3,8 +3,6 @@
 // Remove `unused_async_trait_impl` after async-graphql issue #1832 is fixed and released.
 #![allow(clippy::unused_async, clippy::unused_async_trait_impl)]
 
-mod allow_network;
-mod block_network;
 mod category;
 mod cert;
 mod cluster;
@@ -22,9 +20,12 @@ mod ip_location;
 pub(crate) mod label_db;
 mod model;
 pub(crate) mod network;
+mod network_list;
 mod node;
 mod operation_attempt;
 mod outlier;
+#[cfg(test)]
+mod push_test_support;
 mod qualifier;
 mod sampling;
 mod slicing;
@@ -71,10 +72,9 @@ use tokio::sync::Notify;
 use tracing::warn;
 use vinum::signal;
 
-pub use self::allow_network::get_allow_networks;
-pub use self::block_network::get_block_networks;
 pub use self::cert::ParsedCertificate;
 pub use self::customer::{NetworksTargetAgentLookupKeysPair, get_customer_networks};
+pub use self::network_list::{get_allow_networks, get_block_networks};
 pub use self::node::{
     agent_lookup_key_service_token, agent_lookup_keys_by_customer_id, gen_agent_lookup_key,
 };
@@ -159,6 +159,7 @@ struct SubQueryOneA(
 #[derive(MergedObject, Default)]
 struct SubQueryOneB(
     customer_network::CustomerNetworkQuery,
+    network_list::NetworkListQuery,
     indicator::IndicatorQuery,
     ip_location::IpLocationQuery,
     model::ModelQuery,
@@ -214,6 +215,7 @@ struct SubMutationOneA(
 #[derive(MergedObject, Default)]
 struct SubMutationOneB(
     customer_network::CustomerNetworkMutation,
+    network_list::NetworkListMutation,
     indicator::IndicatorMutation,
     model::ModelMutation,
     network::NetworkMutation,
