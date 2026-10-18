@@ -11,8 +11,12 @@ use super::{
     Node, NodeControlMutation, SEMI_SUPERVISED_AGENT, gen_agent_lookup_key,
 };
 use crate::graphql::{
-    customer::{NetworksTargetAgentLookupKeysPair, send_agent_specific_customer_networks},
-    get_customer_networks,
+    customer::{
+        NetworksTargetAgentLookupKeysPair, send_agent_specific_allow_networks,
+        send_agent_specific_block_networks, send_agent_specific_customer_networks,
+    },
+    get_allow_networks, get_block_networks, get_customer_networks,
+    network_list::lock_network_lists,
     node::input::NodeInput,
 };
 use crate::{error_with_username, info_with_username, warn_with_username};
@@ -576,7 +580,7 @@ async fn send_customer_change_if_needed(ctx: &Context<'_>, i: u32, node: &NodeIn
             );
             return;
         };
-        if let Err(e) = send_customer_change(ctx, customer_id, agent_lookup_keys).await {
+        if let Err(e) = send_customer_change(ctx, i, customer_id, agent_lookup_keys).await {
             error_with_username!(
                 ctx,
                 "Failed to broadcast customer change for customer ID {customer_id} on node {i}. The failure did not affect the node application operation. Error: {e:?}",
@@ -598,16 +602,64 @@ fn customer_id_to_send(node: &NodeInput) -> Option<&str> {
 
 async fn send_customer_change(
     ctx: &Context<'_>,
+    node_id: u32,
     customer_id: u32,
     agent_lookup_keys: Vec<String>,
 ) -> Result<()> {
+    let pair = |networks| {
+        NetworksTargetAgentLookupKeysPair::new(
+            networks,
+            agent_lookup_keys.clone(),
+            SEMI_SUPERVISED_AGENT,
+        )
+    };
     let network_list = {
         let store = crate::graphql::get_store(ctx)?;
-        let networks = get_customer_networks(&store, customer_id)?;
-        NetworksTargetAgentLookupKeysPair::new(networks, agent_lookup_keys, SEMI_SUPERVISED_AGENT)
+        pair(get_customer_networks(&store, customer_id)?)
     };
     if let Err(e) = send_agent_specific_customer_networks(ctx, &[network_list]).await {
         error_with_username!(ctx, "Failed to broadcast internal networks: {e:?}");
+    }
+
+    // hog pulls its allowlist and blocklist only when it connects, so a node
+    // that changes customers is sent the new customer's lists, even empty ones.
+    // They are read and sent under the network lists lock, so that they reach
+    // the node after any push read before this move was stored, whichever
+    // customer it was read for, and in order with the new customer's replaces.
+    let _lock = lock_network_lists(ctx).await?;
+    let lists = {
+        let store = crate::graphql::get_store(ctx)?;
+        // A later move of the node away from this customer is stored before
+        // it takes the lock and sends its own customer's lists. If it has been
+        // stored by now, sending this customer's lists could overtake those
+        // and leave the node with them; otherwise it waits for these to be
+        // sent.
+        let stored_customer_id = store
+            .node_map()
+            .get_by_id(node_id)?
+            .and_then(|(node, _, _)| node.profile)
+            .map(|profile| profile.customer_id);
+        if stored_customer_id == Some(customer_id) {
+            Some((
+                pair(get_allow_networks(&store, customer_id)?),
+                pair(get_block_networks(&store, customer_id)?),
+            ))
+        } else {
+            None
+        }
+    };
+    let Some((allow_list, block_list)) = lists else {
+        info_with_username!(
+            ctx,
+            "Node {node_id} no longer belongs to customer {customer_id}; its allowlist and blocklist are left to the later change"
+        );
+        return Ok(());
+    };
+    if let Err(e) = send_agent_specific_allow_networks(ctx, &[allow_list]).await {
+        error_with_username!(ctx, "Failed to broadcast allowlist: {e:?}");
+    }
+    if let Err(e) = send_agent_specific_block_networks(ctx, &[block_list]).await {
+        error_with_username!(ctx, "Failed to broadcast blocklist: {e:?}");
     }
 
     Ok(())
@@ -618,7 +670,10 @@ async fn send_customer_change(
 mod tests {
     use std::{
         collections::HashMap,
-        sync::{Arc, Mutex},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
         time::Duration,
     };
 
@@ -634,7 +689,12 @@ mod tests {
     };
     use crate::graphql::{
         AgentManager, BoxedAgentManager, Role, SamplingPolicy, TestSchema,
-        customer::NetworksTargetAgentLookupKeysPair, gen_agent_lookup_key,
+        customer::NetworksTargetAgentLookupKeysPair,
+        gen_agent_lookup_key,
+        push_test_support::{
+            Push, PushKind, RecordingAgentManager as PushRecordingAgentManager, group,
+            paused_schema,
+        },
     };
 
     fn test_agent_lookup_key(agent_key: &str, hostname: &str) -> String {
@@ -3769,91 +3829,584 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)] // two nodes and the three pushes each receives
     async fn test_apply_node_draft_customer_change() {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
-            online_apps_by_host_id: HashMap::new(),
-            available_agents: vec![],
-        });
+        let (agent_manager, pushes) = PushRecordingAgentManager::boxed();
         let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
 
-        // Seed a node whose profile (customer 0) differs from its profile_draft (customer 1) so
-        // that applyNodeDraft promotes a customer_id change and broadcasts customer networks.
-        let id = {
-            let store = schema.store();
+        // Customer 1 has an allowlist and a blocklist; customer 2 has none.
+        let allowlist = group(&[], &["10.0.0.0/8"], &[]);
+        let blocklist = group(&["192.0.2.1"], &[], &[]);
+        schema
+            .store()
+            .network_lists_map()
+            .replace(
+                1,
+                1,
+                vec![review_database::NetworkListEntry {
+                    name: "office".to_string(),
+                    group: allowlist.clone(),
+                }],
+                vec![review_database::NetworkListEntry {
+                    name: "scanner".to_string(),
+                    group: blocklist.clone(),
+                }],
+            )
+            .unwrap();
+
+        // Seed nodes whose profile (customer 0) differs from their profile_draft (customers 1
+        // and 2) so that applyNodeDraft promotes a customer_id change and broadcasts the new
+        // customer's networks, allowlist and blocklist.
+        for (name, hostname, customer_id) in [("node-a", "host-a", 1), ("node-b", "host-b", 2)] {
             let node = review_database::Node {
                 id: u32::MAX,
-                name: "node-a".to_string(),
-                name_draft: Some("node-a".to_string()),
+                name: name.to_string(),
+                name_draft: Some(name.to_string()),
                 profile: Some(review_database::NodeProfile {
                     customer_id: 0,
                     description: "desc".to_string(),
-                    hostname: "host-a".to_string(),
+                    hostname: hostname.to_string(),
                 }),
                 profile_draft: Some(review_database::NodeProfile {
-                    customer_id: 1,
+                    customer_id,
                     description: "desc".to_string(),
-                    hostname: "host-a".to_string(),
+                    hostname: hostname.to_string(),
                 }),
                 agents: vec![make_agent(
-                    "hog",
+                    "001.hog",
                     review_database::AgentKind::SemiSupervised,
                     Some("test = 'toml'"),
                 )],
                 external_services: vec![],
                 creation_time: chrono::Utc::now(),
             };
-            store.node_map().put(&node).expect("insert node")
-        };
-        assert_eq!(id, 0);
+            schema.store().node_map().put(&node).expect("insert node");
+        }
 
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    applyNodeDraft(
-                        id: "0"
-                        node: {
-                            name: "node-a",
-                            nameDraft: "node-a",
-                            profile: {
-                                customerId: "0",
-                                description: "desc",
-                                hostname: "host-a"
-                            },
-                            profileDraft: {
-                                customerId: "1",
-                                description: "desc",
-                                hostname: "host-a"
-                            },
-                            agents: [{
-                                key: "hog",
-                                kind: SEMI_SUPERVISED,
-                                status: ENABLED,
-                                config: "test = 'toml'",
-                                draft: "test = 'toml'"
-                            }],
-                            externalServices: []
-                        }
-                    ) {
-                        id
-                        profile { customerId }
+        for (id, name, hostname, customer_id) in [
+            ("0", "node-a", "host-a", "1"),
+            ("1", "node-b", "host-b", "2"),
+        ] {
+            let res = schema
+                .execute_as_system_admin(&format!(
+                    r#"mutation {{
+                        applyNodeDraft(
+                            id: "{id}"
+                            node: {{
+                                name: "{name}",
+                                nameDraft: "{name}",
+                                profile: {{
+                                    customerId: "0",
+                                    description: "desc",
+                                    hostname: "{hostname}"
+                                }},
+                                profileDraft: {{
+                                    customerId: "{customer_id}",
+                                    description: "desc",
+                                    hostname: "{hostname}"
+                                }},
+                                agents: [{{
+                                    key: "001.hog",
+                                    kind: SEMI_SUPERVISED,
+                                    status: ENABLED,
+                                    config: "test = 'toml'",
+                                    draft: "test = 'toml'"
+                                }}],
+                                externalServices: []
+                            }}
+                        ) {{
+                            id
+                            profile {{ customerId }}
+                        }}
+                    }}"#
+                ))
+                .await;
+            assert!(
+                res.errors.is_empty(),
+                "Expected no errors: {:?}",
+                res.errors
+            );
+            assert_json_eq!(
+                res.data.into_json().unwrap(),
+                json!({
+                    "applyNodeDraft": {
+                        "id": id,
+                        "profile": { "customerId": customer_id }
                     }
-                }"#,
+                })
+            );
+        }
+
+        let host_a = vec!["001.hog.host-a".to_string()];
+        let host_b = vec!["001.hog.host-b".to_string()];
+        let empty = review_database::HostNetworkGroup::default();
+        assert_eq!(
+            pushes.internal(),
+            vec![
+                vec![(host_a.clone(), empty.clone())],
+                vec![(host_b.clone(), empty.clone())],
+            ]
+        );
+        assert_eq!(
+            pushes.allow(),
+            vec![
+                vec![(host_a.clone(), allowlist)],
+                vec![(host_b.clone(), empty.clone())],
+            ]
+        );
+        assert_eq!(
+            pushes.block(),
+            vec![vec![(host_a, blocklist)], vec![(host_b, empty)]]
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn customer_change_waits_for_lists_pushed_as_the_previous_customer() {
+        const PREVIOUS: u32 = 4343;
+        const NEXT: u32 = 4344;
+        let (schema, pushes, pause) = paused_schema(PushKind::Allow).await;
+        let next_allowlist = group(&["198.51.100.1"], &[], &[]);
+        let next_blocklist = group(&[], &["172.16.0.0/12"], &[]);
+        schema
+            .store()
+            .network_lists_map()
+            .replace(
+                NEXT,
+                1,
+                vec![review_database::NetworkListEntry {
+                    name: "partner".to_string(),
+                    group: next_allowlist.clone(),
+                }],
+                vec![review_database::NetworkListEntry {
+                    name: "botnet".to_string(),
+                    group: next_blocklist.clone(),
+                }],
             )
-            .await;
+            .unwrap();
+        let profile = |customer_id| review_database::NodeProfile {
+            customer_id,
+            description: "desc".to_string(),
+            hostname: "host-a".to_string(),
+        };
+        let node = review_database::Node {
+            id: u32::MAX,
+            name: "node-a".to_string(),
+            name_draft: Some("node-a".to_string()),
+            profile: Some(profile(PREVIOUS)),
+            profile_draft: Some(profile(NEXT)),
+            agents: vec![make_agent(
+                "001.hog",
+                review_database::AgentKind::SemiSupervised,
+                Some("test = 'toml'"),
+            )],
+            external_services: vec![],
+            creation_time: chrono::Utc::now(),
+        };
+        schema.store().node_map().put(&node).expect("insert node");
+
+        let replace = format!(
+            r#"mutation {{ replaceNetworkLists(customerId: "{PREVIOUS}", revision: "1",
+                allowlist: [{{ name: "office", networkGroup: {{ hosts: [], networks: ["10.0.0.0/8"], ranges: [] }} }}],
+                blocklist: [{{ name: "scanner", networkGroup: {{ hosts: ["192.0.2.1"], networks: [], ranges: [] }} }}]) }}"#
+        );
+        let apply = format!(
+            r#"mutation {{
+                applyNodeDraft(
+                    id: "0"
+                    node: {{
+                        name: "node-a",
+                        nameDraft: "node-a",
+                        profile: {{ customerId: "{PREVIOUS}", description: "desc", hostname: "host-a" }},
+                        profileDraft: {{ customerId: "{NEXT}", description: "desc", hostname: "host-a" }},
+                        agents: [{{
+                            key: "001.hog",
+                            kind: SEMI_SUPERVISED,
+                            status: ENABLED,
+                            config: "test = 'toml'",
+                            draft: "test = 'toml'"
+                        }}],
+                        externalServices: []
+                    }}
+                ) {{ profile {{ customerId }} }}
+            }}"#
+        );
+        let target = vec!["001.hog.host-a".to_string()];
+        let previous_allowlist = group(&[], &["10.0.0.0/8"], &[]);
+        let previous_blocklist = group(&["192.0.2.1"], &[], &[]);
+        let apply_done = AtomicBool::new(false);
+
+        let (replace_res, apply_res, ()) = tokio::join!(
+            // Captures the node as the previous customer's and pauses in its
+            // allowlist push.
+            schema.execute_as_system_admin(&replace),
+            async {
+                // Moves the node once the replace is paused.
+                pause.entered.notified().await;
+                let res = schema.execute_as_system_admin(&apply).await;
+                apply_done.store(true, Ordering::SeqCst);
+                res
+            },
+            async {
+                // Waits until the move waits for the lock, or has finished
+                // without waiting for it.
+                while schema.network_lists_lock_users() < 2 && !apply_done.load(Ordering::SeqCst) {
+                    tokio::task::yield_now().await;
+                }
+                assert_eq!(
+                    pushes.allow(),
+                    vec![vec![(target.clone(), previous_allowlist.clone())]]
+                );
+                assert_eq!(pushes.block(), Vec::<Push>::new());
+                pause.release.notify_one();
+            },
+        );
+
         assert!(
-            res.errors.is_empty(),
-            "Expected no errors: {:?}",
-            res.errors
+            replace_res.errors.is_empty(),
+            "errors: {:?}",
+            replace_res.errors
+        );
+        assert!(
+            apply_res.errors.is_empty(),
+            "errors: {:?}",
+            apply_res.errors
         );
         assert_json_eq!(
-            res.data.into_json().unwrap(),
-            json!({
-                "applyNodeDraft": {
-                    "id": "0",
-                    "profile": { "customerId": "1" }
-                }
-            })
+            apply_res.data.into_json().unwrap(),
+            json!({ "applyNodeDraft": { "profile": { "customerId": NEXT.to_string() } } })
         );
+        // The node ends with the new customer's lists.
+        assert_eq!(
+            pushes.allow(),
+            vec![
+                vec![(target.clone(), previous_allowlist)],
+                vec![(target.clone(), next_allowlist)],
+            ]
+        );
+        assert_eq!(
+            pushes.block(),
+            vec![
+                vec![(target.clone(), previous_blocklist)],
+                vec![(target, next_blocklist)],
+            ]
+        );
+        assert_eq!(schema.network_lists_lock_users(), 0);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn superseded_customer_change_sends_no_lists() {
+        const FIRST: u32 = 4345;
+        const SECOND: u32 = 4346;
+        const THIRD: u32 = 4347;
+        let (schema, pushes, pause) = paused_schema(PushKind::Internal).await;
+        let entry = |name: &str, group| review_database::NetworkListEntry {
+            name: name.to_string(),
+            group,
+        };
+        let second_allowlist = group(&["198.51.100.1"], &[], &[]);
+        let second_blocklist = group(&[], &["172.16.0.0/12"], &[]);
+        let third_allowlist = group(&["203.0.113.7"], &[], &[]);
+        let third_blocklist = group(&[], &["192.168.0.0/16"], &[]);
+        for (customer_id, allowlist, blocklist) in [
+            (SECOND, &second_allowlist, &second_blocklist),
+            (THIRD, &third_allowlist, &third_blocklist),
+        ] {
+            schema
+                .store()
+                .network_lists_map()
+                .replace(
+                    customer_id,
+                    1,
+                    vec![entry("partner", allowlist.clone())],
+                    vec![entry("botnet", blocklist.clone())],
+                )
+                .unwrap();
+        }
+        let profile = |customer_id| review_database::NodeProfile {
+            customer_id,
+            description: "desc".to_string(),
+            hostname: "host-a".to_string(),
+        };
+        let node = review_database::Node {
+            id: u32::MAX,
+            name: "node-a".to_string(),
+            name_draft: Some("node-a".to_string()),
+            profile: Some(profile(FIRST)),
+            profile_draft: Some(profile(SECOND)),
+            agents: vec![make_agent(
+                "001.hog",
+                review_database::AgentKind::SemiSupervised,
+                Some("test = 'toml'"),
+            )],
+            external_services: vec![],
+            creation_time: chrono::Utc::now(),
+        };
+        schema.store().node_map().put(&node).expect("insert node");
+
+        let agents = r#"agents: [{
+            key: "001.hog",
+            kind: SEMI_SUPERVISED,
+            status: ENABLED,
+            config: "test = 'toml'",
+            draft: "test = 'toml'"
+        }],
+        externalServices: []"#;
+        let apply = |from: u32, to: u32| {
+            format!(
+                r#"mutation {{
+                    applyNodeDraft(
+                        id: "0"
+                        node: {{
+                            name: "node-a",
+                            nameDraft: "node-a",
+                            profile: {{ customerId: "{from}", description: "desc", hostname: "host-a" }},
+                            profileDraft: {{ customerId: "{to}", description: "desc", hostname: "host-a" }},
+                            {agents}
+                        }}
+                    ) {{ profile {{ customerId }} }}
+                }}"#
+            )
+        };
+        let draft_third = format!(
+            r#"mutation {{
+                updateNodeDraft(
+                    id: "0"
+                    old: {{
+                        name: "node-a",
+                        nameDraft: "node-a",
+                        profile: {{ customerId: "{SECOND}", description: "desc", hostname: "host-a" }},
+                        profileDraft: {{ customerId: "{SECOND}", description: "desc", hostname: "host-a" }},
+                        {agents}
+                    }},
+                    new: {{
+                        nameDraft: "node-a",
+                        profileDraft: {{ customerId: "{THIRD}", description: "desc", hostname: "host-a" }},
+                        agents: [{{ key: "001.hog", kind: SEMI_SUPERVISED, status: ENABLED, draft: "test = 'toml'" }}],
+                        externalServices: []
+                    }}
+                )
+            }}"#
+        );
+        let target = vec!["001.hog.host-a".to_string()];
+        let to_second = apply(FIRST, SECOND);
+
+        let (first_res, ()) = tokio::join!(
+            // Stores the move to the second customer and pauses in its
+            // internal network push, before it takes the network lists lock.
+            schema.execute_as_system_admin(&to_second),
+            async {
+                pause.entered.notified().await;
+                // Moves the node on to the third customer meanwhile.
+                let res = schema.execute_as_system_admin(&draft_third).await;
+                assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+                let res = schema.execute_as_system_admin(&apply(SECOND, THIRD)).await;
+                assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+                assert_eq!(
+                    pushes.allow(),
+                    vec![vec![(target.clone(), third_allowlist.clone())]]
+                );
+                assert_eq!(
+                    pushes.block(),
+                    vec![vec![(target.clone(), third_blocklist.clone())]]
+                );
+                pause.release.notify_one();
+            },
+        );
+
+        assert!(
+            first_res.errors.is_empty(),
+            "errors: {:?}",
+            first_res.errors
+        );
+        // The superseded move sends no lists, so the node keeps the third
+        // customer's.
+        assert_eq!(pushes.internal().len(), 2);
+        assert_eq!(
+            pushes.allow(),
+            vec![vec![(target.clone(), third_allowlist)]]
+        );
+        assert_eq!(pushes.block(), vec![vec![(target, third_blocklist)]]);
+        let (stored, _, _) = schema.store().node_map().get_by_id(0).unwrap().unwrap();
+        assert_eq!(stored.profile.map(|p| p.customer_id), Some(THIRD));
+        assert_eq!(schema.network_lists_lock_users(), 0);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn successive_customer_changes_wait_for_lists_pushed_before_them() {
+        const FIRST: u32 = 4348;
+        const SECOND: u32 = 4349;
+        const THIRD: u32 = 4350;
+        let (schema, pushes, pause) = paused_schema(PushKind::Allow).await;
+        let entry = |name: &str, group| review_database::NetworkListEntry {
+            name: name.to_string(),
+            group,
+        };
+        let second_allowlist = group(&["198.51.100.1"], &[], &[]);
+        let second_blocklist = group(&[], &["172.16.0.0/12"], &[]);
+        let third_allowlist = group(&["203.0.113.7"], &[], &[]);
+        let third_blocklist = group(&[], &["192.168.0.0/16"], &[]);
+        for (customer_id, allowlist, blocklist) in [
+            (SECOND, &second_allowlist, &second_blocklist),
+            (THIRD, &third_allowlist, &third_blocklist),
+        ] {
+            schema
+                .store()
+                .network_lists_map()
+                .replace(
+                    customer_id,
+                    1,
+                    vec![entry("partner", allowlist.clone())],
+                    vec![entry("botnet", blocklist.clone())],
+                )
+                .unwrap();
+        }
+        let profile = |customer_id| review_database::NodeProfile {
+            customer_id,
+            description: "desc".to_string(),
+            hostname: "host-a".to_string(),
+        };
+        let node = review_database::Node {
+            id: u32::MAX,
+            name: "node-a".to_string(),
+            name_draft: Some("node-a".to_string()),
+            profile: Some(profile(FIRST)),
+            profile_draft: Some(profile(SECOND)),
+            agents: vec![make_agent(
+                "001.hog",
+                review_database::AgentKind::SemiSupervised,
+                Some("test = 'toml'"),
+            )],
+            external_services: vec![],
+            creation_time: chrono::Utc::now(),
+        };
+        schema.store().node_map().put(&node).expect("insert node");
+
+        let replace_first = format!(
+            r#"mutation {{ replaceNetworkLists(customerId: "{FIRST}", revision: "1",
+                allowlist: [{{ name: "office", networkGroup: {{ hosts: [], networks: ["10.0.0.0/8"], ranges: [] }} }}],
+                blocklist: [{{ name: "scanner", networkGroup: {{ hosts: ["192.0.2.1"], networks: [], ranges: [] }} }}]) }}"#
+        );
+        let agents = r#"agents: [{
+            key: "001.hog",
+            kind: SEMI_SUPERVISED,
+            status: ENABLED,
+            config: "test = 'toml'",
+            draft: "test = 'toml'"
+        }],
+        externalServices: []"#;
+        let apply = |from: u32, to: u32| {
+            format!(
+                r#"mutation {{
+                    applyNodeDraft(
+                        id: "0"
+                        node: {{
+                            name: "node-a",
+                            nameDraft: "node-a",
+                            profile: {{ customerId: "{from}", description: "desc", hostname: "host-a" }},
+                            profileDraft: {{ customerId: "{to}", description: "desc", hostname: "host-a" }},
+                            {agents}
+                        }}
+                    ) {{ profile {{ customerId }} }}
+                }}"#
+            )
+        };
+        let draft_third = format!(
+            r#"mutation {{
+                updateNodeDraft(
+                    id: "0"
+                    old: {{
+                        name: "node-a",
+                        nameDraft: "node-a",
+                        profile: {{ customerId: "{SECOND}", description: "desc", hostname: "host-a" }},
+                        profileDraft: {{ customerId: "{SECOND}", description: "desc", hostname: "host-a" }},
+                        {agents}
+                    }},
+                    new: {{
+                        nameDraft: "node-a",
+                        profileDraft: {{ customerId: "{THIRD}", description: "desc", hostname: "host-a" }},
+                        agents: [{{ key: "001.hog", kind: SEMI_SUPERVISED, status: ENABLED, draft: "test = 'toml'" }}],
+                        externalServices: []
+                    }}
+                )
+            }}"#
+        );
+        let target = vec!["001.hog.host-a".to_string()];
+        let first_allowlist = group(&[], &["10.0.0.0/8"], &[]);
+        let first_blocklist = group(&["192.0.2.1"], &[], &[]);
+        let to_second = apply(FIRST, SECOND);
+        let to_third = apply(SECOND, THIRD);
+        let moves_done = AtomicUsize::new(0);
+
+        let (replace_res, (second_res, third_res), ()) = tokio::join!(
+            // Captures the node as the first customer's and pauses in its
+            // allowlist push.
+            schema.execute_as_system_admin(&replace_first),
+            async {
+                pause.entered.notified().await;
+                tokio::join!(
+                    async {
+                        let res = schema.execute_as_system_admin(&to_second).await;
+                        moves_done.fetch_add(1, Ordering::SeqCst);
+                        res
+                    },
+                    async {
+                        // Moves the node on to the third customer once the
+                        // move to the second is stored and waits for the lock.
+                        while schema.network_lists_lock_users() < 2
+                            && moves_done.load(Ordering::SeqCst) == 0
+                        {
+                            tokio::task::yield_now().await;
+                        }
+                        let res = schema.execute_as_system_admin(&draft_third).await;
+                        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+                        let res = schema.execute_as_system_admin(&to_third).await;
+                        moves_done.fetch_add(1, Ordering::SeqCst);
+                        res
+                    },
+                )
+            },
+            async {
+                // Waits until both moves wait for the lock, or one of them has
+                // finished without waiting for it.
+                while schema.network_lists_lock_users() < 3
+                    && moves_done.load(Ordering::SeqCst) == 0
+                {
+                    tokio::task::yield_now().await;
+                }
+                assert_eq!(
+                    pushes.allow(),
+                    vec![vec![(target.clone(), first_allowlist.clone())]]
+                );
+                assert_eq!(pushes.block(), Vec::<Push>::new());
+                pause.release.notify_one();
+            },
+        );
+
+        for res in [replace_res, second_res, third_res] {
+            assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        }
+        // The first customer's lists arrive before the third customer's, and
+        // the superseded move to the second customer sends none.
+        assert_eq!(
+            pushes.allow(),
+            vec![
+                vec![(target.clone(), first_allowlist)],
+                vec![(target.clone(), third_allowlist)],
+            ]
+        );
+        assert_eq!(
+            pushes.block(),
+            vec![
+                vec![(target.clone(), first_blocklist)],
+                vec![(target, third_blocklist)],
+            ]
+        );
+        let (stored, _, _) = schema.store().node_map().get_by_id(0).unwrap().unwrap();
+        assert_eq!(stored.profile.map(|p| p.customer_id), Some(THIRD));
+        assert_eq!(schema.network_lists_lock_users(), 0);
     }
 
     #[tokio::test]

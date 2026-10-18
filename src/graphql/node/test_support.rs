@@ -23,14 +23,14 @@ impl AgentManager for MockAgentManager {
         &self,
         _networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
-        unimplemented!()
+        anyhow::bail!("not expected to be called")
     }
 
     async fn send_agent_specific_block_networks(
         &self,
         _networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
-        unimplemented!()
+        anyhow::bail!("not expected to be called")
     }
 
     async fn online_apps_by_host_id(

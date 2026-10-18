@@ -6058,6 +6058,21 @@ type Mutation {
 	"""
 	removeCustomerNetworks(customerId: ID!): Boolean!
 	"""
+	Replaces the allowlist and blocklist of the customer, returning the
+	stored revision.
+	
+	`allowlist` and `blocklist` are the customer's full lists; empty lists
+	are stored as such. A `revision` lower than the stored one is refused
+	with the error code `STALE_REVISION`, whose `storedRevision` extension
+	holds the stored revision.
+	"""
+	replaceNetworkLists(customerId: ID!, revision: StringNumber!, allowlist: [NetworkListEntryInput!]!, blocklist: [NetworkListEntryInput!]!): StringNumber!
+	"""
+	Removes the allowlist and blocklist of the customer, returning whether
+	any were stored.
+	"""
+	removeNetworkLists(customerId: ID!): Boolean!
+	"""
 	Inserts a new Indicator, overwriting any existing Indicator if same name and version exist already.
 	Returns the inserted db's name and version.
 	"""
@@ -6420,6 +6435,45 @@ type NetworkEdge {
 	A cursor for use in pagination
 	"""
 	cursor: String!
+}
+
+type NetworkListEntry {
+	"""
+	The name of the entry, unique within its list.
+	"""
+	name: String!
+	"""
+	The hosts, networks and ranges of the entry.
+	"""
+	networkGroup: HostNetworkGroup!
+}
+
+input NetworkListEntryInput {
+	name: String!
+	networkGroup: HostNetworkGroupInput!
+}
+
+type NetworkListSet {
+	"""
+	The ID of the customer.
+	"""
+	customerId: ID!
+	"""
+	The writer's revision of this set.
+	"""
+	revision: StringNumber!
+	"""
+	The entries of the allowlist.
+	"""
+	allowlist: [NetworkListEntry!]!
+	"""
+	The entries of the blocklist.
+	"""
+	blocklist: [NetworkListEntry!]!
+	"""
+	The time when this set was last written.
+	"""
+	updatedAt: DateTime!
 }
 
 type NetworkThreat implements Event {
@@ -7541,6 +7595,11 @@ type Query {
 	The networks the customer owns, or null if none were stored for it.
 	"""
 	customerNetworks(customerId: ID!): OwnedNetworkSet
+	"""
+	The allowlist and blocklist of the customer, or null if none were
+	stored for it.
+	"""
+	networkLists(customerId: ID!): NetworkListSet
 	"""
 	Look up an Indicator by the given name.
 	"""

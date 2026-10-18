@@ -3,8 +3,6 @@
 // Remove `unused_async_trait_impl` after async-graphql issue #1832 is fixed and released.
 #![allow(clippy::unused_async, clippy::unused_async_trait_impl)]
 
-mod allow_network;
-mod block_network;
 mod category;
 mod cert;
 mod cluster;
@@ -22,9 +20,12 @@ mod ip_location;
 pub(crate) mod label_db;
 mod model;
 pub(crate) mod network;
+mod network_list;
 mod node;
 mod operation_attempt;
 mod outlier;
+#[cfg(test)]
+mod push_test_support;
 mod qualifier;
 mod sampling;
 mod slicing;
@@ -71,10 +72,9 @@ use tokio::sync::Notify;
 use tracing::warn;
 use vinum::signal;
 
-pub use self::allow_network::get_allow_networks;
-pub use self::block_network::get_block_networks;
 pub use self::cert::ParsedCertificate;
 pub use self::customer::{NetworksTargetAgentLookupKeysPair, get_customer_networks};
+pub use self::network_list::{get_allow_networks, get_block_networks};
 pub use self::node::{
     agent_lookup_key_service_token, agent_lookup_keys_by_customer_id, gen_agent_lookup_key,
 };
@@ -134,6 +134,7 @@ where
     .data(host_onboarder)
     .data(cert_manager)
     .data(tls_reload_handle)
+    .data(Arc::new(network_list::NetworkListsLock::default()))
     .extension(install_state::LatestBuildMemoExtension)
     .extension(MaintenanceExtension::new(maintenance_gate));
     if let Some(ip_locator) = ip_locator {
@@ -159,6 +160,7 @@ struct SubQueryOneA(
 #[derive(MergedObject, Default)]
 struct SubQueryOneB(
     customer_network::CustomerNetworkQuery,
+    network_list::NetworkListQuery,
     indicator::IndicatorQuery,
     ip_location::IpLocationQuery,
     model::ModelQuery,
@@ -214,6 +216,7 @@ struct SubMutationOneA(
 #[derive(MergedObject, Default)]
 struct SubMutationOneB(
     customer_network::CustomerNetworkMutation,
+    network_list::NetworkListMutation,
     indicator::IndicatorMutation,
     model::ModelMutation,
     network::NetworkMutation,
@@ -1355,6 +1358,7 @@ struct TestSchema {
     schema: Schema,
     test_addr: Option<SocketAddr>, // to simulate the client address
     next_customer_id: AtomicU32,   // handed out by `setup_customer_and_node`
+    network_lists_lock: Arc<network_list::NetworkListsLock>,
 }
 
 #[cfg(test)]
@@ -1421,6 +1425,7 @@ impl TestSchema {
         let backup_dir = tempfile::tempdir().unwrap();
         let store = Store::new(db_dir.path(), backup_dir.path(), event_country_locator).unwrap();
         let store = Arc::new(RwLock::new(store));
+        let network_lists_lock = Arc::new(network_list::NetworkListsLock::default());
 
         let builder = Schema::build(
             Query::default(),
@@ -1432,6 +1437,7 @@ impl TestSchema {
         .data(Box::new(MockHostOnboarder {}) as Box<dyn HostOnboarder>)
         .data(store.clone())
         .data(username.to_string())
+        .data(network_lists_lock.clone())
         .extension(install_state::LatestBuildMemoExtension)
         .extension(MaintenanceExtension::new(MaintenanceGate::new()));
         let schema = builder.finish();
@@ -1443,6 +1449,7 @@ impl TestSchema {
             schema,
             test_addr,
             next_customer_id: AtomicU32::new(0),
+            network_lists_lock,
         }
     }
 
@@ -1450,6 +1457,11 @@ impl TestSchema {
         self.store
             .read()
             .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"))
+    }
+
+    /// Returns how many operations hold or wait for the network lists lock.
+    fn network_lists_lock_users(&self) -> usize {
+        self.network_lists_lock.users()
     }
 
     async fn execute_as_system_admin(&self, query: &str) -> async_graphql::Response {

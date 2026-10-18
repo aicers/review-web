@@ -18,7 +18,7 @@ use super::customer::{
     send_agent_specific_customer_networks,
 };
 use super::customer_access::check_customer_membership;
-use super::node::SEMI_SUPERVISED_AGENT;
+use super::node::{SEMI_SUPERVISED_AGENT, agent_lookup_key_service_token};
 use super::{Role, RoleGuard, agent_lookup_keys_by_customer_id};
 use crate::{error_with_username, info_with_username};
 
@@ -211,7 +211,7 @@ enum NetworkType {
     Gateway,
 }
 
-fn parse_customer_id(customer_id: &ID) -> Result<u32> {
+pub(super) fn parse_customer_id(customer_id: &ID) -> Result<u32> {
     customer_id
         .as_str()
         .parse::<u32>()
@@ -257,7 +257,9 @@ fn validate_networks(networks: Vec<OwnedNetworkInput>) -> Result<Vec<database::O
         .collect()
 }
 
-fn validate_group(input: &HostNetworkGroupInput) -> Result<database::HostNetworkGroup, String> {
+pub(super) fn validate_group(
+    input: &HostNetworkGroupInput,
+) -> Result<database::HostNetworkGroup, String> {
     let entries = input.hosts.len() + input.networks.len() + input.ranges.len();
     if entries > MAX_ENTRIES_PER_NETWORK {
         return Err(format!(
@@ -283,7 +285,7 @@ fn validate_group(input: &HostNetworkGroupInput) -> Result<database::HostNetwork
     Ok(group)
 }
 
-fn stale_revision(stored: u64) -> async_graphql::Error {
+pub(super) fn stale_revision(stored: u64) -> async_graphql::Error {
     async_graphql::Error::new("stale revision").extend_with(|_, extensions| {
         extensions.set("code", "STALE_REVISION");
         extensions.set("storedRevision", stored.to_string());
@@ -292,33 +294,47 @@ fn stale_revision(stored: u64) -> async_graphql::Error {
 
 /// Returns the push of `group` to the hog agents of the customer's nodes, or
 /// `None` if the customer has none.
-///
-/// The networks are already stored when this runs, so a failure to look up
-/// the agents is logged rather than failing the call; hog pulls the list again
-/// when it reconnects.
 fn hog_push(
     ctx: &Context<'_>,
     store: &Store,
     customer_id: u32,
     group: database::HostNetworkGroup,
 ) -> Option<NetworksTargetAgentLookupKeysPair> {
+    hog_agent_lookup_keys(ctx, store, customer_id, "networks").map(|agent_lookup_keys| {
+        NetworksTargetAgentLookupKeysPair::new(group, agent_lookup_keys, SEMI_SUPERVISED_AGENT)
+    })
+}
+
+/// Returns the lookup keys of the hog agents of the customer's nodes, or
+/// `None` if the customer has none.
+///
+/// `what` names what is being sent, for the log. It is already stored when
+/// this runs, so a failure to look up the agents is logged rather than failing
+/// the call; hog pulls it again when it reconnects.
+pub(super) fn hog_agent_lookup_keys(
+    ctx: &Context<'_>,
+    store: &Store,
+    customer_id: u32,
+    what: &str,
+) -> Option<Vec<String>> {
     let agent_lookup_keys = match agent_lookup_keys_by_customer_id(store) {
         Ok(mut by_customer) => by_customer.remove(&customer_id)?,
         Err(e) => {
             error_with_username!(
                 ctx,
-                "Failed to find the agents of customer {customer_id} to send its networks to: \
-                 {e:?}"
+                "Failed to find the agents of customer {customer_id} to send its {what} to: {e:?}"
             );
             return None;
         }
     };
-    let push =
-        NetworksTargetAgentLookupKeysPair::new(group, agent_lookup_keys, SEMI_SUPERVISED_AGENT);
-    if push.target_agent_lookup_keys().is_empty() {
+    let hog_agent_lookup_keys: Vec<_> = agent_lookup_keys
+        .into_iter()
+        .filter(|key| agent_lookup_key_service_token(key) == Some(SEMI_SUPERVISED_AGENT))
+        .collect();
+    if hog_agent_lookup_keys.is_empty() {
         None
     } else {
-        Some(push)
+        Some(hog_agent_lookup_keys)
     }
 }
 
@@ -335,189 +351,13 @@ async fn send_push(ctx: &Context<'_>, customer_id: u32, push: NetworksTargetAgen
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashMap,
-        sync::{Arc, Mutex},
-        time::Duration,
-    };
-
-    use async_trait::async_trait;
-    use chrono::Utc;
-    use review_database::{
-        Agent, AgentKind, AgentStatus, HostNetworkGroup, Lifecycle, Node, NodeProfile,
-        OwnedNetwork, event::NetworkType,
-    };
+    use review_database::{HostNetworkGroup, OwnedNetwork, event::NetworkType};
     use serde_json::{Value, json};
 
     use crate::graphql::{
-        AgentManager, BoxedAgentManager, Role, SamplingPolicy, TestSchema,
-        customer::NetworksTargetAgentLookupKeysPair, get_customer_networks,
+        Role, TestSchema, get_customer_networks,
+        push_test_support::{Push, group, insert_node, recording_schema},
     };
-
-    /// One `send_agent_specific_internal_networks` call: the target lookup
-    /// keys and the group of each pair it was sent.
-    type Push = Vec<(Vec<String>, HostNetworkGroup)>;
-
-    /// An `AgentManager` that records every internal network push.
-    struct RecordingAgentManager {
-        pushes: Arc<Mutex<Vec<Push>>>,
-    }
-
-    impl RecordingAgentManager {
-        fn boxed() -> (BoxedAgentManager, Arc<Mutex<Vec<Push>>>) {
-            let pushes = Arc::new(Mutex::new(Vec::new()));
-            let manager = Self {
-                pushes: Arc::clone(&pushes),
-            };
-            (Box::new(manager), pushes)
-        }
-    }
-
-    #[async_trait]
-    impl AgentManager for RecordingAgentManager {
-        async fn send_agent_specific_internal_networks(
-            &self,
-            networks: &[NetworksTargetAgentLookupKeysPair],
-        ) -> Result<Vec<String>, anyhow::Error> {
-            self.pushes
-                .lock()
-                .expect("no test thread panics while holding the lock")
-                .push(
-                    networks
-                        .iter()
-                        .map(|pair| {
-                            (
-                                pair.target_agent_lookup_keys().to_vec(),
-                                pair.networks().clone(),
-                            )
-                        })
-                        .collect(),
-                );
-            Ok(networks
-                .iter()
-                .flat_map(|pair| pair.target_agent_lookup_keys().iter().cloned())
-                .collect())
-        }
-
-        async fn send_agent_specific_allow_networks(
-            &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
-        ) -> Result<Vec<String>, anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-
-        async fn send_agent_specific_block_networks(
-            &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
-        ) -> Result<Vec<String>, anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-
-        async fn online_apps_by_host_id(
-            &self,
-        ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error> {
-            Ok(HashMap::new())
-        }
-
-        async fn broadcast_crusher_sampling_policy(
-            &self,
-            _sampling_policies: &[SamplingPolicy],
-        ) -> Result<(), anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-
-        async fn capabilities(
-            &self,
-            hostname: &str,
-        ) -> Result<std::collections::BTreeSet<String>, anyhow::Error> {
-            anyhow::bail!("{hostname} is unreachable")
-        }
-
-        async fn get_resource_usage(
-            &self,
-            hostname: &str,
-        ) -> Result<review_protocol::types::ResourceUsage, anyhow::Error> {
-            anyhow::bail!("{hostname} is unreachable")
-        }
-
-        async fn halt(&self, _hostname: &str) -> Result<(), anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-
-        async fn ping(&self, hostname: &str) -> Result<Duration, anyhow::Error> {
-            anyhow::bail!("{hostname} is unreachable")
-        }
-
-        async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-
-        async fn update_config(&self, _agent_lookup_key: &str) -> Result<(), anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
-    }
-
-    fn recorded(pushes: &Arc<Mutex<Vec<Push>>>) -> Vec<Push> {
-        pushes
-            .lock()
-            .expect("no test thread panics while holding the lock")
-            .clone()
-    }
-
-    async fn recording_schema() -> (TestSchema, Arc<Mutex<Vec<Push>>>) {
-        let (agent_manager, pushes) = RecordingAgentManager::boxed();
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
-        (schema, pushes)
-    }
-
-    fn agent(key: &str, kind: AgentKind) -> Agent {
-        Agent {
-            node_id: u32::MAX,
-            key: key.to_string(),
-            kind,
-            status: AgentStatus::Enabled,
-            config: None,
-            draft: None,
-            installed_version: None,
-            installed_commit: None,
-            lifecycle: Lifecycle::NotInstalled,
-            bound_addrs: vec![],
-            instance: None,
-        }
-    }
-
-    /// Stores a node of `customer_id` at `hostname` running hog and piglet.
-    fn insert_node(schema: &TestSchema, customer_id: u32, hostname: &str) {
-        let node = Node {
-            id: u32::MAX,
-            name: hostname.to_string(),
-            name_draft: Some(hostname.to_string()),
-            profile: Some(NodeProfile {
-                customer_id,
-                description: String::new(),
-                hostname: hostname.to_string(),
-            }),
-            profile_draft: None,
-            agents: vec![
-                agent("001.hog", AgentKind::SemiSupervised),
-                agent("001.piglet", AgentKind::Sensor),
-            ],
-            external_services: vec![],
-            creation_time: Utc::now(),
-        };
-        schema.store().node_map().put(&node).expect("insert node");
-    }
-
-    fn group(hosts: &[&str], networks: &[&str], ranges: &[(&str, &str)]) -> HostNetworkGroup {
-        HostNetworkGroup::new(
-            hosts.iter().map(|h| h.parse().unwrap()).collect(),
-            networks.iter().map(|n| n.parse().unwrap()).collect(),
-            ranges
-                .iter()
-                .map(|(s, e)| s.parse().unwrap()..=e.parse().unwrap())
-                .collect(),
-        )
-    }
 
     fn replace(customer_id: &str, revision: &str, networks: &str) -> String {
         format!(
@@ -722,7 +562,7 @@ mod tests {
             .execute_as_system_admin(&replace("7", "5", &network("office", "INTRANET", OFFICE)))
             .await;
         assert_eq!(data(res), json!({ "replaceCustomerNetworks": "5" }));
-        assert_eq!(recorded(&pushes).len(), 1);
+        assert_eq!(pushes.internal().len(), 1);
         let before = schema.store().customer_networks_map().get(7).unwrap();
 
         let other = network(
@@ -743,13 +583,13 @@ mod tests {
             schema.store().customer_networks_map().get(7).unwrap(),
             before
         );
-        assert_eq!(recorded(&pushes).len(), 1);
+        assert_eq!(pushes.internal().len(), 1);
 
         let res = schema
             .execute_as_system_admin(&replace("7", "5", &other))
             .await;
         assert_eq!(data(res), json!({ "replaceCustomerNetworks": "5" }));
-        assert_eq!(recorded(&pushes).len(), 2);
+        assert_eq!(pushes.internal().len(), 2);
     }
 
     #[tokio::test]
@@ -851,7 +691,7 @@ mod tests {
                     .is_none()
             );
         }
-        assert_eq!(recorded(&pushes), Vec::<Push>::new());
+        assert_eq!(pushes.internal(), Vec::<Push>::new());
 
         // The limits themselves are accepted.
         let max_networks = (0..256)
@@ -943,7 +783,7 @@ mod tests {
             &[("172.16.0.1", "172.16.0.9")],
         );
         assert_eq!(
-            recorded(&pushes),
+            pushes.internal(),
             vec![vec![(
                 vec![
                     "001.hog.n7a.example.com".to_string(),
@@ -963,7 +803,7 @@ mod tests {
             .execute_as_system_admin(&replace("7", "1", &network("office", "INTRANET", OFFICE)))
             .await;
         assert_eq!(data(res), json!({ "replaceCustomerNetworks": "1" }));
-        assert_eq!(recorded(&pushes).len(), 1);
+        assert_eq!(pushes.internal().len(), 1);
 
         // A resend of the same revision.
         let res = schema
@@ -996,13 +836,13 @@ mod tests {
             .unwrap();
         assert_eq!(stored.revision, 2);
         assert_eq!(stored.networks.len(), 2);
-        assert_eq!(recorded(&pushes).len(), 1);
+        assert_eq!(pushes.internal().len(), 1);
 
         // A change to the group is pushed.
         let res = schema.execute_as_system_admin(&replace("7", "3", "")).await;
         assert_eq!(data(res), json!({ "replaceCustomerNetworks": "3" }));
         assert_eq!(
-            recorded(&pushes)[1],
+            pushes.internal()[1],
             vec![(
                 vec!["001.hog.n7.example.com".to_string()],
                 HostNetworkGroup::default()
@@ -1031,7 +871,7 @@ mod tests {
         let res = schema.execute_as_system_admin(REMOVE_7).await;
         assert_eq!(data(res), json!({ "removeCustomerNetworks": true }));
         assert_eq!(
-            recorded(&pushes),
+            pushes.internal(),
             vec![vec![(
                 vec!["001.hog.n7.example.com".to_string()],
                 HostNetworkGroup::default()
@@ -1041,7 +881,7 @@ mod tests {
         // Nothing was removed, so nothing is pushed.
         let res = schema.execute_as_system_admin(REMOVE_7).await;
         assert_eq!(data(res), json!({ "removeCustomerNetworks": false }));
-        assert_eq!(recorded(&pushes).len(), 1);
+        assert_eq!(pushes.internal().len(), 1);
     }
 
     #[tokio::test]
@@ -1055,7 +895,7 @@ mod tests {
         assert_eq!(data(res), json!({ "replaceCustomerNetworks": "1" }));
         let res = schema.execute_as_system_admin(REMOVE_7).await;
         assert_eq!(data(res), json!({ "removeCustomerNetworks": true }));
-        assert_eq!(recorded(&pushes), Vec::<Push>::new());
+        assert_eq!(pushes.internal(), Vec::<Push>::new());
     }
 
     #[tokio::test]

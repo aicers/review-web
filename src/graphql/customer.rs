@@ -205,6 +205,38 @@ pub async fn send_agent_specific_customer_networks(
         .map_err(Into::into)
 }
 
+/// Returns a list of agents that received the allowlist.
+///
+/// # Errors
+///
+/// Returns an error if the broadcast fails.
+pub(super) async fn send_agent_specific_allow_networks(
+    ctx: &Context<'_>,
+    networks: &[NetworksTargetAgentLookupKeysPair],
+) -> Result<Vec<String>> {
+    let agent_manager = ctx.data::<BoxedAgentManager>()?;
+    agent_manager
+        .send_agent_specific_allow_networks(networks)
+        .await
+        .map_err(Into::into)
+}
+
+/// Returns a list of agents that received the blocklist.
+///
+/// # Errors
+///
+/// Returns an error if the broadcast fails.
+pub(super) async fn send_agent_specific_block_networks(
+    ctx: &Context<'_>,
+    networks: &[NetworksTargetAgentLookupKeysPair],
+) -> Result<Vec<String>> {
+    let agent_manager = ctx.data::<BoxedAgentManager>()?;
+    agent_manager
+        .send_agent_specific_block_networks(networks)
+        .await
+        .map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
     use review_database as database;
