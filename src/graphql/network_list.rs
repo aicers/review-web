@@ -4,12 +4,14 @@
 //! blocklist as the writer last sent them, and is the source of the lists hog
 //! receives.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::sync::{Arc, LazyLock, Mutex, PoisonError, Weak};
 
 use async_graphql::{Context, InputObject, Object, Result, StringNumber, types::ID};
 use chrono::{DateTime, Utc};
 use review_database::{self as database, NetworkListReplaceOutcome, Store};
+use tokio::sync::OwnedMutexGuard;
 use tracing::{error, info};
 
 use super::customer::{
@@ -26,6 +28,47 @@ use crate::{error_with_username, info_with_username};
 
 /// The most entries one list of one customer may hold.
 const MAX_ENTRIES_PER_LIST: usize = 256;
+
+/// The lock of each customer whose network lists are being written or pushed,
+/// held only while some operation uses it.
+static CUSTOMER_LOCKS: LazyLock<Mutex<HashMap<u32, Weak<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(Mutex::default);
+
+/// Waits for the network lists of a customer to be free and locks them.
+///
+/// Whoever writes a customer's lists, or reads them to push them, holds the
+/// lock until the push is sent. A push is only sent when something changed,
+/// so a push overtaken by a newer one would leave hog with a stale list that
+/// no later write repairs; under the lock, hog receives the lists in the
+/// order they were stored.
+pub(super) async fn lock_network_lists(customer_id: u32) -> OwnedMutexGuard<()> {
+    let lock = {
+        // The map is consistent between statements, so a poisoned lock is
+        // still safe to use.
+        let mut locks = CUSTOMER_LOCKS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&customer_id).and_then(Weak::upgrade) {
+            lock
+        } else {
+            let lock = Arc::default();
+            locks.insert(customer_id, Arc::downgrade(&lock));
+            lock
+        }
+    };
+    lock.lock_owned().await
+}
+
+/// Returns how many operations hold or wait for the customer's lock.
+#[cfg(test)]
+fn lock_users(customer_id: u32) -> usize {
+    CUSTOMER_LOCKS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&customer_id)
+        .map_or(0, Weak::strong_count)
+}
 
 /// Returns the merged allowlist of a customer, or an empty group if none is
 /// stored for it.
@@ -114,6 +157,7 @@ impl NetworkListMutation {
             updated_at: Utc::now(),
         };
         let merged = (set.merged_allowlist(), set.merged_blocklist());
+        let _lock = lock_network_lists(customer_id).await;
         let pushes = {
             let store = crate::graphql::get_store(ctx)?;
             let outcome = store.network_lists_map().replace(
@@ -145,6 +189,7 @@ impl NetworkListMutation {
         check_customer_membership(ctx, &customer_id)?;
         let customer_id = parse_customer_id(&customer_id)?;
 
+        let _lock = lock_network_lists(customer_id).await;
         let pushes = {
             let store = crate::graphql::get_store(ctx)?;
             let Some(removed) = store.network_lists_map().remove(customer_id)? else {
@@ -357,13 +402,17 @@ async fn send_pushes(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use review_database::{HostNetworkGroup, NetworkListEntry};
     use serde_json::{Value, json};
 
-    use super::{get_allow_networks, get_block_networks};
+    use super::{get_allow_networks, get_block_networks, lock_users};
     use crate::graphql::{
         Role, TestSchema,
-        push_test_support::{Push, failing_schema, group, insert_node, recording_schema},
+        push_test_support::{
+            Push, failing_schema, group, insert_node, paused_schema, recording_schema,
+        },
     };
 
     fn replace(customer_id: &str, revision: &str, allowlist: &str, blocklist: &str) -> String {
@@ -908,6 +957,60 @@ mod tests {
         assert_eq!(data(res), json!({ "removeNetworkLists": true }));
         assert!(schema.store().network_lists_map().get(7).unwrap().is_none());
         assert_eq!((pushes.allow().len(), pushes.block().len()), (2, 2));
+    }
+
+    #[tokio::test]
+    async fn concurrent_replaces_push_in_the_order_they_were_stored() {
+        // The locks are shared by every schema, so this customer is used by
+        // no other test.
+        const CUSTOMER: u32 = 4242;
+        let (schema, pushes, pause) = paused_schema().await;
+        insert_node(&schema, CUSTOMER, "n.example.com");
+        let target = vec!["001.hog.n.example.com".to_string()];
+        let office = group(&[], &["10.0.0.0/8"], &[]);
+        let scanner = group(&["192.0.2.1"], &[], &[]);
+        let id = CUSTOMER.to_string();
+        let older = replace(&id, "5", &entry("a", OFFICE), &entry("b", SCANNER));
+        let newer = replace(&id, "6", &entry("a", SCANNER), &entry("b", OFFICE));
+        let newer_done = AtomicBool::new(false);
+
+        let (older_res, newer_res, ()) = tokio::join!(
+            schema.execute_as_system_admin(&older),
+            async {
+                // Starts once the older replace is paused in its allowlist push.
+                pause.entered.notified().await;
+                let res = schema.execute_as_system_admin(&newer).await;
+                newer_done.store(true, Ordering::SeqCst);
+                res
+            },
+            async {
+                // Waits until the newer replace waits for the lock, or has
+                // finished without waiting for it.
+                while lock_users(CUSTOMER) < 2 && !newer_done.load(Ordering::SeqCst) {
+                    tokio::task::yield_now().await;
+                }
+                assert_eq!(pushes.allow(), vec![vec![(target.clone(), office.clone())]]);
+                assert_eq!(pushes.block(), Vec::<Push>::new());
+                pause.release.notify_one();
+            },
+        );
+
+        assert_eq!(data(older_res), json!({ "replaceNetworkLists": "5" }));
+        assert_eq!(data(newer_res), json!({ "replaceNetworkLists": "6" }));
+        assert_eq!(
+            pushes.allow(),
+            vec![
+                vec![(target.clone(), office.clone())],
+                vec![(target.clone(), scanner.clone())],
+            ]
+        );
+        assert_eq!(
+            pushes.block(),
+            vec![vec![(target.clone(), scanner)], vec![(target, office)]]
+        );
+        let stored = schema.store().network_lists_map().get(CUSTOMER).unwrap();
+        assert_eq!(stored.map(|set| set.revision), Some(6));
+        assert_eq!(lock_users(CUSTOMER), 0);
     }
 
     /// Returns what `get_allow_networks` and `get_block_networks` return for

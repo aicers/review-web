@@ -12,6 +12,7 @@ use chrono::Utc;
 use review_database::{
     Agent, AgentKind, AgentStatus, HostNetworkGroup, Lifecycle, Node, NodeProfile,
 };
+use tokio::sync::Notify;
 
 use super::{
     AgentManager, BoxedAgentManager, SamplingPolicy, TestSchema,
@@ -77,24 +78,36 @@ fn record(
         .collect()
 }
 
+/// A pause of the first allowlist push a [`RecordingAgentManager`] receives.
+#[derive(Default)]
+pub(super) struct Pause {
+    /// Notified once the paused push has been recorded.
+    pub(super) entered: Notify,
+    /// Notified to let the paused push return.
+    pub(super) release: Notify,
+}
+
 /// An `AgentManager` that records every internal network, allowlist and
 /// blocklist push, and reaches no agent otherwise.
 pub(super) struct RecordingAgentManager {
     pushes: Pushes,
     /// Whether every push fails after it is recorded.
     failing: bool,
+    /// The pause of the first allowlist push, until that push takes it.
+    pause: Mutex<Option<Arc<Pause>>>,
 }
 
 impl RecordingAgentManager {
     pub(super) fn boxed() -> (BoxedAgentManager, Pushes) {
-        Self::boxed_with(false)
+        Self::boxed_with(false, None)
     }
 
-    fn boxed_with(failing: bool) -> (BoxedAgentManager, Pushes) {
+    fn boxed_with(failing: bool, pause: Option<Arc<Pause>>) -> (BoxedAgentManager, Pushes) {
         let pushes = Pushes::default();
         let manager = Self {
             pushes: pushes.clone(),
             failing,
+            pause: Mutex::new(pause),
         };
         (Box::new(manager), pushes)
     }
@@ -125,7 +138,17 @@ impl AgentManager for RecordingAgentManager {
         &self,
         networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
-        self.record(&self.pushes.allow, networks)
+        let sent = self.record(&self.pushes.allow, networks);
+        let pause = self
+            .pause
+            .lock()
+            .expect("no test thread panics while holding the lock")
+            .take();
+        if let Some(pause) = pause {
+            pause.entered.notify_one();
+            pause.release.notified().await;
+        }
+        sent
     }
 
     async fn send_agent_specific_block_networks(
@@ -181,16 +204,24 @@ impl AgentManager for RecordingAgentManager {
 
 /// Returns a schema whose agent manager records every push.
 pub(super) async fn recording_schema() -> (TestSchema, Pushes) {
-    schema_with(false).await
+    schema_with(false, None).await
 }
 
 /// Returns a schema whose agent manager records every push and then fails it.
 pub(super) async fn failing_schema() -> (TestSchema, Pushes) {
-    schema_with(true).await
+    schema_with(true, None).await
 }
 
-async fn schema_with(failing: bool) -> (TestSchema, Pushes) {
-    let (agent_manager, pushes) = RecordingAgentManager::boxed_with(failing);
+/// Returns a schema whose agent manager records every push, and holds the
+/// first allowlist push after recording it until `release` is notified.
+pub(super) async fn paused_schema() -> (TestSchema, Pushes, Arc<Pause>) {
+    let pause = Arc::new(Pause::default());
+    let (schema, pushes) = schema_with(false, Some(pause.clone())).await;
+    (schema, pushes, pause)
+}
+
+async fn schema_with(failing: bool, pause: Option<Arc<Pause>>) -> (TestSchema, Pushes) {
+    let (agent_manager, pushes) = RecordingAgentManager::boxed_with(failing, pause);
     let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
     (schema, pushes)
 }

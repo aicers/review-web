@@ -16,6 +16,7 @@ use crate::graphql::{
         send_agent_specific_block_networks, send_agent_specific_customer_networks,
     },
     get_allow_networks, get_block_networks, get_customer_networks,
+    network_list::lock_network_lists,
     node::input::NodeInput,
 };
 use crate::{error_with_username, info_with_username, warn_with_username};
@@ -604,25 +605,33 @@ async fn send_customer_change(
     customer_id: u32,
     agent_lookup_keys: Vec<String>,
 ) -> Result<()> {
-    // hog pulls its allowlist and blocklist only when it connects, so a node
-    // that changes customers is sent the new customer's lists, even empty ones.
-    let (network_list, allow_list, block_list) = {
+    let pair = |networks| {
+        NetworksTargetAgentLookupKeysPair::new(
+            networks,
+            agent_lookup_keys.clone(),
+            SEMI_SUPERVISED_AGENT,
+        )
+    };
+    let network_list = {
         let store = crate::graphql::get_store(ctx)?;
-        let networks = get_customer_networks(&store, customer_id)?;
-        let allow_networks = get_allow_networks(&store, customer_id)?;
-        let block_networks = get_block_networks(&store, customer_id)?;
-        let pair = |networks| {
-            NetworksTargetAgentLookupKeysPair::new(
-                networks,
-                agent_lookup_keys.clone(),
-                SEMI_SUPERVISED_AGENT,
-            )
-        };
-        (pair(networks), pair(allow_networks), pair(block_networks))
+        pair(get_customer_networks(&store, customer_id)?)
     };
     if let Err(e) = send_agent_specific_customer_networks(ctx, &[network_list]).await {
         error_with_username!(ctx, "Failed to broadcast internal networks: {e:?}");
     }
+
+    // hog pulls its allowlist and blocklist only when it connects, so a node
+    // that changes customers is sent the new customer's lists, even empty ones.
+    // They are read and sent under the customer's lock, so that a concurrent
+    // replace cannot be overtaken by this older copy of the lists.
+    let _lock = lock_network_lists(customer_id).await;
+    let (allow_list, block_list) = {
+        let store = crate::graphql::get_store(ctx)?;
+        (
+            pair(get_allow_networks(&store, customer_id)?),
+            pair(get_block_networks(&store, customer_id)?),
+        )
+    };
     if let Err(e) = send_agent_specific_allow_networks(ctx, &[allow_list]).await {
         error_with_username!(ctx, "Failed to broadcast allowlist: {e:?}");
     }
