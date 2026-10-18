@@ -41,7 +41,7 @@ static CUSTOMER_LOCKS: LazyLock<Mutex<HashMap<u32, Weak<tokio::sync::Mutex<()>>>
 /// so a push overtaken by a newer one would leave hog with a stale list that
 /// no later write repairs; under the lock, hog receives the lists in the
 /// order they were stored.
-pub(super) async fn lock_network_lists(customer_id: u32) -> OwnedMutexGuard<()> {
+async fn lock_network_lists(customer_id: u32) -> OwnedMutexGuard<()> {
     let lock = {
         // The map is consistent between statements, so a poisoned lock is
         // still safe to use.
@@ -60,9 +60,31 @@ pub(super) async fn lock_network_lists(customer_id: u32) -> OwnedMutexGuard<()> 
     lock.lock_owned().await
 }
 
+/// Waits for the network lists of every customer in `customer_ids` to be free
+/// and locks them, in ascending order of customer ID so that two callers
+/// locking the same customers cannot deadlock.
+///
+/// A node moving from one customer to another takes the locks of both. Its
+/// previous customer's lock waits for any push already sent to the node as
+/// that customer's, and its new customer's lock orders the push of the new
+/// lists with that customer's replaces; without both, an older push could
+/// reach the node after its new customer's lists and leave it there.
+pub(super) async fn lock_network_lists_of(
+    customer_ids: impl IntoIterator<Item = u32>,
+) -> Vec<OwnedMutexGuard<()>> {
+    let mut customer_ids: Vec<_> = customer_ids.into_iter().collect();
+    customer_ids.sort_unstable();
+    customer_ids.dedup();
+    let mut guards = Vec::with_capacity(customer_ids.len());
+    for customer_id in customer_ids {
+        guards.push(lock_network_lists(customer_id).await);
+    }
+    guards
+}
+
 /// Returns how many operations hold or wait for the customer's lock.
 #[cfg(test)]
-fn lock_users(customer_id: u32) -> usize {
+pub(super) fn lock_users(customer_id: u32) -> usize {
     CUSTOMER_LOCKS
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
