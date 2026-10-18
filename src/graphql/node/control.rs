@@ -16,7 +16,7 @@ use crate::graphql::{
         send_agent_specific_block_networks, send_agent_specific_customer_networks,
     },
     get_allow_networks, get_block_networks, get_customer_networks,
-    network_list::lock_network_lists_of,
+    network_list::lock_network_lists,
     node::input::NodeInput,
 };
 use crate::{error_with_username, info_with_username, warn_with_username};
@@ -580,13 +580,7 @@ async fn send_customer_change_if_needed(ctx: &Context<'_>, i: u32, node: &NodeIn
             );
             return;
         };
-        let previous_customer_id = node
-            .profile
-            .as_ref()
-            .and_then(|profile| profile.customer_id.parse::<u32>().ok());
-        if let Err(e) =
-            send_customer_change(ctx, i, previous_customer_id, customer_id, agent_lookup_keys).await
-        {
+        if let Err(e) = send_customer_change(ctx, i, customer_id, agent_lookup_keys).await {
             error_with_username!(
                 ctx,
                 "Failed to broadcast customer change for customer ID {customer_id} on node {i}. The failure did not affect the node application operation. Error: {e:?}",
@@ -609,7 +603,6 @@ fn customer_id_to_send(node: &NodeInput) -> Option<&str> {
 async fn send_customer_change(
     ctx: &Context<'_>,
     node_id: u32,
-    previous_customer_id: Option<u32>,
     customer_id: u32,
     agent_lookup_keys: Vec<String>,
 ) -> Result<()> {
@@ -630,18 +623,17 @@ async fn send_customer_change(
 
     // hog pulls its allowlist and blocklist only when it connects, so a node
     // that changes customers is sent the new customer's lists, even empty ones.
-    // They are read and sent under the locks of both customers, so that
-    // neither a push of the previous customer's lists already on its way to
-    // the node nor a concurrent replace of the new customer's lists can land
-    // in the wrong order with these.
-    let _locks = lock_network_lists_of(previous_customer_id.into_iter().chain([customer_id])).await;
+    // They are read and sent under the network lists lock, so that they reach
+    // the node after any push read before this move was stored, whichever
+    // customer it was read for, and in order with the new customer's replaces.
+    let _lock = lock_network_lists(ctx).await?;
     let lists = {
         let store = crate::graphql::get_store(ctx)?;
         // A later move of the node away from this customer is stored before
-        // it takes this customer's lock and sends its own customer's lists.
-        // If it has been stored by now, sending this customer's lists could
-        // overtake those and leave the node with them; otherwise it waits for
-        // these to be sent.
+        // it takes the lock and sends its own customer's lists. If it has been
+        // stored by now, sending this customer's lists could overtake those
+        // and leave the node with them; otherwise it waits for these to be
+        // sent.
         let stored_customer_id = store
             .node_map()
             .get_by_id(node_id)?
@@ -680,7 +672,7 @@ mod tests {
         collections::HashMap,
         sync::{
             Arc, Mutex,
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         time::Duration,
     };
@@ -699,7 +691,6 @@ mod tests {
         AgentManager, BoxedAgentManager, Role, SamplingPolicy, TestSchema,
         customer::NetworksTargetAgentLookupKeysPair,
         gen_agent_lookup_key,
-        network_list::lock_users,
         push_test_support::{
             Push, PushKind, RecordingAgentManager as PushRecordingAgentManager, group,
             paused_schema,
@@ -3972,8 +3963,6 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn customer_change_waits_for_lists_pushed_as_the_previous_customer() {
-        // The locks are shared by every schema, so these customers are used by
-        // no other test.
         const PREVIOUS: u32 = 4343;
         const NEXT: u32 = 4344;
         let (schema, pushes, pause) = paused_schema(PushKind::Allow).await;
@@ -4059,9 +4048,9 @@ mod tests {
                 res
             },
             async {
-                // Waits until the move waits for the previous customer's lock,
-                // or has finished without waiting for it.
-                while lock_users(PREVIOUS) < 2 && !apply_done.load(Ordering::SeqCst) {
+                // Waits until the move waits for the lock, or has finished
+                // without waiting for it.
+                while schema.network_lists_lock_users() < 2 && !apply_done.load(Ordering::SeqCst) {
                     tokio::task::yield_now().await;
                 }
                 assert_eq!(
@@ -4102,15 +4091,12 @@ mod tests {
                 vec![(target, next_blocklist)],
             ]
         );
-        assert_eq!(lock_users(PREVIOUS), 0);
-        assert_eq!(lock_users(NEXT), 0);
+        assert_eq!(schema.network_lists_lock_users(), 0);
     }
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn superseded_customer_change_sends_no_lists() {
-        // The locks are shared by every schema, so these customers are used by
-        // no other test.
         const FIRST: u32 = 4345;
         const SECOND: u32 = 4346;
         const THIRD: u32 = 4347;
@@ -4208,7 +4194,7 @@ mod tests {
 
         let (first_res, ()) = tokio::join!(
             // Stores the move to the second customer and pauses in its
-            // internal network push, before it takes any list lock.
+            // internal network push, before it takes the network lists lock.
             schema.execute_as_system_admin(&to_second),
             async {
                 pause.entered.notified().await;
@@ -4244,9 +4230,183 @@ mod tests {
         assert_eq!(pushes.block(), vec![vec![(target, third_blocklist)]]);
         let (stored, _, _) = schema.store().node_map().get_by_id(0).unwrap().unwrap();
         assert_eq!(stored.profile.map(|p| p.customer_id), Some(THIRD));
-        for customer_id in [FIRST, SECOND, THIRD] {
-            assert_eq!(lock_users(customer_id), 0);
+        assert_eq!(schema.network_lists_lock_users(), 0);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn successive_customer_changes_wait_for_lists_pushed_before_them() {
+        const FIRST: u32 = 4348;
+        const SECOND: u32 = 4349;
+        const THIRD: u32 = 4350;
+        let (schema, pushes, pause) = paused_schema(PushKind::Allow).await;
+        let entry = |name: &str, group| review_database::NetworkListEntry {
+            name: name.to_string(),
+            group,
+        };
+        let second_allowlist = group(&["198.51.100.1"], &[], &[]);
+        let second_blocklist = group(&[], &["172.16.0.0/12"], &[]);
+        let third_allowlist = group(&["203.0.113.7"], &[], &[]);
+        let third_blocklist = group(&[], &["192.168.0.0/16"], &[]);
+        for (customer_id, allowlist, blocklist) in [
+            (SECOND, &second_allowlist, &second_blocklist),
+            (THIRD, &third_allowlist, &third_blocklist),
+        ] {
+            schema
+                .store()
+                .network_lists_map()
+                .replace(
+                    customer_id,
+                    1,
+                    vec![entry("partner", allowlist.clone())],
+                    vec![entry("botnet", blocklist.clone())],
+                )
+                .unwrap();
         }
+        let profile = |customer_id| review_database::NodeProfile {
+            customer_id,
+            description: "desc".to_string(),
+            hostname: "host-a".to_string(),
+        };
+        let node = review_database::Node {
+            id: u32::MAX,
+            name: "node-a".to_string(),
+            name_draft: Some("node-a".to_string()),
+            profile: Some(profile(FIRST)),
+            profile_draft: Some(profile(SECOND)),
+            agents: vec![make_agent(
+                "001.hog",
+                review_database::AgentKind::SemiSupervised,
+                Some("test = 'toml'"),
+            )],
+            external_services: vec![],
+            creation_time: chrono::Utc::now(),
+        };
+        schema.store().node_map().put(&node).expect("insert node");
+
+        let replace_first = format!(
+            r#"mutation {{ replaceNetworkLists(customerId: "{FIRST}", revision: "1",
+                allowlist: [{{ name: "office", networkGroup: {{ hosts: [], networks: ["10.0.0.0/8"], ranges: [] }} }}],
+                blocklist: [{{ name: "scanner", networkGroup: {{ hosts: ["192.0.2.1"], networks: [], ranges: [] }} }}]) }}"#
+        );
+        let agents = r#"agents: [{
+            key: "001.hog",
+            kind: SEMI_SUPERVISED,
+            status: ENABLED,
+            config: "test = 'toml'",
+            draft: "test = 'toml'"
+        }],
+        externalServices: []"#;
+        let apply = |from: u32, to: u32| {
+            format!(
+                r#"mutation {{
+                    applyNodeDraft(
+                        id: "0"
+                        node: {{
+                            name: "node-a",
+                            nameDraft: "node-a",
+                            profile: {{ customerId: "{from}", description: "desc", hostname: "host-a" }},
+                            profileDraft: {{ customerId: "{to}", description: "desc", hostname: "host-a" }},
+                            {agents}
+                        }}
+                    ) {{ profile {{ customerId }} }}
+                }}"#
+            )
+        };
+        let draft_third = format!(
+            r#"mutation {{
+                updateNodeDraft(
+                    id: "0"
+                    old: {{
+                        name: "node-a",
+                        nameDraft: "node-a",
+                        profile: {{ customerId: "{SECOND}", description: "desc", hostname: "host-a" }},
+                        profileDraft: {{ customerId: "{SECOND}", description: "desc", hostname: "host-a" }},
+                        {agents}
+                    }},
+                    new: {{
+                        nameDraft: "node-a",
+                        profileDraft: {{ customerId: "{THIRD}", description: "desc", hostname: "host-a" }},
+                        agents: [{{ key: "001.hog", kind: SEMI_SUPERVISED, status: ENABLED, draft: "test = 'toml'" }}],
+                        externalServices: []
+                    }}
+                )
+            }}"#
+        );
+        let target = vec!["001.hog.host-a".to_string()];
+        let first_allowlist = group(&[], &["10.0.0.0/8"], &[]);
+        let first_blocklist = group(&["192.0.2.1"], &[], &[]);
+        let to_second = apply(FIRST, SECOND);
+        let to_third = apply(SECOND, THIRD);
+        let moves_done = AtomicUsize::new(0);
+
+        let (replace_res, (second_res, third_res), ()) = tokio::join!(
+            // Captures the node as the first customer's and pauses in its
+            // allowlist push.
+            schema.execute_as_system_admin(&replace_first),
+            async {
+                pause.entered.notified().await;
+                tokio::join!(
+                    async {
+                        let res = schema.execute_as_system_admin(&to_second).await;
+                        moves_done.fetch_add(1, Ordering::SeqCst);
+                        res
+                    },
+                    async {
+                        // Moves the node on to the third customer once the
+                        // move to the second is stored and waits for the lock.
+                        while schema.network_lists_lock_users() < 2
+                            && moves_done.load(Ordering::SeqCst) == 0
+                        {
+                            tokio::task::yield_now().await;
+                        }
+                        let res = schema.execute_as_system_admin(&draft_third).await;
+                        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+                        let res = schema.execute_as_system_admin(&to_third).await;
+                        moves_done.fetch_add(1, Ordering::SeqCst);
+                        res
+                    },
+                )
+            },
+            async {
+                // Waits until both moves wait for the lock, or one of them has
+                // finished without waiting for it.
+                while schema.network_lists_lock_users() < 3
+                    && moves_done.load(Ordering::SeqCst) == 0
+                {
+                    tokio::task::yield_now().await;
+                }
+                assert_eq!(
+                    pushes.allow(),
+                    vec![vec![(target.clone(), first_allowlist.clone())]]
+                );
+                assert_eq!(pushes.block(), Vec::<Push>::new());
+                pause.release.notify_one();
+            },
+        );
+
+        for res in [replace_res, second_res, third_res] {
+            assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        }
+        // The first customer's lists arrive before the third customer's, and
+        // the superseded move to the second customer sends none.
+        assert_eq!(
+            pushes.allow(),
+            vec![
+                vec![(target.clone(), first_allowlist)],
+                vec![(target.clone(), third_allowlist)],
+            ]
+        );
+        assert_eq!(
+            pushes.block(),
+            vec![
+                vec![(target.clone(), first_blocklist)],
+                vec![(target, third_blocklist)],
+            ]
+        );
+        let (stored, _, _) = schema.store().node_map().get_by_id(0).unwrap().unwrap();
+        assert_eq!(stored.profile.map(|p| p.customer_id), Some(THIRD));
+        assert_eq!(schema.network_lists_lock_users(), 0);
     }
 
     #[tokio::test]
