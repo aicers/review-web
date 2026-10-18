@@ -78,7 +78,14 @@ fn record(
         .collect()
 }
 
-/// A pause of the first allowlist push a [`RecordingAgentManager`] receives.
+/// The kind of push a [`Pause`] holds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PushKind {
+    Internal,
+    Allow,
+}
+
+/// A pause of the first push of one kind a [`RecordingAgentManager`] receives.
 #[derive(Default)]
 pub(super) struct Pause {
     /// Notified once the paused push has been recorded.
@@ -93,8 +100,8 @@ pub(super) struct RecordingAgentManager {
     pushes: Pushes,
     /// Whether every push fails after it is recorded.
     failing: bool,
-    /// The pause of the first allowlist push, until that push takes it.
-    pause: Mutex<Option<Arc<Pause>>>,
+    /// The pause of the first push of its kind, until that push takes it.
+    pause: Mutex<Option<(PushKind, Arc<Pause>)>>,
 }
 
 impl RecordingAgentManager {
@@ -102,7 +109,10 @@ impl RecordingAgentManager {
         Self::boxed_with(false, None)
     }
 
-    fn boxed_with(failing: bool, pause: Option<Arc<Pause>>) -> (BoxedAgentManager, Pushes) {
+    fn boxed_with(
+        failing: bool,
+        pause: Option<(PushKind, Arc<Pause>)>,
+    ) -> (BoxedAgentManager, Pushes) {
         let pushes = Pushes::default();
         let manager = Self {
             pushes: pushes.clone(),
@@ -123,6 +133,25 @@ impl RecordingAgentManager {
         }
         Ok(sent)
     }
+
+    /// Holds a push of `kind` until released, if it is the one paused.
+    async fn hold(&self, kind: PushKind) {
+        let pause = {
+            let mut pause = self
+                .pause
+                .lock()
+                .expect("no test thread panics while holding the lock");
+            if pause.as_ref().is_some_and(|(paused, _)| *paused == kind) {
+                pause.take().map(|(_, pause)| pause)
+            } else {
+                None
+            }
+        };
+        if let Some(pause) = pause {
+            pause.entered.notify_one();
+            pause.release.notified().await;
+        }
+    }
 }
 
 #[async_trait]
@@ -131,7 +160,9 @@ impl AgentManager for RecordingAgentManager {
         &self,
         networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
-        self.record(&self.pushes.internal, networks)
+        let sent = self.record(&self.pushes.internal, networks);
+        self.hold(PushKind::Internal).await;
+        sent
     }
 
     async fn send_agent_specific_allow_networks(
@@ -139,15 +170,7 @@ impl AgentManager for RecordingAgentManager {
         networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         let sent = self.record(&self.pushes.allow, networks);
-        let pause = self
-            .pause
-            .lock()
-            .expect("no test thread panics while holding the lock")
-            .take();
-        if let Some(pause) = pause {
-            pause.entered.notify_one();
-            pause.release.notified().await;
-        }
+        self.hold(PushKind::Allow).await;
         sent
     }
 
@@ -213,14 +236,14 @@ pub(super) async fn failing_schema() -> (TestSchema, Pushes) {
 }
 
 /// Returns a schema whose agent manager records every push, and holds the
-/// first allowlist push after recording it until `release` is notified.
-pub(super) async fn paused_schema() -> (TestSchema, Pushes, Arc<Pause>) {
+/// first push of `kind` after recording it until `release` is notified.
+pub(super) async fn paused_schema(kind: PushKind) -> (TestSchema, Pushes, Arc<Pause>) {
     let pause = Arc::new(Pause::default());
-    let (schema, pushes) = schema_with(false, Some(pause.clone())).await;
+    let (schema, pushes) = schema_with(false, Some((kind, pause.clone()))).await;
     (schema, pushes, pause)
 }
 
-async fn schema_with(failing: bool, pause: Option<Arc<Pause>>) -> (TestSchema, Pushes) {
+async fn schema_with(failing: bool, pause: Option<(PushKind, Arc<Pause>)>) -> (TestSchema, Pushes) {
     let (agent_manager, pushes) = RecordingAgentManager::boxed_with(failing, pause);
     let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
     (schema, pushes)

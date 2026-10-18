@@ -433,7 +433,7 @@ mod tests {
     use crate::graphql::{
         Role, TestSchema,
         push_test_support::{
-            Push, failing_schema, group, insert_node, paused_schema, recording_schema,
+            Push, PushKind, failing_schema, group, insert_node, paused_schema, recording_schema,
         },
     };
 
@@ -986,7 +986,7 @@ mod tests {
         // The locks are shared by every schema, so this customer is used by
         // no other test.
         const CUSTOMER: u32 = 4242;
-        let (schema, pushes, pause) = paused_schema().await;
+        let (schema, pushes, pause) = paused_schema(PushKind::Allow).await;
         insert_node(&schema, CUSTOMER, "n.example.com");
         let target = vec!["001.hog.n.example.com".to_string()];
         let office = group(&[], &["10.0.0.0/8"], &[]);
