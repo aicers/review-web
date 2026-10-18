@@ -135,9 +135,8 @@ input AgentDraftInput {
 	Agent identity segment combined with the node profile hostname to form the
 	runtime agent lookup key used for routing and notifications.
 	
-	For auth-mtls builds, use `{instance}.{service}` (e.g. `001.hog`, `002.hog`)
-	matching the certificate identity prefix before the DNS SAN hostname.
-	For auth-jwt builds, use the legacy agent name (e.g. `hog`).
+	Use `{instance}.{service}` (e.g. `001.hog`, `002.hog`), matching the
+	certificate identity prefix before the DNS SAN hostname.
 	"""
 	key: String!
 	status: AgentStatus!
@@ -150,9 +149,8 @@ input AgentInput {
 	Agent identity segment combined with the node profile hostname to form the
 	runtime agent lookup key used for routing and notifications.
 	
-	For auth-mtls builds, use `{instance}.{service}` (e.g. `001.hog`, `002.hog`)
-	matching the certificate identity prefix before the DNS SAN hostname.
-	For auth-jwt builds, use the legacy agent name (e.g. `hog`).
+	Use `{instance}.{service}` (e.g. `001.hog`, `002.hog`), matching the
+	certificate identity prefix before the DNS SAN hostname.
 	"""
 	key: String!
 	status: AgentStatus!

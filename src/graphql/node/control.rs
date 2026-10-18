@@ -630,7 +630,7 @@ mod tests {
 
     use super::super::test_support::{
         insert_active_node, insert_apps, installed_agent, installed_service, node_draft_input,
-        node_input, put_node, stored_node, update_account_customers,
+        node_input, put_node, stored_node,
     };
     use crate::graphql::{
         AgentManager, BoxedAgentManager, Role, SamplingPolicy, TestSchema,
@@ -3114,7 +3114,6 @@ mod tests {
         let id0 = insert_active_node(&schema.store(), "shutdown_target", 1, "host-customer-1");
         assert_eq!(id0, 0);
 
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
         let res = schema
             .execute_as_scoped_user(
                 r#"mutation { nodeShutdown(hostname: "host-customer-1") }"#,
@@ -3149,7 +3148,6 @@ mod tests {
         assert_eq!(id0, 0);
 
         // Scoped user with customer 1 cannot shutdown customer 2 node.
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
         let res = schema
             .execute_as_scoped_user(
                 r#"mutation { nodeShutdown(hostname: "host-customer-2") }"#,
@@ -3248,7 +3246,6 @@ mod tests {
                 (Role::SecurityMonitor, vec![1]),
                 (Role::SecurityAdministrator, vec![2]),
             ] {
-                update_account_customers(&schema.store(), "testuser", Some(customers.clone()));
                 let res = schema
                     .execute_as_scoped_user(&query, role, Some(customers))
                     .await;
@@ -3264,7 +3261,6 @@ mod tests {
                 );
             }
 
-            update_account_customers(&schema.store(), "testuser", Some(vec![1]));
             let res = schema
                 .execute_as_scoped_user(&query, Role::SecurityAdministrator, Some(vec![1]))
                 .await;
@@ -3291,7 +3287,6 @@ mod tests {
         let id0 = insert_active_node(&schema.store(), "reboot_target", 1, "host-customer-1");
         assert_eq!(id0, 0);
 
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
         let res = schema
             .execute_as_scoped_user(
                 r#"mutation { nodeReboot(hostname: "host-customer-1") }"#,
@@ -3322,7 +3317,6 @@ mod tests {
         assert_eq!(id0, 0);
 
         // Scoped user with customer 1 cannot reboot customer 2 node.
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
         let res = schema
             .execute_as_scoped_user(
                 r#"mutation { nodeReboot(hostname: "host-customer-2") }"#,
@@ -3411,7 +3405,6 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
         let res = schema
             .execute_as_scoped_user(
                 r#"mutation {
@@ -3467,7 +3460,6 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
         let res = schema
             .execute_as_scoped_user(
                 r#"mutation {
@@ -3519,7 +3511,6 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
         let res = schema
             .execute_as_scoped_user(
                 r#"mutation {
@@ -4402,7 +4393,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "auth-mtls")]
     async fn test_apply_agent_config_multi_instance_lookup_keys() {
         let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {
             online_apps_by_host_id: HashMap::new(),
@@ -4478,7 +4468,6 @@ mod tests {
         let id = put_node_with_agents(&schema.store(), "scoped-node", 2, "host-customer-2", vec![]);
         assert_eq!(id, 0);
 
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
         let res = schema
             .execute_as_scoped_user(
                 r#"mutation {
@@ -4521,7 +4510,6 @@ mod tests {
         let id = put_node_with_agents(&schema.store(), "scoped-node", 2, "host-customer-2", vec![]);
         assert_eq!(id, 0);
 
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
         let res = schema
             .execute_as_scoped_user(
                 r#"mutation {
@@ -5021,10 +5009,7 @@ mod tests {
             "Expected no errors: {:?}",
             res.errors
         );
-        #[cfg(feature = "auth-mtls")]
         assert_eq!(recorded(&calls), vec!["001.giganto.node1.example.com"]);
-        #[cfg(feature = "auth-jwt")]
-        assert_eq!(recorded(&calls), vec!["001.giganto@node1.example.com"]);
     }
 
     #[tokio::test]

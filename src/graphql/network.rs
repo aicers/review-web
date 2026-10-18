@@ -82,12 +82,7 @@ impl NetworkMutation {
     ) -> Result<ID> {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.network_map();
-        let entry = review_database::Network::new(
-            name.clone(),
-            description,
-            networks.try_into()?,
-            Vec::new(),
-        );
+        let entry = review_database::Network::new(name.clone(), description, networks.try_into()?);
         let id = map.insert(entry)?;
         info_with_username!(ctx, "Network {name} has been registered");
         Ok(ID(id.to_string()))
@@ -160,7 +155,6 @@ impl TryFrom<NetworkUpdateInput> for review_database::NetworkUpdate {
             input.name,
             input.description,
             input.networks.and_then(|v| v.try_into().ok()),
-            None,
         ))
     }
 }

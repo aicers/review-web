@@ -173,27 +173,6 @@ struct IpRange {
     end: String,
 }
 
-/// Returns the customer network list.
-///
-/// # Errors
-///
-/// Returns an error if the customer database could not be retrieved.
-#[cfg(feature = "auth-jwt")]
-pub fn get_customer_networks(db: &Store, customer_id: u32) -> Result<database::HostNetworkGroup> {
-    let map = db.customer_map();
-    let mut hosts = vec![];
-    let mut networks = vec![];
-    let mut ip_ranges = vec![];
-    if let Some(customer) = map.get_by_id(customer_id)? {
-        customer.networks.iter().for_each(|net| {
-            hosts.extend(net.network_group.hosts());
-            networks.extend(net.network_group.networks());
-            ip_ranges.extend(net.network_group.ip_ranges().to_vec());
-        });
-    }
-    Ok(database::HostNetworkGroup::new(hosts, networks, ip_ranges))
-}
-
 /// Returns the networks the customer owns, merged into one group whatever
 /// their type, as stored in the customer networks table.
 ///
@@ -202,7 +181,6 @@ pub fn get_customer_networks(db: &Store, customer_id: u32) -> Result<database::H
 /// # Errors
 ///
 /// Returns an error if the stored row could not be read or decoded.
-#[cfg(feature = "auth-mtls")]
 pub fn get_customer_networks(db: &Store, customer_id: u32) -> Result<database::HostNetworkGroup> {
     Ok(db
         .customer_networks_map()
@@ -234,33 +212,6 @@ mod tests {
     use super::NetworksTargetAgentLookupKeysPair;
 
     #[test]
-    #[cfg(feature = "auth-jwt")]
-    fn network_target_agent_lookup_keys_pair_filters_jwt_service_tokens() {
-        let networks = database::HostNetworkGroup::new(vec![], vec![], vec![]);
-        let pair = NetworksTargetAgentLookupKeysPair::new(
-            networks.clone(),
-            vec![
-                "hog@node-01".to_string(),
-                "hog@node-02".to_string(),
-                "reconverge@node-01".to_string(),
-            ],
-            "hog",
-        );
-        assert_eq!(
-            pair.target_agent_lookup_keys(),
-            &["hog@node-01".to_string(), "hog@node-02".to_string()]
-        );
-
-        let pair = NetworksTargetAgentLookupKeysPair::new(
-            networks,
-            pair.target_agent_lookup_keys().to_vec(),
-            "piglet",
-        );
-        assert_eq!(pair.target_agent_lookup_keys().len(), 0);
-    }
-
-    #[test]
-    #[cfg(feature = "auth-mtls")]
     fn network_target_agent_lookup_keys_pair_filters_mtls_service_tokens() {
         let networks = database::HostNetworkGroup::new(vec![], vec![], vec![]);
         let agent_lookup_keys = vec![

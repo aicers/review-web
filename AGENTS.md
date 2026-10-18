@@ -476,13 +476,11 @@ verify these locally before proposing any code.
 
 <!-- markdownlint-disable MD013 -->
 - **Linting (Rust)**:
-  - `cargo clippy --no-default-features --features auth-jwt --all-targets -- -D warnings`
-  - `cargo clippy --no-default-features --features auth-mtls --all-targets -- -D warnings`
+  - `cargo clippy --all-targets -- -D warnings`
 - **Formatting**:
   - `cargo fmt -- --check --config group_imports=StdExternalCrate`
 - **Testing**:
-  - `cargo test --no-default-features --features auth-jwt`
-  - `cargo test --no-default-features --features auth-mtls`
+  - `cargo test`
   - Note: the mTLS integration test binds a local port and may require network
     permissions.
 - **Linting (Docs/Misc)**:

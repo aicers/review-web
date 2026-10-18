@@ -400,20 +400,17 @@ pub fn agent_lookup_keys_by_customer_id(db: &Store) -> Result<HashMap<u32, Vec<S
 #[cfg(test)]
 mod tests {
     use assert_json_diff::assert_json_eq;
-    #[cfg(feature = "auth-mtls")]
     use review_database as database;
     use serde_json::json;
 
     use super::super::test_support::{
         insert_active_node, installed_agent, installed_service, node_draft_input, put_node,
-        stored_node, update_account_customers,
+        stored_node,
     };
-    #[cfg(feature = "auth-mtls")]
     use super::agent_lookup_keys_by_customer_id;
     use crate::graphql::{Role, TestSchema};
 
     #[tokio::test]
-    #[cfg(feature = "auth-mtls")]
     async fn agent_lookup_keys_by_customer_id_keeps_mtls_instances() {
         let schema = TestSchema::new().await;
         let store = schema.store();
@@ -2001,8 +1998,6 @@ mod tests {
     async fn node_customer_scoping_read_admin_allowed() {
         let schema = TestSchema::new().await;
 
-        // TestSchema already creates an admin account for "testuser" with customer_ids = None
-
         // Insert nodes with different customer_ids
         let res = schema
             .execute_as_system_admin(
@@ -2087,9 +2082,6 @@ mod tests {
         assert_eq!(id0, 0);
         assert_eq!(id1, 1);
 
-        // Update account to be scoped to customer 1 only
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
-
         // Scoped user can read node with matching customer_id
         let res = schema
             .execute_as_scoped_user(
@@ -2114,8 +2106,6 @@ mod tests {
     async fn node_customer_scoping_read_forbidden() {
         let schema = TestSchema::new().await;
 
-        // TestSchema creates an admin account - insert nodes first
-
         // Insert node with customer_id 2 (as admin)
         let res = schema
             .execute_as_system_admin(
@@ -2132,9 +2122,6 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
-
-        // Update account to be scoped to customer 1 only
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         // Scoped user is denied read access to non-matching customer_id
         let res = schema
@@ -2205,8 +2192,6 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
-
         // Scoped user should be able to read a draft-only node for their customer.
         let res = schema
             .execute_as_scoped_user(
@@ -2246,8 +2231,6 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
-
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
             .execute_as_scoped_user(
@@ -2311,9 +2294,6 @@ mod tests {
         assert_eq!(id1, 1);
         assert_eq!(id2, 2);
 
-        // Update account to be scoped to customer 1 only
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
-
         // Scoped user list only sees nodes with matching customer_id
         let res = schema
             .execute_as_scoped_user(
@@ -2347,8 +2327,6 @@ mod tests {
 
         let id0 = insert_active_node(&schema.store(), "node_customer_2", 2, "host2.example.com");
         assert_eq!(id0, 0);
-
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
             .execute_as_scoped_user(
@@ -2426,8 +2404,6 @@ mod tests {
         assert_eq!(id1, 1);
 
         // Scope the user to customer 1 only.
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
-
         let res = schema
             .execute_as_scoped_user(
                 r"{nodeList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
@@ -2466,8 +2442,6 @@ mod tests {
             "forbidden.example.com",
         );
         assert_eq!(id0, 0);
-
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
             .execute_as_scoped_user(
@@ -2518,8 +2492,6 @@ mod tests {
     async fn node_customer_scoping_insert_allowed() {
         let schema = TestSchema::new().await;
 
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
-
         let res = schema
             .execute_as_scoped_user(
                 r#"mutation {
@@ -2548,9 +2520,6 @@ mod tests {
     #[tokio::test]
     async fn node_customer_scoping_insert_forbidden() {
         let schema = TestSchema::new().await;
-
-        // Update the default admin account to be scoped to customer 1 only
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         // Scoped user cannot insert node for customer 2
         let res = schema
@@ -2628,8 +2597,6 @@ mod tests {
         assert_eq!(id0, 0);
         assert_eq!(id1, 1);
 
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
-
         let res = schema
             .execute_as_scoped_user(
                 r"{nodeList(first: 10){totalCount edges{node{name}}}}",
@@ -2663,8 +2630,6 @@ mod tests {
             "host2.example.com",
         );
         assert_eq!(id0, 0);
-
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
             .execute_as_scoped_user(
@@ -2762,8 +2727,6 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
-
         let res = schema
             .execute_as_scoped_user(
                 r#"mutation {
@@ -2806,8 +2769,6 @@ mod tests {
     async fn node_customer_scoping_update_forbidden() {
         let schema = TestSchema::new().await;
 
-        // TestSchema creates an admin account - insert nodes first
-
         // Insert node with customer 2 (as admin)
         let res = schema
             .execute_as_system_admin(
@@ -2824,9 +2785,6 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
-
-        // Update account to be scoped to customer 1 only
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         // Scoped user cannot update node with non-matching customer_id
         let res = schema
@@ -2882,8 +2840,6 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
-
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
             .execute_as_scoped_user(
@@ -2978,8 +2934,6 @@ mod tests {
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
 
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
-
         let res = schema
             .execute_as_scoped_user(
                 r#"mutation { removeNodes(ids: ["0"]) }"#,
@@ -3003,8 +2957,6 @@ mod tests {
     async fn node_customer_scoping_remove_forbidden() {
         let schema = TestSchema::new().await;
 
-        // TestSchema creates an admin account - insert nodes first
-
         // Insert node with customer 2 (as admin)
         let res = schema
             .execute_as_system_admin(
@@ -3021,9 +2973,6 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
-
-        // Update account to be scoped to customer 1 only
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         // Scoped user cannot remove node with non-matching customer_id
         let res = schema
@@ -3046,8 +2995,6 @@ mod tests {
         let id1 = insert_active_node(&schema.store(), "node_customer_2", 2, "host2.example.com");
         assert_eq!(id0, 0);
         assert_eq!(id1, 1);
-
-        update_account_customers(&schema.store(), "testuser", Some(vec![1]));
 
         let res = schema
             .execute_as_scoped_user(
@@ -3116,7 +3063,8 @@ mod tests {
         );
     }
 
-    /// Test that system administrators remain unscoped even when account has empty `customer_ids`.
+    /// Test that system administrators remain unscoped even when the request
+    /// carries empty `customer_ids`.
     #[tokio::test]
     async fn node_customer_scoping_empty_customers_admin_allowed() {
         let schema = TestSchema::new().await;
@@ -3124,10 +3072,12 @@ mod tests {
         let id0 = insert_active_node(&schema.store(), "some_node", 1, "host.example.com");
         assert_eq!(id0, 0);
 
-        update_account_customers(&schema.store(), "testuser", Some(vec![]));
-
         let res = schema
-            .execute_as_system_admin(r#"{node(id: "0") { id name }}"#)
+            .execute_as_scoped_user(
+                r#"{node(id: "0") { id name }}"#,
+                Role::SystemAdministrator,
+                Some(vec![]),
+            )
             .await;
         assert!(
             res.errors.is_empty(),
@@ -3145,8 +3095,6 @@ mod tests {
     async fn node_customer_scoping_empty_customers_forbidden() {
         let schema = TestSchema::new().await;
 
-        // TestSchema creates an admin account - insert nodes first
-
         // Insert node (as admin)
         let res = schema
             .execute_as_system_admin(
@@ -3163,9 +3111,6 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
-
-        // Update account to have empty customer list (no access)
-        update_account_customers(&schema.store(), "testuser", Some(vec![]));
 
         // Scoped user with empty customers cannot read any node
         let res = schema

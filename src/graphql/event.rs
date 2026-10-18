@@ -36,8 +36,6 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
 use jiff::Timestamp;
 use num_traits::FromPrimitive;
-#[cfg(feature = "auth-jwt")]
-use review_database::AgentKind;
 use review_database::{
     self as database, EventKind, ExclusionReason, IndexedTable, Iterable, Store, TriageExclusion,
     TriagePolicyInput as DbTriagePolicyInput,
@@ -1219,51 +1217,12 @@ fn from_filter_input(
         let map = store.node_map();
         Some(convert_sensors(&map, sensors_input, scope.as_deref())?)
     } else {
-        #[cfg(feature = "auth-mtls")]
-        {
-            // There is no account under mTLS; the caller's scope comes from
-            // `CustomerIds`, which `sensors_for_user` reads.
-            sensors_for_user(ctx, store).map_err(|e| anyhow!("{}", e.message))?
-        }
-        #[cfg(feature = "auth-jwt")]
-        match ctx
-            .data::<String>()
-            .ok()
-            .and_then(|username| store.account_map().get(username).ok())
-            .flatten()
-            .and_then(|account| account.customer_ids)
-        {
-            None => {
-                // A SystemAdministrator can view all sensor events.
-                None
-            }
-            Some(customer_ids) => {
-                if customer_ids.is_empty() {
-                    Some(Vec::new())
-                } else {
-                    Some(
-                        store
-                            .node_map()
-                            .iter(Direction::Forward, None)
-                            .filter_map(Result::ok)
-                            .filter(|node| {
-                                node.agents
-                                    .iter()
-                                    .any(|agent| agent.kind == AgentKind::Sensor)
-                                    && node.profile.as_ref().is_some_and(|profile| {
-                                        customer_ids.contains(&profile.customer_id)
-                                    })
-                            })
-                            .filter_map(|node| node.profile.map(|profile| profile.hostname))
-                            .collect::<Vec<_>>(),
-                    )
-                }
-            }
-        }
+        // The caller's scope comes from `CustomerIds`, which
+        // `sensors_for_user` reads.
+        sensors_for_user(ctx, store).map_err(|e| anyhow!("{}", e.message))?
     };
 
     Ok(EventFilter::new(
-        None,
         networks,
         directions
             .map(|(kinds, group)| (kinds.into_iter().map(Into::into).collect::<Vec<_>>(), group)),
@@ -1318,22 +1277,12 @@ fn convert_endpoint_input(
     Ok(networks)
 }
 
-/// Returns the networks every event is tested against for `directions`: the
-/// `Intranet` and `Gateway` networks of every customer.
-#[cfg(feature = "auth-jwt")]
-fn internal_networks(store: &Store) -> anyhow::Result<InternalNetworks> {
-    Ok(InternalNetworks::Shared(internal_customer_networks(
-        &store.customer_map(),
-    )?))
-}
-
 /// Returns the networks each event is tested against for `directions`: the
 /// `Intranet` and `Gateway` networks its own customer owns, found through the
 /// node its sensor belongs to.
 ///
 /// An event whose sensor maps to no node has no internal network, so it
 /// matches no direction.
-#[cfg(feature = "auth-mtls")]
 fn internal_networks(store: &Store) -> anyhow::Result<InternalNetworks> {
     use std::collections::{HashMap, hash_map::Entry};
 
@@ -1356,24 +1305,6 @@ fn internal_networks(store: &Store) -> anyhow::Result<InternalNetworks> {
         by_sensor.insert(sensor, groups);
     }
     Ok(InternalNetworks::PerSensor(by_sensor))
-}
-
-#[cfg(feature = "auth-jwt")]
-fn internal_customer_networks(
-    map: &IndexedTable<database::Customer>,
-) -> anyhow::Result<Vec<HostNetworkGroup>> {
-    let mut customer_networks = Vec::new();
-    for entry in map.iter(Direction::Forward, None) {
-        let customer: database::Customer = entry?;
-        for network in customer.networks {
-            if network.network_type == database::event::NetworkType::Intranet
-                || network.network_type == database::event::NetworkType::Gateway
-            {
-                customer_networks.push(network.network_group);
-            }
-        }
-    }
-    Ok(customer_networks)
 }
 
 fn convert_sensors(
@@ -1402,44 +1333,9 @@ fn convert_sensors(
             }
         }
 
-        #[cfg(feature = "auth-jwt")]
-        if let Some(node_profile) = node.profile
-            && !node_profile.hostname.is_empty()
-        {
-            converted_sensors.push(node_profile.hostname.clone());
-        }
-        #[cfg(feature = "auth-mtls")]
         converted_sensors.extend(crate::graphql::customer_access::event_sensor_names(&node));
     }
     Ok(converted_sensors)
-}
-
-/// Returns the list of sensor hostnames the caller is allowed to see, or
-/// `None` for unscoped (administrator) callers.
-#[cfg(feature = "auth-jwt")]
-fn sensors_for_user(ctx: &Context<'_>, store: &Store) -> Result<Option<Vec<String>>> {
-    let Some(customer_ids) = crate::graphql::customer_access::users_customers(ctx)? else {
-        return Ok(None);
-    };
-    if customer_ids.is_empty() {
-        return Ok(Some(Vec::new()));
-    }
-    let sensors = store
-        .node_map()
-        .iter(Direction::Forward, None)
-        .filter_map(Result::ok)
-        .filter(|node| {
-            node.agents
-                .iter()
-                .any(|agent| agent.kind == AgentKind::Sensor)
-                && node
-                    .profile
-                    .as_ref()
-                    .is_some_and(|profile| customer_ids.contains(&profile.customer_id))
-        })
-        .filter_map(|node| node.profile.map(|profile| profile.hostname))
-        .collect::<Vec<_>>();
-    Ok(Some(sensors))
 }
 
 /// Returns the event sensor names the caller is allowed to see, or `None` for
@@ -1447,7 +1343,6 @@ fn sensors_for_user(ctx: &Context<'_>, store: &Store) -> Result<Option<Vec<Strin
 ///
 /// A sensor name that maps to no node, such as one left behind in stored
 /// events by a removed node, is never accessible to a scoped caller.
-#[cfg(feature = "auth-mtls")]
 fn sensors_for_user(ctx: &Context<'_>, store: &Store) -> Result<Option<Vec<String>>> {
     let Some(customer_ids) = crate::graphql::customer_access::users_customers(ctx)? else {
         return Ok(None);
@@ -1468,13 +1363,12 @@ async fn load_event(ctx: &Context<'_>, id: &ID) -> Result<Option<Event>> {
     let store = crate::graphql::get_store(ctx)?;
 
     // Derive the caller's allowed sensors via the shared customer-access
-    // helper, which handles both auth-jwt (username -> account) and
-    // auth-mtls (`CustomerIds` data) request contexts. SystemAdministrator
+    // helper, which reads the request's `CustomerIds`. SystemAdministrator
     // (no customer_ids) sees every sensor; everyone else is restricted to
     // sensors owned by their accessible customers.
     let sensors = sensors_for_user(ctx, &store)?;
     let mut filter = EventFilter::new(
-        None, None, None, None, None, None, None, None, None, None, sensors, None, None, None,
+        None, None, None, None, None, None, None, None, None, sensors, None, None, None,
     );
     filter.moderate_kinds();
 
@@ -1930,9 +1824,6 @@ mod tests {
 
     /// The `Event.sensor` of events emitted by the test node whose hostname is
     /// `sensor1`.
-    #[cfg(feature = "auth-jwt")]
-    const SENSOR1_EVENT_SENSOR: &str = "sensor1";
-    #[cfg(feature = "auth-mtls")]
     const SENSOR1_EVENT_SENSOR: &str = "piglet.sensor1";
 
     /// Creates an event message at `timestamp` emitted by the `sensor1` test
@@ -5746,7 +5637,6 @@ mod tests {
         assert_eq!(data.matches("time:").count(), 2, "got: {data}");
     }
 
-    #[cfg(feature = "auth-mtls")]
     mod event_sensor_names {
         use review_database::{Agent, AgentKind, AgentStatus, Lifecycle, Node, NodeProfile, Store};
         use serde_json::{Value, json};
@@ -6026,9 +5916,8 @@ mod tests {
         }
     }
 
-    /// The `directions` filter under `auth-mtls`, which tests each event
-    /// against the networks of its own customer.
-    #[cfg(feature = "auth-mtls")]
+    /// The `directions` filter, which tests each event against the networks
+    /// of its own customer.
     mod directions_by_customer {
         use review_database::{
             Agent, AgentKind, AgentStatus, HostNetworkGroup, Lifecycle, Node, NodeProfile,

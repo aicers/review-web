@@ -1,11 +1,7 @@
 //! Holds the committed schema artifact honest.
 //!
-//! `examples/schema_sdl.rs` is `required-features = ["auth-mtls"]` and
-//! `#![cfg(feature = "auth-mtls")]`, so `schema.graphql` is the mTLS schema and
-//! this test is gated the same way. Under `auth-jwt` the rendered schema is a
-//! different one, and comparing it against the committed file would fail for a
-//! reason that is not a schema change.
-#![cfg(feature = "auth-mtls")]
+//! `schema.graphql` is the output of `examples/schema_sdl.rs`, and this test
+//! renders the same schema and compares it against the committed file.
 
 use review_web::graphql::{Mutation, Query, Schema, Subscription};
 
@@ -14,8 +10,8 @@ use review_web::graphql::{Mutation, Query, Schema, Subscription};
 const COMMITTED_SDL: &str = include_str!("../schema.graphql");
 
 const REGENERATE: &str = "the GraphQL schema changed. If the change is deliberate, regenerate the \
-                          committed artifact with:\n\n    cargo run --no-default-features \
-                          --features auth-mtls --example schema_sdl > schema.graphql\n";
+                          committed artifact with:\n\n    cargo run --example schema_sdl > \
+                          schema.graphql\n";
 
 fn rendered_sdl() -> String {
     Schema::build(

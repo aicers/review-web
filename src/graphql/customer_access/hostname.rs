@@ -112,15 +112,10 @@ pub(crate) fn sensor_from_key(key: &[u8]) -> Result<String> {
 mod tests {
     use std::sync::{Arc, RwLock};
 
-    #[cfg(feature = "auth-mtls")]
     use async_graphql::Request;
     use async_graphql::{Context, EmptyMutation, EmptySubscription, Object, Result, Schema};
     use chrono::Utc;
-    #[cfg(feature = "auth-jwt")]
-    use review_database::Role;
     use review_database::Store;
-    #[cfg(feature = "auth-jwt")]
-    use review_database::types;
 
     use super::*;
 
@@ -168,36 +163,6 @@ mod tests {
     }
 
     impl TestContext {
-        #[cfg(feature = "auth-jwt")]
-        fn new_with_account(
-            username: &str,
-            customer_ids: Option<Vec<u32>>,
-            nodes: &[(&str, u32)],
-        ) -> Self {
-            let db_dir = tempfile::tempdir().expect("create data dir");
-            let backup_dir = tempfile::tempdir().expect("create backup dir");
-            let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("create store");
-            let account = types::Account::new(
-                username,
-                "password",
-                Role::SecurityMonitor,
-                "Test User".to_string(),
-                "Testing".to_string(),
-                None,
-                None,
-                None,
-                None,
-                customer_ids,
-            )
-            .expect("create account");
-            store
-                .account_map()
-                .insert(&account)
-                .expect("insert account");
-            Self::with_nodes(store, db_dir, backup_dir, Some(username), nodes)
-        }
-
-        #[cfg(feature = "auth-mtls")]
         fn new_without_account(username: &str, nodes: &[(&str, u32)]) -> Self {
             let db_dir = tempfile::tempdir().expect("create data dir");
             let backup_dir = tempfile::tempdir().expect("create backup dir");
@@ -245,16 +210,6 @@ mod tests {
             }
         }
 
-        #[cfg(feature = "auth-jwt")]
-        async fn execute_check_hostname_access(&self, hostname: &str) -> async_graphql::Response {
-            self.schema
-                .execute(format!(
-                    "{{ checkHostnameAccess(hostname: \"{hostname}\") }}"
-                ))
-                .await
-        }
-
-        #[cfg(feature = "auth-mtls")]
         async fn execute_with_guard_and_customer_ids(
             &self,
             hostname: &str,
@@ -269,7 +224,6 @@ mod tests {
             self.schema.execute(request).await
         }
 
-        #[cfg(feature = "auth-mtls")]
         async fn execute_with_guard(
             &self,
             hostname: &str,
@@ -386,22 +340,6 @@ mod tests {
         assert!(map.put(&node2).is_err());
     }
 
-    #[cfg(feature = "auth-jwt")]
-    #[tokio::test]
-    async fn test_check_hostname_access_scoped_user_allowed() {
-        let test_ctx =
-            TestContext::new_with_account("scoped_user", Some(vec![42]), &[("host-a", 42)]);
-
-        let response = test_ctx.execute_check_hostname_access("host-a").await;
-
-        assert!(
-            response.errors.is_empty(),
-            "unexpected errors: {:?}",
-            response.errors
-        );
-    }
-
-    #[cfg(feature = "auth-mtls")]
     #[tokio::test]
     async fn test_check_hostname_access_scoped_user_allowed() {
         let test_ctx = TestContext::new_without_account("scoped_user", &[("host-a", 42)]);
@@ -421,19 +359,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "auth-jwt")]
-    #[tokio::test]
-    async fn test_check_hostname_access_scoped_user_forbidden() {
-        let test_ctx =
-            TestContext::new_with_account("scoped_user", Some(vec![7]), &[("host-a", 42)]);
-
-        let response = test_ctx.execute_check_hostname_access("host-a").await;
-
-        assert_eq!(response.errors.len(), 1);
-        assert_eq!(response.errors[0].message, "Forbidden");
-    }
-
-    #[cfg(feature = "auth-mtls")]
     #[tokio::test]
     async fn test_check_hostname_access_scoped_user_forbidden() {
         let test_ctx = TestContext::new_without_account("scoped_user", &[("host-a", 42)]);
@@ -450,19 +375,6 @@ mod tests {
         assert_eq!(response.errors[0].message, "Forbidden");
     }
 
-    #[cfg(feature = "auth-jwt")]
-    #[tokio::test]
-    async fn test_check_hostname_access_unknown_hostname_forbidden() {
-        let test_ctx =
-            TestContext::new_with_account("scoped_user", Some(vec![42]), &[("host-a", 42)]);
-
-        let response = test_ctx.execute_check_hostname_access("host-missing").await;
-
-        assert_eq!(response.errors.len(), 1);
-        assert_eq!(response.errors[0].message, "Forbidden");
-    }
-
-    #[cfg(feature = "auth-mtls")]
     #[tokio::test]
     async fn test_check_hostname_access_unknown_hostname_forbidden() {
         let test_ctx = TestContext::new_without_account("scoped_user", &[("host-a", 42)]);
@@ -479,21 +391,6 @@ mod tests {
         assert_eq!(response.errors[0].message, "Forbidden");
     }
 
-    #[cfg(feature = "auth-jwt")]
-    #[tokio::test]
-    async fn test_check_hostname_access_admin_bypasses_lookup() {
-        let test_ctx = TestContext::new_with_account("admin_user", None, &[]);
-
-        let response = test_ctx.execute_check_hostname_access("host-missing").await;
-
-        assert!(
-            response.errors.is_empty(),
-            "unexpected errors: {:?}",
-            response.errors
-        );
-    }
-
-    #[cfg(feature = "auth-mtls")]
     #[tokio::test]
     async fn test_check_hostname_access_admin_bypasses_lookup() {
         let test_ctx = TestContext::new_without_account("admin_user", &[]);

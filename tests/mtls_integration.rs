@@ -1,4 +1,3 @@
-#[cfg(feature = "auth-mtls")]
 mod mtls_integration {
     use std::{
         net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -533,18 +532,12 @@ mod mtls_integration {
 
         let config = ServerConfig {
             addr: SocketAddr::new(addr_ip, port),
-            #[cfg(feature = "auth-jwt")]
-            document_root: temp_root.path().to_path_buf(),
             cert_manager: Arc::new(StaticCertManager {
                 cert_path: server_cert_path,
                 key_path: server_key_path,
             }),
             tls_reload_handle: Arc::new(tokio::sync::Notify::new()),
             ca_certs: vec![ca_path],
-            #[cfg(feature = "auth-jwt")]
-            client_cert_path: None,
-            #[cfg(feature = "auth-jwt")]
-            client_key_path: None,
             authenticator: Arc::new(StubAuthenticator),
             package_store: Arc::new(StubPackageStore),
             package_upload_max_bytes: PACKAGE_UPLOAD_MAX_BYTES,
