@@ -1998,8 +1998,6 @@ mod tests {
     async fn node_customer_scoping_read_admin_allowed() {
         let schema = TestSchema::new().await;
 
-        // TestSchema already creates an admin account for "testuser" with customer_ids = None
-
         // Insert nodes with different customer_ids
         let res = schema
             .execute_as_system_admin(
@@ -2107,8 +2105,6 @@ mod tests {
     #[tokio::test]
     async fn node_customer_scoping_read_forbidden() {
         let schema = TestSchema::new().await;
-
-        // TestSchema creates an admin account - insert nodes first
 
         // Insert node with customer_id 2 (as admin)
         let res = schema
@@ -2408,7 +2404,6 @@ mod tests {
         assert_eq!(id1, 1);
 
         // Scope the user to customer 1 only.
-
         let res = schema
             .execute_as_scoped_user(
                 r"{nodeList(first: 1){edges{node{name}} pageInfo{hasNextPage hasPreviousPage}}}",
@@ -2774,8 +2769,6 @@ mod tests {
     async fn node_customer_scoping_update_forbidden() {
         let schema = TestSchema::new().await;
 
-        // TestSchema creates an admin account - insert nodes first
-
         // Insert node with customer 2 (as admin)
         let res = schema
             .execute_as_system_admin(
@@ -2964,8 +2957,6 @@ mod tests {
     async fn node_customer_scoping_remove_forbidden() {
         let schema = TestSchema::new().await;
 
-        // TestSchema creates an admin account - insert nodes first
-
         // Insert node with customer 2 (as admin)
         let res = schema
             .execute_as_system_admin(
@@ -3072,7 +3063,8 @@ mod tests {
         );
     }
 
-    /// Test that system administrators remain unscoped even when account has empty `customer_ids`.
+    /// Test that system administrators remain unscoped even when the request
+    /// carries empty `customer_ids`.
     #[tokio::test]
     async fn node_customer_scoping_empty_customers_admin_allowed() {
         let schema = TestSchema::new().await;
@@ -3081,7 +3073,11 @@ mod tests {
         assert_eq!(id0, 0);
 
         let res = schema
-            .execute_as_system_admin(r#"{node(id: "0") { id name }}"#)
+            .execute_as_scoped_user(
+                r#"{node(id: "0") { id name }}"#,
+                Role::SystemAdministrator,
+                Some(vec![]),
+            )
             .await;
         assert!(
             res.errors.is_empty(),
@@ -3098,8 +3094,6 @@ mod tests {
     #[tokio::test]
     async fn node_customer_scoping_empty_customers_forbidden() {
         let schema = TestSchema::new().await;
-
-        // TestSchema creates an admin account - insert nodes first
 
         // Insert node (as admin)
         let res = schema
