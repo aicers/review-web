@@ -4,7 +4,7 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.43.0] - 2026-10-18
 
 ### Changed
 
@@ -2269,7 +2269,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
-[Unreleased]: https://github.com/aicers/review-web/compare/0.42.1...main
+[0.43.0]: https://github.com/aicers/review-web/compare/0.42.1...0.43.0
 [0.42.1]: https://github.com/aicers/review-web/compare/0.42.0...0.42.1
 [0.42.0]: https://github.com/aicers/review-web/compare/0.41.0...0.42.0
 [0.41.0]: https://github.com/aicers/review-web/compare/0.40.0...0.41.0
