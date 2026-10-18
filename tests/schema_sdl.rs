@@ -43,6 +43,53 @@ fn schema_has_no_process_list() {
     assert!(!sdl.contains("type Process {"), "{REGENERATE}");
 }
 
+/// The customer, allow/block network and network tag APIs have no operation,
+/// type, event field, filter field or network field left in the schema.
+#[test]
+fn schema_has_no_customer_allow_block_or_network_tag_api() {
+    let sdl = rendered_sdl();
+    for removed in [
+        "type Customer {",
+        "customerList",
+        "insertCustomer",
+        "updateCustomer",
+        "removeCustomers",
+        "origCustomer",
+        "respCustomer",
+        "AllowNetwork",
+        "BlockNetwork",
+        "allowNetworkList",
+        "blockNetworkList",
+        "networkTagList",
+        "insertNetworkTag",
+        "removeNetworkTag",
+        "updateNetworkTag",
+    ] {
+        assert!(!sdl.contains(removed), "{removed}: {REGENERATE}");
+    }
+
+    for header in [
+        "input EventListFilterInput {",
+        "input EventStandardFilterInput {",
+    ] {
+        let filter = definition(&sdl, header);
+        assert!(!filter.contains("customers"), "{header}: {REGENERATE}");
+        assert!(!filter.contains("networkTags"), "{header}: {REGENERATE}");
+    }
+
+    for header in ["type Network {", "input NetworkUpdateInput {"] {
+        assert!(
+            !definition(&sdl, header).contains("tagIds"),
+            "{header}: {REGENERATE}"
+        );
+    }
+    let insert_network = sdl
+        .lines()
+        .find(|line| line.contains("insertNetwork("))
+        .expect("the schema defines insertNetwork");
+    assert!(!insert_network.contains("tagIds"), "{REGENERATE}");
+}
+
 /// Category counts preserve the nullable uncategorized bucket without making
 /// the count at the corresponding index nullable.
 #[test]

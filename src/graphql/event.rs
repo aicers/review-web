@@ -78,7 +78,7 @@ use self::{
 };
 use super::{
     Role, RoleGuard,
-    customer::{Customer, HostNetworkGroupInput},
+    customer::HostNetworkGroupInput,
     filter::{FlowKind, LearningMethod, TrafficDirection},
     network::Network,
     triage::{ConfidenceInput, PacketAttrInput, ResponseInput, ThreatCategory},
@@ -959,13 +959,11 @@ impl From<(i128, database::Event)> for Event {
 struct EventListFilterInput {
     start: Option<Timestamp>,
     end: Option<Timestamp>,
-    customers: Option<Vec<ID>>,
     endpoints: Option<Vec<EndpointInput>>,
     directions: Option<Vec<FlowKind>>,
     source: Option<String>,
     destination: Option<String>,
     keywords: Option<Vec<String>>,
-    network_tags: Option<Vec<ID>>,
     sensors: Option<Vec<ID>>,
     os: Option<Vec<ID>>,
     devices: Option<Vec<ID>>,
@@ -992,13 +990,11 @@ struct EventListFilterInput {
 struct EventStandardFilterInput {
     start: Option<Timestamp>,
     end: Option<Timestamp>,
-    customers: Option<Vec<ID>>,
     endpoints: Option<Vec<EndpointInput>>,
     directions: Option<Vec<FlowKind>>,
     source: Option<String>,
     destination: Option<String>,
     keywords: Option<Vec<String>>,
-    network_tags: Option<Vec<ID>>,
     sensors: Option<Vec<ID>>,
     os: Option<Vec<ID>>,
     devices: Option<Vec<ID>>,
@@ -1079,19 +1075,6 @@ fn country_codes(codes: &[[u8; 2]]) -> Vec<&str> {
     codes.iter().map(country_code).collect()
 }
 
-fn find_ip_customer(
-    map: &IndexedTable<database::Customer>,
-    addr: IpAddr,
-) -> Result<Option<Customer>> {
-    for entry in map.iter(Direction::Forward, None) {
-        let customer = entry?;
-        if customer.networks.iter().any(|n| n.contains(addr)) {
-            return Ok(Some(customer.into()));
-        }
-    }
-    Ok(None)
-}
-
 fn find_ip_network(map: &IndexedTable<database::Network>, addr: IpAddr) -> Result<Option<Network>> {
     for entry in map.iter(Direction::Forward, None) {
         let network = entry?;
@@ -1155,13 +1138,6 @@ fn from_filter_input(
     store: &Store,
     input: &EventListFilterInput,
 ) -> anyhow::Result<EventFilter> {
-    let customers = if let Some(customers_input) = input.customers.as_deref() {
-        let map = store.customer_map();
-        Some(convert_customer_input(&map, customers_input)?)
-    } else {
-        None
-    };
-
     let networks = if let Some(endpoints_input) = &input.endpoints {
         let map = store.network_map();
         Some(convert_endpoint_input(&map, endpoints_input)?)
@@ -1287,7 +1263,7 @@ fn from_filter_input(
     };
 
     Ok(EventFilter::new(
-        customers,
+        None,
         networks,
         directions
             .map(|(kinds, group)| (kinds.into_iter().map(Into::into).collect::<Vec<_>>(), group)),
@@ -1306,24 +1282,6 @@ fn from_filter_input(
         input.confidence_max,
         None,
     ))
-}
-
-fn convert_customer_input(
-    map: &IndexedTable<database::Customer>,
-    customer_ids: &[ID],
-) -> anyhow::Result<Vec<database::Customer>> {
-    let mut customers = Vec::with_capacity(customer_ids.len());
-    for id in customer_ids {
-        let i = id
-            .as_str()
-            .parse::<u32>()
-            .context(format!("invalid ID: {}", id.as_str()))?;
-        let Some(c) = map.get_by_id(i)? else {
-            bail!("no such customer")
-        };
-        customers.push(c);
-    }
-    Ok(customers)
 }
 
 fn convert_endpoint_input(
@@ -1721,13 +1679,11 @@ impl From<EventStandardFilterInput> for EventListFilterInput {
         Self {
             start: input.start,
             end: input.end,
-            customers: input.customers,
             endpoints: input.endpoints,
             directions: input.directions,
             source: input.source,
             destination: input.destination,
             keywords: input.keywords,
-            network_tags: input.network_tags,
             sensors: input.sensors,
             os: input.os,
             devices: input.devices,
@@ -1978,18 +1934,6 @@ mod tests {
     const SENSOR1_EVENT_SENSOR: &str = "sensor1";
     #[cfg(feature = "auth-mtls")]
     const SENSOR1_EVENT_SENSOR: &str = "piglet.sensor1";
-
-    /// The `directions` filters of the blocklist tests. Their events come from
-    /// sensor `sensor1`, which maps to no node, so under `auth-mtls` they would
-    /// match no direction; there the tests run without the filter.
-    #[cfg(feature = "auth-jwt")]
-    const OUTBOUND_FILTER: &str = "directions: [\"OUTBOUND\"],";
-    #[cfg(feature = "auth-mtls")]
-    const OUTBOUND_FILTER: &str = "";
-    #[cfg(feature = "auth-jwt")]
-    const INBOUND_FILTER: &str = "directions: [\"INBOUND\"],";
-    #[cfg(feature = "auth-mtls")]
-    const INBOUND_FILTER: &str = "";
 
     /// Creates an event message at `timestamp` emitted by the `sensor1` test
     /// node.
@@ -2649,7 +2593,6 @@ mod tests {
                         name: "negative-time-range"
                         description: ""
                         networks: { hosts: ["0.0.0.2"], networks: [], ranges: [] }
-                        tagIds: []
                     )
                 }"#,
             )
@@ -2752,7 +2695,6 @@ mod tests {
                         name: "cross-epoch"
                         description: ""
                         networks: { hosts: ["0.0.0.2"], networks: [], ranges: [] }
-                        tagIds: []
                     )
                 }"#,
             )
@@ -4268,30 +4210,9 @@ mod tests {
                 db.put(&event_message_at(*ts, src, dst)).unwrap();
             });
 
-        let _ = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertCustomer(
-                        name: "c0",
-                        description: "",
-                        networks: [
-                            {
-                                name: "n0",
-                                description: "",
-                                networkType: INTRANET,
-                                networkGroup: {
-                                    hosts: ["0.0.0.1"],
-                                    networks: [],
-                                    ranges: []
-                                }
-                            }
-                        ])
-                }"#,
-            )
-            .await;
         let query = format!(
             "{{ \
-                        eventList(filter: {{ start:\"{}\", end:\"{}\", customers: [0], }}) {{ \
+                        eventList(filter: {{ start:\"{}\", end:\"{}\" }}) {{ \
                             edges {{ node {{... on DnsCovertChannel {{ time }} }} }} \
                             totalCount \
                         }} \
@@ -4306,7 +4227,7 @@ mod tests {
         );
         let query = format!(
             "{{ \
-                    eventList(filter: {{ start:\"{}\", end:\"{}\", customers: [0], }}) {{ \
+                    eventList(filter: {{ start:\"{}\", end:\"{}\" }}) {{ \
                         edges {{ node {{... on DnsCovertChannel {{ time }} }} }} \
                         totalCount \
                     }} \
@@ -4318,139 +4239,6 @@ mod tests {
         assert_eq!(
             res.data.to_string(),
             r#"{eventList: {edges: [{node: {time: "2018-01-27T18:30:09.453829Z"}}], totalCount: "1"}}"#
-        );
-    }
-
-    #[tokio::test]
-    async fn filter_by_customer() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let ts1 = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-        db.put(&event_message_at(ts1, 1, 2)).unwrap();
-        let ts2 = NaiveDate::from_ymd_opt(2018, 1, 27)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-        db.put(&event_message_at(ts2, 3, 4)).unwrap();
-        let ts3 = NaiveDate::from_ymd_opt(2018, 1, 28)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertCustomer(
-                        name: "c0",
-                        description: "",
-                        networks: [
-                            {
-                                name: "n0",
-                                description: "",
-                                networkType: INTRANET,
-                                networkGroup: {
-                                    hosts: ["0.0.0.1"],
-                                    networks: [],
-                                    ranges: []
-                                }
-                            }
-                        ])
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
-        let ts1 = jiff_timestamp(ts1);
-        let ts3 = jiff_timestamp(ts3);
-        let query = format!(
-            "{{ \
-                eventList(filter: {{ start:\"{ts1}\", end:\"{ts3}\", customers: [0] }}) {{ \
-                    edges {{ node {{... on DnsCovertChannel {{ origAddr }} }} }} \
-                }} \
-            }}"
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "0.0.0.1"}}]}}"#
-        );
-    }
-
-    #[cfg(feature = "auth-jwt")]
-    #[tokio::test]
-    async fn filter_by_direction() {
-        let schema = TestSchema::new().await;
-        let store = schema.store();
-        let db = store.events();
-        let ts1 = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-        db.put(&event_message_at(ts1, 1, 2)).unwrap();
-        let ts2 = NaiveDate::from_ymd_opt(2018, 1, 27)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-        db.put(&event_message_at(ts2, 3, 4)).unwrap();
-        let ts3 = NaiveDate::from_ymd_opt(2018, 1, 28)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertCustomer(
-                        name: "c0",
-                        description: "",
-                        networks: [
-                            {
-                                name: "n0",
-                                description: "",
-                                networkType: INTRANET,
-                                networkGroup: {
-                                    hosts: ["0.0.0.1"],
-                                    networks: [],
-                                    ranges: []
-                                }
-                            }
-                        ])
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
-        let ts1 = jiff_timestamp(ts1);
-        let ts3 = jiff_timestamp(ts3);
-        let query = format!(
-            "{{ \
-                eventList(filter: {{
-                    start:\"{ts1}\",
-                    end:\"{ts3}\",
-                    directions: [\"OUTBOUND\"],
-                }}) {{ \
-                    edges {{ node {{... on DnsCovertChannel {{ origAddr }} }} }} \
-                }} \
-            }}"
-        );
-        let res = schema.execute_as_system_admin(&query).await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{eventList: {edges: [{node: {origAddr: "0.0.0.1"}}]}}"#
         );
     }
 
@@ -4490,8 +4278,7 @@ mod tests {
                             hosts: ["0.0.0.4"],
                             networks: [],
                             ranges: []
-                        },
-                        tagIds: []
+                        }
                     )
                 }"#,
             )
@@ -4682,35 +4469,11 @@ mod tests {
         let key = db.put(&message).unwrap();
 
         let timestamp = jiff_timestamp(timestamp);
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertCustomer(
-                        name: "c0",
-                        description: "",
-                        networks: [
-                            {
-                                name: "n0",
-                                description: "",
-                                networkType: INTRANET,
-                                networkGroup: {
-                                    hosts: ["127.0.0.1"],
-                                    networks: [],
-                                    ranges: []
-                                }
-                            }
-                        ])
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
 
         let query = format!(
             "{{ \
                 eventList(filter: {{
                     start:\"{timestamp}\"
-                    customers: [0],
-                    {OUTBOUND_FILTER}
                 }}) {{ \
                     edges {{ node {{ id, ... on BlocklistDhcp {{ origAddr,giaddr,reqIpAddr,classId,clientId,options {{ code,value }} }} }} }} \
                 }} \
@@ -4780,35 +4543,11 @@ mod tests {
         let key = db.put(&message).unwrap();
 
         let timestamp = jiff_timestamp(timestamp);
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertCustomer(
-                        name: "c0",
-                        description: "",
-                        networks: [
-                            {
-                                name: "n0",
-                                description: "",
-                                networkType: INTRANET,
-                                networkGroup: {
-                                    hosts: ["127.0.0.2"],
-                                    networks: [],
-                                    ranges: []
-                                }
-                            }
-                        ])
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
 
         let query = format!(
             "{{ \
                 eventList(filter: {{
                     start:\"{timestamp}\"
-                    customers: [0],
-                    {INBOUND_FILTER}
                 }}) {{ \
                     edges {{ node {{ id, ... on BlocklistBootp {{ origAddr,ciaddr,chaddr }} }} }} \
                 }} \
@@ -5038,35 +4777,11 @@ mod tests {
         let key = db.put(&message).unwrap();
 
         let timestamp = jiff_timestamp(timestamp);
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertCustomer(
-                        name: "c0",
-                        description: "",
-                        networks: [
-                            {
-                                name: "n0",
-                                description: "",
-                                networkType: INTRANET,
-                                networkGroup: {
-                                    hosts: ["127.0.0.1"],
-                                    networks: [],
-                                    ranges: []
-                                }
-                            }
-                        ])
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
 
         let query = format!(
             "{{ \
                 eventList(filter: {{
                     start:\"{timestamp}\"
-                    customers: [0],
-                    {OUTBOUND_FILTER}
                 }}) {{ \
                     edges {{ node {{ id, ... on BlocklistRadius {{ origAddr,nasIp,userName,message }} }} }} \
                 }} \
@@ -5139,35 +4854,11 @@ mod tests {
         let key = db.put(&message).unwrap();
 
         let timestamp = jiff_timestamp(timestamp);
-        let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    insertCustomer(
-                        name: "c0",
-                        description: "",
-                        networks: [
-                            {
-                                name: "n0",
-                                description: "",
-                                networkType: INTRANET,
-                                networkGroup: {
-                                    hosts: ["127.0.0.1"],
-                                    networks: [],
-                                    ranges: []
-                                }
-                            }
-                        ])
-                }"#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
 
         let query = format!(
             "{{ \
                 eventList(filter: {{
                     start:\"{timestamp}\"
-                    customers: [0],
-                    {OUTBOUND_FILTER}
                 }}) {{ \
                     edges {{ node {{ id, ... on BlocklistMalformedDns {{ origAddr,respAddr,transId,queryBody,respBody }} }} }} \
                 }} \
@@ -6412,9 +6103,9 @@ mod tests {
 
         /// Seeds customer 1 (sensor A) owning Intranet `10.0.0.0/8` and
         /// Extranet `8.0.0.0/8`, customer 2 (sensor B) owning nothing, and
-        /// customer 0 (sensor C) with Intranet `10.0.0.0/8` only in the
-        /// `customers` table; and one `10.1.1.1 -> 8.8.8.8` event on each of
-        /// them and on a sensor that maps to no node.
+        /// customer 0 (sensor C) with no customer networks row; and one
+        /// `10.1.1.1 -> 8.8.8.8` event on each of them and on a sensor that
+        /// maps to no node.
         fn seed(schema: &TestSchema) {
             let store = schema.store();
             insert_sensor_node(&store, 1, "a.example.com");
@@ -6435,20 +6126,6 @@ mod tests {
             put_event(&store, 2, SENSOR_B, "10.1.1.1", "8.8.8.8");
             put_event(&store, 3, SENSOR_C, "10.1.1.1", "8.8.8.8");
             put_event(&store, 4, UNMAPPED_SENSOR, "10.1.1.1", "8.8.8.8");
-        }
-
-        async fn insert_customer_c(schema: &TestSchema) {
-            let res = schema
-                .execute_as_system_admin(
-                    r#"mutation {
-                        insertCustomer(name: "c", description: "", networks: [{
-                            name: "n", description: "", networkType: INTRANET,
-                            networkGroup: { hosts: [], networks: ["10.0.0.0/8"], ranges: [] }
-                        }])
-                    }"#,
-                )
-                .await;
-            assert_eq!(res.data.to_string(), r#"{insertCustomer: "0"}"#);
         }
 
         async fn sensors_matching(schema: &TestSchema, directions: &str) -> Vec<String> {
@@ -6472,7 +6149,6 @@ mod tests {
         #[tokio::test]
         async fn event_is_classified_by_its_own_customer() {
             let schema = TestSchema::new().await;
-            insert_customer_c(&schema).await;
             seed(&schema);
 
             assert_eq!(sensors_matching(&schema, "OUTBOUND").await, vec![SENSOR_A]);
@@ -6545,82 +6221,5 @@ mod tests {
                 Vec::<String>::new()
             );
         }
-    }
-
-    /// The `directions` filter under `auth-jwt`, which tests every event
-    /// against the internal networks of every customer.
-    #[cfg(feature = "auth-jwt")]
-    #[tokio::test]
-    async fn directions_use_every_customers_networks() {
-        let schema = TestSchema::new().await;
-        for (name, network) in [("c0", "10.0.0.0/8"), ("c1", "172.16.0.0/12")] {
-            let res = schema
-                .execute_as_system_admin(&format!(
-                    r#"mutation {{
-                        insertCustomer(name: "{name}", description: "", networks: [{{
-                            name: "n", description: "", networkType: INTRANET,
-                            networkGroup: {{ hosts: [], networks: ["{network}"], ranges: [] }}
-                        }}])
-                    }}"#
-                ))
-                .await;
-            assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
-        }
-        {
-            let store = schema.store();
-            let db = store.events();
-            let ts = |day| {
-                NaiveDate::from_ymd_opt(2018, 1, day)
-                    .unwrap()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap()
-                    .and_local_timezone(Utc)
-                    .unwrap()
-            };
-            let addr = |s: &str| u32::from(s.parse::<Ipv4Addr>().unwrap());
-            let category = Some(EventCategory::CommandAndControl);
-            // Sensors that map to no node: under `auth-jwt` the sensor plays
-            // no part.
-            db.put(&event_message_with_category(
-                ts(1),
-                addr("10.1.1.1"),
-                addr("8.8.8.8"),
-                category,
-                "sensor-x",
-            ))
-            .unwrap();
-            db.put(&event_message_with_category(
-                ts(2),
-                addr("10.1.1.1"),
-                addr("172.16.0.1"),
-                category,
-                "sensor-y",
-            ))
-            .unwrap();
-        }
-
-        let sensors = |directions: &'static str| {
-            let schema = &schema;
-            async move {
-                let res = schema
-                    .execute_as_system_admin(&format!(
-                        "{{ eventList(filter: {{ directions: [{directions}] }}) {{ \
-                            edges {{ node {{ ... on DnsCovertChannel {{ sensor }} }} }} \
-                        }} }}"
-                    ))
-                    .await;
-                assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
-                res.data.to_string()
-            }
-        };
-        assert_eq!(
-            sensors("OUTBOUND").await,
-            r#"{eventList: {edges: [{node: {sensor: "sensor-x"}}]}}"#
-        );
-        assert_eq!(
-            sensors("INTERNAL").await,
-            r#"{eventList: {edges: [{node: {sensor: "sensor-y"}}]}}"#
-        );
-        assert_eq!(sensors("INBOUND").await, r"{eventList: {edges: []}}");
     }
 }

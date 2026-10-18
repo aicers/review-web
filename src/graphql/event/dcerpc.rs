@@ -2,8 +2,8 @@ use async_graphql::{Context, ID, Object, Result, SimpleObject, StringNumber};
 use jiff::Timestamp;
 use review_database::event as database;
 
-use super::{ThreatLevel, TriageScore, country_code, find_ip_customer, find_ip_network};
-use crate::graphql::{customer::Customer, network::Network, triage::ThreatCategory};
+use super::{ThreatLevel, TriageScore, country_code, find_ip_network};
+use crate::graphql::{network::Network, triage::ThreatCategory};
 
 pub(super) struct BlocklistDceRpc {
     id: i128,
@@ -71,13 +71,6 @@ impl BlocklistDceRpc {
         country_code(&self.inner.orig_country_code)
     }
 
-    /// Originator Customer
-    async fn orig_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.customer_map();
-        find_ip_customer(&map, self.inner.orig_addr)
-    }
-
     /// Originator Network
     async fn orig_network(&self, ctx: &Context<'_>) -> Result<Option<Network>> {
         let store = crate::graphql::get_store(ctx)?;
@@ -102,13 +95,6 @@ impl BlocklistDceRpc {
     /// `"XX"` if no country information was recorded for this event.
     async fn resp_country(&self) -> &str {
         country_code(&self.inner.resp_country_code)
-    }
-
-    /// Responder Customer
-    async fn resp_customer(&self, ctx: &Context<'_>) -> Result<Option<Customer>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.customer_map();
-        find_ip_customer(&map, self.inner.resp_addr)
     }
 
     /// Responder Network
