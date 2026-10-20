@@ -623,6 +623,20 @@ fn delete_review_data(
             .remove(host_fqdn)
             .with_context(|| format!("deleting traffic filter rules for {host_fqdn}"))?;
     }
+    #[cfg(test)]
+    tests::checkpoint(&store, tests::Stage::CustomerNetworks, customer_id)
+        .with_context(|| format!("deleting customer networks for customer {customer_id}"))?;
+    store
+        .customer_networks_map()
+        .remove(customer_id)
+        .with_context(|| format!("deleting customer networks for customer {customer_id}"))?;
+    #[cfg(test)]
+    tests::checkpoint(&store, tests::Stage::NetworkLists, customer_id)
+        .with_context(|| format!("deleting network lists for customer {customer_id}"))?;
+    store
+        .network_lists_map()
+        .remove(customer_id)
+        .with_context(|| format!("deleting network lists for customer {customer_id}"))?;
     for node_id in &targets.node_ids {
         #[cfg(test)]
         tests::checkpoint(&store, tests::Stage::Nodes, customer_id)?;
@@ -855,8 +869,8 @@ mod tests {
     use ipnet::IpNet;
     use review_database::{
         Agent, AgentStatus, EventCategory, ExternalService, ExternalServiceKind,
-        ExternalServiceStatus, Node, NodeProfile,
-        event::{DnsEventFields, Event, EventKind, EventMessage},
+        ExternalServiceStatus, HostNetworkGroup, NetworkListEntry, Node, NodeProfile, OwnedNetwork,
+        event::{DnsEventFields, Event, EventKind, EventMessage, NetworkType},
     };
 
     use super::*;
@@ -1072,6 +1086,46 @@ mod tests {
             .unwrap()
     }
 
+    fn put_customer_network_data(test_store: &TestStore, customer_id: u32) {
+        let store = read_store(&test_store.store).unwrap();
+        let group = HostNetworkGroup::new(
+            vec!["192.0.2.1".parse().unwrap()],
+            vec!["192.0.2.0/24".parse().unwrap()],
+            vec![],
+        );
+        store
+            .customer_networks_map()
+            .replace(
+                customer_id,
+                1,
+                vec![OwnedNetwork {
+                    name: "office".to_string(),
+                    network_type: NetworkType::Intranet,
+                    group: group.clone(),
+                }],
+            )
+            .unwrap();
+        store
+            .network_lists_map()
+            .replace(
+                customer_id,
+                1,
+                vec![NetworkListEntry {
+                    name: "allowed".to_string(),
+                    group,
+                }],
+                vec![NetworkListEntry {
+                    name: "blocked".to_string(),
+                    group: HostNetworkGroup::new(
+                        vec!["198.51.100.1".parse().unwrap()],
+                        vec![],
+                        vec![],
+                    ),
+                }],
+            )
+            .unwrap();
+    }
+
     fn put_dns_event(test_store: &TestStore, sensor: &str, second: i64) {
         let fields = DnsEventFields {
             sensor: sensor.to_string(),
@@ -1121,6 +1175,8 @@ mod tests {
         Events,
         Hosts,
         TrafficFilters,
+        CustomerNetworks,
+        NetworkLists,
         Nodes,
         RetryAgent,
         RetryExternalService,
@@ -1708,6 +1764,9 @@ mod tests {
         let test_store = TestStore::new();
         let target_node = put_active_node(&test_store, 1, "one.example");
         let other_node = put_active_node(&test_store, 2, "other.example");
+        put_customer_network_data(&test_store, 1);
+        // The same network values belong to both customers; only the ID selects deletion.
+        put_customer_network_data(&test_store, 2);
         put_dns_event(&test_store, "piglet.one.example", 1);
         put_dns_event(&test_store, "piglet.one.example.extra", 2);
         put_dns_event(&test_store, "piglet.other.example", 3);
@@ -1743,6 +1802,10 @@ mod tests {
         delete_review_data(&test_store.store, 1, &targets).unwrap();
 
         let store = read_store(&test_store.store).unwrap();
+        assert!(store.customer_networks_map().get(1).unwrap().is_none());
+        assert!(store.network_lists_map().get(1).unwrap().is_none());
+        assert!(store.customer_networks_map().get(2).unwrap().is_some());
+        assert!(store.network_lists_map().get(2).unwrap().is_some());
         assert!(store.hosts_map().get(1, target_ip).unwrap().is_none());
         assert!(store.hosts_map().get(2, other_ip).unwrap().is_some());
         assert!(
@@ -1988,15 +2051,18 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn deletion_stops_at_each_failed_boundary_and_retry_finishes() {
-        const STAGES: [Stage; 4] = [
+        const STAGES: [Stage; 6] = [
             Stage::Events,
             Stage::Hosts,
             Stage::TrafficFilters,
+            Stage::CustomerNetworks,
+            Stage::NetworkLists,
             Stage::Nodes,
         ];
         let test_store = TestStore::new();
         for (index, fail_stage) in STAGES.into_iter().enumerate() {
             let node = put_active_node(&test_store, 1, "one.example");
+            put_customer_network_data(&test_store, 1);
             let target_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
             put_dns_event(
                 &test_store,
@@ -2077,6 +2143,22 @@ mod tests {
                 assert!(error.contains("reproduce.one.example"));
                 assert!(error.contains("injected RocksDB boundary error"));
             }
+            let network_error_context = match fail_stage {
+                Stage::CustomerNetworks => Some("deleting customer networks for customer 1"),
+                Stage::NetworkLists => Some("deleting network lists for customer 1"),
+                _ => None,
+            };
+            if let Some(context) = network_error_context {
+                let error = failed
+                    .service_results
+                    .first()
+                    .unwrap()
+                    .error
+                    .as_ref()
+                    .unwrap();
+                assert!(error.contains(context));
+                assert!(error.contains("injected RocksDB boundary error"));
+            }
             {
                 let store = read_store(&test_store.store).unwrap();
                 let target_event_exists = store.events().iter_forward().any(|entry| {
@@ -2100,6 +2182,27 @@ mod tests {
                     matches!(
                         fail_stage,
                         Stage::Events | Stage::Hosts | Stage::TrafficFilters
+                    )
+                );
+                assert_eq!(
+                    store.customer_networks_map().get(1).unwrap().is_some(),
+                    matches!(
+                        fail_stage,
+                        Stage::Events
+                            | Stage::Hosts
+                            | Stage::TrafficFilters
+                            | Stage::CustomerNetworks
+                    )
+                );
+                assert_eq!(
+                    store.network_lists_map().get(1).unwrap().is_some(),
+                    matches!(
+                        fail_stage,
+                        Stage::Events
+                            | Stage::Hosts
+                            | Stage::TrafficFilters
+                            | Stage::CustomerNetworks
+                            | Stage::NetworkLists
                     )
                 );
                 assert!(store.node_map().get_by_id(node).unwrap().is_some());
@@ -2139,6 +2242,8 @@ mod tests {
             );
             assert!(agent.targets.lock().unwrap().is_empty());
             let store = read_store(&test_store.store).unwrap();
+            assert!(store.customer_networks_map().get(1).unwrap().is_none());
+            assert!(store.network_lists_map().get(1).unwrap().is_none());
             assert!(store.hosts_map().get(1, target_ip).unwrap().is_none());
             assert!(
                 store
@@ -2554,6 +2659,7 @@ mod tests {
         ] {
             let manager = Arc::new(CustomerDataDeletionTaskManager::default());
             let node_id = put_active_node(&test_store, customer_id, hostname);
+            put_customer_network_data(&test_store, customer_id);
             let mut review = pending_result(CustomerDataDeletionService::Review, &[hostname]);
             if retry {
                 review.status = CustomerDataDeletionStatus::Failed;
@@ -2605,6 +2711,22 @@ mod tests {
             }
 
             let store = read_store(&test_store.store).unwrap();
+            assert!(
+                store
+                    .customer_networks_map()
+                    .get(customer_id)
+                    .unwrap()
+                    .is_none(),
+                "customer {customer_id} networks remain"
+            );
+            assert!(
+                store
+                    .network_lists_map()
+                    .get(customer_id)
+                    .unwrap()
+                    .is_none(),
+                "customer {customer_id} network lists remain"
+            );
             assert!(
                 store.hosts_map().get(customer_id, ip).unwrap().is_none(),
                 "customer {customer_id} host remains"

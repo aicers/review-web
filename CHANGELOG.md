@@ -8,9 +8,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
-- Added the `deleteCustomerData` GraphQL mutation for system administrators,
-  with persisted per-service progress, failed-service retries, startup
-  recovery, and shutdown waiting for customer data deletion.
+- Added the `deleteCustomerData` GraphQL mutation for system administrators
+  to delete customer events, hosts, traffic filters, nodes, associated
+  agents and external services, owned networks, and allowlists/blocklists.
+  It supports remote deletion requests to Sensor and SemiSupervised,
+  persisted per-service progress, failed-service retries, startup recovery,
+  and waiting for active deletion during shutdown.
 
 ## [0.44.0] - 2026-10-19
 
