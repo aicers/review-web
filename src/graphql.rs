@@ -812,7 +812,21 @@ fn get_trend(
     let cutoff_len = cutoff_rate * original.len().to_f64().expect("safe: usize -> f64");
     let cutoff_frequency = 1.0 / cutoff_len;
     let sections = signal::filter::design::butter(trendi_order, cutoff_frequency)?;
-    signal::filter::filtfilt(&sections, &original)
+    let trend = signal::filter::filtfilt(&sections, &original)?;
+    if trend.iter().any(|&value| trend_count(value).is_none()) {
+        return Err(vinum::InvalidInput::Value(
+            "trend contains a non-finite or unrepresentable count".to_owned(),
+        ));
+    }
+    Ok(trend)
+}
+
+// Keep this conversion shared by validation and both response builders.
+fn trend_count(value: f64) -> Option<usize> {
+    if !value.is_finite() {
+        return None;
+    }
+    value.max(0.0).round().to_usize()
 }
 
 #[cfg(test)]
@@ -1715,6 +1729,36 @@ mod tests {
             assert!(super::zero_filled_length(&series).is_err());
             assert!(super::fill_vacant_time_slots(&series).is_err());
         }
+    }
+
+    #[test]
+    fn trend_count_rounding_and_validation() {
+        for (value, expected) in [
+            (1.0 - f64::EPSILON, 1),
+            (1.0 + f64::EPSILON, 1),
+            (-0.1, 0),
+            (-1.5, 0),
+            (-f64::MAX, 0),
+            (0.5, 1),
+            (1.5, 2),
+            (2.5, 3),
+            (0.49, 0),
+        ] {
+            assert_eq!(super::trend_count(value), Some(expected), "{value}");
+        }
+        let upper = 2_f64.powi(i32::try_from(usize::BITS).unwrap());
+        for value in [
+            upper,
+            upper * 2.0,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            assert_eq!(super::trend_count(value), None, "{value}");
+        }
+        let below = upper.next_down();
+        assert!(super::trend_count(below).is_some());
+        assert!(super::get_trend(&[(0, usize::MAX); 20], 0.1, 0).is_err());
     }
 
     #[test]

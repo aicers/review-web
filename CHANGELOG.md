@@ -15,6 +15,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   persisted per-service progress, failed-service retries, startup recovery,
   and waiting for active deletion during shutdown.
 
+### Changed
+
+- Integer trend counts in `topTimeSeries` and `topTimeSeriesOfCluster` now map
+  negative values to zero and round other values to the nearest integer, with
+  exact halves toward the larger integer.
+- `topTimeSeries` segmentation and regression use the untruncated trend and
+  corrected segment boundaries. This can affect line segments, statistics,
+  included clusters, and sorting.
+- Non-finite trends and trends with unrepresentable integer counts are treated
+  as computation failures: `topTimeSeries` omits the affected cluster and
+  `topTimeSeriesOfCluster` returns an empty `seriesTrend`.
+
 ## [0.44.0] - 2026-10-19
 
 ### Added

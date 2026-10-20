@@ -354,6 +354,9 @@ impl ColumnTimeSeries<'_> {
         self.inner.time_counts.iter().map(Into::into).collect()
     }
 
+    /// The trend with negative counts mapped to 0 and other counts rounded to
+    /// the nearest integer, with exact halves toward the larger integer.
+    /// Empty when the trend cannot be computed.
     async fn series_trend(&self) -> Vec<TimeCount> {
         let Ok(trend) = get_trend(&self.inner.time_counts, self.cutoff_rate, self.trendi_order)
         else {
@@ -364,7 +367,7 @@ impl ColumnTimeSeries<'_> {
             .enumerate()
             .map(|(index, t)| TimeCount {
                 time: i64_to_naive_date_time(self.inner.time_counts[index].0),
-                count: t.trunc().to_usize().unwrap_or(0), // unwrap_or is for minus
+                count: super::trend_count(*t).expect("get_trend validated every count"),
             })
             .collect::<Vec<_>>()
     }
