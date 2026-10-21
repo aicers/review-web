@@ -9,6 +9,7 @@ mod cluster;
 mod core_component;
 mod customer_data_deletion {
     pub use crate::customer_data_deletion::CustomerDataDeletionMutation;
+    pub(crate) use crate::customer_data_deletion::CustomerDataDeletionQuery;
 }
 pub mod customer;
 pub mod customer_access;
@@ -170,6 +171,7 @@ pub struct Query(SubQueryOneA, SubQueryOneB, SubQueryTwoA, SubQueryTwoB);
 struct SubQueryOneA(
     category::CategoryQuery,
     cluster::ClusterQuery,
+    customer_data_deletion::CustomerDataDeletionQuery,
     data_source::DataSourceQuery,
     db_management::DbManagementQuery,
     event::EventQuery,

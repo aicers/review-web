@@ -3671,6 +3671,32 @@ enum CustomerDataDeletionRequestStatus {
 	NO_TARGET
 }
 
+type CustomerDataDeletionResult {
+	customerId: ID!
+	serviceResults: [CustomerDataDeletionServiceResult!]!
+}
+
+enum CustomerDataDeletionService {
+	REVIEW
+	SENSOR
+	SEMI_SUPERVISED
+}
+
+type CustomerDataDeletionServiceResult {
+	service: CustomerDataDeletionService!
+	hostFqdns: [String!]!
+	status: CustomerDataDeletionStatus!
+	requestedAt: DateTime!
+	completedAt: DateTime
+	error: String
+}
+
+enum CustomerDataDeletionStatus {
+	IN_PROGRESS
+	SUCCEEDED
+	FAILED
+}
+
 type DataSource {
 	"""
 	The ID of the data source.
@@ -8026,6 +8052,10 @@ type Query {
 		"""
 		trendiOrder: Int,		start: DateTime,		end: DateTime
 	): TimeSeriesResult!
+	"""
+	Returns persisted deletion results; null means no persisted job exists.
+	"""
+	customerDataDeletionResult(customerId: ID!): CustomerDataDeletionResult
 	"""
 	A list of data sources.
 	"""
