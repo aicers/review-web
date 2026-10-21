@@ -1267,18 +1267,30 @@ mod tests {
         .unwrap();
         assert_eq!(cluster.lines.len(), 1);
         assert!((cluster.lines[0].reg_trend.slope - 11.0).abs() < 1e-9);
-        let cluster =
-            cluster_trend((0..5000).map(|i| 1_000_000_000 + i / 500).collect(), 0, 0.0).unwrap();
-        assert!(cluster.lines.iter().any(|line| line.reg_trend.slope > 0.0));
-        let cluster = cluster_trend(
-            (0..5000)
-                .map(|i| 1_000_000_000 + if i < 2500 { i / 250 } else { (4999 - i) / 250 })
-                .collect(),
-            0,
-            0.0,
-        )
-        .unwrap();
-        assert!(cluster.lines.iter().any(|line| line.reg_trend.slope > 0.0));
+        for order in [0, 4] {
+            let cluster = cluster_trend(
+                (0..5000).map(|i| 1_000_000_000 + i / 500).collect(),
+                order,
+                0.0,
+            )
+            .unwrap();
+            assert!(
+                cluster.lines.iter().any(|line| line.reg_trend.slope > 0.0),
+                "slow rise should survive smoothing with order {order}"
+            );
+            let cluster = cluster_trend(
+                (0..5000)
+                    .map(|i| 1_000_000_000 + if i < 2500 { i / 250 } else { (4999 - i) / 250 })
+                    .collect(),
+                order,
+                0.0,
+            )
+            .unwrap();
+            assert!(
+                cluster.lines.iter().any(|line| line.reg_trend.slope > 0.0),
+                "slow peak should survive smoothing with order {order}"
+            );
+        }
         // Each step is below tau, but the total range exceeds tau.
         let series = counted_series(vec![1_usize << 40; 120]);
         let trend: Vec<_> = (0..120)
