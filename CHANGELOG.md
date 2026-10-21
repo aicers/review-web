@@ -4,6 +4,17 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added the `deleteCustomerData` GraphQL mutation for system administrators
+  to delete customer events, hosts, traffic filters, nodes, associated
+  agents and external services, owned networks, and allowlists/blocklists.
+  It supports remote deletion requests to Sensor and SemiSupervised,
+  persisted per-service progress, failed-service retries, startup recovery,
+  and waiting for active deletion during shutdown.
+
 ## [0.44.0] - 2026-10-19
 
 ### Added
@@ -2292,6 +2303,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.44.0...main
 [0.44.0]: https://github.com/aicers/review-web/compare/0.43.0...0.44.0
 [0.43.0]: https://github.com/aicers/review-web/compare/0.42.1...0.43.0
 [0.42.1]: https://github.com/aicers/review-web/compare/0.42.0...0.42.1

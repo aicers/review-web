@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod backend;
+pub mod customer_data_deletion;
 pub mod graphql;
 pub mod ingress;
 pub mod maintenance;
@@ -185,6 +186,7 @@ pub fn serve<A, D, O>(
     agent_manager: A,
     package_deployer: D,
     host_onboarder: O,
+    customer_data_deletion_manager: Arc<customer_data_deletion::CustomerDataDeletionTaskManager>,
 ) -> Arc<Notify>
 where
     A: AgentManager + 'static,
@@ -203,6 +205,7 @@ where
         config.cert_manager.clone(),
         config.tls_reload_handle.clone(),
         config.maintenance_gate.clone(),
+        customer_data_deletion_manager,
     );
     let web_srv_shutdown_handle = Arc::new(Notify::new());
     let shutdown_handle = web_srv_shutdown_handle.clone();

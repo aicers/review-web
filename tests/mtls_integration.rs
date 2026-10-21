@@ -89,6 +89,13 @@ mod mtls_integration {
 
     #[async_trait]
     impl AgentManager for StubAgentManager {
+        async fn request_customer_data_deletion(
+            &self,
+            _targets: &[review_web::customer_data_deletion::CustomerDataDeletionTarget],
+        ) -> Result<(), anyhow::Error> {
+            Ok(())
+        }
+
         async fn send_agent_specific_internal_networks(
             &self,
             _networks: &[review_web::graphql::customer::NetworksTargetAgentLookupKeysPair],
@@ -553,6 +560,9 @@ mod mtls_integration {
             StubAgentManager,
             StubPackageDeployer,
             StubHostOnboarder,
+            Arc::new(
+                review_web::customer_data_deletion::CustomerDataDeletionTaskManager::default(),
+            ),
         );
 
         Ok(TestServer {

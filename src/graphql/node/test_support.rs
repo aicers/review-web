@@ -12,6 +12,13 @@ pub(super) struct MockAgentManager {
 
 #[async_trait]
 impl AgentManager for MockAgentManager {
+    async fn request_customer_data_deletion(
+        &self,
+        _targets: &[crate::customer_data_deletion::CustomerDataDeletionTarget],
+    ) -> Result<(), anyhow::Error> {
+        unimplemented!()
+    }
+
     async fn send_agent_specific_internal_networks(
         &self,
         _networks: &[NetworksTargetAgentLookupKeysPair],

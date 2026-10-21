@@ -5,7 +5,7 @@ use async_graphql::{Context, InputObject, Object, Result, SimpleObject};
 use review_database::{self as database, Store};
 use serde::{Deserialize, Serialize};
 
-use super::BoxedAgentManager;
+use super::SharedAgentManager;
 use super::node::agent_lookup_key_service_token;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -198,7 +198,7 @@ pub async fn send_agent_specific_customer_networks(
     ctx: &Context<'_>,
     networks: &[NetworksTargetAgentLookupKeysPair],
 ) -> Result<Vec<String>> {
-    let agent_manager = ctx.data::<BoxedAgentManager>()?;
+    let agent_manager = ctx.data::<SharedAgentManager>()?;
     agent_manager
         .send_agent_specific_internal_networks(networks)
         .await
@@ -214,7 +214,7 @@ pub(super) async fn send_agent_specific_allow_networks(
     ctx: &Context<'_>,
     networks: &[NetworksTargetAgentLookupKeysPair],
 ) -> Result<Vec<String>> {
-    let agent_manager = ctx.data::<BoxedAgentManager>()?;
+    let agent_manager = ctx.data::<SharedAgentManager>()?;
     agent_manager
         .send_agent_specific_allow_networks(networks)
         .await
@@ -230,7 +230,7 @@ pub(super) async fn send_agent_specific_block_networks(
     ctx: &Context<'_>,
     networks: &[NetworksTargetAgentLookupKeysPair],
 ) -> Result<Vec<String>> {
-    let agent_manager = ctx.data::<BoxedAgentManager>()?;
+    let agent_manager = ctx.data::<SharedAgentManager>()?;
     agent_manager
         .send_agent_specific_block_networks(networks)
         .await

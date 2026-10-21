@@ -7,6 +7,9 @@ mod category;
 mod cert;
 mod cluster;
 mod core_component;
+mod customer_data_deletion {
+    pub use crate::customer_data_deletion::CustomerDataDeletionMutation;
+}
 pub mod customer;
 pub mod customer_access;
 mod customer_network;
@@ -82,18 +85,19 @@ pub use self::sampling::{
     Interval as SamplingInterval, Kind as SamplingKind, Period as SamplingPeriod,
     Policy as SamplingPolicy, get_sampling_policies,
 };
+pub(crate) use crate::backend::SharedAgentManager;
 use crate::backend::{AgentManager, CertManager, HostOnboarder, PackageDeployer};
 #[cfg(test)]
 use crate::backend::{
     BindAddrInput, BuildId, DeployError, DeployOutcome, HostOnboardingTicket, JoinToken,
     OperationId, RunningRoxydBuild,
 };
+use crate::customer_data_deletion::CustomerDataDeletionTaskManager;
 use crate::maintenance::{MaintenanceExtension, MaintenanceGate};
 
 /// GraphQL schema type.
 pub type Schema = async_graphql::Schema<Query, Mutation, Subscription>;
 
-type BoxedAgentManager = Box<dyn AgentManager>;
 type BoxedPackageDeployer = Box<dyn PackageDeployer>;
 type BoxedHostOnboarder = Box<dyn HostOnboarder>;
 
@@ -114,13 +118,14 @@ pub(super) fn schema<B, D, O>(
     cert_manager: Arc<dyn CertManager>,
     tls_reload_handle: Arc<Notify>,
     maintenance_gate: MaintenanceGate,
+    customer_data_deletion_manager: Arc<CustomerDataDeletionTaskManager>,
 ) -> Schema
 where
     B: AgentManager + 'static,
     D: PackageDeployer + 'static,
     O: HostOnboarder + 'static,
 {
-    let agent_manager: BoxedAgentManager = Box::new(agent_manager);
+    let agent_manager: SharedAgentManager = Arc::new(agent_manager);
     let package_deployer: BoxedPackageDeployer = Box::new(package_deployer);
     let host_onboarder: BoxedHostOnboarder = Box::new(host_onboarder);
     let mut builder = Schema::build(
@@ -134,9 +139,11 @@ where
     .data(host_onboarder)
     .data(cert_manager)
     .data(tls_reload_handle)
+    .data(customer_data_deletion_manager)
     .data(Arc::new(network_list::NetworkListsLock::default()))
     .extension(install_state::LatestBuildMemoExtension)
     .extension(MaintenanceExtension::new(maintenance_gate));
+
     if let Some(ip_locator) = ip_locator {
         builder = builder.data(ip_locator);
     }
@@ -209,6 +216,7 @@ struct SubMutationOneA(
     category::CategoryMutation,
     cert::CertMutation,
     cluster::ClusterMutation,
+    customer_data_deletion::CustomerDataDeletionMutation,
     data_source::DataSourceMutation,
     db_management::DbManagementMutation,
 );
@@ -696,7 +704,7 @@ pub(crate) enum RoleGuard {
 pub struct CustomerIds(pub Option<Vec<u32>>);
 
 impl RoleGuard {
-    fn new(role: database::Role) -> Self {
+    pub(crate) fn new(role: database::Role) -> Self {
         Self::Role(role)
     }
 }
@@ -813,6 +821,13 @@ struct MockAgentManager {}
 #[cfg(test)]
 #[async_trait::async_trait]
 impl AgentManager for MockAgentManager {
+    async fn request_customer_data_deletion(
+        &self,
+        _targets: &[crate::customer_data_deletion::CustomerDataDeletionTarget],
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+
     async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
         Ok(())
     }
@@ -1364,12 +1379,12 @@ struct TestSchema {
 #[cfg(test)]
 impl TestSchema {
     async fn new() -> Self {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         Self::new_with_params(agent_manager, None, "testuser").await
     }
 
     async fn new_with_event_country_locator(locator: Arc<ip2location::DB>) -> Self {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         Self::new_with_params_and_event_country_locator(
             agent_manager,
             None,
@@ -1380,7 +1395,7 @@ impl TestSchema {
     }
 
     async fn new_with_params(
-        agent_manager: BoxedAgentManager,
+        agent_manager: SharedAgentManager,
         test_addr: Option<SocketAddr>,
         username: &str,
     ) -> Self {
@@ -1394,12 +1409,12 @@ impl TestSchema {
     /// so a test that exercises it substitutes a stub here rather than taking
     /// the default one's answers.
     async fn new_with_package_deployer(package_deployer: BoxedPackageDeployer) -> Self {
-        let agent_manager: BoxedAgentManager = Box::new(MockAgentManager {});
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         Self::new_with_all(agent_manager, package_deployer, None, "testuser", None).await
     }
 
     async fn new_with_params_and_event_country_locator(
-        agent_manager: BoxedAgentManager,
+        agent_manager: SharedAgentManager,
         test_addr: Option<SocketAddr>,
         username: &str,
         event_country_locator: Option<Arc<ip2location::DB>>,
@@ -1415,7 +1430,7 @@ impl TestSchema {
     }
 
     async fn new_with_all(
-        agent_manager: BoxedAgentManager,
+        agent_manager: SharedAgentManager,
         package_deployer: BoxedPackageDeployer,
         test_addr: Option<SocketAddr>,
         username: &str,
@@ -1438,8 +1453,10 @@ impl TestSchema {
         .data(store.clone())
         .data(username.to_string())
         .data(network_lists_lock.clone())
+        .data(Arc::new(CustomerDataDeletionTaskManager::default()))
         .extension(install_state::LatestBuildMemoExtension)
         .extension(MaintenanceExtension::new(MaintenanceGate::new()));
+
         let schema = builder.finish();
 
         Self {

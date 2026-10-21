@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::{
     collections::{BTreeSet, HashMap},
     fmt,
@@ -19,11 +20,17 @@ use review_database::{BuildSelector, ListenerBinding, ListenerTransport, PortOwn
 pub use review_protocol::types::ResourceUsage;
 use review_protocol::types::node::{BootstrapMaterial, DeliveryMode, FailurePolicy, PackageState};
 
+use crate::customer_data_deletion::CustomerDataDeletionTarget;
 use crate::graphql::customer::NetworksTargetAgentLookupKeysPair;
 pub use crate::graphql::{ParsedCertificate, SamplingPolicy};
 
 #[async_trait]
 pub trait AgentManager: Send + Sync {
+    async fn request_customer_data_deletion(
+        &self,
+        targets: &[CustomerDataDeletionTarget],
+    ) -> Result<(), anyhow::Error>;
+
     async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
         Err(anyhow!("Not supported"))
     }
@@ -156,6 +163,9 @@ pub struct DataStoreReadEndpoint {
     /// The addresses the plane resolves for the instance's host.
     pub addrs: Vec<IpAddr>,
 }
+
+/// An agent manager that can be owned by background tasks.
+pub type SharedAgentManager = Arc<dyn AgentManager>;
 
 pub trait CertManager: Send + Sync {
     /// Returns the certificate path.
