@@ -1,19 +1,21 @@
-use std::sync::Arc;
-use std::sync::RwLock;
-
 use async_graphql::{
-    Context, Object, Result, SimpleObject, StringNumber,
+    Context, Enum, Object, Result, SimpleObject, StringNumber,
     connection::{Connection, Edge, EmptyFields, OpaqueCursor},
     types::ID,
 };
 use chrono::{DateTime, NaiveDateTime, Utc};
 use num_traits::ToPrimitive;
-use review_database::{self as database, Store};
+use review_database::{self as database, UniqueKey, event::Direction};
 
 use super::{
     DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, MAX_TRENDI_ORDER, PositiveCutoffRate, Role,
-    RoleGuard, cluster::TimeCount, data_source::DataSource, fill_vacant_time_slots, get_trend,
-    slicing, zero_filled_length,
+    RoleGuard,
+    cluster::TimeCount,
+    customer_access,
+    data_source::DataSource,
+    fill_vacant_time_slots, get_trend,
+    refusal::{RefusalCode, refusal},
+    training_result, zero_filled_length,
 };
 use crate::graphql::query;
 
@@ -23,12 +25,19 @@ const RESPONSE_SERIES_BUDGET: u128 = 100_000;
 const DEFAULT_MIN_SLOPE: f64 = 10.0;
 const DEFAULT_MIN_ZERO_COUNT_FOR_TREND: usize = 5;
 
+/// The record `kind` of each clustering method a model can be trained with.
+const MULTIFIELD_KIND: &str = "Multifield";
+const PREFIX_KIND: &str = "Prefix";
+const TIMESERIES_KIND: &str = "Timeseries";
+
 #[derive(Default)]
 pub(super) struct ModelQuery;
 
 #[Object]
 impl ModelQuery {
-    /// A list of models.
+    /// A list of the models of the caller's customers, in name order.
+    ///
+    /// A System Administrator sees every model.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -40,8 +49,7 @@ impl ModelQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<OpaqueCursor<(u32, String)>, ModelDigest, ModelTotalCount, EmptyFields>>
-    {
+    ) -> Result<Connection<OpaqueCursor<Vec<u8>>, ModelDigest, ModelTotalCount, EmptyFields>> {
         query(
             after,
             before,
@@ -52,6 +60,10 @@ impl ModelQuery {
         .await
     }
 
+    /// The extra information on the columns of a CSV model.
+    ///
+    /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+    /// model of none of the caller's customers with `Forbidden`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -65,16 +77,18 @@ impl ModelQuery {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid model id")?;
-        let db = ctx
-            .data::<Arc<RwLock<Store>>>()?
-            .read()
-            .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
+        customer_access::load_accessible_model(ctx, "model", model_id)?;
+        let db = crate::graphql::get_store(ctx)?;
         let map = db.csv_column_extra_map();
         Ok(map
             .get_by_model(model_id)?
             .map(|config| CsvColumnExtraConfig { inner: config }))
     }
 
+    /// The column types of a structured model.
+    ///
+    /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+    /// model of none of the caller's customers with `Forbidden`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -84,27 +98,33 @@ impl ModelQuery {
         ctx: &Context<'_>,
         model: ID,
     ) -> Result<Vec<StructuredColumnType>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.column_stats_map();
         let model = model
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid model id")?;
+        customer_access::load_accessible_model(ctx, "model", model)?;
+        let store = crate::graphql::get_store(ctx)?;
+        let map = store.column_stats_map();
         let types = map.get_column_types_of_model(model)?;
         Ok(types.into_iter().map(Into::into).collect())
     }
 
+    /// The time range of a model's time series.
+    ///
+    /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+    /// model of none of the caller's customers with `Forbidden`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
     async fn time_range_of_model(&self, ctx: &Context<'_>, model: ID) -> Result<TimeRange> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.time_series_map();
         let model = model
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid model id")?;
+        customer_access::load_accessible_model(ctx, "model", model)?;
+        let store = crate::graphql::get_store(ctx)?;
+        let map = store.time_series_map();
         let time_range = map.get_time_range_of_model(model)?;
         let (lower, upper) = time_range.map_or((None, None), |(l, u)| {
             (
@@ -115,6 +135,10 @@ impl ModelQuery {
         Ok(TimeRange { lower, upper })
     }
 
+    /// The top time series of a model, by column.
+    ///
+    /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+    /// model of none of the caller's customers with `Forbidden`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -155,12 +179,13 @@ impl ModelQuery {
             .to_usize()
             .ok_or("invalid size")?;
 
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.time_series_map();
         let model = model
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid model id")?;
+        customer_access::load_accessible_model(ctx, "model", model)?;
+        let store = crate::graphql::get_store(ctx)?;
+        let map = store.time_series_map();
         let time_series = map.get_top_time_series_of_model(model, time, start, end)?;
 
         check_computation_budget(&time_series, time.is_some())?;
@@ -187,6 +212,10 @@ impl ModelQuery {
         Ok(time_series)
     }
 
+    /// The top column values of a model, by column.
+    ///
+    /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+    /// model of none of the caller's customers with `Forbidden`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -209,6 +238,7 @@ impl ModelQuery {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid model id")?;
+        customer_access::load_accessible_model(ctx, "model", model_id)?;
 
         let store = crate::graphql::get_store(ctx)?;
         let cluster_ids = load_cluster_ids_with_size_limit(&store, model_id, portion_of_clusters)?;
@@ -236,6 +266,10 @@ impl ModelQuery {
         Ok(counts.into_iter().map(Into::into).collect())
     }
 
+    /// The top IP addresses of a model, by column.
+    ///
+    /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+    /// model of none of the caller's customers with `Forbidden`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -258,6 +292,7 @@ impl ModelQuery {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid model id(u32)")?;
+        customer_access::load_accessible_model(ctx, "model", model_id)?;
 
         let store = crate::graphql::get_store(ctx)?;
         let cluster_ids = load_cluster_ids_with_size_limit(&store, model_id, portion_of_clusters)?;
@@ -273,6 +308,10 @@ impl ModelQuery {
         Ok(counts.into_iter().map(Into::into).collect())
     }
 
+    /// The top multimaps of a model.
+    ///
+    /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+    /// model of none of the caller's customers with `Forbidden`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -299,6 +338,7 @@ impl ModelQuery {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid model id")?;
+        customer_access::load_accessible_model(ctx, "model", model_id)?;
 
         let store = crate::graphql::get_store(ctx)?;
         let cluster_ids = load_cluster_ids(&store, model_id, None)?;
@@ -331,6 +371,10 @@ pub(super) struct ModelMutation;
 
 #[Object]
 impl ModelMutation {
+    /// Adds extra information on the columns of a CSV model.
+    ///
+    /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+    /// model of none of the caller's customers with `Forbidden`.
     #[allow(clippy::too_many_arguments)]
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
@@ -348,10 +392,8 @@ impl ModelMutation {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid model id")?;
-        let db = ctx
-            .data::<Arc<RwLock<Store>>>()?
-            .read()
-            .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
+        customer_access::load_accessible_model(ctx, "model", model_id)?;
+        let db = crate::graphql::get_store(ctx)?;
         let map = db.csv_column_extra_map();
         Ok(ID(map
             .insert(
@@ -365,6 +407,12 @@ impl ModelMutation {
             .to_string()))
     }
 
+    /// Updates extra information on the columns of a CSV model.
+    ///
+    /// Scope is that of the model the stored extra belongs to. If that model
+    /// does not exist, the update is refused with `extensions.code`
+    /// `NOT_FOUND` on `id`; a model of none of the caller's customers is
+    /// refused with `Forbidden`.
     #[allow(clippy::too_many_arguments)]
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
@@ -378,13 +426,27 @@ impl ModelMutation {
         column_1: Option<Vec<bool>>,
         column_n: Option<Vec<bool>>,
     ) -> Result<ID> {
-        let db = ctx
-            .data::<Arc<RwLock<Store>>>()?
-            .read()
-            .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
+        let extra_id = id.as_str().parse()?;
+        let users_customers = customer_access::users_customers(ctx)?;
+        let db = crate::graphql::get_store(ctx)?;
         let map = db.csv_column_extra_map();
+        let model_id = map
+            .get_by_id(extra_id)?
+            .ok_or_else(|| format!("csv column extra {extra_id} unavailable"))?
+            .model_id;
+        let Some(model) = db.model_map().get_by_id(model_id)? else {
+            return Err(refusal(
+                RefusalCode::NotFound,
+                format!("model {model_id} of csv column extra {extra_id} not found"),
+                "id",
+                id.as_str(),
+            ));
+        };
+        if !customer_access::can_access_model(users_customers.as_deref(), &model) {
+            return Err("Forbidden".into());
+        }
         map.update(
-            id.as_str().parse()?,
+            extra_id,
             column_alias.as_deref(),
             column_display.as_deref(),
             column_top_n.as_deref(),
@@ -478,17 +540,121 @@ impl ModelDigest {
         &self.inner.name
     }
 
-    async fn data_source(&self, ctx: &Context<'_>) -> Result<DataSource> {
+    /// The clustering method the model was trained with.
+    async fn method(&self) -> Result<ModelMethod> {
+        model_method(&self.inner.kind)
+    }
+
+    /// The event kind the model was trained on, such as `http`, a Sysmon kind
+    /// or a log kind.
+    async fn event_kind(&self) -> &str {
+        &self.inner.event_kind
+    }
+
+    /// The customer the model belongs to.
+    async fn customer_id(&self) -> ID {
+        ID(self.inner.customer_id.to_string())
+    }
+
+    /// The engine instance the model belongs to, or null if it has none.
+    async fn instance(&self) -> Option<ModelInstance> {
+        self.inner.instance.as_ref().map(|instance| ModelInstance {
+            node_id: ID(instance.node_id.to_string()),
+            agent_key: instance.agent_key.clone(),
+        })
+    }
+
+    /// When the training that produced the current result succeeded.
+    async fn trained_at(&self) -> DateTime<Utc> {
+        self.inner.trained_at
+    }
+
+    /// The summary of the previous training result, or null if the model has
+    /// none.
+    async fn previous_training_result(&self) -> Option<PreviousTrainingResult> {
+        self.inner
+            .previous
+            .as_ref()
+            .map(|previous| PreviousTrainingResult {
+                model_id: self.inner.id,
+                trained_at: previous.trained_at,
+                version: previous.version,
+            })
+    }
+
+    /// Always null: a model carries no data source.
+    #[graphql(deprecation = "A model carries no data source; this field is always null.")]
+    async fn data_source(&self) -> Option<DataSource> {
+        None
+    }
+}
+
+/// Returns the method a model record's `kind` names.
+///
+/// review-database's `ClusteringMethod`, which the record's `kind` is the name
+/// of, is private to it, so the names are mapped here.
+fn model_method(kind: &str) -> Result<ModelMethod> {
+    match kind {
+        MULTIFIELD_KIND => Ok(ModelMethod::Multidimension),
+        PREFIX_KIND => Ok(ModelMethod::Prefix),
+        TIMESERIES_KIND => Ok(ModelMethod::Timeseries),
+        _ => Err(format!("unknown model method {kind:?}").into()),
+    }
+}
+
+/// The clustering method a model is trained with.
+#[derive(Clone, Copy, Debug, Enum, Eq, PartialEq)]
+#[graphql(remote = "database::ModelMethod")]
+pub(super) enum ModelMethod {
+    Multidimension,
+    Prefix,
+    Timeseries,
+}
+
+/// The engine instance a model belongs to.
+#[derive(SimpleObject)]
+struct ModelInstance {
+    /// The node of the instance.
+    node_id: ID,
+    /// The key of the instance's agent on the node.
+    agent_key: String,
+}
+
+/// The summary of a model's previous training result.
+#[derive(SimpleObject)]
+#[graphql(complex)]
+struct PreviousTrainingResult {
+    #[graphql(skip)]
+    model_id: u32,
+    /// When the training that produced the previous result succeeded.
+    trained_at: DateTime<Utc>,
+    /// The version of the previous result's model.
+    version: i32,
+}
+
+#[async_graphql::ComplexObject]
+impl PreviousTrainingResult {
+    /// The number of clusters in the previous result.
+    async fn cluster_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
-        let map = store.data_source_map();
-        #[allow(clippy::cast_sign_loss)] // u32 stored as i32 in the database
-        match map
-            .get_by_id(self.inner.data_source_id as u32)
-            .map_err(|_| "failed to read data source")?
-        {
-            Some(ds) => Ok(ds.into()),
-            None => Err("no such data source".into()),
-        }
+        let map = training_result::cluster_map(&store, true);
+        Ok(StringNumber(map.count_clusters(
+            self.model_id,
+            None,
+            None,
+            None,
+            None,
+        )?))
+    }
+
+    /// The number of outliers in the previous result.
+    async fn outlier_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
+        let store = crate::graphql::get_store(ctx)?;
+        let map = training_result::outlier_map(&store, true);
+        Ok(StringNumber(
+            map.get(self.model_id, None, Direction::Forward, None)
+                .count(),
+        ))
     }
 }
 
@@ -1031,36 +1197,66 @@ struct Regression {
 
 struct ModelTotalCount;
 
+/// Counts the models of the caller's customers, or every model for an
+/// unscoped caller.
+fn scoped_model_count(ctx: &Context<'_>) -> Result<usize> {
+    let users_customers = customer_access::users_customers(ctx)?;
+    let store = crate::graphql::get_store(ctx)?;
+    let map = store.model_map();
+
+    match users_customers.as_deref() {
+        None => Ok(map.count_models()?),
+        Some(users_customers) => {
+            use database::Iterable;
+
+            let mut count = 0;
+            for entry in map.iter(Direction::Forward, None) {
+                let model = entry.map_err(|_| "invalid value in database")?;
+                if customer_access::can_access_model(Some(users_customers), &model) {
+                    count += 1;
+                }
+            }
+            Ok(count)
+        }
+    }
+}
+
 #[Object]
 impl ModelTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.model_map();
-        Ok(StringNumber(map.count_models()?))
+        Ok(StringNumber(scoped_model_count(ctx)?))
     }
 }
 
 async fn load(
     ctx: &Context<'_>,
-    after: Option<OpaqueCursor<(u32, String)>>,
-    before: Option<OpaqueCursor<(u32, String)>>,
+    after: Option<OpaqueCursor<Vec<u8>>>,
+    before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
-) -> Result<Connection<OpaqueCursor<(u32, String)>, ModelDigest, ModelTotalCount, EmptyFields>> {
-    let is_first = first.is_some();
-    let limit = slicing::len(first, last)?;
-
+) -> Result<Connection<OpaqueCursor<Vec<u8>>, ModelDigest, ModelTotalCount, EmptyFields>> {
+    let users_customers = customer_access::users_customers(ctx)?;
+    let users_customers = users_customers.as_deref();
     let store = crate::graphql::get_store(ctx)?;
     let map = store.model_map();
-    let rows = map.load_models(&after.map(|c| c.0), &before.map(|c| c.0), is_first, limit)?;
 
-    let (rows, has_previous, has_next) = slicing::page_info(is_first, limit, rows);
+    // Filter by customer while collecting edges, so a page and its page info
+    // count only the caller's models.
+    let (rows, has_previous, has_next) =
+        super::process_load_edges_filtered(&map, after, before, first, last, None, |model| {
+            customer_access::can_access_model(users_customers, model)
+        });
+    let rows = rows
+        .into_iter()
+        .map(|res| res.map_err(|e| format!("{e}").into()))
+        .collect::<Result<Vec<_>>>()?;
+
     let mut connection =
         Connection::with_additional_fields(has_previous, has_next, ModelTotalCount);
     connection.edges.extend(
         rows.into_iter()
-            .map(|model| Edge::new(OpaqueCursor((model.id, model.name.clone())), model.into())),
+            .map(|model| Edge::new(OpaqueCursor(model.unique_key().to_vec()), model.into())),
     );
     Ok(connection)
 }
@@ -1166,6 +1362,8 @@ fn load_cluster_ids_with_size_limit(
 }
 
 #[cfg(test)]
+mod scope_tests;
+#[cfg(test)]
 mod time_bounds_tests;
 
 #[cfg(test)]
@@ -1173,6 +1371,7 @@ mod tests {
     use review_database::{Cluster, Store};
 
     use crate::graphql::TestSchema;
+    use crate::graphql::model_test_support::schema_with_models_through;
 
     fn counted_series(counts: impl IntoIterator<Item = usize>) -> Vec<crate::graphql::TimeCount> {
         counts
@@ -1491,7 +1690,7 @@ mod tests {
         second_column: bool,
         overflow: bool,
     ) -> TestSchema {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(1).await;
         {
             let store = schema.store();
             let map = store.time_series_map();
@@ -1679,7 +1878,7 @@ mod tests {
 
     #[tokio::test]
     async fn trend_argument_ranges() {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(1).await;
         for (resolver, selection) in [
             ("topTimeSeries(model: 1", "countIndex trends { trend }"),
             (
@@ -1720,7 +1919,7 @@ mod tests {
     }
 
     async fn schema_with_constant_time_series(points: u32) -> TestSchema {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(1).await;
         {
             let store = schema.store();
             let map = store.time_series_map();
@@ -1760,7 +1959,7 @@ mod tests {
 
     #[tokio::test]
     async fn abnormal_trends_preserve_query_responses() {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(1).await;
         {
             let store = schema.store();
             let map = store.time_series_map();
@@ -1897,7 +2096,7 @@ mod tests {
 
     #[tokio::test]
     async fn trend_argument_defaults() {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(1).await;
         {
             let store = schema.store();
             let map = store.time_series_map();
@@ -1957,7 +2156,7 @@ mod tests {
 
     #[tokio::test]
     async fn schema_does_not_expose_top_clusters_by_score() {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(1).await;
         let res = schema
             .execute_as_system_admin(r#"{ __type(name: "Query") { fields { name } } }"#)
             .await;
@@ -1970,7 +2169,7 @@ mod tests {
 
     #[tokio::test]
     async fn schema_does_not_define_cluster_score_types() {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(1).await;
         let res = schema
             .execute_as_system_admin(
                 r#"{ clusterScore: __type(name: "ClusterScore") { name }

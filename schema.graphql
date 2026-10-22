@@ -5882,7 +5882,36 @@ type ManifestFormatUnsupported {
 type ModelDigest {
 	id: ID!
 	name: String!
-	dataSource: DataSource!
+	"""
+	The clustering method the model was trained with.
+	"""
+	method: ModelMethod!
+	"""
+	The event kind the model was trained on, such as `http`, a Sysmon kind
+	or a log kind.
+	"""
+	eventKind: String!
+	"""
+	The customer the model belongs to.
+	"""
+	customerId: ID!
+	"""
+	The engine instance the model belongs to, or null if it has none.
+	"""
+	instance: ModelInstance
+	"""
+	When the training that produced the current result succeeded.
+	"""
+	trainedAt: DateTime!
+	"""
+	The summary of the previous training result, or null if the model has
+	none.
+	"""
+	previousTrainingResult: PreviousTrainingResult
+	"""
+	Always null: a model carries no data source.
+	"""
+	dataSource: DataSource @deprecated(reason: "A model carries no data source; this field is always null.")
 }
 
 type ModelDigestConnection {
@@ -5940,6 +5969,29 @@ type ModelIndicator {
 	The last modified time of the model indicator.
 	"""
 	lastModified: DateTime!
+}
+
+"""
+The engine instance a model belongs to.
+"""
+type ModelInstance {
+	"""
+	The node of the instance.
+	"""
+	nodeId: ID!
+	"""
+	The key of the instance's agent on the node.
+	"""
+	agentKey: String!
+}
+
+"""
+The clustering method a model is trained with.
+"""
+enum ModelMethod {
+	MULTIDIMENSION
+	PREFIX
+	TIMESERIES
 }
 
 type MultiHostPortScan implements Event {
@@ -6040,6 +6092,9 @@ type Mutation {
 	updateCertificate(cert: String!, key: String!): CertificatePayload!
 	"""
 	Updates the given cluster.
+	
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
 	"""
 	updateCluster(model: ID!, id: ID!, category: ID, qualifier: ID, status: ID): ID!
 	deleteCustomerData(customerId: ID!): CustomerDataDeletionRequestStatus!
@@ -6144,24 +6199,47 @@ type Mutation {
 	"""
 	removeNetworkLists(customerId: ID!): Boolean!
 	"""
-	Inserts a new Indicator, overwriting any existing Indicator if same name and version exist already.
-	Returns the inserted db's name and version.
+	Inserts a new Indicator, or updates the Indicator of the same name as
+	`updateIndicator` does. Returns the indicator's name.
+	
+	Refusals of an update of an existing name carry `extensions.code`:
+	`INDICATOR_IN_USE` while an engine document or a training definition
+	names the indicator, and `INDICATOR_MODEL_CHANGE` if the new data would
+	move it to another model.
 	"""
 	insertIndicator(name: String!, dbfile: String!): String!
 	"""
-	Removes Indicator, returning the db's name and version that no longer exist.
+	Removes Indicators, all or none, returning the given names.
 	
-	On error, some Indicators may have been removed.
+	A name no indicator has is skipped. The removal is refused with
+	`extensions.code` `INDICATOR_IN_USE` while an engine document or a
+	training definition names one of the indicators.
 	"""
 	removeIndicator(names: [String!]!): [String!]!
 	"""
 	Updates the given indicator, returning the indicator name that was updated.
 	
-	Will return error if it failed to access database
-	Will return error if it failed to delete or add indicator into database
+	Refusals carry `extensions.code`: `NOT_FOUND` if no indicator has the
+	name, `INDICATOR_MODEL_CHANGE` if the new data would move the indicator
+	to another model, and `INDICATOR_IN_USE` while an engine document or a
+	training definition names it.
 	"""
 	updateIndicator(name: String!, new: String!): String!
+	"""
+	Adds extra information on the columns of a CSV model.
+	
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
+	"""
 	addCsvColumnExtra(model: ID!, columnAlias: [String!], columnDisplay: [Boolean!], columnTopN: [Boolean!], column1: [Boolean!], columnN: [Boolean!]): ID!
+	"""
+	Updates extra information on the columns of a CSV model.
+	
+	Scope is that of the model the stored extra belongs to. If that model
+	does not exist, the update is refused with `extensions.code`
+	`NOT_FOUND` on `id`; a model of none of the caller's customers is
+	refused with `Forbidden`.
+	"""
 	updateCsvColumnExtra(id: ID!, columnAlias: [String!], columnDisplay: [Boolean!], columnTopN: [Boolean!], column1: [Boolean!], columnN: [Boolean!]): ID!
 	"""
 	Inserts a new network, returning the ID of the network.
@@ -6240,6 +6318,13 @@ type Mutation {
 	instance is removed only with `removeService`.
 	"""
 	updateNodeDraft(id: ID!, old: NodeInput!, new: NodeDraftInput!): ID!
+	"""
+	Marks the given outliers as saved, returning those that already were.
+	
+	The whole request is refused if any input's model belongs to none of
+	the caller's customers, and with `extensions.code` `NOT_FOUND` if any
+	names no model.
+	"""
 	preserveOutliers(input: [PreserveOutliersInput!]!): [PreserveOutliersOutput!]!
 	"""
 	Adds a new qualifier.
@@ -7523,6 +7608,28 @@ type PreserveOutliersOutput {
 	sensor: String!
 }
 
+"""
+The summary of a model's previous training result.
+"""
+type PreviousTrainingResult {
+	"""
+	When the training that produced the previous result succeeded.
+	"""
+	trainedAt: DateTime!
+	"""
+	The version of the previous result's model.
+	"""
+	version: Int!
+	"""
+	The number of clusters in the previous result.
+	"""
+	clusterCount: StringNumber!
+	"""
+	The number of outliers in the previous result.
+	"""
+	outlierCount: StringNumber!
+}
+
 type Qualifier {
 	id: ID!
 	description: String!
@@ -7570,10 +7677,30 @@ type Query {
 	"""
 	categories(after: String, before: String, first: Int, last: Int): CategoryConnection!
 	"""
-	A list of clusters in descending order of cluster size.
+	A list of clusters in descending order of cluster size, then of
+	cluster id.
+	
+	With `previous`, the clusters of the model's previous training result.
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
 	"""
-	clusters(model: ID!, categories: [ID!], detectors: [ID!], qualifiers: [ID!], statuses: [ID!], after: String, before: String, first: Int, last: Int): ClusterConnection!
-	topIpAddressesOfCluster(model: ID!, clusterId: ID!, size: Int): [TopElementCountsByColumn!]!
+	clusters(model: ID!, categories: [ID!], detectors: [ID!], qualifiers: [ID!], statuses: [ID!], after: String, before: String, first: Int, last: Int, previous: Boolean = false): ClusterConnection!
+	"""
+	The top IP addresses of a cluster, by column.
+	
+	With `previous`, the cluster and its column statistics are those of
+	the model's previous training result.
+	
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
+	"""
+	topIpAddressesOfCluster(model: ID!, clusterId: ID!, size: Int, previous: Boolean = false): [TopElementCountsByColumn!]!
+	"""
+	The time series of a cluster.
+	
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
+	"""
 	topTimeSeriesOfCluster(		model: ID!,		clusterId: ID!,
 		"""
 		The dimensionless cutoff rate, strictly greater than 0 with no upper limit. Omitted or null values use 0.1.
@@ -7714,10 +7841,18 @@ type Query {
 	networkLists(customerId: ID!): NetworkListSet
 	"""
 	Look up an Indicator by the given name.
+	
+	Returns null for an indicator whose model belongs to none of the
+	caller's customers, as for a name no indicator has. An indicator whose
+	model does not exist is visible to System Administrators only.
 	"""
 	indicator(name: String!): ModelIndicator
 	"""
 	A list of Indicators.
+	
+	Lists only the indicators whose model belongs to one of the caller's
+	customers. An indicator whose model does not exist is visible to System
+	Administrators only.
 	"""
 	indicatorList: [ModelIndicator!]!
 	"""
@@ -7729,12 +7864,38 @@ type Query {
 	"""
 	ipLocationList(addresses: [IpAddress!]!): [IpLocationItem!]!
 	"""
-	A list of models.
+	A list of the models of the caller's customers, in name order.
+	
+	A System Administrator sees every model.
 	"""
 	models(after: String, before: String, first: Int, last: Int): ModelDigestConnection!
+	"""
+	The extra information on the columns of a CSV model.
+	
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
+	"""
 	csvColumnExtra(model: ID!): CsvColumnExtraConfig
+	"""
+	The column types of a structured model.
+	
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
+	"""
 	structuredColumnTypes(model: ID!): [StructuredColumnType!]!
+	"""
+	The time range of a model's time series.
+	
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
+	"""
 	timeRangeOfModel(model: ID!): TimeRange!
+	"""
+	The top time series of a model, by column.
+	
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
+	"""
 	topTimeSeries(		model: ID!,		size: Int,		time: NaiveDateTime,		minSlope: Float,
 		"""
 		The dimensionless trend filter order, from 0 to 20 inclusive. Omitted or null values use 4.
@@ -7745,8 +7906,26 @@ type Query {
 		"""
 		cutoffRate: Float,		trendCategory: String,		start: DateTime,		end: DateTime
 	): [TopTrendsByColumn!]!
+	"""
+	The top column values of a model, by column.
+	
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
+	"""
 	topColumns(model: ID!, size: Int, time: NaiveDateTime, portionOfClusters: Float, portionOfTopN: Float): [TopElementCountsByColumn!]!
+	"""
+	The top IP addresses of a model, by column.
+	
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
+	"""
 	topIpAddresses(model: ID!, size: Int, time: NaiveDateTime, portionOfClusters: Float, portionOfTopElements: Float): [TopElementCountsByColumn!]!
+	"""
+	The top multimaps of a model.
+	
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
+	"""
 	topMultimaps(model: ID!, size: Int, minMapSize: Int, time: NaiveDateTime): [TopMultimaps!]!
 	"""
 	A list of networks.
@@ -7790,19 +7969,32 @@ type Query {
 	"""
 	qualifiers(after: String, before: String, first: Int, last: Int): QualifierConnection!
 	"""
-	A list of outliers.
+	A list of outliers, one per clustering round.
+	
+	With `previous`, the outliers of the model's previous training result.
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
 	"""
-	outliers(model: ID!, after: String, before: String, first: Int, last: Int): OutlierConnection!
+	outliers(model: ID!, after: String, before: String, first: Int, last: Int, previous: Boolean = false): OutlierConnection!
 	"""
 	A list of saved outliers, grouped by clustering time. Within each group,
 	the outliers are sorted by their distance to the cluster centers.
+	
+	With `previous`, the saved outliers of the model's previous training
+	result.
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
 	"""
-	savedOutliers(modelId: ID!, time: NaiveDateTime, after: String, before: String, first: Int, last: Int): RankedOutlierConnection!
+	savedOutliers(modelId: ID!, time: NaiveDateTime, after: String, before: String, first: Int, last: Int, previous: Boolean = false): RankedOutlierConnection!
 	"""
 	A list of outliers, grouped by clustering time. Within each group,
 	the outliers are sorted by their distance to the cluster centers.
+	
+	With `previous`, the outliers of the model's previous training result.
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
 	"""
-	rankedOutliers(modelId: ID!, time: NaiveDateTime, after: String, before: String, first: Int, last: Int, filter: SearchFilterInput): RankedOutlierConnection!
+	rankedOutliers(modelId: ID!, time: NaiveDateTime, after: String, before: String, first: Int, last: Int, filter: SearchFilterInput, previous: Boolean = false): RankedOutlierConnection!
 	"""
 	A list of sampling policies.
 	"""
@@ -7811,9 +8003,30 @@ type Query {
 	Looks up a sampling policy by the given id.
 	"""
 	samplingPolicy(id: ID!): SamplingPolicy!
-	columnStatistics(model: ID!, cluster: ID!, time: [NaiveDateTime!]!): JSON!
-	roundsByCluster(model: ID!, cluster: ID!, after: String, before: String, first: Int, last: Int): RoundByClusterConnection!
-	roundsByModel(model: ID!, after: String, before: String, first: Int, last: Int): RoundByModelConnection!
+	"""
+	The column statistics of a cluster.
+	
+	With `previous`, those of the model's previous training result.
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
+	"""
+	columnStatistics(model: ID!, cluster: ID!, time: [NaiveDateTime!]!, previous: Boolean = false): JSON!
+	"""
+	The rounds of a cluster.
+	
+	With `previous`, those of the model's previous training result.
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
+	"""
+	roundsByCluster(model: ID!, cluster: ID!, after: String, before: String, first: Int, last: Int, previous: Boolean = false): RoundByClusterConnection!
+	"""
+	The rounds of a model.
+	
+	With `previous`, those of the model's previous training result.
+	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+	model of none of the caller's customers with `Forbidden`.
+	"""
+	roundsByModel(model: ID!, after: String, before: String, first: Int, last: Int, previous: Boolean = false): RoundByModelConnection!
 	"""
 	A list of statuses.
 	"""
@@ -8671,6 +8884,12 @@ type Subscription {
 		"""
 		fetchInterval: Int,		eventStuckCheckInterval: Int
 	): Event!
+	"""
+	Streams the outliers stored from `start` on, of the models that belong
+	to the customers the caller had when the subscription started.
+	
+	Each fetch reads at most 100 models, counted among those models only.
+	"""
 	rankedOutlierStream(		start: DateTime!,
 		"""
 		The fetch interval in seconds, from 1 to 86400 (one day) inclusive. Omitted or null values use 60 seconds.
@@ -9743,6 +9962,10 @@ type WindowsThreat implements Event {
 	learningMethod: LearningMethod!
 }
 
+"""
+Marks an element of a GraphQL schema as no longer supported.
+"""
+directive @deprecated(reason: String = "No longer supported") on FIELD_DEFINITION | ARGUMENT_DEFINITION | INPUT_FIELD_DEFINITION | ENUM_VALUE
 """
 Directs the executor to include this field or fragment only when the `if` argument is true.
 """

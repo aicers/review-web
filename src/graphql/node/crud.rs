@@ -290,10 +290,41 @@ impl NodeMutation {
         merge_installation_state(&stored, &mut old);
         merge_installation_state(&stored, &mut new);
         installed_guard::check_update(i, &stored.name, &old, &new)?;
-        map.update(i, &old, &new)?;
+        update_node(&mut map, i, &old, &new)?;
         info_with_username!(ctx, "Node {:?} has been modified", old.name);
         Ok(id)
     }
+}
+
+/// Updates node `id` from `old` to `new`, writing empty engine document
+/// references for every Unsupervised Engine agent of `new`.
+///
+/// review-database accepts a change of an Unsupervised Engine agent's
+/// `config` or `draft` only together with the references of its documents.
+/// Until the documents are parsed, this bridge writes no references, so the
+/// node writes behave as they did before references were stored.
+///
+/// # Errors
+///
+/// Returns an error if the store refuses the update or a database operation
+/// fails.
+pub(super) fn update_node(
+    map: &mut review_database::NodeTable<'_>,
+    id: u32,
+    old: &review_database::NodeUpdate,
+    new: &review_database::NodeUpdate,
+) -> anyhow::Result<review_database::Node> {
+    let documents: Vec<_> = new
+        .agents
+        .iter()
+        .filter(|agent| agent.kind == review_database::AgentKind::Unsupervised)
+        .map(|agent| review_database::EngineDocumentWrite {
+            agent_key: agent.key.clone(),
+            applied: Some(review_database::EngineDocumentRefs::default()),
+            pending: Some(review_database::EngineDocumentRefs::default()),
+        })
+        .collect();
+    map.update_with_engine_documents(id, old, new, &documents)
 }
 
 pub(super) fn merge_installation_state(

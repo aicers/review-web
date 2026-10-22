@@ -16,11 +16,12 @@ use super::{
     DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, MAX_TRENDI_ORDER, PositiveCutoffRate, Role,
     RoleGuard,
     category::Category,
-    get_trend,
+    customer_access, get_trend,
     model::{ModelDigest, TopElementCountsByColumn},
     qualifier::Qualifier,
     slicing,
     status::Status,
+    training_result,
 };
 use crate::graphql::{query, statistics::i64_to_naive_date_time};
 
@@ -29,7 +30,12 @@ pub(super) struct ClusterQuery;
 
 #[Object]
 impl ClusterQuery {
-    /// A list of clusters in descending order of cluster size.
+    /// A list of clusters in descending order of cluster size, then of
+    /// cluster id.
+    ///
+    /// With `previous`, the clusters of the model's previous training result.
+    /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+    /// model of none of the caller's customers with `Forbidden`.
     #[allow(clippy::too_many_arguments)]
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
@@ -47,8 +53,11 @@ impl ClusterQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
+        #[graphql(default_with = "Some(false)")] previous: Option<bool>,
     ) -> Result<Connection<OpaqueCursor<(u32, i64)>, Cluster, ClusterTotalCount, EmptyFields>> {
+        let previous = previous.unwrap_or_default();
         let model = model.as_str().parse()?;
+        customer_access::load_accessible_model(ctx, "model", model)?;
         let categories = try_id_args_into_ints::<i32>(categories)?;
         let detectors = try_id_args_into_ints::<i32>(detectors)?;
         let qualifiers = try_id_args_into_ints::<i32>(qualifiers)?;
@@ -61,7 +70,18 @@ impl ClusterQuery {
             last,
             |after, before, first, last| async move {
                 load(
-                    ctx, model, categories, detectors, qualifiers, statuses, after, before, first,
+                    ctx,
+                    model,
+                    ClusterFilter {
+                        categories,
+                        detectors,
+                        qualifiers,
+                        statuses,
+                    },
+                    previous,
+                    after,
+                    before,
+                    first,
                     last,
                 )
                 .await
@@ -70,6 +90,13 @@ impl ClusterQuery {
         .await
     }
 
+    /// The top IP addresses of a cluster, by column.
+    ///
+    /// With `previous`, the cluster and its column statistics are those of
+    /// the model's previous training result.
+    ///
+    /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+    /// model of none of the caller's customers with `Forbidden`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -80,8 +107,10 @@ impl ClusterQuery {
         model: ID,
         cluster_id: ID,
         size: Option<i32>,
+        #[graphql(default_with = "Some(false)")] previous: Option<bool>,
     ) -> Result<Vec<TopElementCountsByColumn>> {
         const DEFAULT_SIZE: i32 = 30;
+        let previous = previous.unwrap_or_default();
         let size = size
             .unwrap_or(DEFAULT_SIZE)
             .to_usize()
@@ -94,15 +123,20 @@ impl ClusterQuery {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid cluster id")?;
+        customer_access::load_accessible_model(ctx, "model", model_id)?;
 
         let store = crate::graphql::get_store(ctx)?;
-        let cluster_ids = load_cluster_ids(&store, model_id, Some(cluster_id))?;
+        let cluster_ids = load_cluster_ids(&store, model_id, Some(cluster_id), previous)?;
 
-        let map = store.column_stats_map();
+        let map = training_result::column_stats_map(&store, previous);
         let counts = map.get_top_ip_addresses_of_cluster(model_id, &cluster_ids, size)?;
         Ok(counts.into_iter().map(Into::into).collect())
     }
 
+    /// The time series of a cluster.
+    ///
+    /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+    /// model of none of the caller's customers with `Forbidden`.
     #[allow(clippy::too_many_arguments)]
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
@@ -131,8 +165,6 @@ impl ClusterQuery {
     ) -> Result<TimeSeriesResult> {
         let start = start.map(super::outlier::timestamp_nanos).transpose()?;
         let end = end.map(super::outlier::timestamp_nanos).transpose()?;
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.time_series_map();
         let id = cluster_id
             .as_str()
             .parse::<u32>()
@@ -141,6 +173,9 @@ impl ClusterQuery {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid model id")?;
+        customer_access::load_accessible_model(ctx, "model", model)?;
+        let store = crate::graphql::get_store(ctx)?;
+        let map = store.time_series_map();
         let time_series = map.get_top_time_series_of_cluster(model, id, start, end)?;
 
         Ok(TimeSeriesResult::from_database(
@@ -157,6 +192,9 @@ pub(super) struct ClusterMutation;
 #[Object]
 impl ClusterMutation {
     /// Updates the given cluster.
+    ///
+    /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+    /// model of none of the caller's customers with `Forbidden`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn update_cluster(
@@ -168,8 +206,6 @@ impl ClusterMutation {
         qualifier: Option<ID>,
         status: Option<ID>,
     ) -> Result<ID> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.cluster_map();
         let id_to_i32 = |v: ID| v.as_str().parse().ok();
 
         let status = status.and_then(id_to_i32);
@@ -177,6 +213,9 @@ impl ClusterMutation {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid model id")?;
+        customer_access::load_accessible_model(ctx, "model", model)?;
+        let store = crate::graphql::get_store(ctx)?;
+        let map = store.cluster_map();
         map.update_cluster(
             model,
             id.as_str().parse()?,
@@ -238,9 +277,7 @@ impl Cluster {
     }
 
     async fn model(&self, ctx: &Context<'_>) -> Result<ModelDigest> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.model_map();
-        Ok(map.load_model(self.model_id)?.into())
+        Ok(customer_access::load_accessible_model(ctx, "modelId", self.model_id)?.into())
     }
 
     async fn qualifier(&self, ctx: &Context<'_>) -> Result<Qualifier> {
@@ -268,12 +305,18 @@ impl Cluster {
     }
 }
 
-struct ClusterTotalCount {
-    model_id: u32,
+/// The filters of a `clusters` query.
+struct ClusterFilter {
     categories: Option<Vec<i32>>,
     detectors: Option<Vec<i32>>,
     qualifiers: Option<Vec<i32>>,
     statuses: Option<Vec<i32>>,
+}
+
+struct ClusterTotalCount {
+    model_id: u32,
+    filter: ClusterFilter,
+    previous: bool,
 }
 
 #[Object]
@@ -281,13 +324,13 @@ impl ClusterTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
-        let map = store.cluster_map();
+        let map = training_result::cluster_map(&store, self.previous);
         Ok(StringNumber(map.count_clusters(
             self.model_id,
-            self.categories.as_deref(),
-            self.detectors.as_deref(),
-            self.qualifiers.as_deref(),
-            self.statuses.as_deref(),
+            self.filter.categories.as_deref(),
+            self.filter.detectors.as_deref(),
+            self.filter.qualifiers.as_deref(),
+            self.filter.statuses.as_deref(),
         )?))
     }
 }
@@ -406,10 +449,8 @@ impl From<&super::TimeCount> for TimeCount {
 async fn load(
     ctx: &Context<'_>,
     model: u32,
-    categories: Option<Vec<i32>>,
-    detectors: Option<Vec<i32>>,
-    qualifiers: Option<Vec<i32>>,
-    statuses: Option<Vec<i32>>,
+    filter: ClusterFilter,
+    previous: bool,
     after: Option<OpaqueCursor<(u32, i64)>>,
     before: Option<OpaqueCursor<(u32, i64)>>,
     first: Option<usize>,
@@ -418,18 +459,27 @@ async fn load(
     let is_first = first.is_some();
     let limit = slicing::len(first, last)?;
     let store = crate::graphql::get_store(ctx)?;
-    let map = store.cluster_map();
-    let rows = map.load_clusters(
+    let map = training_result::cluster_map(&store, previous);
+    // `load_clusters` cuts its limit in cluster-id order before it sorts by
+    // size, so it is asked for every eligible cluster, sorted: by descending
+    // size then id for `first`, ascending for `last`. The rows nearest the
+    // cursor come first either way; one more than the page tells
+    // `page_info` whether another page follows.
+    let mut rows = map.load_clusters(
         model,
-        categories.as_deref(),
-        detectors.as_deref(),
-        qualifiers.as_deref(),
-        statuses.as_deref(),
+        filter.categories.as_deref(),
+        filter.detectors.as_deref(),
+        filter.qualifiers.as_deref(),
+        filter.statuses.as_deref(),
         &after.map(|c| c.0),
         &before.map(|c| c.0),
         is_first,
-        limit,
+        usize::MAX,
     )?;
+    rows.truncate(limit.saturating_add(1));
+    if !is_first {
+        rows.reverse();
+    }
 
     let (rows, has_previous, has_next) = slicing::page_info(is_first, limit, rows);
     let mut connection = Connection::with_additional_fields(
@@ -437,10 +487,8 @@ async fn load(
         has_next,
         ClusterTotalCount {
             model_id: model,
-            categories,
-            detectors,
-            qualifiers,
-            statuses,
+            filter,
+            previous,
         },
     );
     connection.edges.extend(rows.into_iter().map(|c| {
@@ -492,8 +540,9 @@ fn load_cluster_ids(
     store: &database::Store,
     model_id: u32,
     cluster_id: Option<u32>,
+    previous: bool,
 ) -> Result<Vec<u32>> {
-    let map = store.cluster_map();
+    let map = training_result::cluster_map(store, previous);
     let clusters = map.load_clusters(
         model_id,
         None,
@@ -514,4 +563,141 @@ fn load_cluster_ids(
         .collect();
 
     Ok(ids)
+}
+
+#[cfg(test)]
+mod tests {
+    use review_database::Store;
+    use serde_json::Value;
+
+    use crate::graphql::model_test_support::{data, replace_model};
+    use crate::graphql::{Role, TestSchema};
+
+    const CUSTOMER: u32 = 1;
+    const CATEGORY: i32 = 1;
+    const OTHER_CATEGORY: i32 = 3;
+
+    /// Stores clusters `ids` of `model` whose sizes grow with their ids, so
+    /// size order runs opposite to id order. Every third cluster is of
+    /// another category.
+    fn put_clusters(store: &Store, model: u32, ids: std::ops::RangeInclusive<u32>) {
+        for id in ids {
+            store
+                .cluster_map()
+                .put(&review_database::Cluster {
+                    model_id: model,
+                    id,
+                    category_id: if id % 3 == 0 {
+                        OTHER_CATEGORY
+                    } else {
+                        CATEGORY
+                    },
+                    detector_id: 1,
+                    event_ids: vec![],
+                    sensors: vec![],
+                    labels: None,
+                    qualifier_id: 1,
+                    status_id: 1,
+                    signature: String::new(),
+                    size: i64::from(id) * 10,
+                    score: None,
+                    last_modification_time: None,
+                })
+                .unwrap();
+        }
+    }
+
+    struct Page {
+        ids: Vec<u32>,
+        has_next: bool,
+        has_previous: bool,
+        start: Option<String>,
+        end: Option<String>,
+    }
+
+    async fn page(schema: &TestSchema, model: u32, filter: &str, arguments: &str) -> Page {
+        let query = format!(
+            "{{ clusters(model: {model}{filter}, {arguments}) {{ nodes {{ id }}
+                pageInfo {{ hasNextPage hasPreviousPage startCursor endCursor }} }} }}"
+        );
+        let res = schema
+            .execute_as_scoped_user(&query, Role::SecurityMonitor, Some(vec![CUSTOMER]))
+            .await;
+        let json = data(res);
+        let connection = &json["clusters"];
+        let cursor = |name: &str| connection["pageInfo"][name].as_str().map(str::to_string);
+        Page {
+            ids: connection["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|node| node["id"].as_str().unwrap().parse().unwrap())
+                .collect(),
+            has_next: connection["pageInfo"]["hasNextPage"] == Value::Bool(true),
+            has_previous: connection["pageInfo"]["hasPreviousPage"] == Value::Bool(true),
+            start: cursor("startCursor"),
+            end: cursor("endCursor"),
+        }
+    }
+
+    /// Pages forward and backward through the clusters, two at a time,
+    /// checking the page info, and returns the ids in the order read.
+    async fn walk(schema: &TestSchema, model: u32, filter: &str) -> (Vec<u32>, Vec<u32>) {
+        let mut forward = Vec::new();
+        let mut arguments = "first: 2".to_string();
+        loop {
+            let next = page(schema, model, filter, &arguments).await;
+            forward.extend(&next.ids);
+            if !next.has_next {
+                break;
+            }
+            assert_eq!(next.ids.len(), 2);
+            arguments = format!("first: 2, after: \"{}\"", next.end.unwrap());
+        }
+
+        let mut backward = Vec::new();
+        let mut arguments = "last: 2".to_string();
+        loop {
+            let next = page(schema, model, filter, &arguments).await;
+            let mut ids = next.ids.clone();
+            ids.extend(backward);
+            backward = ids;
+            if !next.has_previous {
+                break;
+            }
+            assert_eq!(next.ids.len(), 2);
+            arguments = format!("last: 2, before: \"{}\"", next.start.unwrap());
+        }
+        (forward, backward)
+    }
+
+    #[tokio::test]
+    async fn clusters_page_in_size_order() {
+        let schema = TestSchema::new().await;
+        let model = {
+            let store = schema.store();
+            let model = replace_model(&store, "model", CUSTOMER);
+            put_clusters(&store, model, 1..=9);
+            replace_model(&store, "model", CUSTOMER);
+            put_clusters(&store, model, 1..=7);
+            model
+        };
+        let categories = format!(", categories: [\"{CATEGORY}\"]");
+        for (filter, expected) in [
+            (String::new(), vec![7, 6, 5, 4, 3, 2, 1]),
+            (categories.clone(), vec![7, 5, 4, 2, 1]),
+            (
+                ", previous: true".to_string(),
+                vec![9, 8, 7, 6, 5, 4, 3, 2, 1],
+            ),
+            (
+                format!("{categories}, previous: true"),
+                vec![8, 7, 5, 4, 2, 1],
+            ),
+        ] {
+            let (forward, backward) = walk(&schema, model, &filter).await;
+            assert_eq!(forward, expected, "{filter}");
+            assert_eq!(backward, expected, "{filter}");
+        }
+    }
 }
