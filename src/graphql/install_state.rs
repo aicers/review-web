@@ -1176,6 +1176,7 @@ mod tests {
             AgentKind::Sensor,
             AgentKind::SemiSupervised,
             AgentKind::TimeSeriesGenerator,
+            AgentKind::LogCollector,
         ];
         let service_kinds = [
             ExternalServiceKind::DataStore,

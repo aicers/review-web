@@ -882,6 +882,7 @@ mod tests {
             | DeployError::ConfigTemplateRequired { .. }
             | DeployError::ConfigTemplateNotApplicable { .. }
             | DeployError::UnknownConfigTemplate { .. }
+            | DeployError::ManifestFormatUnsupported { .. }
             | DeployError::Other(_) => None,
         }
     }
@@ -907,6 +908,15 @@ mod tests {
                 DeployError::UnknownConfigTemplate {
                     target: "reconverge".to_string(),
                     config_template: "unknown".to_string(),
+                },
+                None,
+            ),
+            (
+                DeployError::ManifestFormatUnsupported {
+                    host: "host1".to_string(),
+                    format_version: 9,
+                    min: 3,
+                    max: 8,
                 },
                 None,
             ),

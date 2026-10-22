@@ -1683,6 +1683,120 @@ mod tests {
         );
     }
 
+    /// A Log Collector agent is set in a draft, applied, and read back through
+    /// both `node` and `nodeList` with its kind intact.
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn log_collector_agent_round_trips_through_draft_and_apply() {
+        let schema = TestSchema::new().await;
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "collector node"
+                        customerId: 0
+                        description: "description"
+                        hostname: "collector.example.com"
+                        agents: []
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    updateNodeDraft(
+                        id: "0"
+                        old: {
+                            name: "collector node"
+                            nameDraft: "collector node"
+                            profile: null
+                            profileDraft: {
+                                customerId: 0, description: "description",
+                                hostname: "collector.example.com"
+                            }
+                            agents: []
+                            externalServices: []
+                        }
+                        new: {
+                            nameDraft: "collector node"
+                            profileDraft: {
+                                customerId: 0, description: "description",
+                                hostname: "collector.example.com"
+                            }
+                            agents: [{
+                                key: "reproduce", kind: LOG_COLLECTOR, status: ENABLED,
+                                draft: "value = 'draft'"
+                            }]
+                            externalServices: null
+                        }
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_eq!(res.data.to_string(), r#"{updateNodeDraft: "0"}"#);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    applyNodeDraft(
+                        id: "0"
+                        node: {
+                            name: "collector node"
+                            nameDraft: "collector node"
+                            profile: null
+                            profileDraft: {
+                                customerId: 0, description: "description",
+                                hostname: "collector.example.com"
+                            }
+                            agents: [{
+                                key: "reproduce", kind: LOG_COLLECTOR, status: ENABLED,
+                                config: null, draft: "value = 'draft'"
+                            }]
+                            externalServices: []
+                        }
+                    ) { id }
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+
+        let expected_agents = json!([{
+            "key": "reproduce",
+            "kind": "LOG_COLLECTOR",
+            "status": "ENABLED",
+            "config": "value = 'draft'",
+            "draft": "value = 'draft'",
+        }]);
+
+        let res = schema
+            .execute_as_system_admin(
+                r#"{ node(id: "0") { agents { key kind status config draft } } }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({ "node": { "agents": expected_agents.clone() } })
+        );
+
+        let res = schema
+            .execute_as_system_admin(
+                r"{ nodeList { edges { node { agents { key kind status config draft } } } } }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({ "nodeList": { "edges": [{ "node": { "agents": expected_agents } }] } })
+        );
+    }
+
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn update_node_agents_with_outdated_old_value() {

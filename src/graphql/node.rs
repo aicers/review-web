@@ -73,6 +73,7 @@ pub enum AgentKind {
     Sensor,
     SemiSupervised,
     TimeSeriesGenerator,
+    LogCollector,
 }
 
 #[derive(Clone, Deserialize, PartialEq, Serialize, Copy, Eq, Enum)]

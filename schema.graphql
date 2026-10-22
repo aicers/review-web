@@ -163,6 +163,7 @@ enum AgentKind {
 	SENSOR
 	SEMI_SUPERVISED
 	TIME_SERIES_GENERATOR
+	LOG_COLLECTOR
 }
 
 type AgentNotifyAttempt {
@@ -5306,7 +5307,7 @@ type HttpThreat implements Event {
 """
 What `installService` answers with.
 """
-union InstallServiceResult = InstallServiceSuccess | PortAllocationConflict | HostPortOccupied | HostOccupancyUnavailable | RequestKeyReused | CleanupPending | RollbackUnsupported | BuildNotServable | ConfigTemplateRequired | ConfigTemplateNotApplicable | UnknownConfigTemplate
+union InstallServiceResult = InstallServiceSuccess | PortAllocationConflict | HostPortOccupied | HostOccupancyUnavailable | RequestKeyReused | CleanupPending | RollbackUnsupported | BuildNotServable | ConfigTemplateRequired | ConfigTemplateNotApplicable | UnknownConfigTemplate | ManifestFormatUnsupported
 
 """
 The install was accepted, and this is the operation to poll.
@@ -5850,6 +5851,32 @@ type LockyRansomware implements Event {
 	Threat Level
 	"""
 	level: ThreatLevel!
+}
+
+"""
+The target host's Host Agent cannot read the package's manifest format, so
+the package was not sent.
+
+The remedy is to update the host's Host Agent (roxyd) or to choose a build
+whose manifest format it reads.
+"""
+type ManifestFormatUnsupported {
+	"""
+	The host whose Host Agent cannot read the package.
+	"""
+	host: String!
+	"""
+	The format version of the package's manifest.
+	"""
+	formatVersion: Int!
+	"""
+	The lowest manifest format version the host last reported reading.
+	"""
+	min: Int!
+	"""
+	The highest manifest format version the host last reported reading.
+	"""
+	max: Int!
 }
 
 type ModelDigest {
@@ -9581,7 +9608,7 @@ type UnusualDestinationPattern implements Event {
 """
 What `updateCoreComponent` answers with.
 """
-union UpdateCoreComponentResult = UpdateCoreComponentSuccess | CleanupPending | RollbackUnsupported | BuildNotServable
+union UpdateCoreComponentResult = UpdateCoreComponentSuccess | CleanupPending | RollbackUnsupported | BuildNotServable | ManifestFormatUnsupported
 
 """
 A core-component update was accepted, and this is the operation to poll.
@@ -9603,7 +9630,7 @@ What `updateService` answers with.
 An update allocates nothing, so neither bind-address conflict and no
 request-key refusal is reachable from it.
 """
-union UpdateServiceResult = UpdateServiceSuccess | CleanupPending | RollbackUnsupported | BuildNotServable
+union UpdateServiceResult = UpdateServiceSuccess | CleanupPending | RollbackUnsupported | BuildNotServable | ManifestFormatUnsupported
 
 """
 The update was accepted, and this is the operation to poll.
