@@ -14,14 +14,14 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
 use num_traits::ToPrimitive;
 use review_database::{
-    IndexedTable, OutlierInfo, Store, TriageResponse, UniqueKey, event::Direction,
+    IndexedTable, Iterable, OutlierInfo, Store, TriageResponse, UniqueKey, event::Direction,
 };
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::time;
 use tracing::error;
 
-use super::{Role, RoleGuard, model::ModelDigest, query};
+use super::{Role, RoleGuard, customer_access, model::ModelDigest, query, training_result};
 use crate::error_with_username;
 
 const MAX_EVENT_NUM_OF_OUTLIER: usize = 50;
@@ -43,6 +43,10 @@ pub(super) struct OutlierStream;
 
 #[Subscription]
 impl OutlierStream {
+    /// Streams the outliers stored from `start` on, of the models that belong
+    /// to the customers the caller had when the subscription started.
+    ///
+    /// Each fetch reads at most 100 models, counted among those models only.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -61,6 +65,7 @@ impl OutlierStream {
         fetch_interval: Option<u64>,
     ) -> Result<impl Stream<Item = RankedOutlier> + use<>> {
         let start = timestamp_nanos(start)?;
+        let users_customers = customer_access::users_customers(ctx)?;
         let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
         let fetch_time = fetch_interval.unwrap_or(DEFAULT_RANKED_OUTLIER_FETCH_TIME);
         let username = ctx
@@ -69,7 +74,9 @@ impl OutlierStream {
             .unwrap_or("<unknown user>".to_string());
         let (tx, rx) = unbounded();
         tokio::spawn(async move {
-            if let Err(e) = fetch_ranked_outliers(store, start, tx, fetch_time).await {
+            if let Err(e) =
+                fetch_ranked_outliers(store, users_customers, start, tx, fetch_time).await
+            {
                 error_with_username!(username: username, "Fetch failed: {e:?}");
             }
         });
@@ -77,9 +84,12 @@ impl OutlierStream {
     }
 }
 
+/// Sends the outliers of the models of `users_customers` (every model if it
+/// is `None`) as they are stored, from `start_time` on.
 #[allow(clippy::too_many_lines)]
 async fn fetch_ranked_outliers(
     store: Arc<RwLock<Store>>,
+    users_customers: Option<Vec<u32>>,
     start_time: i64,
     tx: UnboundedSender<RankedOutlier>,
     fetch_time: u64,
@@ -89,15 +99,25 @@ async fn fetch_ranked_outliers(
     loop {
         itv.tick().await;
 
-        // Read current model's ids
-        let rows = {
+        // Read the ids of the caller's models. The scope is applied before the
+        // cap, so other customers' models never use it up.
+        let model_ids = {
             let store = store
                 .read()
                 .unwrap_or_else(|e| panic!("RwLock poisoned: {e}"));
             let map = store.model_map();
-            map.load_models(&None, &None, true, MAX_MODEL_LIST_SIZE)?
+            let mut model_ids = Vec::new();
+            for res in map.iter(Direction::Forward, None) {
+                if model_ids.len() >= MAX_MODEL_LIST_SIZE {
+                    break;
+                }
+                let model = res?;
+                if customer_access::can_access_model(users_customers.as_deref(), &model) {
+                    model_ids.push(model.id);
+                }
+            }
+            model_ids
         };
-        let model_ids: Vec<u32> = rows.iter().map(|row| row.id).collect();
 
         // Search for ranked outliers by model.
         for model_id in model_ids {
@@ -137,12 +157,25 @@ pub(super) struct OutlierMutation;
 
 #[Object]
 impl OutlierMutation {
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
+    /// Marks the given outliers as saved, returning those that already were.
+    ///
+    /// The whole request is refused if any input's model belongs to none of
+    /// the caller's customers, and with `extensions.code` `NOT_FOUND` if any
+    /// names no model.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn preserve_outliers(
         &self,
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] input: Vec<PreserveOutliersInput>,
     ) -> Result<Vec<PreserveOutliersOutput>> {
+        for (index, outlier) in input.iter().enumerate() {
+            customer_access::load_accessible_model(
+                ctx,
+                &format!("input[{index}].modelId"),
+                outlier.model_id,
+            )?;
+        }
         let store = super::get_store(ctx)?;
         let map = store.outlier_map();
         let mut outdated_items: Vec<PreserveOutliersOutput> = vec![];
@@ -185,11 +218,17 @@ pub struct SearchFilterInput {
 
 #[Object]
 impl OutlierQuery {
-    /// A list of outliers.
+    /// A list of outliers, one per clustering round.
+    ///
+    /// With `previous`, the outliers of the model's previous training result.
+    /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+    /// model of none of the caller's customers with `Forbidden`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
+    // Each argument is an argument of the GraphQL field.
+    #[allow(clippy::too_many_arguments)]
     async fn outliers(
         &self,
         ctx: &Context<'_>,
@@ -198,15 +237,18 @@ impl OutlierQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
+        #[graphql(default_with = "Some(false)")] previous: Option<bool>,
     ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Outlier, OutlierTotalCount, EmptyFields>> {
+        let previous = previous.unwrap_or_default();
         let model = model.as_str().parse()?;
+        customer_access::load_accessible_model(ctx, "model", model)?;
         query(
             after,
             before,
             first,
             last,
             |after, before, first, last| async move {
-                load(ctx, model, after, before, first, last).await
+                load(ctx, model, previous, after, before, first, last).await
             },
         )
         .await
@@ -214,6 +256,11 @@ impl OutlierQuery {
 
     /// A list of saved outliers, grouped by clustering time. Within each group,
     /// the outliers are sorted by their distance to the cluster centers.
+    ///
+    /// With `previous`, the saved outliers of the model's previous training
+    /// result.
+    /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+    /// model of none of the caller's customers with `Forbidden`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
      .or(RoleGuard::new(Role::SecurityAdministrator))
      .or(RoleGuard::new(Role::SecurityManager))
@@ -228,18 +275,21 @@ impl OutlierQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
+        #[graphql(default_with = "Some(false)")] previous: Option<bool>,
     ) -> Result<
         Connection<OpaqueCursor<Vec<u8>>, RankedOutlier, RankedOutlierTotalCount, EmptyFields>,
     > {
+        let previous = previous.unwrap_or_default();
         let time = time.map(|t| timestamp_nanos(t.and_utc())).transpose()?;
-        let filter = |node: RankedOutlier| if node.saved { Some(node) } else { None };
+        let model_id: u32 = model_id.as_str().parse()?;
+        customer_access::load_accessible_model(ctx, "modelId", model_id)?;
         query(
             after,
             before,
             first,
             last,
             |after, before, first, last| async move {
-                load_outliers(ctx, model_id, time, after, before, first, last, filter).await
+                load_saved_outliers(ctx, model_id, time, previous, after, before, first, last).await
             },
         )
         .await
@@ -247,6 +297,10 @@ impl OutlierQuery {
 
     /// A list of outliers, grouped by clustering time. Within each group,
     /// the outliers are sorted by their distance to the cluster centers.
+    ///
+    /// With `previous`, the outliers of the model's previous training result.
+    /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
+    /// model of none of the caller's customers with `Forbidden`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
      .or(RoleGuard::new(Role::SecurityAdministrator))
      .or(RoleGuard::new(Role::SecurityManager))
@@ -262,10 +316,14 @@ impl OutlierQuery {
         first: Option<i32>,
         last: Option<i32>,
         filter: Option<SearchFilterInput>,
+        #[graphql(default_with = "Some(false)")] previous: Option<bool>,
     ) -> Result<
         Connection<OpaqueCursor<Vec<u8>>, RankedOutlier, RankedOutlierTotalCount, EmptyFields>,
     > {
+        let previous = previous.unwrap_or_default();
         let time = time.map(|t| timestamp_nanos(t.and_utc())).transpose()?;
+        let model_id: u32 = model_id.as_str().parse()?;
+        customer_access::load_accessible_model(ctx, "modelId", model_id)?;
         let time_range = filter
             .as_ref()
             .and_then(|filter| filter.time.as_ref())
@@ -283,7 +341,7 @@ impl OutlierQuery {
             last,
             |after, before, first, last| async move {
                 load_ranked_outliers_with_filter(
-                    ctx, model_id, time, after, before, first, last, filter, time_range,
+                    ctx, model_id, time, previous, after, before, first, last, filter, time_range,
                 )
                 .await
             },
@@ -292,20 +350,20 @@ impl OutlierQuery {
     }
 }
 
+/// Loads a page of the model's saved outliers, keeping only saved ones before
+/// the page is cut.
 #[allow(clippy::too_many_arguments)]
-async fn load_outliers(
+async fn load_saved_outliers(
     ctx: &Context<'_>,
-    model_id: ID,
+    model_id: u32,
     timestamp: Option<i64>,
+    previous: bool,
     after: Option<OpaqueCursor<Vec<u8>>>,
     before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
-    filter: fn(RankedOutlier) -> Option<RankedOutlier>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, RankedOutlier, RankedOutlierTotalCount, EmptyFields>>
 {
-    let model_id: u32 = model_id.as_str().parse()?;
-
     let prefix = {
         let mut buf = model_id.to_be_bytes().to_vec();
         if let Some(ts) = timestamp {
@@ -315,10 +373,21 @@ async fn load_outliers(
     };
 
     let store = crate::graphql::get_store(ctx)?;
-    let map = store.outlier_map();
+    let map = training_result::outlier_map(&store, previous);
 
-    let (nodes, has_previous, has_next) =
-        super::load_edges_interim(&map, after, before, first, last, Some(&prefix))?;
+    let (nodes, has_previous, has_next) = super::process_load_edges_filtered(
+        &map,
+        after,
+        before,
+        first,
+        last,
+        Some(&prefix),
+        |outlier: &OutlierInfo| outlier.is_saved,
+    );
+    let nodes = nodes
+        .into_iter()
+        .map(|res| res.map_err(|e| format!("{e}").into()))
+        .collect::<Result<Vec<_>>>()?;
 
     let mut connection = Connection::with_additional_fields(
         has_previous,
@@ -327,12 +396,12 @@ async fn load_outliers(
             model_id,
             timestamp,
             check_saved: true,
+            previous,
         },
     );
-    connection.edges.extend(nodes.into_iter().filter_map(|n| {
+    connection.edges.extend(nodes.into_iter().map(|n| {
         let cursor = OpaqueCursor(n.unique_key());
-        let n: RankedOutlier = n.into();
-        filter(n).map(|n| Edge::new(cursor, n))
+        Edge::new(cursor, n.into())
     }));
     Ok(connection)
 }
@@ -439,6 +508,7 @@ struct RankedOutlierTotalCount {
     model_id: u32,
     timestamp: Option<i64>,
     check_saved: bool,
+    previous: bool,
 }
 
 #[Object]
@@ -446,7 +516,7 @@ impl RankedOutlierTotalCount {
     /// The total number of edges.
     async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         let store = crate::graphql::get_store(ctx)?;
-        let map = store.outlier_map();
+        let map = training_result::outlier_map(&store, self.previous);
 
         let iter = map.get(self.model_id, self.timestamp, Direction::Forward, None);
         let count = if self.check_saved {
@@ -496,14 +566,13 @@ impl Outlier {
     }
 
     async fn model(&self, ctx: &Context<'_>) -> Result<ModelDigest> {
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.model_map();
-        Ok(map.load_model(self.model_id)?.into())
+        Ok(customer_access::load_accessible_model(ctx, "modelId", self.model_id)?.into())
     }
 }
 
 struct OutlierTotalCount {
     model_id: u32,
+    previous: bool,
 }
 
 #[Object]
@@ -512,7 +581,7 @@ impl OutlierTotalCount {
     async fn total_count(&self, ctx: &Context<'_>) -> Result<StringNumber<usize>> {
         use std::collections::HashSet;
         let store = crate::graphql::get_store(ctx)?;
-        let table = store.outlier_map();
+        let table = training_result::outlier_map(&store, self.previous);
         let iter = table.get(self.model_id, None, Direction::Forward, None);
 
         Ok(StringNumber(
@@ -526,13 +595,14 @@ impl OutlierTotalCount {
 async fn load(
     ctx: &Context<'_>,
     model_id: u32,
+    previous: bool,
     after: Option<OpaqueCursor<Vec<u8>>>,
     before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
     last: Option<usize>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Outlier, OutlierTotalCount, EmptyFields>> {
     let store = crate::graphql::get_store(ctx)?;
-    let table = store.outlier_map();
+    let table = training_result::outlier_map(&store, previous);
 
     let after = after.map(|cursor| cursor.0);
     let before = before.map(|cursor| cursor.0);
@@ -600,8 +670,11 @@ async fn load(
         ev.events.sort_unstable();
         Some(Edge::new(cursor, ev))
     });
-    let mut connection =
-        Connection::with_additional_fields(has_previous, has_next, OutlierTotalCount { model_id });
+    let mut connection = Connection::with_additional_fields(
+        has_previous,
+        has_next,
+        OutlierTotalCount { model_id, previous },
+    );
     connection.edges.extend(edges);
     Ok(connection)
 }
@@ -665,8 +738,9 @@ fn check_filter_to_ranked_outlier(
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 async fn load_ranked_outliers_with_filter(
     ctx: &Context<'_>,
-    model_id: ID,
+    model_id: u32,
     timestamp: Option<i64>,
+    previous: bool,
     after: Option<OpaqueCursor<Vec<u8>>>,
     before: Option<OpaqueCursor<Vec<u8>>>,
     first: Option<usize>,
@@ -675,7 +749,6 @@ async fn load_ranked_outliers_with_filter(
     time_range: Option<(Option<i64>, Option<i64>)>,
 ) -> Result<Connection<OpaqueCursor<Vec<u8>>, RankedOutlier, RankedOutlierTotalCount, EmptyFields>>
 {
-    let model_id: u32 = model_id.as_str().parse()?;
     let after = after.map(|cursor| cursor.0);
     let before = before.map(|cursor| cursor.0);
     let (direction, count, from) = if let Some(first) = first {
@@ -687,7 +760,7 @@ async fn load_ranked_outliers_with_filter(
     };
 
     let store = crate::graphql::get_store(ctx)?;
-    let table = store.outlier_map();
+    let table = training_result::outlier_map(&store, previous);
 
     let remarks_map = store.triage_response_map();
     let tags_map = store.event_tag_set()?;
@@ -698,6 +771,7 @@ async fn load_ranked_outliers_with_filter(
         model_id,
         timestamp,
         check_saved: false,
+        previous,
     };
 
     let tag_id_list = if let Some(filter) = &filter {
@@ -788,7 +862,8 @@ mod tests {
     use num_traits::ToPrimitive;
     use review_database::OutlierInfo;
 
-    use crate::graphql::TestSchema;
+    use crate::graphql::Role;
+    use crate::graphql::model_test_support::{replace_model, schema_with_models_through};
 
     fn time_str(t: &DateTime<Utc>) -> String {
         t.format("%FT%T%.9f").to_string()
@@ -843,7 +918,7 @@ mod tests {
 
     #[tokio::test]
     async fn reject_out_of_range_query_times() {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(3).await;
         for time in OUT_OF_RANGE_TIMES {
             for query in time_queries(time) {
                 let response = schema.execute_as_system_admin(&query).await;
@@ -860,7 +935,7 @@ mod tests {
 
     #[tokio::test]
     async fn accept_query_time_boundaries() {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(3).await;
         for time in BOUNDARY_TIMES {
             for query in time_queries(time) {
                 let response = schema.execute_as_system_admin(&query).await;
@@ -871,7 +946,7 @@ mod tests {
 
     #[tokio::test]
     async fn reject_out_of_range_stream_start() {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(3).await;
         for time in OUT_OF_RANGE_TIMES {
             let query = format!("subscription {{rankedOutlierStream(start: \"{time}Z\") {{id}}}}");
             let mut stream = schema.execute_stream(&query).await;
@@ -891,7 +966,7 @@ mod tests {
 
     #[tokio::test]
     async fn representable_times_return_stored_data() {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(3).await;
         let time = "2025-01-01T00:00:00";
         let timestamp = format!("{time}Z")
             .parse::<DateTime<Utc>>()
@@ -951,7 +1026,7 @@ mod tests {
 
     #[tokio::test]
     async fn valid_stream_start_returns_outliers() {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(3).await;
         let time = "2025-01-01T00:00:00Z";
         let timestamp = time
             .parse::<DateTime<Utc>>()
@@ -960,18 +1035,7 @@ mod tests {
             .unwrap();
         let model_id = {
             let store = schema.store();
-            let model_id = store
-                .model_map()
-                .add_model(review_database::ModelDigest {
-                    id: 0,
-                    name: "stream model".to_string(),
-                    version: 1,
-                    kind: "test".to_string(),
-                    max_event_id_num: 100,
-                    data_source_id: 0,
-                    classification_id: None,
-                })
-                .unwrap();
+            let model_id = replace_model(&store, "stream model", 0);
             for (batch, id) in [(timestamp - 1, 0), (timestamp, 1), (timestamp + 1, 2)] {
                 store
                     .outlier_map()
@@ -1001,21 +1065,10 @@ mod tests {
 
     #[tokio::test]
     async fn ranked_outlier_stream_fetch_interval_defaults_and_bounds() {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(3).await;
         {
             let store = schema.store();
-            let model = store
-                .model_map()
-                .add_model(review_database::ModelDigest {
-                    id: 0,
-                    name: "stream-test".to_string(),
-                    version: 1,
-                    kind: "test".to_string(),
-                    max_event_id_num: 1,
-                    data_source_id: 0,
-                    classification_id: None,
-                })
-                .unwrap();
+            let model = replace_model(&store, "stream-test", 0);
             let timestamp = "2018-01-28T01:00:00Z".parse::<DateTime<Utc>>().unwrap();
             for outlier in samples(model, timestamp.timestamp_nanos_opt().unwrap(), 5, 1) {
                 store.outlier_map().insert(&outlier).unwrap();
@@ -1045,7 +1098,7 @@ mod tests {
 
     #[tokio::test]
     async fn outlier_stream_fetch_interval_range() {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(3).await;
         for (interval, range) in [
             (0, "must be greater than or equal to 1"),
             (86_401, "must be less than or equal to 86400"),
@@ -1072,7 +1125,7 @@ mod tests {
 
     #[tokio::test]
     async fn outliers() {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(3).await;
         let store = schema.store();
         let map = store.outlier_map();
         let model = 3;
@@ -1129,7 +1182,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn ranked_outliers() {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(3).await;
         let store = schema.store();
         let map = store.outlier_map();
         let model = 3;
@@ -1260,7 +1313,7 @@ mod tests {
 
     #[tokio::test]
     async fn saved_outliers() {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(3).await;
         let store = schema.store();
         let map = store.outlier_map();
 
@@ -1294,7 +1347,7 @@ mod tests {
 
     #[tokio::test]
     async fn preserved_outliers() {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(3).await;
         let store = schema.store();
         let map = store.outlier_map();
 
@@ -1363,5 +1416,124 @@ mod tests {
             t.timestamp_nanos_opt().unwrap()
         );
         assert_eq!(res.data.to_string(), expect);
+    }
+
+    #[tokio::test]
+    async fn ranked_outlier_stream_reads_only_the_caller_models() {
+        const CUSTOMER_A: u32 = 1;
+        const CUSTOMER_B: u32 = 2;
+        let schema = schema_with_models_through(0).await;
+        let timestamp = "2025-01-01T00:00:00Z"
+            .parse::<DateTime<Utc>>()
+            .unwrap()
+            .timestamp_nanos_opt()
+            .unwrap();
+        let (first_b, model_a) = {
+            let store = schema.store();
+            // More models of customer B than the stream reads per tick, all
+            // sorting before customer A's model.
+            let mut first_b = None;
+            for i in 0..=super::MAX_MODEL_LIST_SIZE {
+                let id = replace_model(&store, &format!("b-{i:03}"), CUSTOMER_B);
+                first_b.get_or_insert(id);
+            }
+            let first_b = first_b.unwrap();
+            store
+                .outlier_map()
+                .insert(samples(first_b, timestamp, 7, 1).first().unwrap())
+                .unwrap();
+            let model_a = replace_model(&store, "z-model", CUSTOMER_A);
+            for outlier in samples(model_a, timestamp, 1, 2) {
+                store.outlier_map().insert(&outlier).unwrap();
+            }
+            (first_b, model_a)
+        };
+        let query = "subscription { rankedOutlierStream(start: \"2025-01-01T00:00:00Z\", \
+                     fetchInterval: 1) { id modelId } }";
+
+        let mut stream = schema
+            .execute_stream_as_scoped_user(query, Role::SecurityMonitor, Some(vec![CUSTOMER_A]))
+            .await;
+        // Customer B's outlier would come first had its model been read.
+        for id in [1, 2] {
+            let response = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(response.errors.is_empty(), "{response:?}");
+            assert_eq!(
+                response.data.to_string(),
+                format!("{{rankedOutlierStream: {{id: \"{id}\", modelId: \"{model_a}\"}}}}")
+            );
+        }
+
+        let mut stream = schema.execute_stream(query).await;
+        let response = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            response.data.to_string(),
+            format!("{{rankedOutlierStream: {{id: \"7\", modelId: \"{first_b}\"}}}}")
+        );
+    }
+
+    #[tokio::test]
+    async fn saved_outlier_pages_hold_only_saved_outliers() {
+        let schema = schema_with_models_through(3).await;
+        let t = chrono::Utc::now();
+        let t_str = time_str(&t);
+        {
+            let store = schema.store();
+            // Saved outliers are the even ids; the odd ones are not saved.
+            for outlier in samples(3, t.timestamp_nanos_opt().unwrap(), 0, 11) {
+                store.outlier_map().insert(&outlier).unwrap();
+            }
+        }
+        let page = |arguments: &str| {
+            format!(
+                "{{ savedOutliers(modelId: 3, time: \"{t_str}\", {arguments}) {{
+                    totalCount nodes {{ id saved }}
+                    pageInfo {{ hasNextPage hasPreviousPage startCursor endCursor }} }} }}"
+            )
+        };
+        let mut ids = Vec::new();
+        let mut arguments = "first: 2".to_string();
+        loop {
+            let response = schema.execute_as_system_admin(&page(&arguments)).await;
+            assert!(response.errors.is_empty(), "{response:?}");
+            let json = response.data.into_json().unwrap();
+            let connection = &json["savedOutliers"];
+            assert_eq!(connection["totalCount"], "6");
+            let nodes = connection["nodes"].as_array().unwrap();
+            assert!(nodes.iter().all(|node| node["saved"] == true), "{nodes:?}");
+            ids.extend(
+                nodes
+                    .iter()
+                    .map(|node| node["id"].as_str().unwrap().to_string()),
+            );
+            if connection["pageInfo"]["hasNextPage"] == false {
+                assert!(nodes.len() <= 2);
+                break;
+            }
+            assert_eq!(nodes.len(), 2);
+            let cursor = connection["pageInfo"]["endCursor"].as_str().unwrap();
+            arguments = format!("first: 2, after: \"{cursor}\"");
+        }
+        assert_eq!(ids, ["0", "2", "4", "6", "8", "10"]);
+
+        let response = schema.execute_as_system_admin(&page("last: 4")).await;
+        let json = response.data.into_json().unwrap();
+        let connection = &json["savedOutliers"];
+        assert_eq!(connection["pageInfo"]["hasPreviousPage"], true);
+        assert_eq!(
+            connection["nodes"],
+            serde_json::json!([
+                { "id": "4", "saved": true },
+                { "id": "6", "saved": true },
+                { "id": "8", "saved": true },
+                { "id": "10", "saved": true },
+            ])
+        );
     }
 }

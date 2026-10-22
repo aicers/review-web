@@ -4,6 +4,60 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `ModelDigest.method`, `eventKind`, `customerId`, `instance`, `trainedAt` and
+  `previousTrainingResult`, which expose a model's record: the clustering
+  method it was trained with (`ModelMethod`: `MULTIDIMENSION`, `PREFIX` or
+  `TIMESERIES`), the event kind it was trained on, the customer it belongs to,
+  the engine instance it belongs to (`ModelInstance`, null when it has none),
+  when its current result was trained, and the summary of its previous
+  training result (`PreviousTrainingResult`: when it was trained, its version,
+  and its cluster and outlier counts), null when it has none.
+- The `previous` argument of `clusters`, `outliers`, `rankedOutliers`,
+  `savedOutliers`, `roundsByModel`, `roundsByCluster`, `columnStatistics` and
+  `topIpAddressesOfCluster`. With `previous: true` they read the model's
+  previous training result, and return empty results for a model that has
+  none.
+- The `extensions.code` values `INDICATOR_IN_USE`, `INDICATOR_MODEL_CHANGE`
+  and `NOT_FOUND`, each with the extensions `field` and `value`.
+  `INDICATOR_IN_USE` also names what uses the indicator: `detectorId`, `nodeId`
+  and `agentKey` for a detector of an engine document, or `definition` for a
+  training definition.
+
+### Changed
+
+- Model, cluster, outlier, round, statistics, CSV column extra and indicator
+  reads and writes, and `rankedOutlierStream`, are limited to the caller's
+  customers. A read or write of another customer's model is refused with
+  `Forbidden`; `models`, `indicatorList` and `rankedOutlierStream` leave such
+  models out, and `indicator` returns null for such an indicator. An unknown
+  model id is refused with `NOT_FOUND`.
+- `preserveOutliers` is open to Security Administrators for their customers'
+  models.
+- **Breaking change:** `insertIndicator`, `updateIndicator` and
+  `removeIndicator` are limited to System Administrators. `updateIndicator`,
+  `removeIndicator` and an `insertIndicator` over an existing name are refused
+  while an engine document or a training definition names the indicator, and
+  are refused when they would move it to another model. `removeIndicator`
+  removes all or none.
+- **Breaking change:** `ModelDigest.dataSource` is nullable, deprecated and
+  always null.
+- Bumped `review-database` dependency to 0.55.0. Its store format moves to
+  0.55.0, so a store written by 0.53 or 0.54 must be migrated through
+  `review-database` before this version serves it. The migration removes every
+  stored model with its clusters, outliers, rounds, scores, column statistics,
+  time series, CSV column extras, model indicators and classifier files, and a
+  snapshot of the states database cannot roll it back.
+
+### Fixed
+
+- `models` pages report `hasNextPage` and `hasPreviousPage`.
+- `clusters` pages follow size order across pages.
+- `savedOutliers` pages hold only saved outliers.
+
 ## [0.46.0] - 2026-10-22
 
 ### Added
@@ -2365,6 +2419,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.46.0...main
 [0.46.0]: https://github.com/aicers/review-web/compare/0.45.0...0.46.0
 [0.45.0]: https://github.com/aicers/review-web/compare/0.44.0...0.45.0
 [0.44.0]: https://github.com/aicers/review-web/compare/0.43.0...0.44.0

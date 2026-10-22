@@ -558,7 +558,7 @@ async fn update_db(
     // Checked here rather than in the callers so that `applyNode` notifies no agent of a refused
     // apply.
     super::installed_guard::check_update(i, &stored.name, &old, &new)?;
-    Ok(map.update(i, &old, &new)?)
+    Ok(super::crud::update_node(&mut map, i, &old, &new)?)
 }
 
 async fn send_customer_change_if_needed(ctx: &Context<'_>, i: u32, node: &NodeInput) {

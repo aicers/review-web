@@ -1,6 +1,7 @@
 use async_graphql::{Request, Variables};
 use serde_json::{Value, json};
 
+use crate::graphql::model_test_support::schema_with_models_through;
 use crate::graphql::{Role, RoleGuard, TestSchema};
 
 const RANGE_QUERY: &str = "{ topTimeSeriesOfCluster(model: 1, clusterId: 1) { earliest latest }
@@ -44,7 +45,7 @@ async fn populated() -> TestSchema {
 }
 
 async fn populated_with_step(step: i64) -> TestSchema {
-    let schema = TestSchema::new().await;
+    let schema = schema_with_models_through(1).await;
     for index in 0..100_i64 {
         let count = usize::try_from((20 - (index % 40).abs_diff(20)) * 100 + 100).unwrap();
         insert(&schema, index * step, 0, count);
@@ -127,7 +128,7 @@ async fn datetime_bounds_preserve_selection_counts_trends_and_offsets() {
 
 #[tokio::test]
 async fn datetime_bounds_filter_with_nanosecond_precision() {
-    let schema = TestSchema::new().await;
+    let schema = schema_with_models_through(1).await;
     for (nanos, count) in [(0, 100), (1, 200), (2, 300)] {
         insert(&schema, nanos, 0, count);
     }
@@ -191,7 +192,7 @@ async fn datetime_ranges_round_trip_with_trends() {
 
 #[tokio::test]
 async fn datetime_range_outputs_are_exact_and_nullable() {
-    let empty = TestSchema::new().await;
+    let empty = schema_with_models_through(1).await;
     assert_eq!(
         data(&empty, RANGE_QUERY).await,
         json!({
@@ -205,7 +206,7 @@ async fn datetime_range_outputs_are_exact_and_nullable() {
         (i64::MIN, "1677-09-21T00:12:43.145224192+00:00"),
         (i64::MAX, "2262-04-11T23:47:16.854775807+00:00"),
     ] {
-        let schema = TestSchema::new().await;
+        let schema = schema_with_models_through(1).await;
         insert(&schema, nanos, 0, 1);
         let query = RANGE_QUERY.replace(
             "clusterId: 1)",
@@ -225,7 +226,7 @@ async fn datetime_range_outputs_are_exact_and_nullable() {
 
 #[tokio::test]
 async fn datetime_bounds_accept_i64_limits_and_reject_adjacent_instants() {
-    let schema = TestSchema::new().await;
+    let schema = schema_with_models_through(1).await;
     for (resolver, selection, _) in QUERIES {
         let time_arguments = if resolver.starts_with("topTimeSeriesOfCluster") {
             vec![""]
@@ -289,7 +290,7 @@ async fn datetime_bounds_do_not_filter_a_selected_batch() {
 
 #[tokio::test]
 async fn datetime_bounds_reject_integer_literals_and_variables() {
-    let schema = TestSchema::new().await;
+    let schema = schema_with_models_through(1).await;
     for (resolver, selection, _) in QUERIES {
         for bound in ["start", "end"] {
             let response = schema
@@ -313,7 +314,7 @@ async fn datetime_bounds_reject_integer_literals_and_variables() {
 
 #[tokio::test]
 async fn datetime_schema_signatures() {
-    let schema = TestSchema::new().await;
+    let schema = schema_with_models_through(1).await;
     let sdl = schema.schema.sdl();
     for name in ["topTimeSeries(", "topTimeSeriesOfCluster("] {
         let arguments = sdl.split_once(name).unwrap().1.split_once("): ").unwrap().0;
@@ -379,7 +380,7 @@ async fn datetime_optional_bounds_keep_two_hour_windows() {
 
 #[tokio::test]
 async fn datetime_ranges_describe_all_stored_data_in_their_scope() {
-    let schema = TestSchema::new().await;
+    let schema = schema_with_models_through(1).await;
     insert(&schema, -1, 0, 1);
     insert(&schema, 1, 0, 1);
     {
