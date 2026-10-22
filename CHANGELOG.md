@@ -4,7 +4,7 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.45.0] - 2026-10-22
 
 ### Added
 
@@ -35,6 +35,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- **Breaking change:** The public `AgentManager` trait gains the required
+  `request_customer_data_deletion` method, which `deleteCustomerData` uses to
+  send deletion requests to Sensor and SemiSupervised. It has no default
+  implementation, so embedders must implement it.
+- **Breaking change:** The public `serve` function takes a required
+  `customer_data_deletion_manager: Arc<CustomerDataDeletionTaskManager>`
+  parameter after `host_onboarder`. Embedders must create one and pass it.
 - Integer trend counts in `topTimeSeries` and `topTimeSeriesOfCluster` now map
   negative values to zero and round other values to the nearest integer, with
   exact halves toward the larger integer.
@@ -2335,7 +2342,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
-[Unreleased]: https://github.com/aicers/review-web/compare/0.44.0...main
+[0.45.0]: https://github.com/aicers/review-web/compare/0.44.0...0.45.0
 [0.44.0]: https://github.com/aicers/review-web/compare/0.43.0...0.44.0
 [0.43.0]: https://github.com/aicers/review-web/compare/0.42.1...0.43.0
 [0.42.1]: https://github.com/aicers/review-web/compare/0.42.0...0.42.1
