@@ -21,7 +21,7 @@ const COMPUTATION_SERIES_BUDGET: u128 = 1_000_000;
 const RESPONSE_SERIES_BUDGET: u128 = 100_000;
 
 const DEFAULT_MIN_SLOPE: f64 = 10.0;
-const DEFAULT_MIN_ZERO_COUNT_FOR_TREND: u32 = 5;
+const DEFAULT_MIN_ZERO_COUNT_FOR_TREND: usize = 5;
 
 #[derive(Default)]
 pub(super) struct ModelQuery;
@@ -698,7 +698,7 @@ impl TopTrendsByColumn {
 struct ClusterTrend {
     cluster_id: u32,
     series: Vec<TimeCount>,
-    trend: Vec<usize>,
+    trend: Vec<f64>,
     lines: Vec<LineSegment>,
     number_of_ups: usize,
     number_of_downs: usize,
@@ -718,10 +718,18 @@ impl ClusterTrend {
         &self.series
     }
 
-    /// The cluster trend in a vector of string representable by a vector of
-    /// `usize`.
+    /// The cluster trend as string-represented `usize` counts. Negative values
+    /// become 0; otherwise values round to the nearest integer, with exact halves
+    /// toward the larger integer. Line segments and statistics use the untruncated
+    /// trend and may differ from those recomputed from these integer values:
+    /// `[1.1, 1.2]` has a positive slope while the integer trend is `["1", "1"]`.
     async fn trend(&self) -> Vec<StringNumber<usize>> {
-        self.trend.iter().map(|x| StringNumber(*x)).collect()
+        self.trend
+            .iter()
+            .map(|&value| {
+                StringNumber(super::trend_count(value).expect("get_trend validated every count"))
+            })
+            .collect()
     }
 
     async fn lines(&self) -> &[LineSegment] {
@@ -775,10 +783,6 @@ impl ClusterTrend {
         let Ok(trend) = get_trend(&series, cutoff_rate, trendi_order) else {
             return Ok(None);
         };
-        let trend = trend
-            .iter()
-            .map(|t| t.trunc().to_usize().unwrap_or(0)) // unwrap_or is for minus
-            .collect::<Vec<_>>();
         let lines = find_lines(&series, &trend, min_slope);
         if lines.is_empty() {
             return Ok(None);
@@ -807,74 +811,74 @@ impl ClusterTrend {
     }
 }
 
-#[allow(clippy::too_many_lines)]
-fn find_lines(series: &[super::TimeCount], trend: &[usize], min_slope: f64) -> Vec<LineSegment> {
-    let mut diff: Vec<f64> = Vec::new();
-    for pair in trend.windows(2) {
-        diff.push(
-            pair[1].to_f64().expect("safe: usize -> f64")
-                - pair[0].to_f64().expect("safe: usize -> f64"),
-        );
-    }
+// Tolerance only covers small filter error; increasing it would erase slow changes.
+fn trend_tolerance(series: &[super::TimeCount]) -> f64 {
+    8192.0
+        * f64::EPSILON
+        * series
+            .iter()
+            .map(|point| point.1)
+            .max()
+            .unwrap_or(0)
+            .to_f64()
+            .expect("usize fits in f64")
+}
 
-    if diff.is_empty() {
+fn trend_segments(trend: &[f64], tau: f64) -> Vec<(usize, usize)> {
+    if trend.len() < 2 {
         return Vec::new();
     }
-
-    let mut locations: Vec<usize> = Vec::new();
-    let (mut sign, mut prev_sign, mut zero_count): (i32, i32, u32) = if diff[0] < 0.0 {
-        // prev_sign - sign - this_sign
-        (-1, -1, 0)
-    } else if diff[0] == 0.0 {
-        (0, 0, 1)
-    } else {
-        (1, 1, 0)
-    };
-
-    let mut zero_start: usize = 0;
-    for (index, &elem) in diff.iter().enumerate().skip(1) {
-        let this_sign: i32 = if elem < 0.0 {
-            -1
-        } else {
-            i32::from(elem == 0.0)
-        };
-
-        if sign == 0 && this_sign == 0 {
-            zero_count += 1;
-        } else if sign == 0 && this_sign != 0 {
-            if prev_sign == this_sign {
-                if zero_count > DEFAULT_MIN_ZERO_COUNT_FOR_TREND {
-                    locations.push(zero_start + 1);
-                    locations.push(index);
-                }
-            } else if zero_count == 1 {
-                locations.push(index);
+    let signs: Vec<i32> = trend
+        .windows(2)
+        .map(|pair| {
+            let diff = pair[1] - pair[0];
+            if diff.abs() <= tau {
+                0
+            } else if diff > 0.0 {
+                1
             } else {
-                locations.push(zero_start + 1);
-                locations.push(index);
+                -1
             }
-            zero_count = 0;
-        } else if sign != 0 && this_sign == 0 {
-            zero_count = 1;
-            zero_start = index;
-        } else if sign != 0 && sign != this_sign {
-            locations.push(index);
+        })
+        .collect();
+    let mut boundaries = vec![0];
+    let mut start = 0;
+    while start < signs.len() {
+        let sign = signs[start];
+        let mut end = start + 1;
+        while end < signs.len() && signs[end] == sign {
+            end += 1;
         }
-
-        prev_sign = sign;
-        sign = this_sign;
+        if sign == 0 {
+            let before = start.checked_sub(1).map(|i| signs[i]);
+            let after = signs.get(end).copied();
+            let opposite = matches!((before, after), (Some(a), Some(b)) if a != b);
+            let length = end - start;
+            if opposite && length == 1 {
+                boundaries.push(end);
+            } else if opposite || length > DEFAULT_MIN_ZERO_COUNT_FOR_TREND {
+                if before.is_some() {
+                    boundaries.push(start + 1);
+                }
+                if after.is_some() {
+                    boundaries.push(end);
+                }
+            }
+        } else if end < signs.len() && signs[end] != 0 {
+            boundaries.push(end);
+        }
+        start = end;
     }
+    boundaries.push(trend.len());
+    boundaries
+        .windows(2)
+        .map(|pair| (pair[0], pair[1] - 1))
+        .collect()
+}
 
-    let mut line_segments_indices: Vec<(usize, usize)> = Vec::new();
-    for index in 0..locations.len() {
-        let first_index = if index == 0 { 0 } else { locations[index - 1] };
-        let last_index = locations[index] - 1;
-        line_segments_indices.push((first_index, last_index));
-    }
-    if locations.len() > 1 {
-        line_segments_indices.push((locations[locations.len() - 1], diff.len() - 1));
-    }
-
+fn find_lines(series: &[super::TimeCount], trend: &[f64], min_slope: f64) -> Vec<LineSegment> {
+    let tau = trend_tolerance(series);
+    let line_segments_indices = trend_segments(trend, tau);
     let mut lines: Vec<LineSegment> = Vec::new();
     for seg in &line_segments_indices {
         let (first_index, last_index) = (seg.0, seg.1);
@@ -894,16 +898,19 @@ fn find_lines(series: &[super::TimeCount], trend: &[usize], min_slope: f64) -> V
             r_square,
         };
 
-        // for trend
-        let x_values: Vec<f64> = (first_index..=last_index)
-            .map(|x| x.to_f64().expect("safe: usize -> f64"))
-            .collect();
-        let y_values: Vec<usize> = (first_index..=last_index).map(|i| trend[i]).collect();
-        let y_values: Vec<f64> = y_values
-            .iter()
-            .map(|y| y.to_f64().expect("safe: usize -> f64"))
-            .collect();
-        let (slope, intercept, r_square) = linear_regression(&x_values, &y_values);
+        // Regress the untruncated trend, preserving negative filter values.
+        let y_values = &trend[first_index..=last_index];
+        let minimum = y_values.iter().copied().fold(f64::INFINITY, f64::min);
+        let maximum = y_values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let (slope, intercept, r_square) = if y_values.len() >= 2 && maximum - minimum <= tau {
+            (
+                0.0,
+                y_values.iter().sum::<f64>() / y_values.len().to_f64().expect("usize fits in f64"),
+                1.0,
+            )
+        } else {
+            linear_regression(&x_values, y_values)
+        };
         let reg_trend = Regression {
             slope,
             intercept,
@@ -1009,6 +1016,9 @@ struct LineSegment {
     first_index: usize,
     last_index: usize,
     reg_original: Regression,
+    /// Regression of the untruncated trend, used for line segments and statistics.
+    /// It may differ from regression recomputed from the integer trend:
+    /// `[1.1, 1.2]` has a positive slope while the integer trend is `["1", "1"]`.
     reg_trend: Regression,
 }
 
@@ -1163,6 +1173,200 @@ mod tests {
     use review_database::{Cluster, Store};
 
     use crate::graphql::TestSchema;
+
+    fn counted_series(counts: impl IntoIterator<Item = usize>) -> Vec<crate::graphql::TimeCount> {
+        counts
+            .into_iter()
+            .enumerate()
+            .map(|(i, count)| (i64::try_from(i).unwrap(), count))
+            .collect()
+    }
+
+    fn cluster_trend(
+        counts: Vec<usize>,
+        order: i32,
+        min_slope: f64,
+    ) -> Option<super::ClusterTrend> {
+        super::ClusterTrend::from_database(
+            review_database::ClusterTimeSeries {
+                id: 1,
+                time_counts: counted_series(counts),
+            },
+            0.1,
+            order,
+            min_slope,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn segmentation_partitions_every_element() {
+        // Expected boundaries are starts of disjoint, inclusive segments.
+        let cases = [
+            (vec![1., 2., 3., 4.], vec![0, 4]),
+            (vec![4., 3., 2., 1.], vec![0, 4]),
+            (vec![1., 2., 3., 2., 1.], vec![0, 2, 5]),
+            (vec![1., 2., 2., 1., 0.], vec![0, 2, 5]),
+            (vec![1., 2., 2., 2., 1., 0.], vec![0, 2, 3, 6]),
+            (vec![1., 2., 2., 2., 2., 2., 2., 3.], vec![0, 8]),
+            (vec![1., 2., 2., 2., 2., 2., 2., 2., 3.], vec![0, 2, 7, 9]),
+            (vec![1., 1., 1., 1., 1., 1., 2., 3.], vec![0, 8]),
+            (vec![1., 1., 1., 1., 1., 1., 1., 2., 3.], vec![0, 6, 9]),
+            (vec![1., 2., 3., 3., 3., 3., 3., 3.], vec![0, 8]),
+            (vec![1., 2., 3., 3., 3., 3., 3., 3., 3.], vec![0, 3, 9]),
+            (vec![1.; 12], vec![0, 12]),
+        ];
+        for (trend, boundaries) in cases {
+            let expected: Vec<_> = boundaries.windows(2).map(|p| (p[0], p[1] - 1)).collect();
+            assert_eq!(super::trend_segments(&trend, 0.0), expected, "{trend:?}");
+        }
+    }
+
+    #[test]
+    fn bump_uses_untruncated_trend() {
+        let mut counts = vec![1; 20];
+        counts[10] = 2;
+        assert!(cluster_trend(counts.clone(), 2, 0.0).is_none());
+        let cluster = cluster_trend(counts, 2, -1.0).unwrap();
+        assert!(cluster.lines.iter().any(|line| line.reg_trend.slope > 0.0));
+        assert!(
+            cluster
+                .trend
+                .iter()
+                .all(|&value| crate::graphql::trend_count(value) == Some(1))
+        );
+    }
+
+    #[test]
+    fn constant_trend_and_wobbles_within_tolerance() {
+        let cluster = cluster_trend(vec![7; 120], 4, -1.0).unwrap();
+        assert_eq!(cluster.lines.len(), 1);
+        let line = &cluster.lines[0];
+        assert_eq!((line.first_index, line.last_index), (0, 119));
+        assert_eq!((line.reg_trend.slope, line.reg_trend.r_square), (0.0, 1.0));
+        let series = counted_series(vec![7; 120]);
+        let tau = super::trend_tolerance(&series);
+        let trend: Vec<_> = (0..120)
+            .map(|i| 7.0 + if i % 2 == 0 { tau / 4.0 } else { -tau / 4.0 })
+            .collect();
+        let lines = super::find_lines(&series, &trend, -1.0);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            (lines[0].reg_trend.slope, lines[0].reg_trend.r_square),
+            (0.0, 1.0)
+        );
+    }
+
+    #[test]
+    fn slow_changes_survive_tolerance() {
+        let cluster = cluster_trend(
+            (0..120).map(|i| (1_usize << 40) + 11 * i).collect(),
+            0,
+            10.0,
+        )
+        .unwrap();
+        assert_eq!(cluster.lines.len(), 1);
+        assert!((cluster.lines[0].reg_trend.slope - 11.0).abs() < 1e-9);
+        for order in [0, 4] {
+            let cluster = cluster_trend(
+                (0..5000).map(|i| 1_000_000_000 + i / 500).collect(),
+                order,
+                0.0,
+            )
+            .unwrap();
+            assert!(
+                cluster.lines.iter().any(|line| line.reg_trend.slope > 0.0),
+                "slow rise should survive smoothing with order {order}"
+            );
+            let cluster = cluster_trend(
+                (0..5000)
+                    .map(|i| 1_000_000_000 + if i < 2500 { i / 250 } else { (4999 - i) / 250 })
+                    .collect(),
+                order,
+                0.0,
+            )
+            .unwrap();
+            assert!(
+                cluster.lines.iter().any(|line| line.reg_trend.slope > 0.0),
+                "slow peak should survive smoothing with order {order}"
+            );
+        }
+        // Each step is below tau, but the total range exceeds tau.
+        let series = counted_series(vec![1_usize << 40; 120]);
+        let trend: Vec<_> = (0..120)
+            .map(|i| 2_f64.powi(40) + f64::from(i) * 0.5)
+            .collect();
+        let lines = super::find_lines(&series, &trend, -1.0);
+        assert_eq!(lines.len(), 1);
+        assert!((lines[0].reg_trend.slope - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rising_series_and_triangle_wave() {
+        let cluster = cluster_trend(
+            (0..100).map(|i| i * 100).collect(),
+            4,
+            super::DEFAULT_MIN_SLOPE,
+        )
+        .unwrap();
+        assert_eq!(cluster.lines.len(), 1);
+        assert_eq!(
+            (cluster.lines[0].first_index, cluster.lines[0].last_index),
+            (0, 99)
+        );
+        let counts = (0..120)
+            .map(|i| 100 * if i % 40 < 20 { i % 40 } else { 40 - i % 40 })
+            .collect();
+        let cluster = cluster_trend(counts, 4, super::DEFAULT_MIN_SLOPE).unwrap();
+        assert_eq!(cluster.lines.len(), 3);
+        let cluster = cluster_trend(
+            (0..100)
+                .map(|i| if i < 80 { 0 } else { (i - 80) * 100 })
+                .collect(),
+            0,
+            super::DEFAULT_MIN_SLOPE,
+        )
+        .unwrap();
+        assert_eq!(cluster.lines.len(), 1);
+        assert_eq!(cluster.lines[0].last_index, 99);
+    }
+
+    #[test]
+    fn filter_negatives_are_preserved_during_analysis() {
+        let series = counted_series((0..100).map(|i| if i == 50 { 100 } else { 0 }));
+        let trend = crate::graphql::get_trend(&series, 0.1, 4).unwrap();
+        assert!(trend.iter().any(|value| *value < 0.0));
+        let cluster = super::ClusterTrend::from_database(
+            review_database::ClusterTimeSeries {
+                id: 1,
+                time_counts: series.clone(),
+            },
+            0.1,
+            4,
+            -1000.0,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(cluster.trend, trend);
+        for line in cluster.lines {
+            let y = &trend[line.first_index..=line.last_index];
+            let x: Vec<_> = (line.first_index..=line.last_index)
+                .map(|i| f64::from(u32::try_from(i).unwrap()))
+                .collect();
+            if y.len() >= 2
+                && y.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                    - y.iter().copied().fold(f64::INFINITY, f64::min)
+                    > super::trend_tolerance(&series)
+            {
+                assert_eq!(line.reg_trend.slope, super::linear_regression(&x, y).0);
+            }
+        }
+    }
+
+    #[test]
+    fn abnormal_cluster_trend_is_omitted() {
+        assert!(cluster_trend(vec![usize::MAX; 20], 0, -1.0).is_none());
+    }
 
     #[test]
     fn computation_budget_counts_all_series_without_filling() {
@@ -1533,6 +1737,78 @@ mod tests {
             }
         }
         schema
+    }
+
+    #[tokio::test]
+    async fn cluster_series_trend_rounds_constant_counts() {
+        let schema = schema_with_constant_time_series(20).await;
+        let response = schema.execute_as_system_admin(
+            "{ topTimeSeriesOfCluster(model: 1, clusterId: 1, trendiOrder: 2, cutoffRate: 0.1) {
+                series { seriesTrend { count } }
+            } }"
+        ).await;
+        assert!(response.errors.is_empty(), "{response:?}");
+        let data = response.data.into_json().unwrap();
+        let trend = data
+            .pointer("/topTimeSeriesOfCluster/series/0/seriesTrend")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(trend.len(), 20);
+        assert!(trend.iter().all(|point| point["count"] == 1));
+    }
+
+    #[tokio::test]
+    async fn abnormal_trends_preserve_query_responses() {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            let map = store.time_series_map();
+            for index in 0..20 {
+                map.insert(&review_database::TimeSeries {
+                    model_id: 1,
+                    cluster_id: 1,
+                    time: 0,
+                    value: i64::from(index) * 1_000_000_000,
+                    count_index: Some(0),
+                    count: usize::MAX,
+                })
+                .unwrap();
+            }
+        }
+        let response = schema
+            .execute_as_system_admin(
+                "{ topTimeSeries(model: 1, trendiOrder: 0, minSlope: -1) { trends { trend } }
+                topTimeSeriesOfCluster(model: 1, clusterId: 1, trendiOrder: 0) {
+                    series { series { count } seriesTrend { count } }
+                } }",
+            )
+            .await;
+        assert!(response.errors.is_empty(), "{response:?}");
+        let data = response.data.into_json().unwrap();
+        assert!(
+            data["topTimeSeries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|column| column["trends"].as_array().unwrap().is_empty())
+        );
+        assert_eq!(
+            data.pointer("/topTimeSeriesOfCluster/series/0/series")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            20
+        );
+        assert_eq!(
+            data.pointer("/topTimeSeriesOfCluster/series/0/seriesTrend")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
     }
 
     #[tokio::test]
