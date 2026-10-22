@@ -3171,6 +3171,24 @@ type CategoryEdge {
 	cursor: String!
 }
 
+"""
+The Central Manager node and the upstream NTP servers of its host.
+"""
+type CentralManagerTimeSources {
+	"""
+	The ID of the Central Manager node, as `Node.id` and `NodeStatus.id`
+	give it.
+	"""
+	nodeId: ID!
+	"""
+	The upstream NTP servers, in the order of the host's configuration
+	file. chrony chooses among them by its own measurements; the order sets
+	no preference. An empty list means none is set: the host then uses
+	Ubuntu's default servers where reachable, and its own clock otherwise.
+	"""
+	servers: [String!]!
+}
+
 type CertificatePayload {
 	parsedCertificate: [ParsedCertificate!]!
 }
@@ -6411,6 +6429,17 @@ type Mutation {
 	Updates the given trusted user agent.
 	"""
 	updateTrustedUserAgent(old: String!, new: String!): Boolean!
+	"""
+	Replaces the upstream NTP servers of the Central Manager host and
+	returns the list sent. The host's Host Agent validates the list before
+	writing anything and refuses an invalid list whole, with the reason as
+	the error message. When the Host Agent does not answer within 10
+	seconds, the request fails with "the Central Manager host did not answer
+	in time". Any other error, the 10-second deadline included, may leave
+	the list applied; read it again with `centralManagerTimeSources` before
+	retrying.
+	"""
+	setCentralManagerTimeSources(servers: [String!]!): [String!]!
 }
 
 """
@@ -6735,6 +6764,11 @@ type NodeStatus {
 	"""
 	cpuUsage: Float
 	"""
+	The node's time synchronization, as its Host Agent reports it. Null when the Host Agent is
+	not connected, does not support the request, fails it, or does not answer within 6 seconds.
+	"""
+	timeSync: NodeTimeSync
+	"""
 	Indicates whether the Manager server is running on this node or not.
 	"""
 	manager: Boolean!
@@ -6805,6 +6839,31 @@ type NodeStatusEdge {
 	A cursor for use in pagination
 	"""
 	cursor: String!
+}
+
+"""
+The time synchronization state a node's Host Agent reports.
+"""
+type NodeTimeSync {
+	"""
+	Whether the host's time synchronization service is enabled.
+	"""
+	enabled: Boolean!
+	"""
+	The host's clock is synchronized to the source it is meant to follow,
+	as of a recent measurement.
+	"""
+	synchronized: Boolean!
+	"""
+	The time source in use, or null when there is none or it is the
+	host's own clock.
+	"""
+	server: String
+	"""
+	The host's clock minus its source's at the last measurement, in
+	seconds: positive when the host is ahead. Null when unknown.
+	"""
+	offset: Float
 }
 
 type NonBrowser implements Event {
@@ -7919,6 +7978,12 @@ type Query {
 	may not list it, or the catalog could not be read.
 	"""
 	configTemplates(target: String!): ConfigTemplateList!
+	"""
+	The Central Manager node and the upstream NTP servers of its host.
+	Fails with "the Central Manager host did not answer in time" when its
+	Host Agent does not answer within 10 seconds.
+	"""
+	centralManagerTimeSources: CentralManagerTimeSources!
 }
 
 type RankedOutlier {

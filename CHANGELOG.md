@@ -14,6 +14,24 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   It supports remote deletion requests to Sensor and SemiSupervised,
   persisted per-service progress, failed-service retries, startup recovery,
   and waiting for active deletion during shutdown.
+- `NodeStatus.timeSync`, the node's time synchronization as its Host Agent
+  reports it: whether the service is enabled, whether the clock is
+  synchronized, the source in use and the last measured offset in seconds. It
+  is null when the Host Agent is not connected, does not support the request,
+  fails it or does not answer within 6 seconds. `nodeStatusList` asks each
+  node's Host Agent for resource usage, ping and time synchronization at once.
+- The `centralManagerTimeSources` query, which returns the Central Manager
+  node's ID and the upstream NTP servers of its host, and the System
+  Administrator-only `setCentralManagerTimeSources` mutation, which replaces
+  them. Both go through the host's Host Agent; a refusal by it is returned as
+  the error message, and both fail with "the Central Manager host did not
+  answer in time" after 10 seconds without an answer. An error from the
+  mutation other than a validation refusal, the 10-second deadline included,
+  may leave the new list applied; read it again before retrying.
+- `AgentManager::time_sync_status`, `AgentManager::time_sources` and
+  `AgentManager::set_time_sources`, with `backend::TimeSyncStatus`. Their
+  default implementations return an error, so `timeSync` is null and both
+  operations fail with `Not supported`.
 
 ### Changed
 
@@ -26,6 +44,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Non-finite trends and trends with unrepresentable integer counts are treated
   as computation failures: `topTimeSeries` omits the affected cluster and
   `topTimeSeriesOfCluster` returns an empty `seriesTrend`.
+- Bumped `review-protocol` dependency to 0.23.0. An embedding application must
+  link the same release, since `AgentManager` uses its types.
 
 ## [0.44.0] - 2026-10-19
 

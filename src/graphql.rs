@@ -200,6 +200,7 @@ struct SubQueryTwoB(
     trusted_user_agent::UserAgentQuery,
     node::BindAddrQuery,
     node::OnboardingQuery,
+    node::TimeSyncQuery,
 );
 
 /// A set of mutations defined in the schema.
@@ -252,6 +253,7 @@ struct SubMutationTwoB(
     trusted_domain::TrustedDomainMutation,
     traffic_filter::TrafficFilterMutation,
     trusted_user_agent::UserAgentMutation,
+    node::TimeSyncMutation,
 );
 
 /// A set of subscription defined in the schema.

@@ -30,7 +30,7 @@ reqwest = { version = "0.13", default-features = false, features = [
   "rustls-no-provider",
 ] }
 review-database = { git = "https://github.com/aicers/review-database.git", tag = "0.53.0" }
-review-protocol = { git = "https://github.com/aicers/review-protocol.git", tag = "0.21.0" }
+review-protocol = { git = "https://github.com/aicers/review-protocol.git", tag = "0.23.0" }
 rustls = { version = "0.23", default-features = false, features = [
   "aws_lc_rs",
   "std",
@@ -53,7 +53,7 @@ assert-json-diff = "2"
 futures = "0.3"
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 tempfile = "3"
-tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "test-util"] }
 tokio-tungstenite = "0.30"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

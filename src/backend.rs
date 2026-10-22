@@ -108,6 +108,47 @@ pub trait AgentManager: Send + Sync {
     /// the round-trip time.
     async fn ping(&self, _hostname: &str) -> Result<Duration, anyhow::Error>;
 
+    /// Returns the time synchronization status the given host's Host Agent
+    /// reports.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the host's Host Agent is not connected, refuses or
+    /// fails the request, or answers with anything but a status. The default
+    /// implementation always returns an error.
+    async fn time_sync_status(&self, _hostname: &str) -> Result<TimeSyncStatus, anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
+
+    /// Returns the upstream NTP servers configured on the given host, in the
+    /// order of its configuration file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the host's Host Agent is not connected, refuses or
+    /// fails the request, or answers with anything but a server list. The
+    /// default implementation always returns an error.
+    async fn time_sources(&self, _hostname: &str) -> Result<Vec<String>, anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
+
+    /// Replaces the upstream NTP servers configured on the given host with
+    /// `servers`, written in that order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the host's Host Agent is not connected, refuses or
+    /// fails the request, or does not confirm it. A refusal's message is the
+    /// error's message, unchanged. The default implementation always returns
+    /// an error.
+    async fn set_time_sources(
+        &self,
+        _hostname: &str,
+        _servers: &[String],
+    ) -> Result<(), anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
+
     /// Reboots the node with the given hostname.
     async fn reboot(&self, _hostname: &str) -> Result<(), anyhow::Error>;
 
@@ -162,6 +203,26 @@ pub struct DataStoreReadEndpoint {
     pub port: u16,
     /// The addresses the plane resolves for the instance's host.
     pub addrs: Vec<IpAddr>,
+}
+
+/// The time synchronization state a host's Host Agent reports.
+///
+/// The fields are those of review-protocol's
+/// `NodeTimeSyncResponse::Status`, which is an enum variant and not a type
+/// of its own.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimeSyncStatus {
+    /// The host's time synchronization service is enabled.
+    pub enabled: bool,
+    /// The host's clock is synchronized to the source it is meant to follow,
+    /// as of a recent measurement.
+    pub synchronized: bool,
+    /// The source in use; none when there is none or it is the host's own
+    /// clock.
+    pub server: Option<String>,
+    /// The host's clock minus its source's at the last measurement, in
+    /// microseconds; none when unknown.
+    pub offset_micros: Option<i64>,
 }
 
 /// An agent manager that can be owned by background tasks.
@@ -244,12 +305,12 @@ pub(crate) const CORE_PACKAGE_IDS: [&str; 6] = [
 // neither pinned upstream defines it. The surfaces checked, at the exact
 // revisions this crate pins in `Cargo.toml`:
 //
-// - `review-database` at `7cd319c` (tag `0.49.0`) — the `pub use` surface of
+// - `review-database` at `a8ca8e8` (tag `0.53.0`) — the `pub use` surface of
 //   its `lib.rs`, its three public modules `types`, `event` and `backup`,
 //   which together are every name this crate can import from it, and behind
 //   the re-exports the private `tables::operation_attempt` and
 //   `tables::port_allocation` modules that hold the deployment types.
-// - `review-protocol` at `76e28fe` (tag `0.21.0`) — the `types::node` module,
+// - `review-protocol` at `aae234f` (tag `0.23.0`) — the `types::node` module,
 //   which carries the package (`NodePackageRequest`/`NodePackageResponse`/
 //   `NodePackageError`) and enrollment (`NodeEnrollRequest`/
 //   `NodeEnrollResponse`/`NodeEnrollError`) surfaces, and the rest of its
