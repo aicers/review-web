@@ -1342,6 +1342,7 @@ mod tests {
                 "hog",
                 "reconverge",
                 "crusher",
+                "reproduce",
             ])
         );
         assert!(!observed.permitted.iter().any(|id| id == "bootroot"));

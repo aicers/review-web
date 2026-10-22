@@ -271,8 +271,14 @@ pub trait CertManager: Send + Sync {
 /// to enumerate.
 // The list is declared here because every call site that classifies a target
 // by package class depends on it; the tests below assert its membership.
-pub(crate) const MODULE_PACKAGE_IDS: [&str; 5] =
-    ["piglet", "giganto", "hog", "reconverge", "crusher"];
+pub(crate) const MODULE_PACKAGE_IDS: [&str; 6] = [
+    "piglet",
+    "giganto",
+    "hog",
+    "reconverge",
+    "crusher",
+    "reproduce",
+];
 
 /// The canonical package-ids of the core-component packages.
 ///
@@ -607,7 +613,7 @@ pub struct RunningRoxydBuild {
 
 /// Why a deployment operation could not be carried out.
 ///
-/// The nine named variants are exactly the failures a resolver renders as a
+/// The ten named variants are exactly the failures a resolver renders as a
 /// state of the form the operator is looking at, so a resolver decides the
 /// result-payload union member by matching on the kind rather than on a
 /// message string — an upstream wording change would otherwise silently
@@ -717,6 +723,24 @@ pub enum DeployError {
         /// The unknown configuration template id.
         config_template: String,
     },
+    /// The target host's Host Agent cannot read the package's manifest
+    /// format.
+    ///
+    /// It is raised before the package is sent, and the remedy is to update
+    /// the host's Host Agent or to choose a build whose format it reads.
+    #[error(
+        "the Host Agent on {host} reads manifest formats {min} through {max}, not {format_version}"
+    )]
+    ManifestFormatUnsupported {
+        /// The host whose Host Agent cannot read the package.
+        host: String,
+        /// The format version of the package's manifest.
+        format_version: u32,
+        /// The lowest manifest format version the host last reported reading.
+        min: u32,
+        /// The highest manifest format version the host last reported reading.
+        max: u32,
+    },
     /// Any other failure, rendered as an ordinary GraphQL error.
     ///
     /// [`review_database::PortAllocationError::Database`] arrives here: it is
@@ -801,7 +825,9 @@ pub trait PackageDeployer: Send + Sync {
     /// selected build, [`DeployError::ConfigTemplateRequired`] if a required
     /// template was omitted, [`DeployError::ConfigTemplateNotApplicable`] if
     /// the target takes no template, [`DeployError::UnknownConfigTemplate`]
-    /// if the id is absent from the target's catalog, and
+    /// if the id is absent from the target's catalog,
+    /// [`DeployError::ManifestFormatUnsupported`] if the target host's Host
+    /// Agent cannot read the package's manifest format, and
     /// [`DeployError::Other`] for any other failure.
     // The public install contract keeps these independent arguments, as the
     // GraphQL mutation does; grouping them would change the implementer API.
@@ -829,9 +855,11 @@ pub trait PackageDeployer: Send + Sync {
     ///
     /// Returns [`DeployError::CleanupPending`] if a teardown is still owed on
     /// the target, [`DeployError::BuildNotServable`] if the store will not
-    /// serve the selected build, and [`DeployError::Other`] for any other
-    /// failure. It allocates nothing, so it produces no bind-address or
-    /// request-key variant.
+    /// serve the selected build, [`DeployError::ManifestFormatUnsupported`]
+    /// if the target host's Host Agent cannot read the package's manifest
+    /// format, and [`DeployError::Other`] for any other failure. It
+    /// allocates nothing, so it produces no bind-address or request-key
+    /// variant.
     async fn update(
         &self,
         host: &str,
@@ -1302,10 +1330,17 @@ mod tests {
     const BINARY_SHA256: &str = "5e0c2b1f9a8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b";
 
     #[test]
-    fn module_package_ids_are_the_five_modules() {
+    fn module_package_ids_are_the_six_modules() {
         assert_eq!(
             MODULE_PACKAGE_IDS,
-            ["piglet", "giganto", "hog", "reconverge", "crusher"]
+            [
+                "piglet",
+                "giganto",
+                "hog",
+                "reconverge",
+                "crusher",
+                "reproduce"
+            ]
         );
     }
 
@@ -1434,6 +1469,7 @@ mod tests {
         assert_eq!(AgentKind::SemiSupervised.package_id(), Some("hog"));
         assert_eq!(AgentKind::Unsupervised.package_id(), Some("reconverge"));
         assert_eq!(AgentKind::TimeSeriesGenerator.package_id(), Some("crusher"));
+        assert_eq!(AgentKind::LogCollector.package_id(), Some("reproduce"));
         assert_eq!(ExternalServiceKind::DataStore.package_id(), Some("giganto"));
         assert_eq!(ExternalServiceKind::TiContainer.package_id(), None);
     }
@@ -1447,6 +1483,7 @@ mod tests {
             AgentKind::SemiSupervised.package_id(),
             AgentKind::Unsupervised.package_id(),
             AgentKind::TimeSeriesGenerator.package_id(),
+            AgentKind::LogCollector.package_id(),
             ExternalServiceKind::DataStore.package_id(),
         ];
         for package_id in from_kinds.into_iter().flatten() {

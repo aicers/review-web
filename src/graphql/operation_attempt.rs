@@ -779,7 +779,14 @@ mod tests {
     /// package-ids alone.
     #[test]
     fn the_row_derives_the_tier_and_the_stricter_side_wins() {
-        for target in ["piglet", "giganto", "hog", "reconverge", "crusher"] {
+        for target in [
+            "piglet",
+            "giganto",
+            "hog",
+            "reconverge",
+            "crusher",
+            "reproduce",
+        ] {
             assert_eq!(
                 required_access(OperationAction::Update, target),
                 AttemptAccess::HostScoped,
@@ -1426,7 +1433,7 @@ mod tests {
         assert_eq!(listed[1]["id"], json!(LATER));
     }
 
-    /// A target outside the five module package-ids is refused, so observation
+    /// A target outside the module package-ids is refused, so observation
     /// is no looser than action.
     #[tokio::test]
     async fn in_flight_installs_refuses_a_non_module_target() {

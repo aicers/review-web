@@ -526,6 +526,24 @@ async fn every_named_variant_is_constructible_from_another_crate() {
         .map(|_| ())
         .expect_err("roxyd did not answer");
     assert!(matches!(error, DeployError::Other(_)));
+
+    // review raises this before sending a package, from the host's reported
+    // range, so constructing it directly is what review does.
+    let error = DeployError::ManifestFormatUnsupported {
+        host: "host1".to_string(),
+        format_version: 9,
+        min: 3,
+        max: 8,
+    };
+    assert!(matches!(
+        error,
+        DeployError::ManifestFormatUnsupported {
+            ref host,
+            format_version: 9,
+            min: 3,
+            max: 8,
+        } if host == "host1"
+    ));
 }
 
 /// A successful install pairs the disposition with the operation's identity,

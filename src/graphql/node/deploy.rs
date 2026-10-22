@@ -240,6 +240,7 @@ pub(crate) enum UpdateCoreComponentResult {
     CleanupPending(CleanupPending),
     RollbackUnsupported(RollbackUnsupported),
     BuildNotServable(BuildNotServable),
+    ManifestFormatUnsupported(ManifestFormatUnsupported),
 }
 
 /// The one-time credential and command for bringing a host under management.
@@ -324,6 +325,23 @@ pub(crate) struct BuildNotServable {
     target: String,
 }
 
+/// The target host's Host Agent cannot read the package's manifest format, so
+/// the package was not sent.
+///
+/// The remedy is to update the host's Host Agent (roxyd) or to choose a build
+/// whose manifest format it reads.
+#[derive(SimpleObject)]
+pub(crate) struct ManifestFormatUnsupported {
+    /// The host whose Host Agent cannot read the package.
+    host: String,
+    /// The format version of the package's manifest.
+    format_version: u32,
+    /// The lowest manifest format version the host last reported reading.
+    min: u32,
+    /// The highest manifest format version the host last reported reading.
+    max: u32,
+}
+
 /// The target requires a configuration template. Choose a template.
 #[derive(SimpleObject)]
 pub(crate) struct ConfigTemplateRequired {
@@ -362,6 +380,7 @@ pub(crate) enum InstallServiceResult {
     ConfigTemplateRequired(ConfigTemplateRequired),
     ConfigTemplateNotApplicable(ConfigTemplateNotApplicable),
     UnknownConfigTemplate(UnknownConfigTemplate),
+    ManifestFormatUnsupported(ManifestFormatUnsupported),
 }
 
 /// What `updateService` answers with.
@@ -374,6 +393,7 @@ pub(crate) enum UpdateServiceResult {
     CleanupPending(CleanupPending),
     RollbackUnsupported(RollbackUnsupported),
     BuildNotServable(BuildNotServable),
+    ManifestFormatUnsupported(ManifestFormatUnsupported),
 }
 
 /// What `removeService` answers with.
@@ -668,8 +688,10 @@ impl DeployMutation {
     /// the target requires one and whether the id exists.
     // The argument list is the mutation's published contract, so it is not a
     // parameter count to reduce: folding the seven into an input object would
-    // change the schema.
-    #[allow(clippy::too_many_arguments)]
+    // change the schema. The length is one arm per member of the install
+    // union, each mapping a `DeployError` variant to its object; splitting
+    // the match would scatter that one-to-one mapping.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn install_service(
@@ -776,6 +798,19 @@ impl DeployMutation {
                     config_template,
                 },
             )),
+            Err(DeployError::ManifestFormatUnsupported {
+                host,
+                format_version,
+                min,
+                max,
+            }) => Ok(InstallServiceResult::ManifestFormatUnsupported(
+                ManifestFormatUnsupported {
+                    host,
+                    format_version,
+                    min,
+                    max,
+                },
+            )),
             Err(e) => Err(e.into()),
         }
     }
@@ -839,6 +874,19 @@ impl DeployMutation {
                     target,
                 }))
             }
+            Err(DeployError::ManifestFormatUnsupported {
+                host,
+                format_version,
+                min,
+                max,
+            }) => Ok(UpdateServiceResult::ManifestFormatUnsupported(
+                ManifestFormatUnsupported {
+                    host,
+                    format_version,
+                    min,
+                    max,
+                },
+            )),
             Err(e) => Err(e.into()),
         }
     }
@@ -926,6 +974,19 @@ impl DeployMutation {
             Err(DeployError::BuildNotServable { target }) => Ok(
                 UpdateCoreComponentResult::BuildNotServable(BuildNotServable { target }),
             ),
+            Err(DeployError::ManifestFormatUnsupported {
+                host,
+                format_version,
+                min,
+                max,
+            }) => Ok(UpdateCoreComponentResult::ManifestFormatUnsupported(
+                ManifestFormatUnsupported {
+                    host,
+                    format_version,
+                    min,
+                    max,
+                },
+            )),
             Err(e) => Err(e.into()),
         }
     }
@@ -1168,6 +1229,7 @@ mod tests {
         ConfigTemplateRequired,
         ConfigTemplateNotApplicable,
         UnknownConfigTemplate,
+        ManifestFormatUnsupported,
         Other,
     }
 
@@ -1225,6 +1287,12 @@ mod tests {
                 Self::UnknownConfigTemplate => DeployError::UnknownConfigTemplate {
                     target: TEMPLATE_TARGET.to_string(),
                     config_template: UNKNOWN_TEMPLATE.to_string(),
+                },
+                Self::ManifestFormatUnsupported => DeployError::ManifestFormatUnsupported {
+                    host: "giganto-host-7".to_string(),
+                    format_version: 9,
+                    min: 3,
+                    max: 8,
                 },
                 Self::Other => {
                     DeployError::Other(anyhow::anyhow!("review answered something unmodelled"))
@@ -1791,13 +1859,15 @@ mod tests {
         ... on BuildNotServable { target }
         ... on ConfigTemplateRequired { target }
         ... on ConfigTemplateNotApplicable { target }
-        ... on UnknownConfigTemplate { target configTemplate }";
+        ... on UnknownConfigTemplate { target configTemplate }
+        ... on ManifestFormatUnsupported { host formatVersion min max }";
 
     const UPDATE_SELECTION: &str = "__typename
         ... on UpdateServiceSuccess { operationId disposition }
         ... on CleanupPending { host target instance operationId }
         ... on RollbackUnsupported { host capability }
-        ... on BuildNotServable { target }";
+        ... on BuildNotServable { target }
+        ... on ManifestFormatUnsupported { host formatVersion min max }";
 
     const REMOVE_SELECTION: &str = "__typename
         ... on RemoveServiceSuccess { operationId }
@@ -1807,7 +1877,8 @@ mod tests {
         ... on UpdateCoreComponentSuccess { operationId disposition }
         ... on CleanupPending { host target instance operationId }
         ... on RollbackUnsupported { host capability }
-        ... on BuildNotServable { target }";
+        ... on BuildNotServable { target }
+        ... on ManifestFormatUnsupported { host formatVersion min max }";
 
     fn install_mutation(args: &str) -> String {
         format!("mutation {{ installService({args}) {{ {INSTALL_SELECTION} }} }}")
@@ -2171,9 +2242,9 @@ mod tests {
         }
     }
 
-    /// `CleanupPending` and `BuildNotServable` are the only backend refusals
-    /// a core update returns as a member; every other variant is an ordinary
-    /// GraphQL error.
+    /// `CleanupPending`, `BuildNotServable` and `ManifestFormatUnsupported`
+    /// are the only backend refusals a core update returns as a member; every
+    /// other variant is an ordinary GraphQL error.
     #[tokio::test]
     async fn only_the_core_update_union_variants_are_returned_as_members() {
         let (deployer, _) = RecordingDeployer::boxed(Answer::Fail(Failure::CleanupPending(None)));
@@ -3805,6 +3876,42 @@ mod tests {
         }
     }
 
+    /// `ManifestFormatUnsupported` arrives as its member, with its four fields,
+    /// on the three mutations that send a package, after exactly one backend
+    /// call.
+    #[tokio::test]
+    async fn an_unreadable_manifest_format_is_the_union_member_on_every_build_mutation() {
+        for (query, field) in [
+            (install_mutation(&install_args("giganto")), "installService"),
+            (update_mutation(&update_args("giganto")), "updateService"),
+            (
+                core_update_mutation(&core_update_args("review", "control-host")),
+                "updateCoreComponent",
+            ),
+        ] {
+            let (deployer, calls) =
+                RecordingDeployer::boxed(Answer::Fail(Failure::ManifestFormatUnsupported));
+            let schema = TestSchema::new().await;
+
+            let res = schema
+                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .await;
+
+            assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
+            assert_eq!(calls.total(), 1, "{query}");
+            assert_json_eq!(
+                res.data.into_json().unwrap()[field].clone(),
+                json!({
+                    "__typename": "ManifestFormatUnsupported",
+                    "host": "giganto-host-7",
+                    "formatVersion": 9,
+                    "min": 3,
+                    "max": 8,
+                })
+            );
+        }
+    }
+
     /// Every variant outside the operation's union is an ordinary GraphQL
     /// error rather than a member.
     #[tokio::test]
@@ -3848,10 +3955,29 @@ mod tests {
         assert!(res.data.into_json().unwrap().is_null());
         assert_eq!(calls.total(), 1);
 
+        // A removal sends no package, so `ManifestFormatUnsupported` is
+        // outside its union though it is inside the install and update ones.
+        let (deployer, calls) =
+            RecordingDeployer::boxed(Answer::Fail(Failure::ManifestFormatUnsupported));
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin_with_data(
+                &remove_mutation(&remove_args("giganto")),
+                deployer as BoxedPackageDeployer,
+            )
+            .await;
+        assert_eq!(res.errors.len(), 1);
+        assert_eq!(
+            res.errors[0].message,
+            "the Host Agent on giganto-host-7 reads manifest formats 3 through 8, not 9"
+        );
+        assert!(res.data.into_json().unwrap().is_null());
+        assert_eq!(calls.total(), 1);
+
         // An update and a removal allocate nothing, so every variant but
-        // `CleanupPending` and, for an update, `BuildNotServable` is outside
-        // their unions — the two bind-address conflicts and the reuse refusal
-        // included.
+        // `CleanupPending` and, for an update, `BuildNotServable` and
+        // `ManifestFormatUnsupported` is outside their unions — the two
+        // bind-address conflicts and the reuse refusal included.
         let outside = [
             Failure::Other,
             Failure::PortAllocationConflict,
@@ -4462,12 +4588,12 @@ mod tests {
             "union InstallServiceResult = InstallServiceSuccess | PortAllocationConflict | \
              HostPortOccupied | HostOccupancyUnavailable | RequestKeyReused | CleanupPending | \
              RollbackUnsupported | BuildNotServable | ConfigTemplateRequired | \
-             ConfigTemplateNotApplicable | UnknownConfigTemplate"
+             ConfigTemplateNotApplicable | UnknownConfigTemplate | ManifestFormatUnsupported"
         );
         assert_eq!(
             sdl_line(&sdl, "union UpdateServiceResult"),
             "union UpdateServiceResult = UpdateServiceSuccess | CleanupPending | \
-             RollbackUnsupported | BuildNotServable"
+             RollbackUnsupported | BuildNotServable | ManifestFormatUnsupported"
         );
         assert_eq!(
             sdl_line(&sdl, "union RemoveServiceResult"),
@@ -4476,9 +4602,26 @@ mod tests {
         assert_eq!(
             sdl_line(&sdl, "union UpdateCoreComponentResult"),
             "union UpdateCoreComponentResult = UpdateCoreComponentSuccess | CleanupPending | \
-             RollbackUnsupported | BuildNotServable"
+             RollbackUnsupported | BuildNotServable | ManifestFormatUnsupported"
         );
         assert!(!sdl.contains("union HostOnboardingTicket"));
+    }
+
+    /// `ManifestFormatUnsupported` carries the host and the three numbers as
+    /// plain `Int`s, which clients compare numerically.
+    #[test]
+    fn the_manifest_format_refusal_keeps_its_shape() {
+        let sdl = rendered_sdl();
+
+        assert_eq!(
+            sdl_block_fields(&sdl, "type ManifestFormatUnsupported {"),
+            vec![
+                "host: String!",
+                "formatVersion: Int!",
+                "min: Int!",
+                "max: Int!",
+            ]
+        );
     }
 
     #[test]

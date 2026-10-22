@@ -4,6 +4,29 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `LOG_COLLECTOR` in `AgentKind`, the kind of the Log Collector (REproduce),
+  deployed from the `reproduce` package. Module install, update and removal,
+  `storeBuildList`, `configTemplates`, bind-address recommendation,
+  operation-attempt queries and package upload by a System Administrator or
+  Security Administrator accept `reproduce`.
+- The `ManifestFormatUnsupported` member of the `installService`,
+  `updateService` and `updateCoreComponent` results, returned when the target
+  host's Host Agent cannot read the package's manifest format. It carries the
+  host, the package's format version and the inclusive range the host reads.
+
+### Changed
+
+- **Breaking change:** The public `DeployError` enum gains the
+  `ManifestFormatUnsupported { host, format_version, min, max }` variant,
+  which breaks callers that match on it exhaustively.
+- Bumped `review-database` dependency to 0.54.0, which adds
+  `AgentKind::LogCollector`. Its store format stays in the 0.53 series, so a
+  store written by 0.53 is served without migration.
+
 ## [0.45.0] - 2026-10-22
 
 ### Added
@@ -2342,6 +2365,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.45.0...main
 [0.45.0]: https://github.com/aicers/review-web/compare/0.44.0...0.45.0
 [0.44.0]: https://github.com/aicers/review-web/compare/0.43.0...0.44.0
 [0.43.0]: https://github.com/aicers/review-web/compare/0.42.1...0.43.0

@@ -2224,8 +2224,12 @@ mod tests {
                     DeployError::Other(_) => MockDeployFailure::Arbitrary,
                     DeployError::ConfigTemplateRequired { .. }
                     | DeployError::ConfigTemplateNotApplicable { .. }
-                    | DeployError::UnknownConfigTemplate { .. } => {
-                        panic!("this mock does not script configuration template refusals")
+                    | DeployError::UnknownConfigTemplate { .. }
+                    | DeployError::ManifestFormatUnsupported { .. } => {
+                        panic!(
+                            "this mock does not script configuration template or manifest-format \
+                             refusals"
+                        )
                     }
                 };
                 assert_eq!(selected, failure);
