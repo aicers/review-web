@@ -471,7 +471,7 @@ fn trend_order_descriptions_include_zero() {
     }
 }
 
-/// The auth-mTLS query preserves the persisted result contract.
+/// The deletion result query and types match the GraphQL API contract.
 #[test]
 fn customer_data_deletion_result_contract() {
     let sdl = rendered_sdl();

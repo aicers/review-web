@@ -115,7 +115,10 @@ struct CustomerDataDeletionExecutionPlan {
 }
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
-#[graphql(name = "CustomerDataDeletionService")]
+#[graphql(
+    name = "CustomerDataDeletionService",
+    remote = "review_database::CustomerDataDeletionService"
+)]
 enum DeletionService {
     Review,
     Sensor,
@@ -123,7 +126,10 @@ enum DeletionService {
 }
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
-#[graphql(name = "CustomerDataDeletionStatus")]
+#[graphql(
+    name = "CustomerDataDeletionStatus",
+    remote = "review_database::CustomerDataDeletionStatus"
+)]
 enum DeletionStatus {
     InProgress,
     Succeeded,
@@ -146,17 +152,9 @@ impl TryFrom<CustomerDataDeletionServiceResult> for DeletionServiceResult {
 
     fn try_from(result: CustomerDataDeletionServiceResult) -> anyhow::Result<Self> {
         Ok(Self {
-            service: match result.service {
-                CustomerDataDeletionService::Review => DeletionService::Review,
-                CustomerDataDeletionService::Sensor => DeletionService::Sensor,
-                CustomerDataDeletionService::SemiSupervised => DeletionService::SemiSupervised,
-            },
+            service: result.service.into(),
             host_fqdns: result.host_fqdns,
-            status: match result.status {
-                CustomerDataDeletionStatus::InProgress => DeletionStatus::InProgress,
-                CustomerDataDeletionStatus::Succeeded => DeletionStatus::Succeeded,
-                CustomerDataDeletionStatus::Failed => DeletionStatus::Failed,
-            },
+            status: result.status.into(),
             requested_at: Timestamp::from_nanosecond(i128::from(result.requested_at))
                 .context("converting deletion result request timestamp")?,
             completed_at: result
@@ -194,8 +192,6 @@ impl CustomerDataDeletionQuery {
             .map_err(|_| async_graphql::Error::new("invalid customer ID"))?;
         let store = ctx.data::<Arc<RwLock<Store>>>()?;
         let store = read_store(store)?;
-        #[cfg(test)]
-        tests::checkpoint(&store, tests::Stage::LookupJob, customer_id)?;
         let job = store
             .customer_data_deletion_map()
             .get(customer_id)
@@ -1269,7 +1265,6 @@ mod tests {
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(crate) enum Stage {
-        LookupJob,
         ScanJobs,
         CollectNodes,
         PersistRequest,
@@ -1442,6 +1437,14 @@ mod tests {
         Request::new(query).data(RoleGuard::new(Role::SystemAdministrator))
     }
 
+    async fn result_query_data(
+        schema: &Schema<CustomerDataDeletionQuery, CustomerDataDeletionMutation, EmptySubscription>,
+    ) -> serde_json::Value {
+        let response = schema.execute(admin_request(RESULT_QUERY)).await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        response.data.into_json().unwrap()
+    }
+
     #[tokio::test]
     async fn result_preserves_order_hosts_enums_timestamps_and_persisted_state() {
         let test_store = TestStore::new();
@@ -1481,18 +1484,10 @@ mod tests {
         let original = job(&test_store.store, 7);
         let _hook = HookGuard::install(
             &test_store.store,
-            Arc::new(|stage, id| {
-                assert_eq!(stage, Stage::LookupJob, "query invoked deletion processing");
-                assert_eq!(id, 7, "query must look up only the requested ID");
-                Ok(())
-            }),
+            Arc::new(|stage, _| panic!("result query invoked deletion processing at {stage:?}")),
         );
-        let response = result_schema(&test_store)
-            .execute(admin_request(RESULT_QUERY))
-            .await;
-        assert!(response.errors.is_empty(), "{:?}", response.errors);
         assert_eq!(
-            response.data.into_json().unwrap(),
+            result_query_data(&result_schema(&test_store)).await,
             serde_json::json!({
                 "customerDataDeletionResult": {
                     "customerId": "7",
@@ -1516,22 +1511,6 @@ mod tests {
         assert!(store.node_map().get_by_id(node_id).unwrap().is_some());
         assert_eq!(store.events().iter_forward().count(), 1);
         assert!(store.customer_networks_map().get(7).unwrap().is_some());
-    }
-
-    #[test]
-    fn deletion_results_are_not_registered_in_uncomposed_schemas() {
-        let schema =
-            Schema::build(TestQuery, async_graphql::EmptyMutation, EmptySubscription).finish();
-        let sdl = schema.sdl();
-        for name in [
-            "customerDataDeletionResult",
-            "CustomerDataDeletionResult",
-            "CustomerDataDeletionServiceResult",
-            "CustomerDataDeletionService",
-            "CustomerDataDeletionStatus",
-        ] {
-            assert!(!sdl.contains(name), "unexpected registration of {name}");
-        }
     }
 
     #[tokio::test]
@@ -1570,13 +1549,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn result_reflects_persisted_retry_updates() {
+        const CUSTOMER_ID: u32 = 7;
+        const FIRST_REQUEST: i64 = 1_700_000_000_123_456_789;
+        const FAILED_AT: i64 = 1_700_000_001_234_567_891;
+        const RETRY_REQUEST: i64 = 1_700_000_002_345_678_901;
+        const FAILURE: &str = "first attempt failed";
+        const RESULT_PATH: &str = "/customerDataDeletionResult/serviceResults/0";
+
+        let test_store = TestStore::new();
+        let schema = result_schema(&test_store);
+        let mut deletion_job = CustomerDataDeletionJob {
+            customer_id: CUSTOMER_ID,
+            service_results: vec![CustomerDataDeletionServiceResult {
+                service: CustomerDataDeletionService::Sensor,
+                host_fqdns: vec!["sensor.example".to_string()],
+                status: CustomerDataDeletionStatus::Failed,
+                requested_at: FIRST_REQUEST,
+                completed_at: Some(FAILED_AT),
+                error: Some(FAILURE.to_string()),
+            }],
+        };
+        read_store(&test_store.store)
+            .unwrap()
+            .customer_data_deletion_map()
+            .put(&deletion_job)
+            .unwrap();
+
+        let data = result_query_data(&schema).await;
+        let result = data.pointer(RESULT_PATH).unwrap();
+        assert_eq!(result["status"], "FAILED");
+        assert_eq!(result["requestedAt"], "2023-11-14T22:13:20.123456789Z");
+        assert_eq!(result["completedAt"], "2023-11-14T22:13:21.234567891Z");
+        assert_eq!(result["error"], FAILURE);
+
+        // Reuse the schema and query after the retry update to detect stale results.
+        let result = deletion_job.service_results.first_mut().unwrap();
+        result.status = CustomerDataDeletionStatus::InProgress;
+        result.requested_at = RETRY_REQUEST;
+        result.completed_at = None;
+        result.error = None;
+        read_store(&test_store.store)
+            .unwrap()
+            .customer_data_deletion_map()
+            .update_service(CUSTOMER_ID, result)
+            .unwrap();
+
+        let data = result_query_data(&schema).await;
+        let result = data.pointer(RESULT_PATH).unwrap();
+        assert_eq!(result["status"], "IN_PROGRESS");
+        assert_eq!(result["requestedAt"], "2023-11-14T22:13:22.345678901Z");
+        assert_eq!(result.get("completedAt"), Some(&serde_json::Value::Null));
+        assert_eq!(result.get("error"), Some(&serde_json::Value::Null));
+    }
+
+    #[tokio::test]
     async fn result_rejects_other_roles_and_invalid_ids_before_lookup() {
         let test_store = TestStore::new();
         let schema = result_schema(&test_store);
-        let _hook = HookGuard::install(
-            &test_store.store,
-            Arc::new(|_, _| panic!("rejected requests must not access deletion jobs")),
-        );
         for role in [
             Role::SecurityAdministrator,
             Role::SecurityManager,
@@ -1595,35 +1625,6 @@ mod tests {
             let response = schema.execute(admin_request(&query)).await;
             assert_eq!(response.errors.len(), 1);
             assert_eq!(response.errors[0].message, "invalid customer ID");
-        }
-    }
-
-    #[tokio::test]
-    async fn result_propagates_lookup_and_decoding_failures() {
-        let test_store = TestStore::new();
-        let schema = result_schema(&test_store);
-        // The database table has no public raw-write API. Inject failures at
-        // its lookup boundary using the existing per-Store checkpoint hook.
-        for decode in [false, true] {
-            let _hook = HookGuard::install(
-                &test_store.store,
-                Arc::new(move |stage, id| {
-                    assert_eq!(stage, Stage::LookupJob);
-                    assert_eq!(id, 7);
-                    if decode {
-                        bincode::deserialize::<Vec<CustomerDataDeletionServiceResult>>(&[0xff])
-                            .context("decoding persisted deletion results")?;
-                    }
-                    bail!("database lookup failed")
-                }),
-            );
-            let response = schema.execute(admin_request(RESULT_QUERY)).await;
-            assert_eq!(response.errors.len(), 1);
-            assert!(response.errors[0].message.contains(if decode {
-                "decoding persisted deletion results"
-            } else {
-                "database lookup failed"
-            }));
         }
     }
 

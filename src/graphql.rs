@@ -8,8 +8,9 @@ mod cert;
 mod cluster;
 mod core_component;
 mod customer_data_deletion {
-    pub use crate::customer_data_deletion::CustomerDataDeletionMutation;
-    pub(crate) use crate::customer_data_deletion::CustomerDataDeletionQuery;
+    pub(super) use crate::customer_data_deletion::{
+        CustomerDataDeletionMutation, CustomerDataDeletionQuery,
+    };
 }
 pub mod customer;
 pub mod customer_access;
