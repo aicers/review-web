@@ -11,6 +11,7 @@ mod installed_guard;
 mod status;
 #[cfg(test)]
 pub(super) mod test_support;
+mod time_sync;
 
 use std::{borrow::Cow, time::Duration};
 
@@ -24,6 +25,7 @@ use database::{Indexable, event::Direction};
 use input::NodeInput;
 use review_database as database;
 use serde::{Deserialize, Serialize};
+use time_sync::NodeTimeSync;
 
 use super::{
     install_state::{self, Lifecycle, UpdateState, WithdrawalState},
@@ -43,6 +45,14 @@ pub(super) struct NodeStatusQuery;
 
 #[derive(Default)]
 pub(super) struct NodeControlMutation;
+
+/// The root of the Central Manager time source query.
+#[derive(Default)]
+pub(super) struct TimeSyncQuery;
+
+/// The root of the Central Manager time source mutation.
+#[derive(Default)]
+pub(super) struct TimeSyncMutation;
 
 /// The root of the bind-address recommendation query.
 #[derive(Default)]
@@ -964,6 +974,10 @@ pub(super) struct NodeStatus {
     #[graphql(skip)]
     ping: Option<Duration>,
 
+    /// The node's time synchronization, as its Host Agent reports it. Null when the Host Agent is
+    /// not connected, does not support the request, fails it, or does not answer within 6 seconds.
+    time_sync: Option<NodeTimeSync>,
+
     /// Indicates whether the Manager server is running on this node or not.
     manager: bool,
 
@@ -1011,6 +1025,7 @@ impl NodeStatus {
         node: database::Node,
         resource_usage: Option<&review_protocol::types::ResourceUsage>,
         ping: Option<Duration>,
+        time_sync: Option<NodeTimeSync>,
         manager: bool,
     ) -> Self {
         let agents = node
@@ -1073,6 +1088,7 @@ impl NodeStatus {
                 .map(|x| x.disk_used_bytes + x.disk_available_bytes),
             used_disk_space: resource_usage.as_ref().map(|x| x.disk_used_bytes),
             ping,
+            time_sync,
             manager,
             agents,
             external_services,

@@ -12,9 +12,15 @@ use tracing::info;
 use super::{
     super::{Role, RoleGuard, SharedAgentManager, customer_access},
     NodeStatus, NodeStatusQuery, NodeStatusTotalCount, matches_manager_hostname,
+    time_sync::NodeTimeSync,
 };
 use crate::graphql::query_with_constraints;
 use crate::info_with_username;
+
+/// How long a node's Host Agent is given to report its time synchronization.
+///
+/// The Host Agent bounds its own handling to 5 seconds.
+const TIME_SYNC_TIMEOUT: Duration = Duration::from_secs(6);
 
 #[Object]
 impl NodeStatusQuery {
@@ -86,25 +92,36 @@ async fn load(
 
         let is_manager = matches_manager_hostname(hostname);
 
-        let (resource_usage, ping) = fetch_resource_usage_and_ping(agent_manager, hostname).await;
+        let (resource_usage, ping, time_sync) = fetch_runtime_status(agent_manager, hostname).await;
 
         let key = node.unique_key();
         connection.edges.push(Edge::new(
             OpaqueCursor(key.to_vec()),
-            NodeStatus::new(node, resource_usage.as_ref(), ping, is_manager),
+            NodeStatus::new(node, resource_usage.as_ref(), ping, time_sync, is_manager),
         ));
     }
     Ok(connection)
 }
 
-// Returns the resource usage and ping time of the given hostname.
-async fn fetch_resource_usage_and_ping(
+// Returns the resource usage, ping time and time synchronization of the given hostname, asking
+// for all three at once. Only the time synchronization request is bounded by a timeout.
+async fn fetch_runtime_status(
     agent_manager: &SharedAgentManager,
     hostname: &str,
-) -> (Option<ResourceUsage>, Option<Duration>) {
+) -> (
+    Option<ResourceUsage>,
+    Option<Duration>,
+    Option<NodeTimeSync>,
+) {
+    let (resource_usage, ping, time_sync) = tokio::join!(
+        agent_manager.get_resource_usage(hostname),
+        agent_manager.ping(hostname),
+        tokio::time::timeout(TIME_SYNC_TIMEOUT, agent_manager.time_sync_status(hostname)),
+    );
     (
-        agent_manager.get_resource_usage(hostname).await.ok(),
-        agent_manager.ping(hostname).await.ok(),
+        resource_usage.ok(),
+        ping.ok(),
+        time_sync.ok().and_then(Result::ok).map(Into::into),
     )
 }
 
@@ -129,7 +146,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin(
                 r"{nodeStatusList{edges{node{manager cpuUsage totalMemory usedMemory
-                    totalDiskSpace usedDiskSpace ping}}}}",
+                    totalDiskSpace usedDiskSpace ping timeSync{enabled}}}}}",
             )
             .await;
         assert!(res.errors.is_empty(), "{:?}", res.errors);
@@ -144,7 +161,8 @@ mod tests {
                         "usedMemory": null,
                         "totalDiskSpace": null,
                         "usedDiskSpace": null,
-                        "ping": null
+                        "ping": null,
+                        "timeSync": null
                     }}]
                 }
             })
