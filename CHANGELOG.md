@@ -4,7 +4,7 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.47.0] - 2026-10-23
 
 ### Added
 
@@ -124,7 +124,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - `models` pages report `hasNextPage` and `hasPreviousPage`.
 - `clusters` pages follow size order across pages.
-- `savedOutliers` pages hold only saved outliers.
+- `savedOutliers` pages are filled with saved outliers up to the requested
+  size, and `hasNextPage` and `hasPreviousPage` consider only saved outliers.
 
 ## [0.46.0] - 2026-10-22
 
@@ -2487,7 +2488,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
-[Unreleased]: https://github.com/aicers/review-web/compare/0.46.0...main
+[0.47.0]: https://github.com/aicers/review-web/compare/0.46.0...0.47.0
 [0.46.0]: https://github.com/aicers/review-web/compare/0.45.0...0.46.0
 [0.45.0]: https://github.com/aicers/review-web/compare/0.44.0...0.45.0
 [0.44.0]: https://github.com/aicers/review-web/compare/0.43.0...0.44.0
