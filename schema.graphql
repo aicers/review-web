@@ -6475,7 +6475,7 @@ type Mutation {
 	`detectorId` for a detector's refusal; and `CUSTOMER_CHANGE_REFUSED` for a hostname whose
 	`piglet.` or `reproduce.` name an engine document or training definition of another
 	customer lists (RFC 0006 §5.11), which names that detector or definition only to a System
-	Administrator.
+	Administrator. An Unsupervised Engine agent key listed more than once is refused.
 	"""
 	insertNode(name: String!, customerId: ID!, description: String!, hostname: String!, agents: [AgentDraftInput!]!, externalServices: [ExternalServiceInput!]!): ID!
 	"""

@@ -1002,6 +1002,14 @@ async fn a_draft_save_from_a_stale_draft_is_refused() {
         assert_eq!(f.node(f.engine_a.node_id), stored);
         assert_eq!(f.refs(&f.engine_a), Default::default());
     }
+
+    // A stale request is refused as stale even when its draft is not TOML.
+    let new = with_draft(&stale, ENGINE_KEY, Some("cpus = 99"));
+    let query = update_draft(&stale, &new).replace(&gql("cpus = 99"), &gql("not toml"));
+    let res = f.sec(&query, &[A]).await;
+    assert_eq!(plain_error(&res), STALE_NODE);
+    assert_eq!(f.node(f.engine_a.node_id), stored);
+    assert_eq!(f.refs(&f.engine_a), Default::default());
 }
 
 #[tokio::test]
@@ -1081,6 +1089,26 @@ async fn a_change_of_kind_to_or_from_unsupervised_is_refused() {
         "agent key `002.reconverge` is listed more than once"
     );
     assert_eq!(f.node(id), stored);
+}
+
+#[tokio::test]
+async fn an_insert_listing_an_engine_key_twice_is_refused() {
+    let f = fixture().await;
+    let before = f.store().node_map().count().unwrap();
+    let agent = format!(
+        "{{ kind: UNSUPERVISED, key: {}, status: ENABLED, draft: null }}",
+        gql(ENGINE_KEY)
+    );
+    let query = format!(
+        "mutation {{ insertNode(name: \"twice\", customerId: \"{A}\", description: \"\", \
+         hostname: \"twice.example.com\", agents: [{agent}, {agent}], externalServices: []) }}"
+    );
+    let res = f.sys(&query).await;
+    assert_eq!(
+        plain_error(&res),
+        format!("agent key `{ENGINE_KEY}` is listed more than once")
+    );
+    assert_eq!(f.store().node_map().count().unwrap(), before);
 }
 
 // ---------------------------------------------------------------------------

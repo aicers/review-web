@@ -88,6 +88,7 @@ pub(crate) struct LabelDb {
 pub(crate) struct LabelColumn {
     pub(crate) column_ids: Vec<usize>,
     pub(crate) db: String,
+    #[serde(default, deserialize_with = "optional_f32")]
     pub(crate) min_score: Option<f32>,
 }
 
@@ -115,6 +116,23 @@ fn rfc3339<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Erro
     Ok(text)
 }
 
+/// Deserializes an `f32`, refusing a finite number too large for one, which
+/// a derived `f32` field would take as infinity.
+fn optional_f32<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<f32>, D::Error> {
+    let Some(value) = Option::<f64>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    // Narrowing rounds to the nearest `f32`, which loses no more than the
+    // precision a score of the engine's own `f32` has; only a finite value
+    // past `f32::MAX` turns infinite, and that one is refused below.
+    #[allow(clippy::cast_possible_truncation)]
+    let narrowed = value as f32;
+    if value.is_finite() && narrowed.is_infinite() {
+        return Err(D::Error::custom(format!("{value} is too large for f32")));
+    }
+    Ok(Some(narrowed))
+}
+
 /// The engine instance a document is checked for, and what the rules that
 /// read the store need besides the store.
 pub(crate) struct DocumentTarget<'a> {
@@ -132,8 +150,9 @@ pub(crate) struct DocumentTarget<'a> {
 }
 
 impl EngineDocument {
-    /// Parses `text` and checks every rule that needs nothing stored: the
-    /// schema, the bounds, and repeated ids, models and sources.
+    /// Parses `text` and checks every rule that needs nothing stored, in this
+    /// order: the schema, a non-empty source list included, the bounds, and
+    /// repeated ids, models and sources.
     ///
     /// # Errors
     ///
@@ -141,6 +160,7 @@ impl EngineDocument {
     /// `BOUND_VIOLATED` or `DUPLICATE_ENTRY`.
     pub(crate) fn parse_and_validate(text: &str) -> Result<Self> {
         let document = Self::parse(text)?;
+        document.check_sources_present()?;
         document.check_bounds()?;
         document.check_repeats()?;
         Ok(document)
@@ -187,6 +207,24 @@ impl EngineDocument {
             .iter()
             .map(|detector| detector.data_store.server_name.as_str())
             .collect()
+    }
+
+    /// Refuses a detector with no source, which the schema's types alone do
+    /// not: it cannot be run, so it is as invalid as a missing source list.
+    fn check_sources_present(&self) -> Result<()> {
+        for (i, detector) in self.detectors.iter().enumerate() {
+            if detector.sources.is_empty() {
+                return Err(detector_refusal(
+                    RefusalCode::InvalidDocument,
+                    "sources must not be empty".to_string(),
+                    i,
+                    "sources",
+                    String::new(),
+                    detector,
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn check_bounds(&self) -> Result<()> {
@@ -249,16 +287,6 @@ impl EngineDocument {
             }
             if !models.insert(detector.model.as_str()) {
                 return Err(duplicate_model(i, detector));
-            }
-            if detector.sources.is_empty() {
-                return Err(detector_refusal(
-                    RefusalCode::InvalidDocument,
-                    "sources must not be empty".to_string(),
-                    i,
-                    "sources",
-                    String::new(),
-                    detector,
-                ));
             }
             let mut sources = HashSet::new();
             for (j, source) in detector.sources.iter().enumerate() {

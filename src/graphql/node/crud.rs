@@ -116,7 +116,7 @@ impl NodeMutation {
     /// `detectorId` for a detector's refusal; and `CUSTOMER_CHANGE_REFUSED` for a hostname whose
     /// `piglet.` or `reproduce.` name an engine document or training definition of another
     /// customer lists (RFC 0006 §5.11), which names that detector or definition only to a System
-    /// Administrator.
+    /// Administrator. An Unsupervised Engine agent key listed more than once is refused.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     #[allow(clippy::too_many_arguments)]
@@ -131,11 +131,8 @@ impl NodeMutation {
         agents: Vec<AgentDraftInput>,
         external_services: Vec<ExternalServiceInput>,
     ) -> Result<ID> {
-        let _lock = lock_engine_config(ctx).await?;
         let system_admin = customer_access::is_system_admin(ctx);
-        let store = crate::graphql::get_store(ctx)?;
         let users_customers = customer_access::users_customers(ctx)?;
-        let map = store.node_map();
         let customer_id = customer_id
             .as_str()
             .parse::<u32>()
@@ -194,7 +191,11 @@ impl NodeMutation {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        engine_write::check_duplicate_keys(&agents)?;
 
+        let _lock = lock_engine_config(ctx).await?;
+        let store = crate::graphql::get_store(ctx)?;
+        let map = store.node_map();
         let value = review_database::Node {
             id: u32::MAX,
             name: name.clone(),
@@ -306,7 +307,7 @@ impl NodeMutation {
         }
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
-        let mut new = super::input::create_draft_update(&old, new)?;
+        let (mut new, not_toml) = super::input::create_draft_update(&old, new)?;
         let mut old = old.try_into()?;
         engine_write::check_agent_keys(&old, &new)?;
         let addrs = engine_write::lookup_addrs(ctx, &old, &new, Slot::Draft).await;
@@ -320,6 +321,7 @@ impl NodeMutation {
         merge_installation_state(&stored, &mut new);
         installed_guard::check_update(i, &stored.name, &old, &new)?;
         let changed = engine_write::changed_agents(&stored, &old, &new, Slot::Draft)?;
+        engine_write::check_not_toml(&stored, &old, not_toml)?;
         let documents = engine_write::validate_documents(
             &store,
             i,

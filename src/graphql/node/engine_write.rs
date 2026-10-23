@@ -4,9 +4,10 @@
 //! `insertNode`, `updateNodeDraft`, `applyNode` and `applyNodeDraft` validate
 //! the Unsupervised Engine documents they write and refuse a customer or
 //! hostname change that would strand a model or a source reference. The
-//! steps run around the engine configuration lock: [`lookup_addrs`] and
-//! [`check_agent_keys`] need only the request and run before it; everything
-//! else reads the store and runs with it held, through the store write.
+//! steps run around the engine configuration lock: [`lookup_addrs`],
+//! [`check_agent_keys`] and [`check_duplicate_keys`] need only the request
+//! and run before it; everything else reads the store and runs with it held,
+//! through the store write.
 
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -55,6 +56,14 @@ pub(super) struct ChangedDocument {
     agent_key: String,
     /// `None` for an agent whose document is `None`.
     document: Option<EngineDocument>,
+}
+
+/// An Unsupervised Engine draft of a draft save that is not TOML, refused
+/// only once the request is known not to be stale.
+pub(super) struct NotToml {
+    pub(super) agent_key: String,
+    /// The `INVALID_DOCUMENT` refusal of the draft.
+    pub(super) refusal: Error,
 }
 
 /// Returns the Unsupervised Engine agents of `new` whose `slot` document
@@ -150,12 +159,21 @@ pub(super) fn check_agent_keys(old: &NodeUpdate, new: &NodeUpdate) -> Result<()>
             return Err(kind_changed(&agent.key));
         }
     }
-    for agent in new
-        .agents
+    check_duplicate_keys(&new.agents)
+}
+
+/// Refuses, before the lock, `agents` that list an Unsupervised Engine agent
+/// key more than once.
+///
+/// # Errors
+///
+/// Returns a plain error naming the agent key.
+pub(super) fn check_duplicate_keys(agents: &[Agent]) -> Result<()> {
+    for agent in agents
         .iter()
         .filter(|agent| agent.kind == AgentKind::Unsupervised)
     {
-        if new.agents.iter().filter(|a| a.key == agent.key).count() > 1 {
+        if agents.iter().filter(|a| a.key == agent.key).count() > 1 {
             return Err(duplicate_agent_key(&agent.key));
         }
     }
@@ -206,18 +224,57 @@ pub(super) fn changed_agents<'a>(
         if !differs_from_stored && !differs_from_old {
             continue;
         }
-        if let Some(old_agent) = old_agent {
-            let stale = stored_agent.is_none_or(|s| match slot {
-                Slot::Draft => s.draft != old_agent.draft,
-                Slot::Config => s.config != old_agent.config || s.draft != old_agent.draft,
-            });
-            if stale {
-                return Err(STALE_NODE.into());
-            }
+        if old_agent.is_some_and(|old_agent| is_stale(stored, old_agent, slot)) {
+            return Err(STALE_NODE.into());
         }
         changed.push(agent);
     }
     Ok(changed)
+}
+
+/// Returns whether the `old` agent `old_agent` is not the stored one: its
+/// draft for [`Slot::Draft`], its config or draft for [`Slot::Config`]. An
+/// agent whose stored row is gone or is not Unsupervised counts as changed.
+fn is_stale(stored: &Node, old_agent: &Agent, slot: Slot) -> bool {
+    stored
+        .agents
+        .iter()
+        .find(|stored| stored.key == old_agent.key && stored.kind == AgentKind::Unsupervised)
+        .is_none_or(|s| match slot {
+            Slot::Draft => s.draft != old_agent.draft,
+            Slot::Config => s.config != old_agent.config || s.draft != old_agent.draft,
+        })
+}
+
+/// Refuses, with the lock held and before any document is validated, a
+/// draft save with an Unsupervised Engine draft that is not TOML.
+///
+/// Such a draft differs from its `old` one, so its agent is listed: the save
+/// is refused with [`STALE_NODE`] when one of them is kept from `old` and its
+/// `old` draft is not the stored one, like any listed agent, and otherwise
+/// with the first one's `INVALID_DOCUMENT` refusal.
+///
+/// # Errors
+///
+/// Returns [`STALE_NODE`] or the `INVALID_DOCUMENT` refusal.
+pub(super) fn check_not_toml(
+    stored: &Node,
+    old: &NodeUpdate,
+    not_toml: Vec<NotToml>,
+) -> Result<()> {
+    let stale = not_toml.iter().any(|draft| {
+        old.agents
+            .iter()
+            .find(|old_agent| old_agent.key == draft.agent_key)
+            .is_some_and(|old_agent| is_stale(stored, old_agent, Slot::Draft))
+    });
+    if stale {
+        return Err(STALE_NODE.into());
+    }
+    match not_toml.into_iter().next() {
+        Some(first) => Err(first.refusal),
+        None => Ok(()),
+    }
 }
 
 /// Validates the `slot` document of each of `agents` of node `node_id` with

@@ -381,10 +381,34 @@ fn values_outside_their_type_are_invalid() {
             "min_score = \"high\"",
             "detectors[0].labeldb.columns[0].min_score",
         ),
+        (
+            "min_score = 0.7",
+            "min_score = 1e100",
+            "detectors[0].labeldb.columns[0].min_score",
+        ),
+        (
+            "min_score = 0.7",
+            "min_score = -1e39",
+            "detectors[0].labeldb.columns[0].min_score",
+        ),
     ] {
         let (code, refused_field, _, _) = refused(&FULL.replace(replaced, by));
         assert_eq!(code, "INVALID_DOCUMENT", "{by}");
         assert_eq!(refused_field, field, "{by}");
+    }
+}
+
+#[test]
+fn a_min_score_up_to_the_largest_f32_is_accepted() {
+    for (by, expected) in [
+        ("min_score = 3.4028235e38", f32::MAX),
+        ("min_score = -3.4028235e38", f32::MIN),
+        ("min_score = 1", 1.0),
+    ] {
+        let document =
+            EngineDocument::parse_and_validate(&FULL.replace("min_score = 0.7", by)).expect(by);
+        let labeldb = document.detectors[0].labeldb.as_ref().unwrap();
+        assert_eq!(labeldb.columns[0].min_score, Some(expected), "{by}");
     }
 }
 
@@ -498,11 +522,31 @@ fn ids_models_and_sources_are_listed_once_each() {
 #[test]
 fn bounds_are_checked_before_repeats() {
     let text = with(
-        &with(VALID, "sources", "sources = []"),
+        &with(
+            VALID,
+            "sources",
+            "sources = [\"piglet.node2.example.com\", \"piglet.node2.example.com\"]",
+        ),
         "batch_size",
         "batch_size = 5000001",
     );
     assert_eq!(code_and_field(&text).0, "BOUND_VIOLATED");
+}
+
+#[test]
+fn an_empty_source_list_is_refused_before_bounds() {
+    let text = with(
+        &with(VALID, "sources", "sources = []"),
+        "batch_size",
+        "batch_size = 5000001",
+    );
+    assert_eq!(
+        code_and_field(&text),
+        (
+            "INVALID_DOCUMENT".to_string(),
+            "detectors[0].sources".to_string()
+        )
+    );
 }
 
 #[test]
