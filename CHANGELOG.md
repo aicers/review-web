@@ -46,6 +46,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `AgentManager::train_model`, `clone_model` and `cancel_run`, which relay run
   requests to an engine instance, and `EngineRefused`, the error they return
   when the instance refused a request.
+- `runDetectorOnce`, which asks an Unsupervised Engine instance to run one
+  round of a detector of its applied document now, refused while the instance
+  is stopped; and `startEngineInstance` and `stopEngineInstance`, which start
+  an instance, and stop and disable it, through its node's Host Agent.
+- `engineInstance`, which reads whether an Unsupervised Engine instance is
+  stopped and the last status each of its detectors reported
+  (`DetectorStatus`: its state, when its last round finished, the round's
+  outcome and reason, its event count and its sources' states).
+- `AgentManager::run_detector_once`, `start_engine_instance` and
+  `stop_engine_instance`, which relay run once, start and stop requests for
+  an engine instance, and whose default implementations return an error.
 - The `previous` argument of `clusters`, `outliers`, `rankedOutliers`,
   `savedOutliers`, `roundsByModel`, `roundsByCluster`, `columnStatistics` and
   `topIpAddressesOfCluster`. With `previous: true` they read the model's
@@ -61,7 +72,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `INSTANCE_NOT_ELIGIBLE`, `INSTANCE_STOPPED`, `INSTANCE_UNREACHABLE`,
   `ENGINE_REFUSED`, `RUN_IN_PROGRESS`, `RUN_NOT_ACTIVE`, `MODEL_IN_USE`,
   `CROSS_CUSTOMER_FORBIDDEN`, `ASSIGN_REFUSED`, `MODEL_NOT_OF_INSTANCE` and
-  `CUSTOMER_CHANGE_REFUSED`.
+  `CUSTOMER_CHANGE_REFUSED`; and `DETECTOR_NOT_FOUND`, which `runDetectorOnce`
+  returns.
   `INDICATOR_IN_USE` also names what uses the indicator: `detectorId`, `nodeId`
   and `agentKey` for a detector of an engine document, or `definition` for a
   training definition. `insertNode`, `updateNodeDraft`, `applyNode` and

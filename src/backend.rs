@@ -271,11 +271,99 @@ pub trait AgentManager: Send + Sync {
     ) -> Result<(), anyhow::Error> {
         Err(anyhow!("Not supported"))
     }
+
+    /// Asks the Unsupervised Engine instance identified by the runtime lookup
+    /// key to run one round of its detector `detector_id` now.
+    ///
+    /// The request is review-protocol's `RunDetectorOnce`. `detector_id` is
+    /// relayed unchanged. A successful return means only that the instance
+    /// accepted the request; the round's result arrives as the detector's
+    /// status.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error wrapping [`EngineRefused`], built with
+    /// `anyhow::Error::new`, exactly when the instance received the request
+    /// and refused it, with the engine's reason: a round of the detector is
+    /// running, or the detector is paused for a training or clone run. Any
+    /// other error means the request did not reach the instance: it has no
+    /// live connection, the send or the answer failed, or the instance is
+    /// recorded as stopped. The default implementation always returns an
+    /// error that is not [`EngineRefused`], for an embedding application
+    /// without an engine relay.
+    async fn run_detector_once(
+        &self,
+        _agent_lookup_key: &str,
+        _detector_id: i32,
+    ) -> Result<(), anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
+
+    /// Starts the unit of the Unsupervised Engine instance `agent_key` of
+    /// node `node_id`, through the node's Host Agent, and records the
+    /// instance as not stopped once the Host Agent confirms.
+    ///
+    /// The implementation checks that the target is an installed
+    /// Unsupervised Engine instance, builds the `service` value
+    /// `reconverge/<instance:03>` from the agent's instance number, and
+    /// relays review-protocol's `NodeServiceRequest::Start` to the node's
+    /// Host Agent. It is the only writer of the instance's stopped state,
+    /// which it records with `Store::set_engine_instance_stopped` after the
+    /// Host Agent confirms. The engine fetches its document itself when it
+    /// starts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error, and records nothing, if the target is not an
+    /// installed Unsupervised Engine instance, if the relay fails, or if the
+    /// Host Agent refuses the request; the error carries the Host Agent's
+    /// error text unchanged, which names the unit's observed enablement and
+    /// running state. The default implementation always returns an error,
+    /// for an embedding application without a Host Agent relay.
+    async fn start_engine_instance(
+        &self,
+        _node_id: u32,
+        _agent_key: &str,
+    ) -> Result<(), anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
+
+    /// Stops and disables the unit of the Unsupervised Engine instance
+    /// `agent_key` of node `node_id`, through the node's Host Agent, and
+    /// records the instance as stopped once the Host Agent confirms.
+    ///
+    /// The implementation checks that the target is an installed
+    /// Unsupervised Engine instance, builds the `service` value
+    /// `reconverge/<instance:03>` from the agent's instance number, and
+    /// relays review-protocol's `NodeServiceRequest::Stop` to the node's
+    /// Host Agent, which also disables the unit so that it stays stopped
+    /// across reboots. It is the only writer of the instance's stopped
+    /// state, which it records with `Store::set_engine_instance_stopped`
+    /// after the Host Agent confirms; that write also fails the instance's
+    /// active runs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error, and records nothing, if the target is not an
+    /// installed Unsupervised Engine instance, if the relay fails, or if the
+    /// Host Agent refuses the request; the error carries the Host Agent's
+    /// error text unchanged, which names the unit's observed enablement and
+    /// running state. The default implementation always returns an error,
+    /// for an embedding application without a Host Agent relay.
+    async fn stop_engine_instance(
+        &self,
+        _node_id: u32,
+        _agent_key: &str,
+    ) -> Result<(), anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
 }
 
-/// The refusal of a run request an Unsupervised Engine instance received.
+/// The refusal of a run or run once request an Unsupervised Engine instance
+/// received.
 ///
-/// An [`AgentManager`] relay method returns it inside its `anyhow::Error`,
+/// An [`AgentManager`] relay method (`train_model`, `clone_model`,
+/// `cancel_run` or `run_detector_once`) returns it inside its `anyhow::Error`,
 /// built with `anyhow::Error::new`, when the instance answered the request
 /// with a refusal, so a caller can tell a refusal from a request that never
 /// reached the instance with `downcast_ref`.

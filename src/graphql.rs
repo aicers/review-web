@@ -17,6 +17,7 @@ mod data_source;
 mod db_management;
 mod engine_config;
 mod engine_document;
+mod engine_instance;
 mod event;
 mod filter;
 pub(crate) mod indicator;
@@ -172,6 +173,7 @@ struct SubQueryOneA(
     cluster::ClusterQuery,
     data_source::DataSourceQuery,
     db_management::DbManagementQuery,
+    engine_instance::EngineInstanceQuery,
     event::EventQuery,
     event::EventGroupQuery,
 );
@@ -233,6 +235,7 @@ struct SubMutationOneA(
     customer_data_deletion::CustomerDataDeletionMutation,
     data_source::DataSourceMutation,
     db_management::DbManagementMutation,
+    engine_instance::EngineInstanceMutation,
 );
 
 #[derive(MergedObject, Default)]

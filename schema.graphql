@@ -3859,6 +3859,84 @@ enum DeployDisposition {
 	ACCEPTED
 }
 
+"""
+The status of one source of a detector.
+"""
+type DetectorSourceStatus {
+	"""
+	The source's name.
+	"""
+	source: String!
+	"""
+	The source's state.
+	"""
+	state: SourceState!
+	"""
+	Why the source failed, when it did.
+	"""
+	reason: String
+}
+
+"""
+Why a detector does or does not run.
+"""
+enum DetectorState {
+	"""
+	The detector is scheduled and runs its rounds.
+	"""
+	RUNNING
+	"""
+	The detector is disabled.
+	"""
+	DISABLED
+	"""
+	The detector has no model to run.
+	"""
+	NO_MODEL
+	"""
+	The detector is paused for a training or clone run of its model.
+	"""
+	PAUSED_FOR_RUN
+}
+
+"""
+The status a detector of an engine instance last reported.
+"""
+type DetectorStatus {
+	"""
+	The detector's id in the engine document.
+	"""
+	detectorId: ID!
+	"""
+	The detector's state, which says why it does not run if it does not.
+	"""
+	state: DetectorState!
+	"""
+	When the detector's last round finished, or null before its first.
+	"""
+	finishedAt: DateTime
+	"""
+	The outcome of the detector's last round, or null before its first.
+	"""
+	outcome: RoundOutcome
+	"""
+	The failure reason of the detector's last round.
+	"""
+	reason: String
+	"""
+	The number of events the detector's last round analysed.
+	"""
+	events: StringNumber!
+	"""
+	The state of each of the detector's sources in its last round.
+	"""
+	sources: [DetectorSourceStatus!]!
+	"""
+	When the Central Manager stored the report.
+	"""
+	reportedAt: DateTime!
+}
+
 type DhcpOption {
 	code: Int!
 	value: [Int!]!
@@ -4219,6 +4297,29 @@ input EndpointInput {
 	direction: TrafficDirection
 	predefined: ID
 	custom: HostNetworkGroupInput
+}
+
+"""
+An Unsupervised Engine instance's stopped state and detector statuses.
+"""
+type EngineInstance {
+	"""
+	The node of the instance.
+	"""
+	nodeId: ID!
+	"""
+	The key of the instance's agent on the node.
+	"""
+	agentKey: String!
+	"""
+	Whether the instance is stopped.
+	"""
+	stopped: Boolean!
+	"""
+	The last status of each detector that has reported one, ordered by
+	detector id.
+	"""
+	detectors: [DetectorStatus!]!
 }
 
 """
@@ -6311,6 +6412,52 @@ type Mutation {
 	"""
 	updateBackupConfig(old: BackupConfigInput!, new: BackupConfigInput!): BackupConfig!
 	"""
+	Asks the engine instance `agentKey` of node `nodeId` to run one round
+	of its detector `detectorId` now, returning `true` once the instance
+	accepts.
+	
+	A detector of the applied document is relayed whether or not it is
+	enabled. Scope is the node's customer: a node of none of the caller's
+	customers is refused with `Forbidden`, and an unknown node with
+	`no such node`.
+	
+	Refusals carry `extensions.code`: `INSTANCE_NOT_ELIGIBLE`;
+	`INSTANCE_STOPPED` for a stopped instance; `DETECTOR_NOT_FOUND` for a
+	`detectorId` that is not an id of the applied document, with
+	`detectorId` when it is an integer; and, with `detectorId`,
+	`ENGINE_REFUSED` with the engine's reason in `value` (a round is
+	running, or the detector is paused for a run) or
+	`INSTANCE_UNREACHABLE` when the request did not reach the instance or
+	the instance was stopped meanwhile.
+	"""
+	runDetectorOnce(nodeId: ID!, agentKey: String!, detectorId: ID!): Boolean!
+	"""
+	Starts the engine instance `agentKey` of node `nodeId` through the
+	node's Host Agent, returning `true` once the Host Agent confirms.
+	
+	The instance fetches its engine document itself when it starts. Scope
+	is the node's customer: a node of none of the caller's customers is
+	refused with `Forbidden`, and an unknown node with `no such node`.
+	
+	Refusals carry `extensions.code`: `INSTANCE_NOT_ELIGIBLE`, and
+	`INSTANCE_UNREACHABLE` when the start did not complete, with the
+	backend's error text as the message.
+	"""
+	startEngineInstance(nodeId: ID!, agentKey: String!): Boolean!
+	"""
+	Stops and disables the engine instance `agentKey` of node `nodeId`
+	through the node's Host Agent, returning `true` once the Host Agent
+	confirms.
+	
+	Scope is the node's customer: a node of none of the caller's customers
+	is refused with `Forbidden`, and an unknown node with `no such node`.
+	
+	Refusals carry `extensions.code`: `INSTANCE_NOT_ELIGIBLE`, and
+	`INSTANCE_UNREACHABLE` when the stop did not complete, with the
+	backend's error text as the message.
+	"""
+	stopEngineInstance(nodeId: ID!, agentKey: String!): Boolean!
+	"""
 	Replaces the networks the customer owns with `networks`, returning the
 	stored revision.
 	
@@ -8040,6 +8187,18 @@ type Query {
 	"""
 	backupConfig: BackupConfig
 	"""
+	The engine instance `agentKey` of node `nodeId`: whether it is
+	stopped, and the last status each of its detectors reported.
+	
+	Scope is the node's customer: a node of none of the caller's customers
+	is refused with `Forbidden`, and an unknown node with `no such node`.
+	
+	Refusals carry `extensions.code`: `INSTANCE_NOT_ELIGIBLE` unless
+	`agentKey` is an installed Unsupervised Engine instance of the node and
+	the node has an applied profile with a hostname.
+	"""
+	engineInstance(nodeId: ID!, agentKey: String!): EngineInstance!
+	"""
 	Looks up a single event by its opaque `id`.
 	
 	`id` is the value previously returned from `Event.id`. Decoding the
@@ -8957,6 +9116,20 @@ type RoundEdge {
 }
 
 """
+The outcome of a detector's round.
+"""
+enum RoundOutcome {
+	"""
+	The round succeeded.
+	"""
+	SUCCEEDED
+	"""
+	The round failed; the status's `reason` says why.
+	"""
+	FAILED
+}
+
+"""
 A connected host and the roxyd build it reports running.
 """
 type RunningRoxydBuild {
@@ -9120,6 +9293,25 @@ type SkippedAgent {
 	"""
 	agentKey: String!
 	reason: SkipReason!
+}
+
+"""
+The state of a detector's source in its last round.
+"""
+enum SourceState {
+	"""
+	A Data Store node served the source's events.
+	"""
+	SERVED
+	"""
+	No Data Store node served the source; the round went on and the
+	source kept its read position.
+	"""
+	SERVED_BY_NO_NODE
+	"""
+	Reading the source's events failed, which failed the round.
+	"""
+	FAILED
 }
 
 type Status {
