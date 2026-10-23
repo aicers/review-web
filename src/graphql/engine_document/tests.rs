@@ -143,6 +143,45 @@ fn every_optional_key_may_be_absent() {
             .cpus,
         None
     );
+
+    // Each optional setting of a present label database, with its columns.
+    let full = EngineDocument::parse_and_validate(FULL).unwrap().detectors[0]
+        .labeldb
+        .clone()
+        .unwrap();
+    for (key, expected) in [
+        (
+            "event_range",
+            LabelDb {
+                event_range: None,
+                ..full.clone()
+            },
+        ),
+        (
+            "min_events_ratio",
+            LabelDb {
+                min_events_ratio: None,
+                ..full.clone()
+            },
+        ),
+        (
+            "generate_unlabeled_from_outliers",
+            LabelDb {
+                generate_unlabeled_from_outliers: None,
+                ..full.clone()
+            },
+        ),
+        (
+            "limit_unlabeled_from_outliers",
+            LabelDb {
+                limit_unlabeled_from_outliers: None,
+                ..full.clone()
+            },
+        ),
+    ] {
+        let document = EngineDocument::parse_and_validate(&without(FULL, key)).expect(key);
+        assert_eq!(document.detectors[0].labeldb, Some(expected), "{key}");
+    }
 }
 
 #[test]
@@ -238,6 +277,14 @@ fn every_required_key_must_be_present() {
         (
             "INVALID_DOCUMENT".to_string(),
             "detectors[0].labeldb.columns".to_string()
+        )
+    );
+    let no_column_ids = FULL.replace("{ column_ids = [1, 2], db", "{ db");
+    assert_eq!(
+        code_and_field(&no_column_ids),
+        (
+            "INVALID_DOCUMENT".to_string(),
+            "detectors[0].labeldb.columns[1].column_ids".to_string()
         )
     );
     let no_db = FULL.replace(", db = \"Other\"", "");
