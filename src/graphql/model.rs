@@ -27,7 +27,7 @@ const DEFAULT_MIN_SLOPE: f64 = 10.0;
 const DEFAULT_MIN_ZERO_COUNT_FOR_TREND: usize = 5;
 
 /// The record `kind` of each clustering method a model can be trained with.
-const MULTIFIELD_KIND: &str = "Multifield";
+pub(crate) const MULTIFIELD_KIND: &str = "Multifield";
 const PREFIX_KIND: &str = "Prefix";
 const TIMESERIES_KIND: &str = "Timeseries";
 

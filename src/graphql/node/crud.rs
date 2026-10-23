@@ -12,12 +12,13 @@ use review_database::{Store, UniqueKey, event::Direction};
 use tracing::info;
 
 use super::{
-    super::{Role, RoleGuard, customer_access},
+    super::{Role, RoleGuard, customer_access, engine_config::lock_engine_config},
     Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, customer_sensor_list,
     customer_sensor_list::{Sensor, SensorTotalCount},
     data_store_endpoint::{self, DataStoreEndpoint},
+    engine_write::{self, Slot},
     gen_agent_lookup_key,
-    input::{AgentDraftInput, ExternalServiceInput, NodeDraftInput},
+    input::{AgentDraftInput, ExternalServiceInput, NodeDraftInput, agent_draft},
     installed_guard,
 };
 use crate::{graphql::query_with_constraints, info_with_username};
@@ -107,6 +108,15 @@ impl NodeQuery {
 #[Object]
 impl NodeMutation {
     /// Inserts a new node, returning the ID of the new node.
+    ///
+    /// The draft of each Unsupervised Engine agent is validated as an engine document (RFC 0006
+    /// §5.3). A new node has no applied profile, so a document with any detector is refused with
+    /// `SOURCE_NOT_ALLOWED`. Refusals carry `extensions.code`: `INVALID_DOCUMENT`,
+    /// `UNKNOWN_FIELD`, `DUPLICATE_ENTRY`, `BOUND_VIOLATED` and `SOURCE_NOT_ALLOWED`, with
+    /// `detectorId` for a detector's refusal; and `CUSTOMER_CHANGE_REFUSED` for a hostname whose
+    /// `piglet.` or `reproduce.` name an engine document or training definition of another
+    /// customer lists (RFC 0006 §5.11), which names that detector or definition only to a System
+    /// Administrator.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     #[allow(clippy::too_many_arguments)]
@@ -121,6 +131,8 @@ impl NodeMutation {
         agents: Vec<AgentDraftInput>,
         external_services: Vec<ExternalServiceInput>,
     ) -> Result<ID> {
+        let _lock = lock_engine_config(ctx).await?;
+        let system_admin = customer_access::is_system_admin(ctx);
         let store = crate::graphql::get_store(ctx)?;
         let users_customers = customer_access::users_customers(ctx)?;
         let map = store.node_map();
@@ -137,15 +149,7 @@ impl NodeMutation {
         let agents: Vec<review_database::Agent> = agents
             .into_iter()
             .map(|new_agent| {
-                let draft = match new_agent.draft {
-                    Some(draft) => Some(draft.try_into().map_err(|_| {
-                        Error::new(format!(
-                            "Failed to convert the draft to TOML for the agent: {}",
-                            new_agent.key
-                        ))
-                    })?),
-                    None => None,
-                };
+                let draft = agent_draft(new_agent.kind, &new_agent.key, new_agent.draft)?;
 
                 Ok::<_, Error>(review_database::Agent {
                     node_id: u32::MAX,
@@ -205,6 +209,15 @@ impl NodeMutation {
             external_services,
             creation_time: Utc::now(),
         };
+        engine_write::validate_new_node_documents(&store, &value.agents)?;
+        engine_write::check_node_guards(
+            &store,
+            None,
+            &[],
+            None,
+            value.profile_draft.as_ref(),
+            system_admin,
+        )?;
         let id = map.put(&value)?;
         info_with_username!(ctx, "Node {} has been registered", value.name);
         Ok(ID(id.to_string()))
@@ -267,6 +280,17 @@ impl NodeMutation {
     ///
     /// Refuses an update that would delete an installed instance's row or change its kind; such an
     /// instance is removed only with `removeService`.
+    ///
+    /// An Unsupervised Engine agent's draft that differs from its stored draft is validated as an
+    /// engine document (RFC 0006 §5.3) for the node's applied customer; one left unchanged is not.
+    /// Refusals carry `extensions.code`: `INVALID_DOCUMENT`, `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`,
+    /// `DUPLICATE_ENTRY`, `BOUND_VIOLATED`, `SOURCE_NOT_ALLOWED`, `MODEL_NOT_OF_INSTANCE`,
+    /// `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` and `INDICATOR_NOT_ALLOWED`, with
+    /// `detectorId` for a detector's refusal; and `CUSTOMER_CHANGE_REFUSED` for a customer or
+    /// hostname change the node guards of RFC 0006 §5.11 refuse, which names another customer's
+    /// detector or definition only to a System Administrator. An `old` Unsupervised Engine draft
+    /// that is not the stored one is refused with "the node changed since it was read; reload and
+    /// retry".
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn update_node_draft(
@@ -281,50 +305,48 @@ impl NodeMutation {
             customer_access::check_customer_membership(ctx, &profile_draft.customer_id)?;
         }
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-        let store = crate::graphql::get_store(ctx)?;
-        let mut map = store.node_map();
 
         let mut new = super::input::create_draft_update(&old, new)?;
         let mut old = old.try_into()?;
+        engine_write::check_agent_keys(&old, &new)?;
+        let addrs = engine_write::lookup_addrs(ctx, &old, &new, Slot::Draft).await;
+
+        let _lock = lock_engine_config(ctx).await?;
+        let system_admin = customer_access::is_system_admin(ctx);
+        let store = crate::graphql::get_store(ctx)?;
+        let mut map = store.node_map();
         let (stored, _, _) = map.get_by_id(i)?.ok_or("no such node")?;
         merge_installation_state(&stored, &mut old);
         merge_installation_state(&stored, &mut new);
         installed_guard::check_update(i, &stored.name, &old, &new)?;
-        update_node(&mut map, i, &old, &new)?;
+        let changed = engine_write::changed_agents(&stored, &old, &new, Slot::Draft)?;
+        let documents = engine_write::validate_documents(
+            &store,
+            i,
+            &stored,
+            &changed,
+            Slot::Draft,
+            &addrs,
+            system_admin,
+        )?;
+        engine_write::check_node_guards(
+            &store,
+            Some(i),
+            &engine_write::engine_keys(&new),
+            stored.profile.as_ref(),
+            new.profile_draft.as_ref(),
+            system_admin,
+        )?;
+        map.update_with_engine_documents(
+            i,
+            &old,
+            &new,
+            &engine_write::document_writes(&documents, Slot::Draft),
+        )
+        .map_err(|e| engine_write::store_refusal(e, &old, &documents))?;
         info_with_username!(ctx, "Node {:?} has been modified", old.name);
         Ok(id)
     }
-}
-
-/// Updates node `id` from `old` to `new`, writing empty engine document
-/// references for every Unsupervised Engine agent of `new`.
-///
-/// review-database accepts a change of an Unsupervised Engine agent's
-/// `config` or `draft` only together with the references of its documents.
-/// Until the documents are parsed, this bridge writes no references, so the
-/// node writes behave as they did before references were stored.
-///
-/// # Errors
-///
-/// Returns an error if the store refuses the update or a database operation
-/// fails.
-pub(super) fn update_node(
-    map: &mut review_database::NodeTable<'_>,
-    id: u32,
-    old: &review_database::NodeUpdate,
-    new: &review_database::NodeUpdate,
-) -> anyhow::Result<review_database::Node> {
-    let documents: Vec<_> = new
-        .agents
-        .iter()
-        .filter(|agent| agent.kind == review_database::AgentKind::Unsupervised)
-        .map(|agent| review_database::EngineDocumentWrite {
-            agent_key: agent.key.clone(),
-            applied: Some(review_database::EngineDocumentRefs::default()),
-            pending: Some(review_database::EngineDocumentRefs::default()),
-        })
-        .collect();
-    map.update_with_engine_documents(id, old, new, &documents)
 }
 
 pub(super) fn merge_installation_state(
@@ -542,7 +564,7 @@ mod tests {
                             key: "unsupervised"
                             kind: UNSUPERVISED
                             status: ENABLED
-                            draft: "test = 'toml'"
+                            draft: "detectors = []"
                         },
                         {
                             key: "sensor"
@@ -616,7 +638,7 @@ mod tests {
                         "kind": "UNSUPERVISED",
                         "status": "ENABLED",
                         "config": null,
-                        "draft": "test = 'toml'"
+                        "draft": "detectors = []"
                     },
                     {
                         "key": "sensor",
@@ -651,7 +673,7 @@ mod tests {
                                     kind: "UNSUPERVISED",
                                     status: "ENABLED",
                                     config: null,
-                                    draft: "test = 'toml'"
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -675,7 +697,7 @@ mod tests {
                                     key: "unsupervised",
                                     kind: "UNSUPERVISED",
                                     status: "ENABLED",
-                                    draft: "test = 'changed_toml'"
+                                    draft: "cpus = 2"
                                 },
                                 {
                                     key: "sensor",
@@ -751,7 +773,7 @@ mod tests {
                         "kind": "UNSUPERVISED",
                         "status": "ENABLED",
                         "config": null,
-                        "draft": "test = 'changed_toml'"
+                        "draft": "cpus = 2"
                     },
                     {
                         "key": "sensor",
@@ -3576,8 +3598,9 @@ mod tests {
         let id = put_installed_node(&schema.store(), "installed");
         let stored = stored_node(&schema.store(), id);
 
+        // A change to or from Unsupervised is refused before this guard runs.
         let mut new = stored.clone();
-        new.agents[0].kind = review_database::AgentKind::Unsupervised;
+        new.agents[0].kind = review_database::AgentKind::SemiSupervised;
         let res = update_draft(&schema, id, &stored, &node_draft_input(&new, true, true)).await;
         let err = only_error(&res);
         assert!(

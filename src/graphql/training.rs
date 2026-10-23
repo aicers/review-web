@@ -23,7 +23,7 @@ use review_database::{
 };
 use tracing::warn;
 
-pub(crate) use self::definition::{TrainingDocument, sources_of};
+pub(crate) use self::definition::{TrainingDocument, is_customer_indicator, sources_of};
 use super::{
     Role, RoleGuard, SharedAgentManager,
     customer_access::{

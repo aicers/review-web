@@ -60,10 +60,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `INDICATOR_NOT_ALLOWED`, `NAME_TAKEN`, `NAME_INVALID`, `FIELD_FIXED`,
   `INSTANCE_NOT_ELIGIBLE`, `INSTANCE_STOPPED`, `INSTANCE_UNREACHABLE`,
   `ENGINE_REFUSED`, `RUN_IN_PROGRESS`, `RUN_NOT_ACTIVE`, `MODEL_IN_USE`,
-  `CROSS_CUSTOMER_FORBIDDEN` and `ASSIGN_REFUSED`.
+  `CROSS_CUSTOMER_FORBIDDEN`, `ASSIGN_REFUSED`, `MODEL_NOT_OF_INSTANCE` and
+  `CUSTOMER_CHANGE_REFUSED`.
   `INDICATOR_IN_USE` also names what uses the indicator: `detectorId`, `nodeId`
   and `agentKey` for a detector of an engine document, or `definition` for a
-  training definition.
+  training definition. `insertNode`, `updateNodeDraft`, `applyNode` and
+  `applyNodeDraft` return the codes of an Unsupervised Engine agent's engine
+  document, with `detectorId` on a detector's refusal, and
+  `CUSTOMER_CHANGE_REFUSED`, which names another customer's detector
+  (`detectorId`, `nodeId` and `agentKey`) or training definition
+  (`definition`) only to a System Administrator.
 
 ### Changed
 
@@ -83,6 +89,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   removes all or none.
 - **Breaking change:** `ModelDigest.dataSource` is nullable, deprecated and
   always null.
+- **Breaking change:** `insertNode`, `updateNodeDraft`, `applyNode` and
+  `applyNodeDraft` refuse an Unsupervised Engine agent's draft unless it is a
+  valid engine configuration. It must name only its instance's models and its
+  customer's sensors, indicators and installed Data Stores; before, any TOML
+  was accepted. Refusals carry a code in `extensions.code`.
+- A node's customer can no longer be changed while one of its Unsupervised
+  Engine instances owns a model or training definition.
+- A node can no longer take a customer or hostname whose `piglet.` or
+  `reproduce.` name another customer's engine configuration or training
+  definition lists.
 - Bumped `review-database` dependency to 0.55.0. Its store format moves to
   0.55.0, so a store written by 0.53 or 0.54 must be migrated through
   `review-database` before this version serves it. The migration removes every

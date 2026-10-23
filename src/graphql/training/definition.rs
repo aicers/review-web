@@ -9,18 +9,17 @@
 use std::{
     collections::HashSet,
     net::{IpAddr, SocketAddr},
-    ops::Range,
 };
 
 use async_graphql::Result;
 use chrono::{DateTime, TimeDelta};
 use review_database::{ModelMethod, Store};
 use serde::{Deserialize, Serialize};
-use toml::de::{DeTable, DeValue};
 
 use crate::graphql::{
     customer_access::customer_source_names,
     refusal::{RefusalCode, refusal},
+    toml_refusal::parse_refusal,
     unsupervised::{DataStore, check_data_store},
 };
 
@@ -268,7 +267,7 @@ impl TrainingDocument {
     /// Returns a refusal with `UNKNOWN_FIELD` for a key outside the schema,
     /// and with `INVALID_DOCUMENT` for anything else that does not parse.
     pub(crate) fn parse(text: &str) -> Result<Self> {
-        toml::from_str(text).map_err(|e| parse_refusal(text, &e))
+        toml::from_str(text).map_err(|e| parse_refusal(text, &e, "training definition"))
     }
 
     /// Returns the definition as TOML text.
@@ -505,19 +504,28 @@ impl TrainingDocument {
         let Some(name) = self.suspicious_tokens.as_deref() else {
             return Ok(());
         };
-        let allowed = match store.model_indicator_map().get(name)? {
-            Some(indicator) => store
-                .model_map()
-                .get_by_id(indicator.model_id)?
-                .is_some_and(|model| model.customer_id == customer_id),
-            None => false,
-        };
-        if allowed {
+        if is_customer_indicator(store, name, customer_id)? {
             Ok(())
         } else {
             Err(indicator_not_allowed(name))
         }
     }
+}
+
+/// Returns whether `name` is an indicator whose model belongs to the customer
+/// `customer_id`.
+///
+/// # Errors
+///
+/// Returns an error if the store cannot be read.
+pub(crate) fn is_customer_indicator(store: &Store, name: &str, customer_id: u32) -> Result<bool> {
+    Ok(match store.model_indicator_map().get(name)? {
+        Some(indicator) => store
+            .model_map()
+            .get_by_id(indicator.model_id)?
+            .is_some_and(|model| model.customer_id == customer_id),
+        None => false,
+    })
 }
 
 /// Returns the `INDICATOR_NOT_ALLOWED` refusal of `suspicious_tokens` naming
@@ -549,129 +557,6 @@ fn rfc3339(field: &str, value: &str) -> Result<DateTime<chrono::FixedOffset>> {
             value,
         )
     })
-}
-
-/// Returns the refusal of a definition that does not parse.
-///
-/// A key outside the schema is `UNKNOWN_FIELD`, anything else
-/// `INVALID_DOCUMENT`. `field` is the dotted path of the offending key, found
-/// from the error's position; it is empty where the document as a whole is
-/// at fault, such as a TOML syntax error.
-fn parse_refusal(text: &str, error: &toml::de::Error) -> async_graphql::Error {
-    let message = error.message();
-    let mut field = error
-        .span()
-        .and_then(|span| path_at(text, &span))
-        .unwrap_or_default();
-    let value = error
-        .span()
-        .and_then(|span| text.get(span))
-        .unwrap_or_default();
-    if let Some(key) = quoted(message, "unknown field `") {
-        let field = if field.is_empty() {
-            key.to_string()
-        } else {
-            field
-        };
-        return refusal(
-            RefusalCode::UnknownField,
-            format!("unknown key {field}"),
-            &field,
-            key,
-        );
-    }
-    if let Some(key) = quoted(message, "missing field `") {
-        field = if field.is_empty() {
-            key.to_string()
-        } else {
-            format!("{field}.{key}")
-        };
-        return refusal(
-            RefusalCode::InvalidDocument,
-            format!("required key {field} is missing"),
-            &field,
-            "",
-        );
-    }
-    refusal(
-        RefusalCode::InvalidDocument,
-        format!("invalid training definition: {message}"),
-        &field,
-        value,
-    )
-}
-
-/// Returns the text between `prefix` and the next backtick of `message`, if
-/// `message` starts with `prefix`.
-fn quoted<'a>(message: &'a str, prefix: &str) -> Option<&'a str> {
-    message.strip_prefix(prefix)?.split('`').next()
-}
-
-/// Returns the dotted path of the deepest key or value of `text` whose span
-/// covers `span`, or `None` for an empty span or a document that does not
-/// parse.
-fn path_at(text: &str, span: &Range<usize>) -> Option<String> {
-    if span.is_empty() {
-        return None;
-    }
-    let table = DeTable::parse(text).ok()?;
-    let mut found = None;
-    walk_table(table.get_ref(), span, "", 0, &mut found);
-    found.map(|(path, _)| path)
-}
-
-/// Records in `found` the deepest path under `table` whose key or value
-/// covers `span`, with its depth.
-fn walk_table(
-    table: &DeTable<'_>,
-    span: &Range<usize>,
-    prefix: &str,
-    depth: usize,
-    found: &mut Option<(String, usize)>,
-) {
-    for (key, value) in table {
-        let path = if prefix.is_empty() {
-            key.get_ref().to_string()
-        } else {
-            format!("{prefix}.{}", key.get_ref())
-        };
-        if covers(&key.span(), span) || covers(&value.span(), span) {
-            record(found, &path, depth + 1);
-        }
-        walk_value(value.get_ref(), span, &path, depth + 1, found);
-    }
-}
-
-fn walk_value(
-    value: &DeValue<'_>,
-    span: &Range<usize>,
-    path: &str,
-    depth: usize,
-    found: &mut Option<(String, usize)>,
-) {
-    match value {
-        DeValue::Table(table) => walk_table(table, span, path, depth, found),
-        DeValue::Array(items) => {
-            for (i, item) in items.iter().enumerate() {
-                let path = format!("{path}[{i}]");
-                if covers(&item.span(), span) {
-                    record(found, &path, depth + 1);
-                }
-                walk_value(item.get_ref(), span, &path, depth + 1, found);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn covers(outer: &Range<usize>, inner: &Range<usize>) -> bool {
-    outer.start <= inner.start && inner.end <= outer.end
-}
-
-fn record(found: &mut Option<(String, usize)>, path: &str, depth: usize) {
-    if found.as_ref().is_none_or(|(_, deepest)| *deepest < depth) {
-        *found = Some((path.to_string(), depth));
-    }
 }
 
 #[cfg(test)]

@@ -7,8 +7,12 @@ use review_database::AgentStatus;
 use tracing::{error, info, warn};
 
 use super::{
-    super::{Role, RoleGuard, SharedAgentManager, customer_access},
-    Node, NodeControlMutation, SEMI_SUPERVISED_AGENT, gen_agent_lookup_key,
+    super::{
+        Role, RoleGuard, SharedAgentManager, customer_access, engine_config::lock_engine_config,
+    },
+    Node, NodeControlMutation, SEMI_SUPERVISED_AGENT,
+    engine_write::{self, Slot},
+    gen_agent_lookup_key,
 };
 use crate::graphql::{
     customer::{
@@ -135,6 +139,18 @@ impl NodeControlMutation {
     /// Refuses, before any write or agent notification, an apply that would delete an installed
     /// instance's row, change its kind, or change the hostname of the node that holds one; such an
     /// instance is removed only with `removeService`.
+    ///
+    /// Each Unsupervised Engine agent's document being applied that differs from its applied
+    /// config is validated as an engine document (RFC 0006 §5.3) for the node's applied customer
+    /// before this apply, and any refusal refuses the whole apply. Refusals carry
+    /// `extensions.code`: `INVALID_DOCUMENT`, `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`,
+    /// `DUPLICATE_ENTRY`, `BOUND_VIOLATED`, `SOURCE_NOT_ALLOWED`, `MODEL_NOT_OF_INSTANCE`,
+    /// `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` and `INDICATOR_NOT_ALLOWED`, with
+    /// `detectorId` for a detector's refusal; and `CUSTOMER_CHANGE_REFUSED` for a customer or
+    /// hostname change the node guards of RFC 0006 §5.11 refuse, which names another customer's
+    /// detector or definition only to a System Administrator. A `node` whose Unsupervised Engine
+    /// config or draft is not the stored one is refused with "the node changed since it was read;
+    /// reload and retry".
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_node(&self, ctx: &Context<'_>, id: ID, node: NodeInput) -> Result<ID> {
@@ -239,6 +255,18 @@ impl NodeControlMutation {
     /// Refuses an apply that would delete an installed instance's row, change its kind, or change
     /// the hostname of the node that holds one; such an instance is removed only with
     /// `removeService`.
+    ///
+    /// Each Unsupervised Engine agent's document being applied that differs from its applied
+    /// config is validated as an engine document (RFC 0006 §5.3) for the node's applied customer
+    /// before this apply, and any refusal refuses the whole apply. Refusals carry
+    /// `extensions.code`: `INVALID_DOCUMENT`, `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`,
+    /// `DUPLICATE_ENTRY`, `BOUND_VIOLATED`, `SOURCE_NOT_ALLOWED`, `MODEL_NOT_OF_INSTANCE`,
+    /// `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` and `INDICATOR_NOT_ALLOWED`, with
+    /// `detectorId` for a detector's refusal; and `CUSTOMER_CHANGE_REFUSED` for a customer or
+    /// hostname change the node guards of RFC 0006 §5.11 refuse, which names another customer's
+    /// detector or definition only to a System Administrator. A `node` whose Unsupervised Engine
+    /// config or draft is not the stored one is refused with "the node changed since it was read;
+    /// reload and retry".
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_node_draft(&self, ctx: &Context<'_>, id: ID, node: NodeInput) -> Result<Node> {
@@ -521,9 +549,6 @@ async fn update_db(
     node: &NodeInput,
     disable_agent_keys: &[&str],
 ) -> Result<review_database::Node> {
-    let store = crate::graphql::get_store(ctx)?;
-    let mut map = store.node_map();
-
     let mut update = node.clone();
     update
         .name
@@ -552,13 +577,46 @@ async fn update_db(
 
     let mut old = node.clone().try_into()?;
     let mut new = update.try_into()?;
+    engine_write::check_agent_keys(&old, &new)?;
+    let addrs = engine_write::lookup_addrs(ctx, &old, &new, Slot::Config).await;
+
+    // Held from the checks below through the store write, and released before the caller notifies
+    // any agent.
+    let _lock = lock_engine_config(ctx).await?;
+    let system_admin = customer_access::is_system_admin(ctx);
+    let store = crate::graphql::get_store(ctx)?;
+    let mut map = store.node_map();
     let (stored, _, _) = map.get_by_id(i)?.ok_or("no such node")?;
     super::crud::merge_installation_state(&stored, &mut old);
     super::crud::merge_installation_state(&stored, &mut new);
     // Checked here rather than in the callers so that `applyNode` notifies no agent of a refused
     // apply.
     super::installed_guard::check_update(i, &stored.name, &old, &new)?;
-    Ok(super::crud::update_node(&mut map, i, &old, &new)?)
+    let changed = engine_write::changed_agents(&stored, &old, &new, Slot::Config)?;
+    let documents = engine_write::validate_documents(
+        &store,
+        i,
+        &stored,
+        &changed,
+        Slot::Config,
+        &addrs,
+        system_admin,
+    )?;
+    engine_write::check_node_guards(
+        &store,
+        Some(i),
+        &engine_write::engine_keys(&new),
+        stored.profile.as_ref(),
+        new.profile.as_ref(),
+        system_admin,
+    )?;
+    map.update_with_engine_documents(
+        i,
+        &old,
+        &new,
+        &engine_write::document_writes(&documents, Slot::Config),
+    )
+    .map_err(|e| engine_write::store_refusal(e, &old, &documents))
 }
 
 async fn send_customer_change_if_needed(ctx: &Context<'_>, i: u32, node: &NodeInput) {
@@ -733,7 +791,7 @@ mod tests {
                             key: "unsupervised"
                             kind: UNSUPERVISED
                             status: ENABLED
-                            draft: "test = 'toml'"
+                            draft: "detectors = []"
                         },
                         {
                             key: "sensor"
@@ -814,7 +872,7 @@ mod tests {
                                       "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
                                       "config": null,
-                                      "draft": "test = 'toml'"
+                                      "draft": "detectors = []"
                                     },
                                     {
                                       "nodeId": 0,
@@ -854,7 +912,7 @@ mod tests {
                                     kind: UNSUPERVISED,
                                     status: ENABLED,
                                     config: null,
-                                    draft: "test = 'toml'"
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -941,8 +999,8 @@ mod tests {
                                       "key": "unsupervised",
                                       "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
-                                      "config": "test = 'toml'",
-                                      "draft": "test = 'toml'"
+                                      "config": "detectors = []",
+                                      "draft": "detectors = []"
                                     },
                                     {
                                       "nodeId": 0,
@@ -985,8 +1043,8 @@ mod tests {
                                     key: "unsupervised",
                                     kind: UNSUPERVISED,
                                     status: ENABLED,
-                                    config: "test = 'toml'",
-                                    draft: "test = 'toml'"
+                                    config: "detectors = []",
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -1010,7 +1068,7 @@ mod tests {
                                     key: "unsupervised",
                                     kind: UNSUPERVISED,
                                     status: ENABLED,
-                                    draft: "test = 'toml'"
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -1097,8 +1155,8 @@ mod tests {
                                       "key": "unsupervised",
                                       "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
-                                      "config": "test = 'toml'",
-                                      "draft": "test = 'toml'"
+                                      "config": "detectors = []",
+                                      "draft": "detectors = []"
                                     },
                                     {
                                       "nodeId": 0,
@@ -1141,8 +1199,8 @@ mod tests {
                                     key: "unsupervised",
                                     kind: UNSUPERVISED,
                                     status: ENABLED,
-                                    config: "test = 'toml'",
-                                    draft: "test = 'toml'"
+                                    config: "detectors = []",
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -1229,8 +1287,8 @@ mod tests {
                                       "key": "unsupervised",
                                       "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
-                                      "config": "test = 'toml'",
-                                      "draft": "test = 'toml'"
+                                      "config": "detectors = []",
+                                      "draft": "detectors = []"
                                     },
                                     {
                                       "nodeId": 0,
@@ -1273,8 +1331,8 @@ mod tests {
                                     key: "unsupervised",
                                     kind: UNSUPERVISED,
                                     status: ENABLED,
-                                    config: "test = 'toml'",
-                                    draft: "test = 'toml'"
+                                    config: "detectors = []",
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -1298,7 +1356,7 @@ mod tests {
                                     key: "unsupervised",
                                     kind: UNSUPERVISED,
                                     status: ENABLED,
-                                    draft: "test = 'toml'"
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -1347,8 +1405,8 @@ mod tests {
                                     key: "unsupervised",
                                     kind: UNSUPERVISED,
                                     status: ENABLED,
-                                    config: "test = 'toml'",
-                                    draft: "test = 'toml'"
+                                    config: "detectors = []",
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -1444,8 +1502,8 @@ mod tests {
                                         "key": "unsupervised",
                                         "kind": "UNSUPERVISED",
                                         "status": "ENABLED",
-                                        "config": "test = 'toml'",
-                                        "draft": "test = 'toml'"
+                                        "config": "detectors = []",
+                                        "draft": "detectors = []"
                                     },
                                     {
                                         "nodeId": 0,
@@ -1496,8 +1554,8 @@ mod tests {
                                     key: "unsupervised",
                                     kind: UNSUPERVISED,
                                     status: ENABLED,
-                                    config: "test = 'toml'",
-                                    draft: "test = 'toml'"
+                                    config: "detectors = []",
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -1528,7 +1586,7 @@ mod tests {
                                     key: "unsupervised",
                                     kind: UNSUPERVISED,
                                     status: ENABLED,
-                                    draft: "test = 'toml'"
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -1623,8 +1681,8 @@ mod tests {
                                       "key": "unsupervised",
                                       "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
-                                      "config": "test = 'toml'",
-                                      "draft": "test = 'toml'"
+                                      "config": "detectors = []",
+                                      "draft": "detectors = []"
                                     },
                                     {
                                       "nodeId": 0,
@@ -1675,8 +1733,8 @@ mod tests {
                                     key: "unsupervised",
                                     kind: "UNSUPERVISED",
                                     status: "ENABLED",
-                                    config: "test = 'toml'",
-                                    draft: "test = 'toml'"
+                                    config: "detectors = []",
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -1772,8 +1830,8 @@ mod tests {
                                         "key": "unsupervised",
                                         "kind": "UNSUPERVISED",
                                         "status": "ENABLED",
-                                        "config": "test = 'toml'",
-                                        "draft": "test = 'toml'"
+                                        "config": "detectors = []",
+                                        "draft": "detectors = []"
                                     },
                                     {
                                         "nodeId": 0,
@@ -1824,8 +1882,8 @@ mod tests {
                                     key: "unsupervised",
                                     kind: "UNSUPERVISED",
                                     status: "ENABLED",
-                                    config: "test = 'toml'",
-                                    draft: "test = 'toml'"
+                                    config: "detectors = []",
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -1856,7 +1914,7 @@ mod tests {
                                     key: "unsupervised",
                                     kind: "UNSUPERVISED",
                                     status: "ENABLED",
-                                    draft: "test = 'toml'"
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -1951,8 +2009,8 @@ mod tests {
                                       "key": "unsupervised",
                                       "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
-                                      "config": "test = 'toml'",
-                                      "draft": "test = 'toml'"
+                                      "config": "detectors = []",
+                                      "draft": "detectors = []"
                                     },
                                     {
                                       "nodeId": 0,
@@ -2004,8 +2062,8 @@ mod tests {
                                         key: "unsupervised",
                                         kind: "UNSUPERVISED",
                                         status: "ENABLED",
-                                        config: "test = 'toml'",
-                                        draft: "test = 'toml'"
+                                        config: "detectors = []",
+                                        draft: "detectors = []"
                                     },
                                     {
                                         key: "sensor",
@@ -2100,8 +2158,8 @@ mod tests {
                                       "key": "unsupervised",
                                       "kind": "UNSUPERVISED",
                                       "status": "ENABLED",
-                                      "config": "test = 'toml'",
-                                      "draft": "test = 'toml'"
+                                      "config": "detectors = []",
+                                      "draft": "detectors = []"
                                     }
                                 ],
                                 "externalServices": [
@@ -2294,7 +2352,7 @@ mod tests {
                             key: "unsupervised"
                             kind: UNSUPERVISED
                             status: ENABLED
-                            draft: "test = 'toml'"
+                            draft: "detectors = []"
                         },
                         {
                             key: "sensor"
@@ -2339,7 +2397,7 @@ mod tests {
                                     kind: "UNSUPERVISED",
                                     status: "ENABLED",
                                     config: null,
-                                    draft: "test = 'toml'"
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -2385,7 +2443,7 @@ mod tests {
                             key: "unsupervised"
                             kind: UNSUPERVISED
                             status: ENABLED
-                            draft: "test = 'toml'"
+                            draft: "detectors = []"
                         },
                         {
                             key: "sensor"
@@ -2421,7 +2479,7 @@ mod tests {
                                     kind: "UNSUPERVISED",
                                     status: "ENABLED",
                                     config: null,
-                                    draft: "test = 'toml'"
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -2467,7 +2525,7 @@ mod tests {
                             key: "unsupervised"
                             kind: UNSUPERVISED
                             status: ENABLED
-                            draft: "test = 'toml'"
+                            draft: "detectors = []"
                         },
                         {
                             key: "sensor"
@@ -2503,7 +2561,7 @@ mod tests {
                                     kind: "UNSUPERVISED",
                                     status: "ENABLED",
                                     config: null,
-                                    draft: "test = 'toml'"
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -2547,7 +2605,7 @@ mod tests {
                             key: "unsupervised"
                             kind: UNSUPERVISED
                             status: ENABLED
-                            draft: "test = 'toml'"
+                            draft: "detectors = []"
                         }]
                         externalServices: [{
                             key: "data_store"
@@ -2581,7 +2639,7 @@ mod tests {
                                 kind: UNSUPERVISED,
                                 status: ENABLED,
                                 config: null,
-                                draft: "test = 'toml'"
+                                draft: "detectors = []"
                             }],
                             externalServices: [{
                                 key: "data_store",
@@ -2660,8 +2718,8 @@ mod tests {
                                 key: "unsupervised",
                                 kind: UNSUPERVISED,
                                 status: ENABLED,
-                                config: "test = 'toml'",
-                                draft: "test = 'toml'"
+                                config: "detectors = []",
+                                draft: "detectors = []"
                             }],
                             externalServices: [{
                                 key: "data_store",
@@ -2732,7 +2790,7 @@ mod tests {
                             key: "unsupervised"
                             kind: UNSUPERVISED
                             status: ENABLED
-                            draft: "test = 'toml'"
+                            draft: "detectors = []"
                         },
                         {
                             key: "sensor"
@@ -2768,7 +2826,7 @@ mod tests {
                                     kind: "UNSUPERVISED",
                                     status: "ENABLED",
                                     config: null,
-                                    draft: "test = 'toml'"
+                                    draft: "detectors = []"
                                 },
                                 {
                                     key: "sensor",
@@ -3706,7 +3764,7 @@ mod tests {
                             key: "unsupervised"
                             kind: UNSUPERVISED
                             status: ENABLED
-                            draft: "test = 'toml'"
+                            draft: "detectors = []"
                         }],
                         externalServices: []
                     )
@@ -3734,7 +3792,7 @@ mod tests {
                                 kind: UNSUPERVISED,
                                 status: ENABLED,
                                 config: null,
-                                draft: "test = 'toml'"
+                                draft: "detectors = []"
                             }],
                             externalServices: []
                         }
@@ -3765,8 +3823,8 @@ mod tests {
                     "agents": [
                         {
                             "key": "unsupervised",
-                            "config": "test = 'toml'",
-                            "draft": "test = 'toml'",
+                            "config": "detectors = []",
+                            "draft": "detectors = []",
                         }
                     ],
                 }
@@ -3818,8 +3876,8 @@ mod tests {
                                 key: "unsupervised",
                                 kind: UNSUPERVISED,
                                 status: ENABLED,
-                                config: "test = 'toml'",
-                                draft: "test = 'toml'"
+                                config: "detectors = []",
+                                draft: "detectors = []"
                             }],
                             externalServices: []
                         }
@@ -4469,8 +4527,8 @@ mod tests {
                                 key: "unsupervised",
                                 kind: UNSUPERVISED,
                                 status: ENABLED,
-                                config: "test = 'toml'",
-                                draft: "test = 'toml'"
+                                config: "detectors = []",
+                                draft: "detectors = []"
                             }],
                             externalServices: []
                         }

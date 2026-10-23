@@ -152,6 +152,31 @@ pub(super) struct NodeDraftInput {
     pub external_services: Option<Vec<ExternalServiceInput>>,
 }
 
+/// Converts the draft of agent `key` of `kind` to TOML.
+///
+/// # Errors
+///
+/// Returns `INVALID_DOCUMENT` for an Unsupervised Engine draft that is not
+/// TOML, and a plain error for another agent's.
+pub(super) fn agent_draft(
+    kind: AgentKind,
+    key: &str,
+    draft: Option<String>,
+) -> Result<Option<review_database::AgentConfig>> {
+    let Some(draft) = draft else {
+        return Ok(None);
+    };
+    if kind == AgentKind::Unsupervised {
+        super::engine_write::check_toml(&draft)?;
+    }
+    let draft = draft.try_into().map_err(|_| {
+        Error::new(format!(
+            "Failed to convert the draft to TOML for the agent: {key}"
+        ))
+    })?;
+    Ok(Some(draft))
+}
+
 pub(super) fn create_draft_update(
     old: &NodeInput,
     new: NodeDraftInput,
@@ -191,15 +216,7 @@ pub(super) fn create_draft_update(
                         None => None,
                     };
 
-                    let draft = match new_agent.draft {
-                        Some(draft) => Some(draft.try_into().map_err(|_| {
-                            Error::new(format!(
-                                "Failed to convert the draft to TOML for the agent: {}",
-                                new_agent.key
-                            ))
-                        })?),
-                        None => None,
-                    };
+                    let draft = agent_draft(new_agent.kind, &new_agent.key, new_agent.draft)?;
 
                     Ok(review_database::Agent {
                         node_id: u32::MAX,
