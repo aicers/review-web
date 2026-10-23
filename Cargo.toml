@@ -55,6 +55,7 @@ assert-json-diff = "2"
 flate2 = "1"
 futures = "0.3"
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
+rocksdb = "0.25"
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "test-util"] }
 tokio-tungstenite = "0.30"

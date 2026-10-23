@@ -470,3 +470,49 @@ fn trend_order_descriptions_include_zero() {
         );
     }
 }
+
+/// The deletion result query and types match the GraphQL API contract.
+#[test]
+fn customer_data_deletion_result_contract() {
+    let sdl = rendered_sdl();
+    assert!(
+        definition(&sdl, "type Query {").contains(
+            "\n\tcustomerDataDeletionResult(customerId: ID!): CustomerDataDeletionResult\n"
+        )
+    );
+    for (header, fields) in [
+        (
+            "type CustomerDataDeletionResult {",
+            vec![
+                "customerId: ID!",
+                "serviceResults: [CustomerDataDeletionServiceResult!]!",
+            ],
+        ),
+        (
+            "type CustomerDataDeletionServiceResult {",
+            vec![
+                "service: CustomerDataDeletionService!",
+                "hostFqdns: [String!]!",
+                "status: CustomerDataDeletionStatus!",
+                "requestedAt: DateTime!",
+                "completedAt: DateTime",
+                "error: String",
+            ],
+        ),
+        (
+            "enum CustomerDataDeletionService {",
+            vec!["REVIEW", "SENSOR", "SEMI_SUPERVISED"],
+        ),
+        (
+            "enum CustomerDataDeletionStatus {",
+            vec!["IN_PROGRESS", "SUCCEEDED", "FAILED"],
+        ),
+    ] {
+        let actual: Vec<_> = definition(&sdl, header)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        assert_eq!(actual, fields, "{header}");
+    }
+}

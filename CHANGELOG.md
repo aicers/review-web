@@ -82,6 +82,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `CUSTOMER_CHANGE_REFUSED`, which names another customer's detector
   (`detectorId`, `nodeId` and `agentKey`) or training definition
   (`definition`) only to a System Administrator.
+- Added the `customerDataDeletionResult` GraphQL query for system administrators
+  to view per-service deletion status, timestamps, and errors.
 
 ### Changed
 
