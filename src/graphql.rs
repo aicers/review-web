@@ -44,6 +44,7 @@ mod sampling;
 mod slicing;
 mod statistics;
 mod status;
+mod system_log_collector;
 mod tags;
 mod template;
 mod toml_refusal;
@@ -219,6 +220,7 @@ struct SubQueryTwoB(
     node::BindAddrQuery,
     node::OnboardingQuery,
     node::TimeSyncQuery,
+    system_log_collector::SystemLogCollectorQuery,
 );
 
 /// A set of mutations defined in the schema.
@@ -274,6 +276,7 @@ struct SubMutationTwoB(
     traffic_filter::TrafficFilterMutation,
     trusted_user_agent::UserAgentMutation,
     node::TimeSyncMutation,
+    system_log_collector::SystemLogCollectorMutation,
 );
 
 /// A set of subscription defined in the schema.
@@ -2276,10 +2279,11 @@ mod tests {
                     DeployError::ConfigTemplateRequired { .. }
                     | DeployError::ConfigTemplateNotApplicable { .. }
                     | DeployError::UnknownConfigTemplate { .. }
-                    | DeployError::ManifestFormatUnsupported { .. } => {
+                    | DeployError::ManifestFormatUnsupported { .. }
+                    | DeployError::SystemInstance { .. } => {
                         panic!(
-                            "this mock does not script configuration template or manifest-format \
-                             refusals"
+                            "this mock does not script configuration template, manifest-format \
+                             or system-instance refusals"
                         )
                     }
                 };

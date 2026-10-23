@@ -883,6 +883,7 @@ mod tests {
             | DeployError::ConfigTemplateNotApplicable { .. }
             | DeployError::UnknownConfigTemplate { .. }
             | DeployError::ManifestFormatUnsupported { .. }
+            | DeployError::SystemInstance { .. }
             | DeployError::Other(_) => None,
         }
     }
@@ -917,6 +918,12 @@ mod tests {
                     format_version: 9,
                     min: 3,
                     max: 8,
+                },
+                None,
+            ),
+            (
+                DeployError::SystemInstance {
+                    host: "host1".to_string(),
                 },
                 None,
             ),

@@ -4,6 +4,34 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `systemLogCollectorList`, `setSystemLogCollectorDataStore` and
+  `updateSystemLogCollector`, for System Administrators: they list each
+  host's operational log collector with its build, connection, Data Store,
+  last install refusal and latest operation attempt, choose its Data Store,
+  and update its build.
+- The `SystemInstance` member of the `updateService` and `removeService`
+  results, returned when the instance is the host's operational log
+  collector.
+- `PackageDeployer::system_log_collectors`,
+  `set_system_log_collector_data_store` and `update_system_log_collector`,
+  whose default implementations return an error.
+
+### Changed
+
+- `inFlightInstalls` and `latestInstall` leave out the install attempts of the
+  operational log collectors.
+- **Breaking change:** The public `DeployError` enum gains the
+  `SystemInstance { host }` variant, which breaks callers that match on it
+  exhaustively.
+- Bumped `review-database` dependency to 0.56.0. Its store format moves to
+  0.56.0, so a store written by 0.55 must be migrated through
+  `review-database` before this version serves it; the migration adds the
+  empty system log collectors table and changes nothing else.
+
 ## [0.47.0] - 2026-10-23
 
 ### Added
@@ -2488,6 +2516,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.47.0...main
 [0.47.0]: https://github.com/aicers/review-web/compare/0.46.0...0.47.0
 [0.46.0]: https://github.com/aicers/review-web/compare/0.45.0...0.46.0
 [0.45.0]: https://github.com/aicers/review-web/compare/0.44.0...0.45.0
