@@ -14,9 +14,11 @@ use std::{net::SocketAddr, sync::Mutex};
 
 use async_trait::async_trait;
 use axum::body::Bytes;
+use chrono::Utc;
 use futures::StreamExt;
 use review_database::{
     BuildSelector, ListenerBinding, ListenerTransport, PortOwner, RequestKeyError,
+    SystemLogCollector, SystemLogCollectorRefusal,
 };
 // `review_database::Lifecycle` and `review_protocol::types::node::Lifecycle`
 // share a name, so nothing here glob-imports either module.
@@ -27,7 +29,8 @@ use review_web::backend::{
     AcceptedPackage, BindAddrInput, BuildId, ConfigTemplateCatalog, ConfigTemplateSummary,
     DeployError, DeployOutcome, EngineRefused, HostOnboarder, HostOnboardingTicket, IngressStream,
     IngressStreamError, JoinToken, LocalizedText, OperationId, PackageDeployer, PackageIngestError,
-    PackageStoreReceiver, RunningRoxydBuild, TrustActivation, TrustIngestError, TrustManager,
+    PackageStoreReceiver, RunningRoxydBuild, SystemLogCollectorState, TrustActivation,
+    TrustIngestError, TrustManager,
 };
 
 const TOKEN: &str = "s3cret-join-token";
@@ -544,6 +547,66 @@ async fn every_named_variant_is_constructible_from_another_crate() {
             max: 8,
         } if host == "host1"
     ));
+
+    // review raises this when a node operation names the host's system
+    // instance, so constructing it directly is what review does.
+    let error = DeployError::SystemInstance {
+        host: "host1".to_string(),
+    };
+    assert!(matches!(
+        error,
+        DeployError::SystemInstance { ref host } if host == "host1"
+    ));
+}
+
+/// `OutsideDeployer` implements none of the system log collector methods, so
+/// each answers through its default body with an error.
+#[tokio::test]
+async fn the_system_log_collector_methods_default_to_an_error() {
+    let deployer = deployer(None);
+    assert!(deployer.system_log_collectors().await.is_err());
+    assert!(
+        deployer
+            .set_system_log_collector_data_store("host1", "001.giganto.host2")
+            .await
+            .is_err()
+    );
+    let error = deployer
+        .update_system_log_collector(
+            "host1",
+            BuildSelector::Version("0.1.0".to_string()),
+            FailurePolicy::Hold,
+        )
+        .await
+        .map(|_| ())
+        .expect_err("the default body refuses");
+    assert!(matches!(error, DeployError::Other(_)));
+}
+
+/// review builds a system log collector's state from its row, its connection
+/// and its newest attempt, field by field.
+#[test]
+fn a_system_log_collector_state_is_constructible_field_by_field() {
+    let state = SystemLogCollectorState {
+        collector: SystemLogCollector {
+            host: "host1".to_string(),
+            instance: Some(1),
+            install_keys: vec![REQUEST_KEY.to_string()],
+            installed_version: Some(ROXYD_VERSION.to_string()),
+            installed_commit: Some(ROXYD_COMMIT.to_string()),
+            data_store: Some("001.giganto.host2".to_string()),
+            config: None,
+            last_refusal: Some(SystemLogCollectorRefusal {
+                at: Utc::now(),
+                message: "refused".to_string(),
+            }),
+        },
+        connected: true,
+        latest_attempt: None,
+    };
+    assert_eq!(state.collector.host, "host1");
+    assert!(state.connected);
+    assert!(state.latest_attempt.is_none());
 }
 
 /// A successful install pairs the disposition with the operation's identity,

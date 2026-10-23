@@ -800,9 +800,26 @@ pub struct RunningRoxydBuild {
     pub build: BuildId,
 }
 
+/// One system log collector as review reports it: its row, whether its
+/// instance is connected, and its newest operation attempt.
+#[derive(Clone, Debug)]
+pub struct SystemLogCollectorState {
+    /// The collector's row.
+    pub collector: review_database::SystemLogCollector,
+    /// Whether `REview`'s agent registry holds a live connection under the
+    /// instance's key `<instance:03>.reproduce.<host>`; `false` for a row
+    /// with no instance.
+    pub connected: bool,
+    /// For a row with an instance, the current attempt of
+    /// `(host, "reproduce", Some(instance))` as `latest_attempt` answers it;
+    /// for a row without one, the attempt under its newest install key, if
+    /// the ledger holds it.
+    pub latest_attempt: Option<review_database::OperationAttempt>,
+}
+
 /// Why a deployment operation could not be carried out.
 ///
-/// The ten named variants are exactly the failures a resolver renders as a
+/// The eleven named variants are exactly the failures a resolver renders as a
 /// state of the form the operator is looking at, so a resolver decides the
 /// result-payload union member by matching on the kind rather than on a
 /// message string — an upstream wording change would otherwise silently
@@ -930,6 +947,15 @@ pub enum DeployError {
         /// The highest manifest format version the host last reported reading.
         max: u32,
     },
+    /// The placement is the host's operational log collector, which node
+    /// operations do not update or remove.
+    #[error(
+        "this is the host's operational log collector; update it from Operational log collectors"
+    )]
+    SystemInstance {
+        /// The host the refused placement is on.
+        host: String,
+    },
     /// Any other failure, rendered as an ordinary GraphQL error.
     ///
     /// [`review_database::PortAllocationError::Database`] arrives here: it is
@@ -1046,7 +1072,10 @@ pub trait PackageDeployer: Send + Sync {
     /// the target, [`DeployError::BuildNotServable`] if the store will not
     /// serve the selected build, [`DeployError::ManifestFormatUnsupported`]
     /// if the target host's Host Agent cannot read the package's manifest
-    /// format, and [`DeployError::Other`] for any other failure. It
+    /// format, [`DeployError::SystemInstance`] if `(host, target, instance)`
+    /// is the host's system log collector, which is updated through
+    /// [`update_system_log_collector`](PackageDeployer::update_system_log_collector)
+    /// instead, and [`DeployError::Other`] for any other failure. It
     /// allocates nothing, so it produces no bind-address or request-key
     /// variant.
     async fn update(
@@ -1066,7 +1095,10 @@ pub trait PackageDeployer: Send + Sync {
     /// # Errors
     ///
     /// Returns [`DeployError::CleanupPending`] if a teardown is already owed
-    /// on the target, and [`DeployError::Other`] for any other failure.
+    /// on the target, [`DeployError::SystemInstance`] if
+    /// `(host, target, instance)` is the host's system log collector, which a
+    /// node operation never removes, and [`DeployError::Other`] for any other
+    /// failure.
     async fn remove(
         &self,
         host: &str,
@@ -1211,6 +1243,62 @@ pub trait PackageDeployer: Send + Sync {
         target: &str,
         instance: Option<u32>,
     ) -> Result<Option<BuildId>, anyhow::Error>;
+
+    /// Returns every system log collector, in host order.
+    ///
+    /// A system log collector is the `reproduce` instance `REview` installs
+    /// on each host with a connected Host Agent to send Clumit Security's own
+    /// logs to a Data Store. It belongs to the host, not to a node or a
+    /// customer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the collectors could not be read. The default
+    /// implementation always returns an error, for an embedding application
+    /// without system log collectors.
+    async fn system_log_collectors(&self) -> Result<Vec<SystemLogCollectorState>, anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
+
+    /// Stores `server_name` as the Data Store of `host`'s system log
+    /// collector and asks for the host's reconcile, which renders and pushes
+    /// its configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `host` has no system log collector, if
+    /// `server_name` is not an installed Data Store, or if the choice could
+    /// not be stored. The default implementation always returns an error.
+    async fn set_system_log_collector_data_store(
+        &self,
+        _host: &str,
+        _server_name: &str,
+    ) -> Result<(), anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
+
+    /// Updates the build of `host`'s system log collector, as
+    /// [`update`](PackageDeployer::update) does for a module instance, and
+    /// returns how the apply ended paired with the operation's identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeployError::CleanupPending`] if a teardown is still owed on
+    /// the target, [`DeployError::BuildNotServable`] if the store will not
+    /// serve the selected build, [`DeployError::ManifestFormatUnsupported`]
+    /// if the host's Host Agent cannot read the package's manifest format,
+    /// and [`DeployError::Other`] for any other failure, including a host
+    /// with no system log collector or one whose collector has no instance.
+    /// It never returns [`DeployError::SystemInstance`]. The default
+    /// implementation always returns [`DeployError::Other`].
+    async fn update_system_log_collector(
+        &self,
+        _host: &str,
+        _selector: BuildSelector,
+        _on_failure: FailurePolicy,
+    ) -> Result<(DeployOutcome, OperationId), DeployError> {
+        Err(DeployError::Other(anyhow!("Not supported")))
+    }
 
     /// Enrolls a service identity with the registrar and returns the material
     /// a first install needs.

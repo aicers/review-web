@@ -7031,6 +7031,35 @@ type Mutation {
 	retrying.
 	"""
 	setCentralManagerTimeSources(servers: [String!]!): [String!]!
+	"""
+	Chooses `serverName` as the Data Store of `host`'s operational log
+	collector, and has the collector's configuration rendered and pushed.
+	
+	Whether `serverName` names an installed Data Store is review's answer;
+	nothing here checks it.
+	
+	# Errors
+	
+	Returns an error if `host` has no collector, if `serverName` is not an
+	installed Data Store, or if review could not store the choice.
+	"""
+	setSystemLogCollectorDataStore(host: String!, serverName: String!): Boolean!
+	"""
+	Updates the build of `host`'s operational log collector and returns the
+	operation to poll.
+	
+	`ROLLBACK` is refused as `RollbackUnsupported` on a host that
+	advertises no rollback supervisor, before review is asked, as
+	`updateService` refuses it.
+	
+	# Errors
+	
+	Returns an error if `buildSelector` sets both fields or neither, if the
+	host's capabilities could not be read, if `host` has no collector or
+	its collector has no instance, or for any other failure review reports
+	outside the result union.
+	"""
+	updateSystemLogCollector(host: String!, buildSelector: BuildSelectorInput!, onFailure: FailurePolicy! = ROLLBACK): UpdateSystemLogCollectorResult!
 }
 
 """
@@ -8639,6 +8668,11 @@ type Query {
 	is deterministic; the record scan order is idempotency-key order, which
 	is arbitrary. That order is display only and selects nothing.
 	
+	The install attempts of the hosts' operational log collectors are left
+	out, as [`operator_installs`] describes: node cards read this for an
+	operator's install, which must never show a system install of the same
+	`(host, reproduce)`.
+	
 	# Errors
 	
 	Returns an error if the caller has no access to `host`, if `target` is
@@ -8670,6 +8704,11 @@ type Query {
 	install request for the pair", and request order is exactly that. A
 	row that still owes cleanup is returned with `cleanupOwed` set, not
 	hidden.
+	
+	The install attempts of the hosts' operational log collectors are left
+	out, as [`operator_installs`] describes, before the latest is chosen:
+	node cards read this for an operator's install, which must never show a
+	system install of the same `(host, reproduce)`, nor be hidden by one.
 	
 	# Errors
 	
@@ -8756,6 +8795,16 @@ type Query {
 	Host Agent does not answer within 10 seconds.
 	"""
 	centralManagerTimeSources: CentralManagerTimeSources!
+	"""
+	The operational log collector of every host, in host order.
+	
+	The order is the one review answers in; nothing here re-sorts it.
+	
+	# Errors
+	
+	Returns an error if review could not list the collectors.
+	"""
+	systemLogCollectorList: [SystemLogCollector!]!
 }
 
 type RankedOutlier {
@@ -8915,7 +8964,7 @@ What `removeService` answers with.
 A removal resolves no build, so no build-not-servable refusal is reachable
 from it.
 """
-union RemoveServiceResult = RemoveServiceSuccess | CleanupPending
+union RemoveServiceResult = RemoveServiceSuccess | CleanupPending | SystemInstance
 
 """
 The removal was accepted, and this is the operation to poll.
@@ -9646,6 +9695,84 @@ type SuspiciousTlsTraffic implements Event {
 	Threat Level
 	"""
 	level: ThreatLevel!
+}
+
+"""
+The placement is the host's operational log collector, which node
+operations do not update or remove.
+
+The remedy is to update it from Operational log collectors, through
+`updateSystemLogCollector`.
+"""
+type SystemInstance {
+	"""
+	The host the refused placement is on.
+	"""
+	host: String!
+}
+
+"""
+The operational log collector of one host.
+"""
+type SystemLogCollector {
+	"""
+	The host the collector runs on.
+	"""
+	host: String!
+	"""
+	The instance number of `reproduce` on the host. It is null until an
+	install succeeded.
+	"""
+	instance: StringNumber
+	"""
+	The version of the build installed on the host.
+	
+	It is null together with `installedCommit` or not at all: the two are
+	one build identity, and half of one names no build.
+	"""
+	installedVersion: String
+	"""
+	The commit of the build installed on the host.
+	
+	Null together with `installedVersion` or not at all.
+	"""
+	installedCommit: String
+	"""
+	The server name of the Data Store the collector sends to. It is null
+	until one is chosen.
+	"""
+	dataStore: String
+	"""
+	Whether the collector's instance is connected. It is `false` for a
+	collector with no instance.
+	"""
+	connected: Boolean!
+	"""
+	The last refusal of an install of the collector, if any.
+	"""
+	lastRefusal: SystemLogCollectorRefusal
+	"""
+	The collector's newest operation attempt, or null if it has none.
+	
+	For a collector with an instance it is the current attempt of that
+	instance; for one without, the attempt of its newest install request,
+	if the ledger still holds it.
+	"""
+	latestOperationAttempt: OperationAttempt
+}
+
+"""
+A refusal of an install of a host's operational log collector.
+"""
+type SystemLogCollectorRefusal {
+	"""
+	When the install was refused.
+	"""
+	at: DateTime!
+	"""
+	The reason the install was refused, as reported.
+	"""
+	message: String!
 }
 
 type Tag {
@@ -10505,12 +10632,34 @@ What `updateService` answers with.
 An update allocates nothing, so neither bind-address conflict and no
 request-key refusal is reachable from it.
 """
-union UpdateServiceResult = UpdateServiceSuccess | CleanupPending | RollbackUnsupported | BuildNotServable | ManifestFormatUnsupported
+union UpdateServiceResult = UpdateServiceSuccess | CleanupPending | RollbackUnsupported | BuildNotServable | ManifestFormatUnsupported | SystemInstance
 
 """
 The update was accepted, and this is the operation to poll.
 """
 type UpdateServiceSuccess {
+	"""
+	The attempt's durable identity.
+	"""
+	operationId: String!
+	"""
+	Whether the apply finished or was accepted for later reconciliation.
+	"""
+	disposition: DeployDisposition!
+}
+
+"""
+What `updateSystemLogCollector` answers with.
+
+These are the members of `updateService`'s result except `SystemInstance`:
+the collector is the system instance this mutation is for.
+"""
+union UpdateSystemLogCollectorResult = UpdateSystemLogCollectorSuccess | CleanupPending | RollbackUnsupported | BuildNotServable | ManifestFormatUnsupported
+
+"""
+The collector's update was accepted, and this is the operation to poll.
+"""
+type UpdateSystemLogCollectorSuccess {
 	"""
 	The attempt's durable identity.
 	"""

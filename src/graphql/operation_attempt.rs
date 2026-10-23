@@ -370,6 +370,11 @@ impl OperationAttemptQuery {
     /// is deterministic; the record scan order is idempotency-key order, which
     /// is arbitrary. That order is display only and selects nothing.
     ///
+    /// The install attempts of the hosts' operational log collectors are left
+    /// out, as [`operator_installs`] describes: node cards read this for an
+    /// operator's install, which must never show a system install of the same
+    /// `(host, reproduce)`.
+    ///
     /// # Errors
     ///
     /// Returns an error if the caller has no access to `host`, if `target` is
@@ -393,17 +398,15 @@ impl OperationAttemptQuery {
         // index needs an instance and is not reachable from here — so the
         // records are scanned. A decode failure is propagated rather than
         // skipped, so a corrupt row cannot quietly shrink the answer.
-        let mut attempts = Vec::new();
+        let keep = in_flight_install_of(&host, &target);
+        let mut candidates = Vec::new();
         for row in map.iter(Direction::Forward, None) {
             let row = row?;
-            if row.action == database::OperationAction::Install
-                && !row.is_terminal()
-                && row.host == host
-                && row.target == target
-            {
-                attempts.push(row);
+            if keep(&row) {
+                candidates.push(row);
             }
         }
+        let mut attempts = operator_installs(&store, candidates, keep)?;
         attempts.sort_unstable_by(request_order);
         Ok(attempts.into_iter().map(Into::into).collect())
     }
@@ -433,6 +436,11 @@ impl OperationAttemptQuery {
     /// row that still owes cleanup is returned with `cleanupOwed` set, not
     /// hidden.
     ///
+    /// The install attempts of the hosts' operational log collectors are left
+    /// out, as [`operator_installs`] describes, before the latest is chosen:
+    /// node cards read this for an operator's install, which must never show a
+    /// system install of the same `(host, reproduce)`, nor be hidden by one.
+    ///
     /// # Errors
     ///
     /// Returns an error if the caller has no access to `host`, if `target` is
@@ -451,22 +459,88 @@ impl OperationAttemptQuery {
         let store = super::get_store(ctx)?;
         let map = store.operation_attempt_map();
         // Scanned for the reason `inFlightInstalls` scans, and with a decode
-        // failure propagated for the same one.
-        let mut latest: Option<database::OperationAttempt> = None;
+        // failure propagated for the same one. Every matching candidate is
+        // kept rather than a running maximum, because the maximum is only
+        // known once the system installs are left out.
+        let keep = install_of(&host, &target);
+        let mut candidates = Vec::new();
         for row in map.iter(Direction::Forward, None) {
             let row = row?;
-            if row.action == database::OperationAction::Install
-                && row.host == host
-                && row.target == target
-                && latest
-                    .as_ref()
-                    .is_none_or(|held| request_order(held, &row).is_lt())
-            {
-                latest = Some(row);
+            if keep(&row) {
+                candidates.push(row);
             }
         }
-        Ok(latest.map(Into::into))
+        Ok(operator_installs(&store, candidates, keep)?
+            .into_iter()
+            .max_by(request_order)
+            .map(Into::into))
     }
+}
+
+/// Returns the predicate `latestInstall` selects its candidates by: an install
+/// of `target` on `host`, whatever its phase.
+fn install_of<'a>(
+    host: &'a str,
+    target: &'a str,
+) -> impl Fn(&database::OperationAttempt) -> bool + 'a {
+    move |row| {
+        row.action == database::OperationAction::Install && row.host == host && row.target == target
+    }
+}
+
+/// Returns the predicate `inFlightInstalls` selects its candidates by: a
+/// non-terminal install of `target` on `host`.
+fn in_flight_install_of<'a>(
+    host: &'a str,
+    target: &'a str,
+) -> impl Fn(&database::OperationAttempt) -> bool + 'a {
+    let install = install_of(host, target);
+    move |row| install(row) && !row.is_terminal()
+}
+
+/// Returns the operator's install attempts among `candidates`, each as the
+/// ledger holds it now and still matching `keep`.
+///
+/// The install attempts of the hosts' operational log collectors are left
+/// out. A system log collector is a `reproduce` instance `REview` installs on
+/// every host for itself, and node cards read `inFlightInstalls` and
+/// `latestInstall` for an operator's Log Collector install, which must never
+/// show a system install of the same `(host, reproduce)`, nor the reverse.
+///
+/// The system installs are recognized by their keys: every install key a
+/// system log collector row holds is read once and excluded. Install keys are
+/// fresh and never reused. A system install's key is written before its
+/// attempt, and removed in the same transaction that prunes the attempt, so
+/// re-reading each remaining candidate by its key closes the race with a
+/// prune that runs between the candidates' scan and the key-set read: a
+/// system attempt whose key was removed before the key-set read is absent on
+/// re-read and is dropped, and a key removed after that read was already in
+/// the excluded set. The re-read record, not the scanned copy, is what `keep`
+/// is applied to and what is returned.
+///
+/// # Errors
+///
+/// Returns an error if the install keys or any candidate cannot be read. A
+/// failed read is never answered as an empty list.
+fn operator_installs(
+    store: &Store,
+    candidates: Vec<database::OperationAttempt>,
+    keep: impl Fn(&database::OperationAttempt) -> bool,
+) -> Result<Vec<database::OperationAttempt>> {
+    let system_keys = store.system_log_collector_map().install_keys()?;
+    let map = store.operation_attempt_map();
+    let mut attempts = Vec::new();
+    for candidate in candidates {
+        if system_keys.contains(&candidate.idempotency_key) {
+            continue;
+        }
+        if let Some(row) = map.get(&candidate.idempotency_key)?
+            && keep(&row)
+        {
+            attempts.push(row);
+        }
+    }
+    Ok(attempts)
 }
 
 /// Orders two attempts by when they were requested: `started_at`, tie-broken
@@ -555,12 +629,12 @@ fn node_hostname(store: &Store, node_id: u32) -> Result<Option<String>> {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{DateTime, TimeZone, Utc};
+    use chrono::{DateTime, TimeDelta, TimeZone, Utc};
     use review_database::{
         Agent, AgentKind, AgentStatus, CoreComponent, ExternalService, ExternalServiceKind,
         ExternalServiceStatus, Lifecycle, Node, NodeProfile, OperationAction,
         OperationAttempt as Record, OperationCleanupState, OperationFailureKind, OperationOutcome,
-        OperationPhase, OperationRetryPolicy, Role, Store,
+        OperationPhase, OperationRetentionBound, OperationRetryPolicy, Role, Store,
     };
     use serde_json::json;
 
@@ -1740,6 +1814,238 @@ mod tests {
             assert_eq!(refused.errors.len(), 1, "{role:?}");
             assert_eq!(refused.errors[0].message, "Forbidden", "{role:?}");
         }
+    }
+
+    /// Returns the ids `inFlightInstalls` lists for `(host, target)` as a
+    /// system administrator, asserting that it carries no error.
+    async fn in_flight_ids(schema: &TestSchema, host: &str, target: &str) -> Vec<String> {
+        let res = schema
+            .execute_as_system_admin(&in_flight_query(host, target))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        res.data.into_json().unwrap()["inFlightInstalls"]
+            .as_array()
+            .expect("a list")
+            .iter()
+            .map(|attempt| attempt["id"].as_str().expect("an id").to_string())
+            .collect()
+    }
+
+    /// A system log collector's install never shows on either install query,
+    /// while it runs or once it finished, and never hides an operator's
+    /// install of the same `(host, reproduce)`.
+    ///
+    /// The system install is requested after the operator's, so a query that
+    /// still counted it would answer it as the latest.
+    #[tokio::test]
+    async fn the_install_queries_leave_out_a_system_install() {
+        const SYSTEM: &str = "0aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        const OPERATOR: &str = "0bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        let schema = TestSchema::new().await;
+        insert_node(&schema.store(), "node1", HOST, CUSTOMER, vec![], vec![]);
+
+        // The key is written before its attempt, as review writes it.
+        schema
+            .store()
+            .system_log_collector_map()
+            .append_install_key(HOST, SYSTEM, None)
+            .expect("append the system install key");
+        let mut system = attempt(SYSTEM, OperationAction::Install, HOST, "reproduce", Some(1));
+        system.started_at = instant(30);
+        seed(&schema.store(), &system);
+
+        assert_eq!(
+            in_flight_ids(&schema, HOST, "reproduce").await,
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            latest_install(&schema, HOST, "reproduce").await,
+            json!(null)
+        );
+
+        seed(
+            &schema.store(),
+            &finished(system, OperationOutcome::Succeeded),
+        );
+        schema
+            .store()
+            .system_log_collector_map()
+            .record_install(SYSTEM, 1, "1.2.0", "abcabc")
+            .expect("record the system install");
+
+        assert_eq!(
+            in_flight_ids(&schema, HOST, "reproduce").await,
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            latest_install(&schema, HOST, "reproduce").await,
+            json!(null)
+        );
+
+        let operator = attempt(
+            OPERATOR,
+            OperationAction::Install,
+            HOST,
+            "reproduce",
+            Some(2),
+        );
+        seed(&schema.store(), &operator);
+
+        assert_eq!(
+            in_flight_ids(&schema, HOST, "reproduce").await,
+            vec![OPERATOR.to_string()]
+        );
+        let found = latest_install(&schema, HOST, "reproduce").await;
+        assert_eq!(found["id"], json!(OPERATOR));
+        assert_eq!(found["outcome"], json!(null));
+
+        seed(
+            &schema.store(),
+            &finished(operator, OperationOutcome::Succeeded),
+        );
+
+        assert_eq!(
+            in_flight_ids(&schema, HOST, "reproduce").await,
+            Vec::<String>::new()
+        );
+        let found = latest_install(&schema, HOST, "reproduce").await;
+        assert_eq!(found["id"], json!(OPERATOR));
+        assert_eq!(found["outcome"], json!("SUCCEEDED"));
+    }
+
+    /// Both a running system install and a running operator install: only
+    /// the operator's is answered.
+    #[tokio::test]
+    async fn the_install_queries_answer_the_operator_install_beside_a_running_system_one() {
+        const SYSTEM: &str = "0aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        const OPERATOR: &str = "0bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        let schema = TestSchema::new().await;
+        insert_node(&schema.store(), "node1", HOST, CUSTOMER, vec![], vec![]);
+        schema
+            .store()
+            .system_log_collector_map()
+            .append_install_key(HOST, SYSTEM, None)
+            .expect("append the system install key");
+        let mut system = attempt(SYSTEM, OperationAction::Install, HOST, "reproduce", Some(1));
+        system.started_at = instant(30);
+        seed(&schema.store(), &system);
+        seed(
+            &schema.store(),
+            &attempt(
+                OPERATOR,
+                OperationAction::Install,
+                HOST,
+                "reproduce",
+                Some(2),
+            ),
+        );
+
+        assert_eq!(
+            in_flight_ids(&schema, HOST, "reproduce").await,
+            vec![OPERATOR.to_string()]
+        );
+        assert_eq!(
+            latest_install(&schema, HOST, "reproduce").await["id"],
+            json!(OPERATOR)
+        );
+    }
+
+    /// With no system log collector row, an operator's `reproduce` install is
+    /// answered as before.
+    #[tokio::test]
+    async fn the_install_queries_are_unchanged_without_system_rows() {
+        const OPERATOR: &str = "0bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        let schema = TestSchema::new().await;
+        insert_node(&schema.store(), "node1", HOST, CUSTOMER, vec![], vec![]);
+        seed(
+            &schema.store(),
+            &attempt(
+                OPERATOR,
+                OperationAction::Install,
+                HOST,
+                "reproduce",
+                Some(2),
+            ),
+        );
+
+        assert_eq!(
+            in_flight_ids(&schema, HOST, "reproduce").await,
+            vec![OPERATOR.to_string()]
+        );
+        assert_eq!(
+            latest_install(&schema, HOST, "reproduce").await["id"],
+            json!(OPERATOR)
+        );
+    }
+
+    /// A system candidate the scan copied while it ran, whose attempt and key
+    /// were pruned before the key-set read, is kept by neither query's
+    /// predicates: its key is gone from the excluded set, and the re-read
+    /// finds no attempt.
+    #[tokio::test]
+    async fn a_system_candidate_pruned_after_the_scan_is_not_returned() {
+        const SYSTEM: &str = "0aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        const LATER: &str = "0ccccccc-cccc-4ccc-8ccc-cccccccccccc";
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        store
+            .system_log_collector_map()
+            .append_install_key(HOST, SYSTEM, None)
+            .expect("append the system install key");
+        let system = attempt(SYSTEM, OperationAction::Install, HOST, "reproduce", Some(1));
+        seed(&store, &system);
+
+        // The copy the candidate scan made while the install ran.
+        let copied = store
+            .operation_attempt_map()
+            .get(SYSTEM)
+            .expect("read")
+            .expect("the attempt is there");
+
+        seed(&store, &finished(system, OperationOutcome::Succeeded));
+        // `prune` keeps the attempt the latest pointer names for its triple,
+        // so a later attempt of the same triple takes the pointer off the
+        // system install.
+        let later = attempt(LATER, OperationAction::Update, HOST, "reproduce", Some(1));
+        seed(&store, &later);
+        seed(&store, &finished(later, OperationOutcome::Succeeded));
+        let removed = store
+            .operation_attempt_map()
+            .prune(
+                OperationRetentionBound {
+                    max_age: TimeDelta::zero(),
+                    max_terminal_per_triple: 1,
+                },
+                instant(120),
+            )
+            .expect("prune");
+        assert_eq!(removed, 1);
+        assert!(
+            store
+                .operation_attempt_map()
+                .get(SYSTEM)
+                .expect("read")
+                .is_none()
+        );
+        assert!(
+            store
+                .system_log_collector_map()
+                .install_keys()
+                .expect("read the install keys")
+                .is_empty()
+        );
+
+        let in_flight = super::operator_installs(
+            &store,
+            vec![copied.clone()],
+            super::in_flight_install_of(HOST, "reproduce"),
+        )
+        .expect("the post-scan read");
+        assert_eq!(in_flight, Vec::<Record>::new());
+        let latest =
+            super::operator_installs(&store, vec![copied], super::install_of(HOST, "reproduce"))
+                .expect("the post-scan read");
+        assert_eq!(latest, Vec::<Record>::new());
     }
 
     /// A scoped caller reaches only the hosts of its own customers, on both

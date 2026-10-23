@@ -423,19 +423,23 @@ fn the_operation_enums_mirror_the_stored_ones() {
     }
 }
 
-/// The inline latest attempt is on the three entry types and on no other.
+/// The inline latest attempt is on the three entry types and the system log
+/// collector, and on no other.
 ///
 /// It is reachable only through read paths already guarded
-/// `SystemAdministrator` or `SecurityAdministrator`, and hanging it on a
-/// fourth type would be the way that stops being true.
+/// `SystemAdministrator` or `SecurityAdministrator` — the system log
+/// collector through `systemLogCollectorList`, for a System Administrator
+/// alone — and hanging it on another type would be the way that stops being
+/// true.
 #[test]
-fn the_inline_latest_attempt_is_on_the_three_entry_types() {
+fn the_inline_latest_attempt_is_on_the_entry_types_and_the_system_log_collector() {
     let sdl = rendered_sdl();
 
     for header in [
         "type Agent {",
         "type ExternalService {",
         "type CoreComponent {",
+        "type SystemLogCollector {",
     ] {
         assert!(
             definition(&sdl, header).contains("\n\tlatestOperationAttempt: OperationAttempt\n"),
@@ -445,7 +449,7 @@ fn the_inline_latest_attempt_is_on_the_three_entry_types() {
     assert_eq!(
         sdl.matches("\tlatestOperationAttempt: OperationAttempt\n")
             .count(),
-        3,
+        4,
         "{REGENERATE}"
     );
     // One word for one concept: no type spells it shorter.

@@ -322,7 +322,7 @@ pub(crate) struct RollbackUnsupported {
 #[derive(SimpleObject)]
 pub(crate) struct BuildNotServable {
     /// The package-id the selection was for.
-    target: String,
+    pub(crate) target: String,
 }
 
 /// The target host's Host Agent cannot read the package's manifest format, so
@@ -333,13 +333,24 @@ pub(crate) struct BuildNotServable {
 #[derive(SimpleObject)]
 pub(crate) struct ManifestFormatUnsupported {
     /// The host whose Host Agent cannot read the package.
-    host: String,
+    pub(crate) host: String,
     /// The format version of the package's manifest.
-    format_version: u32,
+    pub(crate) format_version: u32,
     /// The lowest manifest format version the host last reported reading.
-    min: u32,
+    pub(crate) min: u32,
     /// The highest manifest format version the host last reported reading.
-    max: u32,
+    pub(crate) max: u32,
+}
+
+/// The placement is the host's operational log collector, which node
+/// operations do not update or remove.
+///
+/// The remedy is to update it from Operational log collectors, through
+/// `updateSystemLogCollector`.
+#[derive(SimpleObject)]
+pub(crate) struct SystemInstance {
+    /// The host the refused placement is on.
+    host: String,
 }
 
 /// The target requires a configuration template. Choose a template.
@@ -394,6 +405,7 @@ pub(crate) enum UpdateServiceResult {
     RollbackUnsupported(RollbackUnsupported),
     BuildNotServable(BuildNotServable),
     ManifestFormatUnsupported(ManifestFormatUnsupported),
+    SystemInstance(SystemInstance),
 }
 
 /// What `removeService` answers with.
@@ -404,6 +416,7 @@ pub(crate) enum UpdateServiceResult {
 pub(crate) enum RemoveServiceResult {
     Success(RemoveServiceSuccess),
     CleanupPending(CleanupPending),
+    SystemInstance(SystemInstance),
 }
 
 /// Refuses a target outside `permitted`, naming it, as an ordinary GraphQL
@@ -528,7 +541,7 @@ fn bind_addrs(submitted: Option<Vec<BindAddrInput>>) -> Result<Option<Vec<Backen
 ///
 /// The parameter list is that variant's payload verbatim, so a field added to
 /// the variant stops the call sites compiling rather than being dropped.
-fn cleanup_pending(
+pub(crate) fn cleanup_pending(
     host: String,
     target: String,
     instance: Option<u32>,
@@ -564,7 +577,7 @@ fn cleanup_pending(
 /// Returns an error if the capability set cannot be read. A host that could
 /// not be asked is never reported as a host that answered no, and a failed
 /// read is never an implicit grant.
-async fn check_rollback_support(
+pub(crate) async fn check_rollback_support(
     ctx: &Context<'_>,
     host: &str,
     on_failure: FailurePolicy,
@@ -887,6 +900,9 @@ impl DeployMutation {
                     max,
                 },
             )),
+            Err(DeployError::SystemInstance { host }) => {
+                Ok(UpdateServiceResult::SystemInstance(SystemInstance { host }))
+            }
             Err(e) => Err(e.into()),
         }
     }
@@ -924,6 +940,9 @@ impl DeployMutation {
                 instance,
                 operation_id,
             ))),
+            Err(DeployError::SystemInstance { host }) => {
+                Ok(RemoveServiceResult::SystemInstance(SystemInstance { host }))
+            }
             Err(e) => Err(e.into()),
         }
     }
@@ -1114,6 +1133,11 @@ mod tests {
     /// instead of the variant's field would fail the assertion.
     const UNSERVABLE_TARGET: &str = "unservable-target";
 
+    /// The host a `SystemInstance` refusal carries. It is deliberately not a
+    /// host any test submits, so a resolver that rendered its own argument
+    /// instead of the variant's field would fail the assertion.
+    const SYSTEM_INSTANCE_HOST: &str = "system-instance-host";
+
     /// The targets outside the module class every mutation must refuse.
     const FOREIGN_TARGETS: [&str; 7] = [
         "roxyd",
@@ -1230,6 +1254,7 @@ mod tests {
         ConfigTemplateNotApplicable,
         UnknownConfigTemplate,
         ManifestFormatUnsupported,
+        SystemInstance,
         Other,
     }
 
@@ -1293,6 +1318,9 @@ mod tests {
                     format_version: 9,
                     min: 3,
                     max: 8,
+                },
+                Self::SystemInstance => DeployError::SystemInstance {
+                    host: SYSTEM_INSTANCE_HOST.to_string(),
                 },
                 Self::Other => {
                     DeployError::Other(anyhow::anyhow!("review answered something unmodelled"))
@@ -1867,11 +1895,13 @@ mod tests {
         ... on CleanupPending { host target instance operationId }
         ... on RollbackUnsupported { host capability }
         ... on BuildNotServable { target }
-        ... on ManifestFormatUnsupported { host formatVersion min max }";
+        ... on ManifestFormatUnsupported { host formatVersion min max }
+        ... on SystemInstance { host }";
 
     const REMOVE_SELECTION: &str = "__typename
         ... on RemoveServiceSuccess { operationId }
-        ... on CleanupPending { host target instance operationId }";
+        ... on CleanupPending { host target instance operationId }
+        ... on SystemInstance { host }";
 
     const CORE_UPDATE_SELECTION: &str = "__typename
         ... on UpdateCoreComponentSuccess { operationId disposition }
@@ -3912,6 +3942,61 @@ mod tests {
         }
     }
 
+    /// `SystemInstance` arrives as its member, with the host the backend
+    /// named, on an update and a removal, after exactly one backend call.
+    #[tokio::test]
+    async fn a_system_instance_is_the_union_member_on_update_and_removal() {
+        for (query, field) in [
+            (update_mutation(&update_args("reproduce")), "updateService"),
+            (remove_mutation(&remove_args("reproduce")), "removeService"),
+        ] {
+            let (deployer, calls) = RecordingDeployer::boxed(Answer::Fail(Failure::SystemInstance));
+            let schema = TestSchema::new().await;
+
+            let res = schema
+                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .await;
+
+            assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
+            assert_eq!(calls.total(), 1, "{query}");
+            assert_json_eq!(
+                res.data.into_json().unwrap()[field].clone(),
+                json!({
+                    "__typename": "SystemInstance",
+                    "host": SYSTEM_INSTANCE_HOST,
+                })
+            );
+        }
+    }
+
+    /// An install and a core-component update cannot meet a system instance,
+    /// so their unions leave `SystemInstance` out and the variant is an
+    /// ordinary GraphQL error there.
+    #[tokio::test]
+    async fn a_system_instance_is_an_ordinary_error_on_install_and_core_update() {
+        for query in [
+            install_mutation(&install_args("reproduce")),
+            core_update_mutation(&core_update_args("review", "control-host")),
+        ] {
+            let (deployer, calls) = RecordingDeployer::boxed(Answer::Fail(Failure::SystemInstance));
+            let schema = TestSchema::new().await;
+
+            let res = schema
+                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .await;
+
+            assert_eq!(res.errors.len(), 1, "{query}");
+            assert_eq!(
+                res.errors[0].message,
+                "this is the host's operational log collector; update it from Operational log \
+                 collectors",
+                "{query}"
+            );
+            assert!(res.data.into_json().unwrap().is_null(), "{query}");
+            assert_eq!(calls.total(), 1, "{query}");
+        }
+    }
+
     /// Every variant outside the operation's union is an ordinary GraphQL
     /// error rather than a member.
     #[tokio::test]
@@ -4593,16 +4678,25 @@ mod tests {
         assert_eq!(
             sdl_line(&sdl, "union UpdateServiceResult"),
             "union UpdateServiceResult = UpdateServiceSuccess | CleanupPending | \
-             RollbackUnsupported | BuildNotServable | ManifestFormatUnsupported"
+             RollbackUnsupported | BuildNotServable | ManifestFormatUnsupported | SystemInstance"
         );
         assert_eq!(
             sdl_line(&sdl, "union RemoveServiceResult"),
-            "union RemoveServiceResult = RemoveServiceSuccess | CleanupPending"
+            "union RemoveServiceResult = RemoveServiceSuccess | CleanupPending | SystemInstance"
         );
         assert_eq!(
             sdl_line(&sdl, "union UpdateCoreComponentResult"),
             "union UpdateCoreComponentResult = UpdateCoreComponentSuccess | CleanupPending | \
              RollbackUnsupported | BuildNotServable | ManifestFormatUnsupported"
+        );
+        assert_eq!(
+            sdl_line(&sdl, "union UpdateSystemLogCollectorResult"),
+            "union UpdateSystemLogCollectorResult = UpdateSystemLogCollectorSuccess | \
+             CleanupPending | RollbackUnsupported | BuildNotServable | ManifestFormatUnsupported"
+        );
+        assert_eq!(
+            sdl_block_fields(&sdl, "type SystemInstance {"),
+            vec!["host: String!"]
         );
         assert!(!sdl.contains("union HostOnboardingTicket"));
     }
