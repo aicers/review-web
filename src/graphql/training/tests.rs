@@ -910,6 +910,65 @@ async fn the_default_relay_leaves_the_run_failed() {
 }
 
 #[tokio::test]
+async fn the_default_clone_and_cancel_relays_clean_up_the_run() {
+    let schema = TestSchema::new().await;
+    let (engine, target, sensor, server_name) = {
+        let store = schema.store();
+        (
+            insert_engine_instance(&store, A, "engine-a.example.com", ENGINE_KEY),
+            insert_engine_instance(&store, A, "engine-a2.example.com", ENGINE_KEY),
+            insert_sensor_node(&store, A, "sensor-a.example.com"),
+            insert_data_store_node(&store, A, STORE_HOST),
+        )
+    };
+    let text = definition_text(&[&sensor], &server_name, OWN_ADDRESS, "");
+    data(
+        schema
+            .execute_as_system_admin(&insert(&engine, "src", &text))
+            .await,
+    );
+    let id = schema.store().start_training_run("src").unwrap().run.id;
+    let res = schema
+        .execute_as_system_admin(&cancel(&id.to_string()))
+        .await;
+    assert_eq!(
+        refused(&res),
+        (
+            "INSTANCE_UNREACHABLE".into(),
+            "runId".into(),
+            lookup_key(&engine, "engine-a.example.com")
+        )
+    );
+    let run = schema.store().model_run(id).unwrap().unwrap();
+    assert_eq!(run.state, RunState::Failed);
+    assert_eq!(run.reason.as_deref(), Some(INSTANCE_UNREACHABLE));
+
+    let id = schema.store().start_training_run("src").unwrap().run.id;
+    complete(&schema.store(), id, &engine, "src");
+    let res = schema
+        .execute_as_system_admin(&clone(
+            "src",
+            "dst",
+            &target,
+            (&server_name, OWN_ADDRESS),
+            &[&sensor],
+            "",
+        ))
+        .await;
+    assert_eq!(
+        refused(&res),
+        (
+            "INSTANCE_UNREACHABLE".into(),
+            "source".into(),
+            lookup_key(&engine, "engine-a.example.com")
+        )
+    );
+    assert!(stored(&schema.store(), "dst").is_none());
+    assert_eq!(schema.store().model_runs("dst").unwrap(), []);
+    assert!(schema.store().active_run("src").unwrap().is_none());
+}
+
+#[tokio::test]
 async fn train_applies_the_source_and_data_store_rules_to_the_stored_definition() {
     let f = fixture().await;
     let text = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
@@ -1142,6 +1201,70 @@ async fn an_undelivered_cancel_of_a_clone_removes_it_with_its_target() {
 
 // ---------------------------------------------------------------------------
 // cloneModel
+
+#[tokio::test]
+async fn a_clone_relay_error_frees_the_target_name() {
+    for ends_runs in [false, true] {
+        for answer in [
+            RelayAnswer::Refused("no disk space".into()),
+            RelayAnswer::Unreachable,
+        ] {
+            let f = fixture().await;
+            if ends_runs {
+                f.relay.end_failed_runs();
+            }
+            f.define(
+                &f.engine_a,
+                "src",
+                &f.definition(&[&f.sensor_a], OWN_ADDRESS, ""),
+            )
+            .await;
+            let trained_run = f.train_to_completion("src", &f.engine_a).await;
+            let request = clone(
+                "src",
+                "dst",
+                &f.engine_a2,
+                (&f.server_name, OWN_ADDRESS),
+                &[&f.sensor_a2],
+                "",
+            );
+            f.relay.answer_with(answer.clone());
+            let res = f.sec(&request, &[A]).await;
+            let expected = match answer {
+                RelayAnswer::Refused(reason) => ("ENGINE_REFUSED", reason),
+                RelayAnswer::Unreachable => (
+                    "INSTANCE_UNREACHABLE",
+                    lookup_key(&f.engine_a, "engine-a.example.com"),
+                ),
+                RelayAnswer::Accepted => unreachable!("only errors are tested"),
+            };
+            assert_eq!(
+                refused(&res),
+                (expected.0.into(), "source".into(), expected.1)
+            );
+            let calls = f.relay.calls();
+            let Some(RelayCall::Clone {
+                run_id: failed_run_id,
+                ..
+            }) = calls.last()
+            else {
+                panic!("clone was not relayed: {calls:?}");
+            };
+            assert_eq!(f.run_state(*failed_run_id), None);
+            assert!(stored(&f.store(), "dst").is_none());
+            assert_eq!(f.store().model_runs("dst").unwrap(), []);
+            assert!(f.store().active_run("src").unwrap().is_none());
+            let source = model_by_name(&f.store(), "src").unwrap().unwrap();
+            assert_eq!(source.trained_run_id, trained_run);
+
+            f.relay.answer_with(RelayAnswer::Accepted);
+            let retried_run = run_id(&data(f.sec(&request, &[A]).await)["cloneModel"]);
+            assert_ne!(retried_run, *failed_run_id);
+            assert_eq!(f.run_state(retried_run), Some(RunState::Requested));
+            assert!(stored(&f.store(), "dst").is_some());
+        }
+    }
+}
 
 #[tokio::test]
 async fn a_same_customer_clone_is_relayed_and_shown_on_its_source() {
