@@ -865,6 +865,21 @@ async fn a_detector_on_a_node_without_an_applied_profile_is_refused() {
     assert_eq!(detector_id, Value::from(1));
     ok(f.sys(&f.save_query(&bare, Some("cpus = 4"))).await);
 
+    // An apply of the document is refused alike.
+    f.seed(&bare, Some(&f.valid()));
+    let stored = f.node(id);
+    let (code, field, value, detector_id) = refused(&f.sys(&apply(&stored)).await);
+    assert_eq!(
+        (code.as_str(), field.as_str(), value.as_str()),
+        (
+            "SOURCE_NOT_ALLOWED",
+            "detectors[0].sources[0]",
+            f.sensor_a.as_str()
+        )
+    );
+    assert_eq!(detector_id, Value::from(1));
+    assert_eq!(f.node(id), stored);
+
     // A new node has no applied profile either.
     let res = f
         .sys(&insert_node(A, "new.example.com", Some(&f.valid())))
@@ -1603,4 +1618,136 @@ async fn a_new_node_or_a_hostname_change_is_refused_for_a_listed_name() {
     let (message, extensions) = single_error(&res);
     assert!(extensions.get("code").is_none(), "{extensions}");
     assert!(message.contains("already in use"), "{message}");
+}
+
+/// What lists the source names in the Apply guard tests: a draft document of
+/// `engine_a` or a training definition of customer A.
+#[derive(Clone, Copy, Debug)]
+enum Holder {
+    Document,
+    Definition,
+}
+
+impl Fixture {
+    /// Makes `holder`, of customer A, list `sources`.
+    async fn hold(&self, holder: Holder, sources: &[&str]) {
+        match holder {
+            Holder::Document => ok(self
+                .save(&self.engine_a, Some(&self.doc("model-a", sources, "")))
+                .await),
+            Holder::Definition => self
+                .store()
+                .insert_training_definition(NewTrainingDefinition {
+                    name: "def".to_string(),
+                    customer_id: A,
+                    instance: self.engine_a.clone(),
+                    method: ModelMethod::Multidimension,
+                    event_kind: "http".to_string(),
+                    sources: sources.iter().map(ToString::to_string).collect(),
+                    indicator: None,
+                    definition: String::new(),
+                })
+                .expect("insert training definition"),
+        }
+    }
+
+    /// Stores a draft profile of `customer_id` and `hostname` on node `id`,
+    /// keeping its applied profile, without the guard a draft save runs, and
+    /// returns the stored node.
+    fn seed_move(&self, id: u32, customer_id: u32, hostname: &str) -> Node {
+        let node = self.node(id);
+        let moved = NodeProfile {
+            customer_id,
+            description: String::new(),
+            hostname: hostname.to_string(),
+        };
+        self.set_profiles(id, node.profile.clone(), Some(moved));
+        self.node(id)
+    }
+
+    /// Checks that `applyNode` and `applyNodeDraft` of the stored `node`, as a
+    /// System Administrator, each refuse with `CUSTOMER_CHANGE_REFUSED` on
+    /// `field` for `source`, naming `holder`, and leave the node as stored.
+    async fn assert_apply_refused(&self, node: &Node, holder: Holder, field: &str, source: &str) {
+        assert_eq!(self.node(node.id), *node, "the request matches the store");
+        for query in [apply(node), apply_draft(node)] {
+            let (_, extensions) = single_error(&self.sys(&query).await);
+            assert_eq!(extensions["code"], "CUSTOMER_CHANGE_REFUSED", "{query}");
+            assert_eq!(extensions["field"], field, "{query}");
+            assert_eq!(extensions["value"], source, "{query}");
+            match holder {
+                Holder::Document => {
+                    assert_eq!(extensions["agentKey"], ENGINE_KEY, "{query}");
+                    assert_eq!(
+                        extensions["nodeId"],
+                        self.engine_a.node_id.to_string(),
+                        "{query}"
+                    );
+                }
+                Holder::Definition => assert_eq!(extensions["definition"], "def", "{query}"),
+            }
+            assert_eq!(self.node(node.id), *node, "{query}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_apply_of_a_customer_change_is_refused_while_another_customer_lists_the_source() {
+    for holder in [Holder::Document, Holder::Definition] {
+        let f = fixture().await;
+        f.hold(holder, &[&f.sensor_a, &f.logs_a]).await;
+        for source in [&f.sensor_a, &f.logs_a] {
+            let node = f.source_node(source);
+            let hostname = node.profile.as_ref().unwrap().hostname.clone();
+            let node = f.seed_move(node.id, B, &hostname);
+            f.assert_apply_refused(&node, holder, "customer_id", source)
+                .await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_apply_of_a_hostname_change_is_refused_for_another_customers_listed_name() {
+    for holder in [Holder::Document, Holder::Definition] {
+        let f = fixture().await;
+        f.hold(holder, &[&f.sensor_a, &f.logs_a]).await;
+        for (source, hostname) in [
+            (&f.sensor_a, "sensor-a.example.com"),
+            (&f.logs_a, "logs-a.example.com"),
+        ] {
+            // The store keeps a hostname to one node, so the listed node
+            // leaves it first, which its own customer's holder allows.
+            let listed = f.source_node(source);
+            let vacated = format!("moved-{hostname}");
+            ok(f.sys(&Fixture::move_query(&listed, A, &vacated)).await);
+            ok(f.sys(&apply(&f.node(listed.id))).await);
+            assert_eq!(f.node(listed.id).profile.unwrap().hostname, vacated);
+
+            let node = f.source_node(&f.sensor_b);
+            let node = f.seed_move(node.id, B, hostname);
+            f.assert_apply_refused(&node, holder, "hostname", source)
+                .await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_applied_removal_of_the_sensor_or_log_collector_does_not_lift_the_apply_guard() {
+    for holder in [Holder::Document, Holder::Definition] {
+        let f = fixture().await;
+        f.hold(holder, &[&f.sensor_a, &f.logs_a]).await;
+        for source in [&f.sensor_a, &f.logs_a] {
+            let node = f.source_node(source);
+            let mut removed = node.clone();
+            removed.agents.clear();
+            ok(f.sys(&update_draft(&node, &removed)).await);
+            ok(f.sys(&apply(&f.node(node.id))).await);
+            assert_eq!(f.node(node.id).agents, Vec::<Agent>::new());
+
+            let hostname = node.profile.as_ref().unwrap().hostname.clone();
+            let node = f.seed_move(node.id, B, &hostname);
+            f.assert_apply_refused(&node, holder, "customer_id", source)
+                .await;
+        }
+    }
 }
