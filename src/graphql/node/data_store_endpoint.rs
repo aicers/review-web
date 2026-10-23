@@ -29,10 +29,20 @@ pub(super) struct DataStoreEndpoint {
 }
 
 /// One Data Store row that is listed: the hostname of its node's applied
-/// profile and its instance number.
-struct ListedRow {
-    hostname: String,
-    instance: u32,
+/// profile, its instance number, and its stored configuration.
+pub(crate) struct ListedRow {
+    pub(crate) hostname: String,
+    pub(crate) instance: u32,
+    /// The Data Store external service's stored `draft`.
+    pub(crate) draft: Option<database::ExternalServiceConfig>,
+}
+
+impl ListedRow {
+    /// Returns the row's Data Store name, `<instance:03>.giganto.<hostname>`.
+    #[must_use]
+    pub(crate) fn server_name(&self) -> String {
+        format!("{:03}.giganto.{}", self.instance, self.hostname)
+    }
 }
 
 /// Returns every listed Data Store row, in node-map order.
@@ -41,8 +51,11 @@ struct ListedRow {
 /// profile, it has an instance number, its projected installed state has a
 /// version, and its lifecycle is neither `NOT_INSTALLED` nor `REMOVING`. The
 /// instance, version and lifecycle are read as `ExternalService` resolves them.
-fn listed_rows(ctx: &Context<'_>) -> Result<Vec<ListedRow>> {
-    let store = get_store(ctx)?;
+///
+/// # Errors
+///
+/// Returns an error if the node map cannot be read.
+pub(crate) fn listed_rows(store: &database::Store) -> Result<Vec<ListedRow>> {
     let map = store.node_map();
     let mut rows = Vec::new();
     for entry in map.iter(Direction::Forward, None) {
@@ -50,7 +63,7 @@ fn listed_rows(ctx: &Context<'_>) -> Result<Vec<ListedRow>> {
         let Some(profile) = node.profile.as_ref() else {
             continue;
         };
-        for service in &node.external_services {
+        for service in node.external_services {
             if service.kind != database::ExternalServiceKind::DataStore {
                 continue;
             }
@@ -81,6 +94,7 @@ fn listed_rows(ctx: &Context<'_>) -> Result<Vec<ListedRow>> {
             rows.push(ListedRow {
                 hostname: profile.hostname.clone(),
                 instance,
+                draft: service.draft,
             });
         }
     }
@@ -92,7 +106,9 @@ fn listed_rows(ctx: &Context<'_>) -> Result<Vec<ListedRow>> {
 /// A failure is this element's alone: it is logged, and the element carries
 /// port `0` and no address under a name composed here as a label only.
 async fn endpoint(agent_manager: &SharedAgentManager, row: ListedRow) -> DataStoreEndpoint {
-    let ListedRow { hostname, instance } = row;
+    let ListedRow {
+        hostname, instance, ..
+    } = row;
     match agent_manager
         .data_store_read_endpoint(&hostname, instance)
         .await
@@ -117,7 +133,7 @@ async fn endpoint(agent_manager: &SharedAgentManager, row: ListedRow) -> DataSto
 }
 
 pub(super) async fn load(ctx: &Context<'_>) -> Result<Vec<DataStoreEndpoint>> {
-    let rows = listed_rows(ctx)?;
+    let rows = listed_rows(&*get_store(ctx)?)?;
     if rows.is_empty() {
         return Ok(Vec::new());
     }

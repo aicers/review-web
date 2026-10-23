@@ -43,6 +43,7 @@ strum_macros = "0.28"
 thiserror = "2"
 tokio = "1"
 tokio-rustls = "0.26"
+toml = "1"
 tower = "0.5"
 tracing = "0.1"
 vinum = { git = "https://github.com/vinesystems/vinum.git", tag = "2.0.0" }

@@ -42,6 +42,17 @@ pub(crate) fn users_customers(ctx: &Context<'_>) -> Result<Option<Vec<u32>>> {
     Ok(customer_ids.0.clone())
 }
 
+/// Returns whether the request is made by a System Administrator.
+///
+/// A System Administrator is unscoped (see [`users_customers`]) and is the
+/// only role some decisions are reserved for, such as a cross-customer clone
+/// or an address override.
+#[must_use]
+pub(crate) fn is_system_admin(ctx: &Context<'_>) -> bool {
+    ctx.data_opt::<crate::graphql::RoleGuard>()
+        == Some(&crate::graphql::RoleGuard::Role(Role::SystemAdministrator))
+}
+
 /// Checks whether the current user can access the given customer ID.
 ///
 /// Returns `Ok(())` if the current user is unscoped or belongs to the given customer.

@@ -34,6 +34,8 @@ mod outlier;
 mod push_test_support;
 mod qualifier;
 mod refusal;
+#[cfg(test)]
+mod run_test_support;
 mod sampling;
 mod slicing;
 mod statistics;
@@ -42,10 +44,12 @@ mod tags;
 mod template;
 mod tor_exit_node;
 mod traffic_filter;
+mod training;
 mod training_result;
 mod triage;
 mod trusted_domain;
 mod trusted_user_agent;
+mod unsupervised;
 
 use std::fmt;
 use std::future::Future;
@@ -194,6 +198,7 @@ struct SubQueryTwoA(
     template::TemplateQuery,
     tor_exit_node::TorExitNodeQuery,
     label_db::LabelDbQuery,
+    training::TrainingQuery,
 );
 
 #[derive(MergedObject, Default)]
@@ -249,6 +254,7 @@ struct SubMutationTwoA(
     tags::WorkflowTagMutation,
     template::TemplateMutation,
     tor_exit_node::TorExitNodeMutation,
+    training::TrainingMutation,
 );
 
 #[derive(MergedObject, Default)]

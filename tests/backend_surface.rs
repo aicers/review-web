@@ -25,7 +25,7 @@ use review_protocol::types::node::{
 };
 use review_web::backend::{
     AcceptedPackage, BindAddrInput, BuildId, ConfigTemplateCatalog, ConfigTemplateSummary,
-    DeployError, DeployOutcome, HostOnboarder, HostOnboardingTicket, IngressStream,
+    DeployError, DeployOutcome, EngineRefused, HostOnboarder, HostOnboardingTicket, IngressStream,
     IngressStreamError, JoinToken, LocalizedText, OperationId, PackageDeployer, PackageIngestError,
     PackageStoreReceiver, RunningRoxydBuild, TrustActivation, TrustIngestError, TrustManager,
 };
@@ -839,4 +839,21 @@ async fn an_outside_trust_manager_preserves_each_stream_error_kind() {
                 .is_empty()
         );
     }
+}
+
+/// `aicers/review` builds the refusal an engine sent, wraps it as the relay
+/// methods' contract asks, and review-web downcasts it back out.
+#[test]
+fn an_engine_refusal_is_built_and_downcast_from_another_crate() {
+    let error = anyhow::Error::new(EngineRefused {
+        reason: "no disk space".to_string(),
+    });
+    let refused = error
+        .downcast_ref::<EngineRefused>()
+        .expect("the refusal is downcast back");
+    assert_eq!(refused.reason, "no disk space");
+    assert!(error.to_string().contains("no disk space"));
+
+    let unreachable = anyhow::anyhow!("no live connection");
+    assert!(unreachable.downcast_ref::<EngineRefused>().is_none());
 }

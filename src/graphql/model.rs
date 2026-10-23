@@ -15,6 +15,7 @@ use super::{
     data_source::DataSource,
     fill_vacant_time_slots, get_trend,
     refusal::{RefusalCode, refusal},
+    training::{self, ModelDetectorUse, ModelRun, TrainingDefinition, TrainingDefinitionState},
     training_result, zero_filled_length,
 };
 use crate::graphql::query;
@@ -558,10 +559,7 @@ impl ModelDigest {
 
     /// The engine instance the model belongs to, or null if it has none.
     async fn instance(&self) -> Option<ModelInstance> {
-        self.inner.instance.as_ref().map(|instance| ModelInstance {
-            node_id: ID(instance.node_id.to_string()),
-            agent_key: instance.agent_key.clone(),
-        })
+        self.inner.instance.as_ref().map(Into::into)
     }
 
     /// When the training that produced the current result succeeded.
@@ -579,7 +577,67 @@ impl ModelDigest {
                 model_id: self.inner.id,
                 trained_at: previous.trained_at,
                 version: previous.version,
+                trained_definition: previous.trained_definition.clone(),
+                trained_run_id: ID(previous.trained_run_id.to_string()),
             })
+    }
+
+    /// The state of the model's training definition.
+    ///
+    /// A model with no definition is `NO_INSTANCE` if it has no instance and
+    /// `READY` otherwise.
+    async fn state(&self, ctx: &Context<'_>) -> Result<TrainingDefinitionState> {
+        let store = crate::graphql::get_store(ctx)?;
+        Ok(match store.training_definition_state(&self.inner.name)? {
+            Some(state) => state.into(),
+            None if self.inner.instance.is_none() => TrainingDefinitionState::NoInstance,
+            None => TrainingDefinitionState::Ready,
+        })
+    }
+
+    /// The model's editable training definition: the settings of its next
+    /// training. Null for a model with no definition.
+    async fn definition(&self, ctx: &Context<'_>) -> Result<Option<TrainingDefinition>> {
+        let store = crate::graphql::get_store(ctx)?;
+        Ok(store.training_definition(&self.inner.name)?.map(Into::into))
+    }
+
+    /// The training definition, a TOML document, of the run that trained the
+    /// current result.
+    async fn trained_definition(&self) -> &str {
+        &self.inner.trained_definition
+    }
+
+    /// The id of the run that trained the current result.
+    async fn trained_run_id(&self) -> ID {
+        ID(self.inner.trained_run_id.to_string())
+    }
+
+    /// The sources of `trainedDefinition`; empty if it does not parse.
+    async fn training_sources(&self) -> Vec<String> {
+        training::sources_of(&self.inner.trained_definition)
+    }
+
+    /// The active run that creates or replaces the model, or clones from it.
+    ///
+    /// A clone run to another customer is null for callers who are not System
+    /// Administrators.
+    async fn active_run(&self, ctx: &Context<'_>) -> Result<Option<ModelRun>> {
+        let store = crate::graphql::get_store(ctx)?;
+        training::visible_active_run(ctx, &store, &self.inner.name)
+    }
+
+    /// The detectors whose applied or pending engine document names the
+    /// model, ordered by node id, agent key, then detector id. A detector the
+    /// applied and the pending document name under different ids is listed
+    /// once for each.
+    async fn detectors(&self, ctx: &Context<'_>) -> Result<Vec<ModelDetectorUse>> {
+        let store = crate::graphql::get_store(ctx)?;
+        Ok(store
+            .model_users(&self.inner.name)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
     }
 
     /// Always null: a model carries no data source.
@@ -613,11 +671,20 @@ pub(super) enum ModelMethod {
 
 /// The engine instance a model belongs to.
 #[derive(SimpleObject)]
-struct ModelInstance {
+pub(super) struct ModelInstance {
     /// The node of the instance.
     node_id: ID,
     /// The key of the instance's agent on the node.
     agent_key: String,
+}
+
+impl From<&database::ModelInstance> for ModelInstance {
+    fn from(instance: &database::ModelInstance) -> Self {
+        Self {
+            node_id: ID(instance.node_id.to_string()),
+            agent_key: instance.agent_key.clone(),
+        }
+    }
 }
 
 /// The summary of a model's previous training result.
@@ -630,6 +697,11 @@ struct PreviousTrainingResult {
     trained_at: DateTime<Utc>,
     /// The version of the previous result's model.
     version: i32,
+    /// The training definition, a TOML document, of the run that trained the
+    /// previous result.
+    trained_definition: String,
+    /// The id of the run that trained the previous result.
+    trained_run_id: ID,
 }
 
 #[async_graphql::ComplexObject]
