@@ -287,7 +287,14 @@ impl TrainingMutation {
             let Some(hostname) = applied_hostname(&store, instance.node_id)? else {
                 return Err(no_hostname(instance));
             };
-            let document = TrainingDocument::parse(&stored.definition)?;
+            let document = TrainingDocument::parse(&stored.definition).map_err(|_| {
+                refusal(
+                    RefusalCode::InvalidDocument,
+                    format!("the stored definition {name:?} does not parse"),
+                    "name",
+                    &name,
+                )
+            })?;
             document.check_sources(&store, stored.customer_id)?;
             document.check_data_store(
                 &store,

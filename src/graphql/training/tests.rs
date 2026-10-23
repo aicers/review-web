@@ -1011,6 +1011,36 @@ async fn train_applies_the_source_and_data_store_rules_to_the_stored_definition(
 }
 
 #[tokio::test]
+async fn train_refuses_a_stored_definition_that_does_not_parse() {
+    let f = fixture().await;
+    let text = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
+    f.define(&f.engine_a, "def", &text).await;
+
+    // A key outside the schema, stored bypassing validation, is reported as
+    // a stored text that does not parse rather than as `UNKNOWN_FIELD`.
+    let document = TrainingDocument::parse(&text).unwrap();
+    f.store()
+        .update_training_definition(
+            "def",
+            TrainingDefinitionUpdate {
+                method: document.method.into(),
+                event_kind: document.event_kind.clone(),
+                sources: document.sources.clone(),
+                indicator: None,
+                definition: format!("unknown_key = 1\n{text}"),
+            },
+        )
+        .unwrap();
+    let res = f.sys(&train("def")).await;
+    assert_eq!(
+        refused(&res),
+        ("INVALID_DOCUMENT".into(), "name".into(), "def".into())
+    );
+    assert_eq!(f.store().model_runs("def").unwrap().len(), 0);
+    assert_eq!(f.relay.calls(), Vec::new());
+}
+
+#[tokio::test]
 async fn train_relays_the_text_read_under_the_lock() {
     let f = fixture().await;
     f.define(
