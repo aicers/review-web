@@ -969,6 +969,7 @@ mod tests {
         ExternalServiceStatus, HostNetworkGroup, NetworkListEntry, Node, NodeProfile, OwnedNetwork,
         event::{DnsEventFields, Event, EventKind, EventMessage, NetworkType},
     };
+    use rocksdb::{OptimisticTransactionDB, Options, SingleThreaded};
 
     use super::*;
     use crate::backend::{AgentManager, ResourceUsage};
@@ -1546,6 +1547,68 @@ mod tests {
         assert!(response.errors.is_empty(), "{:?}", response.errors);
         assert!(!response.data.into_json().unwrap()["customerDataDeletionResult"].is_null());
         assert_eq!(job(&test_store.store, 7), original);
+    }
+
+    #[tokio::test]
+    async fn result_propagates_persisted_job_decoding_failure() {
+        const CUSTOMER_ID: u32 = 7;
+        const STATES_DIRECTORY: &str = "states.db";
+        const JOB_COLUMN_FAMILY: &str = "customer deletion jobs";
+
+        let permit = TEST_DB_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let db_dir = tempfile::tempdir().unwrap();
+        let backup_dir = tempfile::tempdir().unwrap();
+        {
+            // Match review-database's layout and write an undecodable service-results value.
+            // Close the raw database before Store opens it and creates the remaining tables.
+            let mut options = Options::default();
+            options.create_if_missing(true);
+            options.create_missing_column_families(true);
+            let db = OptimisticTransactionDB::<SingleThreaded>::open_cf(
+                &options,
+                db_dir.path().join(STATES_DIRECTORY),
+                [JOB_COLUMN_FAMILY],
+            )
+            .unwrap();
+            let column_family = db.cf_handle(JOB_COLUMN_FAMILY).unwrap();
+            db.put_cf(column_family, CUSTOMER_ID.to_be_bytes(), [0xff])
+                .unwrap();
+        }
+        let store = Store::new(db_dir.path(), backup_dir.path(), None).unwrap();
+        assert!(store.customer_data_deletion_map().get(CUSTOMER_ID).is_err());
+        let test_store = TestStore {
+            _permit: permit,
+            _db_dir: db_dir,
+            _backup_dir: backup_dir,
+            store: Arc::new(RwLock::new(store)),
+        };
+
+        let schema = result_schema(&test_store);
+        let response = schema.execute(admin_request(RESULT_QUERY)).await;
+        assert_eq!(response.errors.len(), 1, "{:?}", response.errors);
+        let error = response.errors.first().unwrap();
+        assert_eq!(
+            error.message,
+            format!("retrieving customer data deletion job {CUSTOMER_ID}")
+        );
+        assert_eq!(
+            error.path,
+            vec![async_graphql::PathSegment::Field(
+                "customerDataDeletionResult".to_string()
+            )]
+        );
+
+        // An unrelated malformed row must not turn a missing job into an error.
+        let response = schema
+            .execute(admin_request(&RESULT_QUERY.replace("\"7\"", "\"8\"")))
+            .await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        assert_eq!(
+            response.data.into_json().unwrap(),
+            serde_json::json!({"customerDataDeletionResult": null})
+        );
     }
 
     #[tokio::test]
