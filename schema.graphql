@@ -3788,6 +3788,20 @@ type DataStoreEndpoint {
 	addrs: [String!]!
 }
 
+"""
+The Data Store a clone's target reads from.
+"""
+input DataStoreInput {
+	"""
+	The address the engine dials, `ip:port`.
+	"""
+	address: String!
+	"""
+	The name of the Data Store, `<instance:03>.giganto.<hostname>`.
+	"""
+	serverName: String!
+}
+
 enum DataType {
 	"""
 	comma-separated values
@@ -5879,6 +5893,33 @@ type ManifestFormatUnsupported {
 	max: Int!
 }
 
+"""
+A detector of an engine instance's applied or pending document that names
+a model.
+"""
+type ModelDetectorUse {
+	"""
+	The node of the instance.
+	"""
+	nodeId: ID!
+	"""
+	The key of the instance's agent on the node.
+	"""
+	agentKey: String!
+	"""
+	The id of the detector.
+	"""
+	detectorId: ID!
+	"""
+	Whether the applied document's detector names the model.
+	"""
+	applied: Boolean!
+	"""
+	Whether the pending document's detector names the model.
+	"""
+	pending: Boolean!
+}
+
 type ModelDigest {
 	id: ID!
 	name: String!
@@ -5908,6 +5949,45 @@ type ModelDigest {
 	none.
 	"""
 	previousTrainingResult: PreviousTrainingResult
+	"""
+	The state of the model's training definition.
+	
+	A model with no definition is `NO_INSTANCE` if it has no instance and
+	`READY` otherwise.
+	"""
+	state: TrainingDefinitionState!
+	"""
+	The model's editable training definition: the settings of its next
+	training. Null for a model with no definition.
+	"""
+	definition: TrainingDefinition
+	"""
+	The training definition, a TOML document, of the run that trained the
+	current result.
+	"""
+	trainedDefinition: String!
+	"""
+	The id of the run that trained the current result.
+	"""
+	trainedRunId: ID!
+	"""
+	The sources of `trainedDefinition`; empty if it does not parse.
+	"""
+	trainingSources: [String!]!
+	"""
+	The active run that creates or replaces the model, or clones from it.
+	
+	A clone run to another customer is null for callers who are not System
+	Administrators.
+	"""
+	activeRun: ModelRun
+	"""
+	The detectors whose applied or pending engine document names the
+	model, ordered by node id, agent key, then detector id. A detector the
+	applied and the pending document name under different ids is listed
+	once for each.
+	"""
+	detectors: [ModelDetectorUse!]!
 	"""
 	Always null: a model carries no data source.
 	"""
@@ -5992,6 +6072,68 @@ enum ModelMethod {
 	MULTIDIMENSION
 	PREFIX
 	TIMESERIES
+}
+
+type ModelRun {
+	"""
+	The id the Central Manager issued for the run.
+	"""
+	id: ID!
+	"""
+	What the run does.
+	"""
+	kind: ModelRunKind!
+	"""
+	The model the run creates or replaces; for a clone, the target.
+	"""
+	model: String!
+	"""
+	The model a clone run copies, or null for a training run. Null also
+	for a clone to another customer unless the caller is a System
+	Administrator.
+	"""
+	source: String
+	"""
+	The state of the run.
+	"""
+	state: ModelRunState!
+	"""
+	The reason given with the last state change, if any.
+	"""
+	reason: String
+	"""
+	When the run was requested.
+	"""
+	requestedAt: DateTime!
+	"""
+	When the state of the run last changed.
+	"""
+	updatedAt: DateTime!
+}
+
+"""
+What a run does.
+"""
+enum ModelRunKind {
+	"""
+	Trains the model of a training definition.
+	"""
+	TRAIN
+	"""
+	Clones a model into a new one.
+	"""
+	CLONE
+}
+
+"""
+The state of a run.
+"""
+enum ModelRunState {
+	REQUESTED
+	STARTED
+	SUCCEEDED
+	FAILED
+	CANCELLED
 }
 
 type MultiHostPortScan implements Event {
@@ -6407,6 +6549,126 @@ type Mutation {
 	mutation; a Hog that missed it receives the list when it next connects.
 	"""
 	updateTorExitNodeList(ipAddresses: [String!]!): [String!]!
+	"""
+	Stores the training definition `name` on the engine instance
+	`agentKey` of node `nodeId`, returning the name.
+	
+	`definition` is the TOML document of review-protocol's
+	`TrainModelRequest::definition`. Scope is the customer of the
+	instance's node; an instance of none of the caller's customers is
+	refused with `Forbidden`.
+	
+	Refusals carry `extensions.code`: `INVALID_DOCUMENT`,
+	`UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`, `DUPLICATE_ENTRY`,
+	`BOUND_VIOLATED`, `TIMESERIES_UNSUPPORTED`, `EVENT_KIND_NOT_ALLOWED`,
+	`SOURCE_NOT_ALLOWED`, `DATA_STORE_NOT_INSTALLED`,
+	`ADDRESS_OVERRIDE_FORBIDDEN` and `INDICATOR_NOT_ALLOWED` for the
+	definition; `NAME_TAKEN`, `NAME_INVALID` and `INSTANCE_NOT_ELIGIBLE`.
+	"""
+	insertTrainingDefinition(nodeId: ID!, agentKey: String!, name: String!, definition: String!): String!
+	"""
+	Replaces the training definition `name` with `definition`, returning
+	the name.
+	
+	Scope is the stored definition's customer, and the definition is
+	validated for that customer. A definition of none of the caller's
+	customers is refused with `Forbidden`.
+	
+	Refusals carry `extensions.code`: the codes of the definition, as
+	`insertTrainingDefinition` lists them; `NOT_FOUND`, `RUN_IN_PROGRESS`
+	while a run of the definition is active, and `FIELD_FIXED` when the
+	method or the event kind would change after the model exists.
+	"""
+	updateTrainingDefinition(name: String!, definition: String!): String!
+	"""
+	Removes the training definition `name` with its runs, returning the
+	name.
+	
+	Scope is the stored definition's customer. Refusals carry
+	`extensions.code`: `NOT_FOUND`; `MODEL_IN_USE` while a model of the
+	name exists, with `definition`; `RUN_IN_PROGRESS` while a run of the
+	definition is active.
+	"""
+	removeTrainingDefinition(name: String!): String!
+	"""
+	Starts a training run of the definition `name` on its instance,
+	returning the run id.
+	
+	Scope is the definition's customer. The stored definition is checked
+	again for its customer's sources and an installed Data Store, and the
+	definition text the run starts with is relayed to the instance.
+	
+	Refusals carry `extensions.code`: `NOT_FOUND`; `INVALID_DOCUMENT` if
+	the stored definition does not parse; `SOURCE_NOT_ALLOWED` and
+	`DATA_STORE_NOT_INSTALLED`; `INSTANCE_NOT_ELIGIBLE`,
+	`INSTANCE_STOPPED` and `RUN_IN_PROGRESS`; and, once the run is
+	stored, `ENGINE_REFUSED` with the engine's reason in `value` or
+	`INSTANCE_UNREACHABLE`, either leaving the run failed.
+	"""
+	trainModel(name: String!): ID!
+	"""
+	Asks the instance performing the active run `runId` to cancel it,
+	returning the run id.
+	
+	Scope is the customer of the definition the run's model names, for a
+	clone the target's. The request goes to the instance that performs
+	the run, for a clone the source model's.
+	
+	Refusals carry `extensions.code`: `NOT_FOUND`; `RUN_NOT_ACTIVE` for a
+	finished run; `ENGINE_REFUSED` with the engine's reason in `value` or
+	`INSTANCE_UNREACHABLE`, either leaving the run failed (a clone run is
+	removed with its target definition).
+	"""
+	cancelModelRun(runId: ID!): ID!
+	"""
+	Clones the model `source` into the new model `targetName` on the
+	engine instance `agentKey` of node `nodeId`, returning the run id.
+	
+	The target's definition is the source's trained definition, the one
+	that produced its classifier, with `dataStore`, `sources` and
+	`suspiciousTokens` replaced. Left out, `suspiciousTokens` keeps the
+	trained definition's indicator for a clone within a customer and
+	clears it for a clone to another customer; null clears it.
+	
+	The caller must belong to the source's customer and the target
+	instance's, or is refused with `Forbidden`; a clone to another
+	customer is refused with `CROSS_CUSTOMER_FORBIDDEN` to anyone but a
+	System Administrator.
+	
+	Refusals carry `extensions.code`: the codes of the definition, as
+	`insertTrainingDefinition` lists them; `NOT_FOUND`, `NAME_TAKEN`,
+	`NAME_INVALID`, `INSTANCE_NOT_ELIGIBLE`, `INSTANCE_STOPPED`,
+	`RUN_IN_PROGRESS` (also when the source was retrained while the clone
+	was prepared, with the source's name in `value`) and
+	`CROSS_CUSTOMER_FORBIDDEN`; and, once the run is stored,
+	`ENGINE_REFUSED` with the engine's reason in `value` or
+	`INSTANCE_UNREACHABLE`, either removing the run with its target
+	definition.
+	"""
+	cloneModel(source: String!, targetName: String!, nodeId: ID!, agentKey: String!, dataStore: DataStoreInput!, sources: [String!]!, suspiciousTokens: String): ID!
+	"""
+	Deletes the model `name` with everything stored for it, returning the
+	name.
+	
+	Scope is the model's customer. Refusals carry `extensions.code`:
+	`NOT_FOUND`; `MODEL_IN_USE` while a detector names the model (with
+	`detectorId`, `nodeId` and `agentKey`), a run of the model is active
+	(with the run id in `value`), or one of its indicators is named by a
+	detector or another definition (with the indicator in `value`, and
+	`detectorId`, `nodeId` and `agentKey`, or `definition`).
+	"""
+	removeModel(name: String!): String!
+	"""
+	Gives the model `name`, which has no instance, the engine instance
+	`agentKey` of node `nodeId`, returning the name.
+	
+	The caller must belong to the model's customer and the instance's, or
+	is refused with `Forbidden`. Refusals carry `extensions.code`:
+	`NOT_FOUND`; `ASSIGN_REFUSED` for a model that has an instance or an
+	instance of another customer than the model's;
+	`INSTANCE_NOT_ELIGIBLE`.
+	"""
+	assignModel(name: String!, nodeId: ID!, agentKey: String!): String!
 	"""
 	Inserts a new label database, overwriting any existing database with the same name.
 	`dbfile` should be encoded string of `LabelDb` instance that is serialized
@@ -7621,6 +7883,15 @@ type PreviousTrainingResult {
 	"""
 	version: Int!
 	"""
+	The training definition, a TOML document, of the run that trained the
+	previous result.
+	"""
+	trainedDefinition: String!
+	"""
+	The id of the run that trained the previous result.
+	"""
+	trainedRunId: ID!
+	"""
 	The number of clusters in the previous result.
 	"""
 	clusterCount: StringNumber!
@@ -8059,6 +8330,34 @@ type Query {
 	Detail information of a rule in a label database.
 	"""
 	labelDbRule(name: String!, ruleId: String!): LabelDbRule
+	"""
+	The training definitions of the caller's customers, in name order.
+	
+	A System Administrator sees every definition.
+	"""
+	trainingDefinitions: [TrainingDefinition!]!
+	"""
+	The training definition `name`, or null if no definition has the
+	name.
+	
+	A definition of none of the caller's customers is refused with
+	`Forbidden`.
+	"""
+	trainingDefinition(name: String!): TrainingDefinition
+	"""
+	The runs that create or replace the model `model`, and the clone runs
+	from it, ascending by id.
+	
+	Scope is the customer of the training definition named `model`, or of
+	the model record when no definition has the name. A cross-customer
+	clone run from the model is left out for callers who are not System
+	Administrators.
+	
+	Refused with `extensions.code` `NOT_FOUND` when neither a definition
+	nor a model has the name, and with `Forbidden` for a model of none of
+	the caller's customers.
+	"""
+	modelRuns(model: String!): [ModelRun!]!
 	"""
 	The core-component registry: one entry per `(component, host)`.
 	
@@ -9570,6 +9869,97 @@ type TrafficFilter {
 	The last modification time.
 	"""
 	description: String
+}
+
+type TrainingDefinition {
+	"""
+	The name of the definition, which is also the name of its model.
+	"""
+	name: String!
+	"""
+	The customer the definition belongs to.
+	"""
+	customerId: ID!
+	"""
+	The engine instance the definition trains on, or null in the "no
+	instance" state.
+	"""
+	instance: ModelInstance
+	"""
+	The clustering method the definition trains with.
+	"""
+	method: ModelMethod!
+	"""
+	The event kind the definition trains on.
+	"""
+	eventKind: String!
+	"""
+	The source names the definition reads events of.
+	"""
+	sources: [String!]!
+	"""
+	The model indicator `suspicious_tokens` names, if any.
+	"""
+	suspiciousTokens: String
+	"""
+	The definition, a TOML document: the settings of the model's next
+	training.
+	"""
+	definition: String!
+	"""
+	The state of the definition.
+	"""
+	state: TrainingDefinitionState!
+	"""
+	The model the definition trained, or null until it is trained.
+	"""
+	model: ModelDigest
+	"""
+	The active run that creates or replaces the model, or clones from it.
+	"""
+	activeRun: ModelRun
+	"""
+	The last run of the definition.
+	"""
+	lastRun: ModelRun
+	"""
+	When the definition was created.
+	"""
+	createdAt: DateTime!
+	"""
+	When the definition was last updated.
+	"""
+	updatedAt: DateTime!
+}
+
+"""
+The state of a training definition (RFC 0006 §5.10).
+"""
+enum TrainingDefinitionState {
+	"""
+	No model exists and no run failed.
+	"""
+	NEVER_TRAINED
+	"""
+	A training run of the definition is active.
+	"""
+	TRAINING
+	"""
+	The definition was created by a clone that has not succeeded yet.
+	"""
+	CLONING
+	"""
+	A model of the definition's name exists.
+	"""
+	READY
+	"""
+	No model exists and the last run failed.
+	"""
+	TRAINING_FAILED
+	"""
+	The definition has no instance.
+	"""
+	NO_INSTANCE
 }
 
 """

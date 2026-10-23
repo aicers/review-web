@@ -16,7 +16,7 @@ use ipnet::IpNet;
 // `review_database::Lifecycle` and `review_protocol::types::node::Lifecycle` are
 // two distinct types with the same name, so nothing here glob-imports either
 // module and neither `Lifecycle` is brought into scope.
-use review_database::{BuildSelector, ListenerBinding, ListenerTransport, PortOwner};
+use review_database::{BuildSelector, ListenerBinding, ListenerTransport, PortOwner, RunId};
 pub use review_protocol::types::ResourceUsage;
 use review_protocol::types::node::{BootstrapMaterial, DeliveryMode, FailurePolicy, PackageState};
 
@@ -190,7 +190,108 @@ pub trait AgentManager: Send + Sync {
     ) -> Result<(), anyhow::Error> {
         Err(anyhow!("Not supported"))
     }
+
+    /// Asks the Unsupervised Engine instance identified by the runtime lookup
+    /// key to start the training run `run_id`, which creates or replaces the
+    /// model `model` from `definition`, a training definition in TOML.
+    ///
+    /// The request is review-protocol's `TrainModel`. `definition` is relayed
+    /// verbatim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error wrapping [`EngineRefused`], built with
+    /// `anyhow::Error::new`, exactly when the instance received the request
+    /// and refused it, with the engine's reason. Any other error means the
+    /// request did not reach the instance: it has no live connection, or the
+    /// send or the answer failed. On either error the implementation ends the
+    /// run as failed with its reason before returning. The default
+    /// implementation always returns an error that is not [`EngineRefused`],
+    /// for an embedding application without an engine relay.
+    async fn train_model(
+        &self,
+        _agent_lookup_key: &str,
+        _run_id: RunId,
+        _model: &str,
+        _definition: &str,
+    ) -> Result<(), anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
+
+    /// Asks the Unsupervised Engine instance identified by the runtime lookup
+    /// key, the instance of the model `source`, to start the clone run
+    /// `run_id`, which copies `source` into the new model `target_name`.
+    ///
+    /// The request is review-protocol's `CloneModel`. `strip_events` tells the
+    /// engine to drop every stored event from the clone, as it must for a
+    /// clone to another customer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error wrapping [`EngineRefused`], built with
+    /// `anyhow::Error::new`, exactly when the instance received the request
+    /// and refused it, with the engine's reason. Any other error means the
+    /// request did not reach the instance: it has no live connection, or the
+    /// send or the answer failed. On either error the implementation ends the
+    /// run as failed with its reason before returning. The default
+    /// implementation always returns an error that is not [`EngineRefused`],
+    /// for an embedding application without an engine relay.
+    async fn clone_model(
+        &self,
+        _agent_lookup_key: &str,
+        _run_id: RunId,
+        _source: &str,
+        _target_name: &str,
+        _strip_events: bool,
+    ) -> Result<(), anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
+
+    /// Asks the Unsupervised Engine instance identified by the runtime lookup
+    /// key, the instance performing the run, to cancel the run `run_id`.
+    ///
+    /// The request is review-protocol's `CancelRun`. The engine reports the
+    /// cancellation as a run state; a successful return means only that the
+    /// instance accepted the request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error wrapping [`EngineRefused`], built with
+    /// `anyhow::Error::new`, exactly when the instance received the request
+    /// and refused it, with the engine's reason. Any other error means the
+    /// request did not reach the instance: it has no live connection, or the
+    /// send or the answer failed. On either error the implementation ends the
+    /// run as failed with its reason before returning. The default
+    /// implementation always returns an error that is not [`EngineRefused`],
+    /// for an embedding application without an engine relay.
+    async fn cancel_run(
+        &self,
+        _agent_lookup_key: &str,
+        _run_id: RunId,
+    ) -> Result<(), anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
 }
+
+/// The refusal of a run request an Unsupervised Engine instance received.
+///
+/// An [`AgentManager`] relay method returns it inside its `anyhow::Error`,
+/// built with `anyhow::Error::new`, when the instance answered the request
+/// with a refusal, so a caller can tell a refusal from a request that never
+/// reached the instance with `downcast_ref`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EngineRefused {
+    /// The reason the engine gave.
+    pub reason: String,
+}
+
+impl fmt::Display for EngineRefused {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the engine refused the request: {}", self.reason)
+    }
+}
+
+impl std::error::Error for EngineRefused {}
 
 /// The endpoint at which `REview`'s configuration plane reaches one Data Store
 /// (Giganto) instance's GraphQL API.

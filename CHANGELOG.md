@@ -15,14 +15,51 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   the engine instance it belongs to (`ModelInstance`, null when it has none),
   when its current result was trained, and the summary of its previous
   training result (`PreviousTrainingResult`: when it was trained, its version,
-  and its cluster and outlier counts), null when it has none.
+  its cluster and outlier counts, and the training definition and run id that
+  trained it), null when it has none.
+- Training definitions of Unsupervised Engine models: `trainingDefinitions`
+  and `trainingDefinition` read them (`TrainingDefinition`, with its state,
+  model, active run and last run), and `insertTrainingDefinition`,
+  `updateTrainingDefinition` and `removeTrainingDefinition` write them. A
+  definition is the TOML document review-protocol documents; it is refused
+  unless it parses with no key outside the schema, uses the `multidimension`
+  or `prefix` method with an event kind the method takes, stays within the
+  bounds of a training, lists each source once and only sources of its
+  instance's customer, reads an installed Data Store at one of its own
+  addresses (another address only for a System Administrator, or kept from
+  the stored definition), and names an indicator of its customer.
+- Model runs: `trainModel` trains a definition, `cloneModel` clones a model
+  from the definition that trained it into a new model, to another customer
+  only for a System Administrator, and `cancelModelRun` cancels a run, each
+  relayed to the engine instance; `modelRuns` lists a model's runs
+  (`ModelRun`). A clone run to another customer is not shown to the source
+  customer.
+- `removeModel`, which deletes a model unless an engine document, an active
+  run or another definition's indicator uses it, and `assignModel`, which
+  gives a model with no instance an instance of its customer.
+- `ModelDigest.state`, `definition`, `trainedDefinition`, `trainedRunId`,
+  `trainingSources`, `activeRun` and `detectors`: the state of the model's
+  training definition, the definition of its next training, the definition
+  and run that trained its current result, the sources of that definition,
+  its active run, and the engine document detectors that name it.
+- `AgentManager::train_model`, `clone_model` and `cancel_run`, which relay run
+  requests to an engine instance, and `EngineRefused`, the error they return
+  when the instance refused a request.
 - The `previous` argument of `clusters`, `outliers`, `rankedOutliers`,
   `savedOutliers`, `roundsByModel`, `roundsByCluster`, `columnStatistics` and
   `topIpAddressesOfCluster`. With `previous: true` they read the model's
   previous training result, and return empty results for a model that has
   none.
 - The `extensions.code` values `INDICATOR_IN_USE`, `INDICATOR_MODEL_CHANGE`
-  and `NOT_FOUND`, each with the extensions `field` and `value`.
+  and `NOT_FOUND`, each with the extensions `field` and `value`, and those of
+  the training definition, run and model mutations: `INVALID_DOCUMENT`,
+  `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`, `DUPLICATE_ENTRY`, `BOUND_VIOLATED`,
+  `TIMESERIES_UNSUPPORTED`, `EVENT_KIND_NOT_ALLOWED`, `SOURCE_NOT_ALLOWED`,
+  `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN`,
+  `INDICATOR_NOT_ALLOWED`, `NAME_TAKEN`, `NAME_INVALID`, `FIELD_FIXED`,
+  `INSTANCE_NOT_ELIGIBLE`, `INSTANCE_STOPPED`, `INSTANCE_UNREACHABLE`,
+  `ENGINE_REFUSED`, `RUN_IN_PROGRESS`, `RUN_NOT_ACTIVE`, `MODEL_IN_USE`,
+  `CROSS_CUSTOMER_FORBIDDEN` and `ASSIGN_REFUSED`.
   `INDICATOR_IN_USE` also names what uses the indicator: `detectorId`, `nodeId`
   and `agentKey` for a detector of an engine document, or `definition` for a
   training definition.

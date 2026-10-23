@@ -6,7 +6,7 @@
 //! (for example `piglet.sensor.example.com`). The node hostname alone never
 //! matches `Event.sensor`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use async_graphql::Result;
 use review_database::{AgentKind, Node, Store, event::Direction};
@@ -38,6 +38,55 @@ pub(crate) fn event_sensor_names(node: &Node) -> Vec<String> {
         .package_id()
         .map(|service| vec![format!("{service}.{}", profile.hostname)])
         .unwrap_or_default()
+}
+
+/// Returns the source names of `node`: the names a training definition or an
+/// engine document may list in its `sources` (RFC 0006 §4 "Source name").
+///
+/// They are the node's [`event_sensor_names`], plus
+/// `<Log Collector package id>.<hostname>` when the node has an applied
+/// profile with a non-empty hostname and at least one `LogCollector`-kind
+/// agent, configured or not.
+#[must_use]
+pub(crate) fn source_names(node: &Node) -> Vec<String> {
+    let mut names = event_sensor_names(node);
+    let Some(profile) = node.profile.as_ref() else {
+        return names;
+    };
+    if profile.hostname.is_empty() {
+        return names;
+    }
+    let has_log_collector = node
+        .agents
+        .iter()
+        .any(|agent| agent.kind == AgentKind::LogCollector);
+    if has_log_collector && let Some(service) = AgentKind::LogCollector.package_id() {
+        names.push(format!("{service}.{}", profile.hostname));
+    }
+    names
+}
+
+/// Returns the source names of every node whose applied profile belongs to
+/// `customer_id`.
+///
+/// # Errors
+///
+/// Returns an error if a database iteration error occurs.
+pub(crate) fn customer_source_names(store: &Store, customer_id: u32) -> Result<HashSet<String>> {
+    let map = store.node_map();
+    let mut names = HashSet::new();
+    for entry in map.iter(Direction::Forward, None) {
+        let node = entry
+            .map_err(|e| async_graphql::Error::new(format!("failed to iterate nodes: {e}")))?;
+        if node
+            .profile
+            .as_ref()
+            .is_some_and(|profile| profile.customer_id == customer_id)
+        {
+            names.extend(source_names(&node));
+        }
+    }
+    Ok(names)
 }
 
 /// Builds a map from event sensor names to the customer ID of the node that
@@ -207,6 +256,126 @@ mod tests {
             vec![agent(AgentKind::Sensor, "001.piglet", Some(""))],
         );
         assert_eq!(event_sensor_names(&node), vec!["piglet.Sensor.Example.com"]);
+    }
+
+    #[test]
+    fn source_names_of_a_sensor_node() {
+        let node = node(
+            "sensor",
+            Some(profile(1, "sensor.example.com")),
+            None,
+            vec![agent(AgentKind::Sensor, "001.piglet", Some(""))],
+        );
+        assert_eq!(source_names(&node), vec!["piglet.sensor.example.com"]);
+    }
+
+    #[test]
+    fn source_names_of_a_log_collector_node() {
+        let node = node(
+            "collector",
+            Some(profile(1, "logs.example.com")),
+            None,
+            vec![
+                agent(AgentKind::LogCollector, "001.reproduce", None),
+                agent(AgentKind::LogCollector, "002.reproduce", Some("")),
+            ],
+        );
+        assert_eq!(source_names(&node), vec!["reproduce.logs.example.com"]);
+    }
+
+    #[test]
+    fn source_names_of_a_node_with_both() {
+        let node = node(
+            "both",
+            Some(profile(1, "both.example.com")),
+            None,
+            vec![
+                agent(AgentKind::LogCollector, "001.reproduce", Some("")),
+                agent(AgentKind::Sensor, "001.piglet", None),
+            ],
+        );
+        assert_eq!(
+            source_names(&node),
+            vec!["piglet.both.example.com", "reproduce.both.example.com"]
+        );
+    }
+
+    #[test]
+    fn source_names_need_an_applied_hostname() {
+        let agents = vec![
+            agent(AgentKind::LogCollector, "001.reproduce", Some("")),
+            agent(AgentKind::Sensor, "001.piglet", Some("")),
+        ];
+        let empty = node("empty", Some(profile(1, "")), None, agents.clone());
+        assert_eq!(source_names(&empty), Vec::<String>::new());
+        let draft = node("draft", None, Some(profile(1, "draft.example.com")), agents);
+        assert_eq!(source_names(&draft), Vec::<String>::new());
+    }
+
+    #[test]
+    fn event_sensor_names_leave_out_log_collectors() {
+        let node = node(
+            "collector",
+            Some(profile(1, "logs.example.com")),
+            None,
+            vec![agent(AgentKind::LogCollector, "001.reproduce", Some(""))],
+        );
+        assert_eq!(event_sensor_names(&node), Vec::<String>::new());
+    }
+
+    #[test]
+    fn customer_source_names_cover_applied_nodes_of_the_customer() {
+        let db_dir = tempfile::tempdir().unwrap();
+        let backup_dir = tempfile::tempdir().unwrap();
+        let store = Store::new(db_dir.path(), backup_dir.path(), None).unwrap();
+        let nodes = [
+            node(
+                "a",
+                Some(profile(1, "a.example.com")),
+                None,
+                vec![agent(AgentKind::Sensor, "001.piglet", Some(""))],
+            ),
+            node(
+                "a-logs",
+                Some(profile(1, "a-logs.example.com")),
+                None,
+                vec![agent(AgentKind::LogCollector, "001.reproduce", None)],
+            ),
+            node(
+                "b",
+                Some(profile(2, "b.example.com")),
+                None,
+                vec![
+                    agent(AgentKind::Sensor, "001.piglet", Some("")),
+                    agent(AgentKind::LogCollector, "001.reproduce", Some("")),
+                ],
+            ),
+            node(
+                "draft",
+                None,
+                Some(profile(1, "draft.example.com")),
+                vec![agent(AgentKind::Sensor, "001.piglet", Some(""))],
+            ),
+        ];
+        for node in &nodes {
+            store.node_map().put(node).unwrap();
+        }
+
+        assert_eq!(
+            customer_source_names(&store, 1).unwrap(),
+            HashSet::from([
+                "piglet.a.example.com".to_string(),
+                "reproduce.a-logs.example.com".to_string(),
+            ])
+        );
+        assert_eq!(
+            customer_source_names(&store, 2).unwrap(),
+            HashSet::from([
+                "piglet.b.example.com".to_string(),
+                "reproduce.b.example.com".to_string(),
+            ])
+        );
+        assert!(customer_source_names(&store, 3).unwrap().is_empty());
     }
 
     #[test]
