@@ -119,8 +119,8 @@ pub(crate) async fn data_store_addrs(ctx: &Context<'_>, server_name: &str) -> Ve
 
 /// Applies the Data Store rule, with the engine configuration lock held.
 ///
-/// `server_name` must be an installed Data Store, as `dataStoreEndpoints`
-/// lists them. `address` must then be one of the Data Store's own addresses,
+/// `server_name` must be `<instance:03>.giganto.<hostname>` and an installed
+/// Data Store, as `dataStoreEndpoints` lists them. `address` must then be one of the Data Store's own addresses,
 /// each of `addrs` (from [`data_store_addrs`]) with the port of
 /// `publish_srv_addr` in the Data Store's stored draft, unless `system_admin`
 /// or the pair is among `kept`. A Data Store whose draft is absent or has no
@@ -138,16 +138,23 @@ pub(crate) fn check_data_store(
     kept: &HashSet<(String, SocketAddr)>,
     system_admin: bool,
 ) -> anyhow::Result<Option<DataStoreRefusal>> {
+    let not_installed = DataStoreRefusal {
+        code: RefusalCode::DataStoreNotInstalled,
+        key: "server_name",
+    };
+    // A listed row can compose a name that is not canonical, such as
+    // `001.giganto.` on a node whose applied hostname is empty. Neither a
+    // System Administrator nor a kept pair exempts a name from this rule.
+    if parse_server_name(&data_store.server_name).is_none() {
+        return Ok(Some(not_installed));
+    }
     let rows = listed_rows(store)
         .map_err(|e| anyhow::anyhow!("cannot list Data Stores: {}", e.message))?;
     let Some(row) = rows
         .into_iter()
         .find(|row| row.server_name() == data_store.server_name)
     else {
-        return Ok(Some(DataStoreRefusal {
-            code: RefusalCode::DataStoreNotInstalled,
-            key: "server_name",
-        }));
+        return Ok(Some(not_installed));
     };
     if system_admin || kept.contains(&data_store.pair()) {
         return Ok(None);

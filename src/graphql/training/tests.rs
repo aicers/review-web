@@ -13,7 +13,7 @@ use crate::graphql::{
     model_test_support::{TestModel, data, insert_definition, insert_indicator, single_error},
     run_test_support::{
         Relay, RelayAnswer, RelayCall, insert_data_store_node, insert_engine_instance,
-        insert_log_collector_node, insert_sensor_node, relay_schema,
+        insert_log_collector_node, insert_named_data_store_node, insert_sensor_node, relay_schema,
     },
 };
 
@@ -537,6 +537,35 @@ async fn the_data_store_must_be_installed() {
             )
         );
     }
+}
+
+#[tokio::test]
+async fn a_listed_data_store_with_no_hostname_is_not_installed() {
+    let f = fixture().await;
+    // A node whose applied hostname is empty lists its Data Store as
+    // `001.giganto.`, a name that does not parse.
+    let server_name = insert_named_data_store_node(&f.store(), A, "nameless.example.com", "");
+    assert_eq!(server_name, "001.giganto.");
+    let not_installed = (
+        "DATA_STORE_NOT_INSTALLED".to_string(),
+        "data_store.server_name".to_string(),
+        server_name.clone(),
+    );
+
+    // A System Administrator's address override does not exempt the name.
+    let text = definition_text(&[&f.sensor_a], &server_name, OVERRIDE, "");
+    let res = f.sys(&insert(&f.engine_a, "def", &text)).await;
+    assert_eq!(refused(&res), not_installed);
+
+    // Nor does a kept pair, on update or on training.
+    let own = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
+    f.define(&f.engine_a, "def", &own).await;
+    store_text(&f.store(), "def", &text);
+    let res = f.sec(&update("def", &text), &[A]).await;
+    assert_eq!(refused(&res), not_installed);
+    let res = f.sys(&train("def")).await;
+    assert_eq!(refused(&res), not_installed);
+    assert_eq!(f.store().model_runs("def").unwrap().len(), 0);
 }
 
 #[tokio::test]

@@ -328,6 +328,25 @@ fn put_node(
     agents: Vec<Agent>,
     external_services: Vec<ExternalService>,
 ) -> u32 {
+    put_named_node(
+        store,
+        customer_id,
+        hostname,
+        hostname,
+        agents,
+        external_services,
+    )
+}
+
+/// Stores a node named `name` whose applied hostname is `hostname`.
+fn put_named_node(
+    store: &Store,
+    customer_id: u32,
+    name: &str,
+    hostname: &str,
+    agents: Vec<Agent>,
+    external_services: Vec<ExternalService>,
+) -> u32 {
     let profile = NodeProfile {
         customer_id,
         description: String::new(),
@@ -335,8 +354,8 @@ fn put_node(
     };
     let node = Node {
         id: u32::MAX,
-        name: hostname.to_string(),
-        name_draft: Some(hostname.to_string()),
+        name: name.to_string(),
+        name_draft: Some(name.to_string()),
         profile: Some(profile.clone()),
         profile_draft: Some(profile),
         agents,
@@ -376,6 +395,18 @@ pub(super) fn insert_log_collector_node(store: &Store, customer_id: u32, hostnam
 /// Store instance 1 that publishes on [`PUBLISH_PORT`], and returns the Data
 /// Store's name.
 pub(super) fn insert_data_store_node(store: &Store, customer_id: u32, hostname: &str) -> String {
+    insert_named_data_store_node(store, customer_id, hostname, hostname)
+}
+
+/// Stores a node named `name` whose applied hostname is `hostname`, running
+/// the Data Store [`insert_data_store_node`] stores, and returns the Data
+/// Store's name.
+pub(super) fn insert_named_data_store_node(
+    store: &Store,
+    customer_id: u32,
+    name: &str,
+    hostname: &str,
+) -> String {
     let service = ExternalService {
         node_id: u32::MAX,
         key: format!("giganto1@{hostname}"),
@@ -392,7 +423,7 @@ pub(super) fn insert_data_store_node(store: &Store, customer_id: u32, hostname: 
         bound_addrs: vec![],
         instance: Some(1),
     };
-    put_node(store, customer_id, hostname, vec![], vec![service]);
+    put_named_node(store, customer_id, name, hostname, vec![], vec![service]);
     format!("001.giganto.{hostname}")
 }
 
