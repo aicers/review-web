@@ -295,11 +295,8 @@ impl EngineDocument {
                 let source = detector.sources.first().cloned().unwrap_or_default();
                 return Err(detector_refusal(
                     RefusalCode::SourceNotAllowed,
-                    format!(
-                        "node {} has no applied profile, so its engine document can have no \
-                         detector",
-                        target.instance.node_id
-                    ),
+                    "the node has no applied profile, so its engine document can have no detector"
+                        .to_string(),
                     i,
                     "sources[0]",
                     source,

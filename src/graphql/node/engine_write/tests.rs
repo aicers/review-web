@@ -870,6 +870,8 @@ async fn a_detector_on_a_node_without_an_applied_profile_is_refused() {
         .sys(&insert_node(A, "new.example.com", Some(&f.valid())))
         .await;
     assert_eq!(refused(&res).0, "SOURCE_NOT_ALLOWED");
+    let message = single_error(&res).0;
+    assert!(!message.contains(&u32::MAX.to_string()), "{message}");
     let res = f
         .sys(&insert_node(A, "new.example.com", Some("not toml")))
         .await;
