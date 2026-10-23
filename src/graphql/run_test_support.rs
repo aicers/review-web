@@ -1,6 +1,6 @@
-//! Test support for the Unsupervised Engine run relay: an `AgentManager` that
-//! records every train, clone and cancel request and can be told to fail
-//! them, and the nodes a training definition names.
+//! Test support for the Unsupervised Engine relay: an `AgentManager` that
+//! records every train, clone, cancel, run once, start and stop request and
+//! can be told to fail them, and the nodes a training definition names.
 
 use std::{
     collections::HashMap,
@@ -25,7 +25,7 @@ use crate::backend::{DataStoreReadEndpoint, EngineRefused};
 /// The port of `publish_srv_addr` in every test Data Store's draft.
 pub(super) const PUBLISH_PORT: u16 = 38_371;
 
-/// A run request the relay received.
+/// A request the relay received.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum RelayCall {
     Train {
@@ -45,9 +45,21 @@ pub(super) enum RelayCall {
         agent_lookup_key: String,
         run_id: RunId,
     },
+    RunDetectorOnce {
+        agent_lookup_key: String,
+        detector_id: i32,
+    },
+    StartEngineInstance {
+        node_id: u32,
+        agent_key: String,
+    },
+    StopEngineInstance {
+        node_id: u32,
+        agent_key: String,
+    },
 }
 
-/// How the relay answers a run request.
+/// How the relay answers a request.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) enum RelayAnswer {
     /// The instance accepted the request.
@@ -87,12 +99,12 @@ struct RelayState {
 pub(super) struct Relay(Arc<RelayState>);
 
 impl Relay {
-    /// Returns every run request received, in order.
+    /// Returns every request received, in order.
     pub(super) fn calls(&self) -> Vec<RelayCall> {
         lock(&self.0.calls).clone()
     }
 
-    /// Makes every later run request answer `answer`.
+    /// Makes every later request answer `answer`.
     pub(super) fn answer_with(&self, answer: RelayAnswer) {
         *lock(&self.0.answer) = answer;
     }
@@ -120,7 +132,10 @@ impl Relay {
         pause
     }
 
-    fn record(&self, call: RelayCall, run_id: RunId) -> Result<(), anyhow::Error> {
+    /// Records `call` and answers it; a failed request of the run `run_id`
+    /// is ended as failed first if the relay ends failed runs. A request that
+    /// carries no run passes `None`.
+    fn record(&self, call: RelayCall, run_id: Option<RunId>) -> Result<(), anyhow::Error> {
         lock(&self.0.calls).push(call);
         let answer = lock(&self.0.answer).clone();
         let error = match answer {
@@ -128,7 +143,9 @@ impl Relay {
             RelayAnswer::Refused(reason) => anyhow::Error::new(EngineRefused { reason }),
             RelayAnswer::Unreachable => anyhow::anyhow!("no live connection"),
         };
-        if *lock(&self.0.ends_runs) {
+        if let Some(run_id) = run_id
+            && *lock(&self.0.ends_runs)
+        {
             let store = self.0.store.get().expect("the store is set");
             store
                 .read()
@@ -254,7 +271,7 @@ impl AgentManager for Relay {
                 model: model.to_string(),
                 definition: definition.to_string(),
             },
-            run_id,
+            Some(run_id),
         )
     }
 
@@ -274,7 +291,7 @@ impl AgentManager for Relay {
                 target_name: target_name.to_string(),
                 strip_events,
             },
-            run_id,
+            Some(run_id),
         )
     }
 
@@ -284,7 +301,49 @@ impl AgentManager for Relay {
                 agent_lookup_key: agent_lookup_key.to_string(),
                 run_id,
             },
-            run_id,
+            Some(run_id),
+        )
+    }
+
+    async fn run_detector_once(
+        &self,
+        agent_lookup_key: &str,
+        detector_id: i32,
+    ) -> Result<(), anyhow::Error> {
+        self.record(
+            RelayCall::RunDetectorOnce {
+                agent_lookup_key: agent_lookup_key.to_string(),
+                detector_id,
+            },
+            None,
+        )
+    }
+
+    async fn start_engine_instance(
+        &self,
+        node_id: u32,
+        agent_key: &str,
+    ) -> Result<(), anyhow::Error> {
+        self.record(
+            RelayCall::StartEngineInstance {
+                node_id,
+                agent_key: agent_key.to_string(),
+            },
+            None,
+        )
+    }
+
+    async fn stop_engine_instance(
+        &self,
+        node_id: u32,
+        agent_key: &str,
+    ) -> Result<(), anyhow::Error> {
+        self.record(
+            RelayCall::StopEngineInstance {
+                node_id,
+                agent_key: agent_key.to_string(),
+            },
+            None,
         )
     }
 }
@@ -435,11 +494,32 @@ pub(super) fn insert_engine_instance(
     hostname: &str,
     agent_key: &str,
 ) -> ModelInstance {
+    insert_agent_node(
+        store,
+        customer_id,
+        hostname,
+        agent_key,
+        AgentKind::Unsupervised,
+        Some(1),
+    )
+}
+
+/// Stores a node of `customer_id` at `hostname` with one agent `agent_key`
+/// of `kind`, installed as `instance` if that is `Some`, and returns the node
+/// id and the agent key.
+pub(super) fn insert_agent_node(
+    store: &Store,
+    customer_id: u32,
+    hostname: &str,
+    agent_key: &str,
+    kind: AgentKind,
+    instance: Option<u32>,
+) -> ModelInstance {
     let node_id = put_node(
         store,
         customer_id,
         hostname,
-        vec![agent(agent_key, AgentKind::Unsupervised, Some(1))],
+        vec![agent(agent_key, kind, instance)],
         vec![],
     );
     ModelInstance {

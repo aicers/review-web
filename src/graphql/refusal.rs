@@ -24,6 +24,8 @@ pub(crate) enum RefusalCode {
     CustomerChangeRefused,
     /// A `server_name` that is not an installed Data Store.
     DataStoreNotInstalled,
+    /// Run once of a detector id absent from the applied document.
+    DetectorNotFound,
     /// A repeated source, a repeated detector id, or a model named by two
     /// detectors.
     DuplicateEntry,
@@ -47,9 +49,10 @@ pub(crate) enum RefusalCode {
     /// node with an applied profile and hostname, or a model or definition
     /// that has no instance.
     InstanceNotEligible,
-    /// A run on a stopped instance.
+    /// A run or run once on a stopped instance.
     InstanceStopped,
-    /// A relay request that did not reach the instance.
+    /// A relay request that did not reach the instance, or a start or stop
+    /// that did not complete.
     InstanceUnreachable,
     /// TOML that does not parse, a required field missing, or a value of the
     /// wrong type.
@@ -92,6 +95,7 @@ impl RefusalCode {
             Self::CrossCustomerForbidden => "CROSS_CUSTOMER_FORBIDDEN",
             Self::CustomerChangeRefused => "CUSTOMER_CHANGE_REFUSED",
             Self::DataStoreNotInstalled => "DATA_STORE_NOT_INSTALLED",
+            Self::DetectorNotFound => "DETECTOR_NOT_FOUND",
             Self::DuplicateEntry => "DUPLICATE_ENTRY",
             Self::EngineRefused => "ENGINE_REFUSED",
             Self::EventKindNotAllowed => "EVENT_KIND_NOT_ALLOWED",

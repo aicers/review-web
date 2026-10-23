@@ -658,10 +658,16 @@ fn clone_document(
     TrainingDocument::parse_and_validate(&document.to_text()?)
 }
 
-/// An engine instance a request names, resolved with the lock held.
-struct TargetInstance {
-    instance: database::ModelInstance,
-    customer_id: u32,
+/// An engine instance a request names, as [`resolve_instance`] read it.
+///
+/// A caller that checks or creates a reference holds the engine configuration
+/// lock across the read; one that only reads or relays does not.
+pub(super) struct TargetInstance {
+    pub(super) instance: database::ModelInstance,
+    pub(super) customer_id: u32,
+    /// The hostname of the applied profile of the instance's node, never
+    /// empty.
+    pub(super) hostname: String,
 }
 
 /// Resolves the engine instance `agent_key` of node `node_id` and checks
@@ -670,7 +676,7 @@ struct TargetInstance {
 /// The instance must be an Unsupervised Engine agent with an instance number,
 /// on a node whose applied profile has a hostname; otherwise the request is
 /// refused with `INSTANCE_NOT_ELIGIBLE`. Its customer is that profile's.
-fn resolve_instance(
+pub(super) fn resolve_instance(
     store: &Store,
     users_customers: Option<&[u32]>,
     node_id: u32,
@@ -726,6 +732,7 @@ fn resolve_instance(
             agent_key: agent_key.to_string(),
         },
         customer_id: profile.customer_id,
+        hostname: profile.hostname.clone(),
     })
 }
 
@@ -797,7 +804,7 @@ fn fail_run(store: &Store, run_id: RunId) {
 /// Maps a relay error: `ENGINE_REFUSED`, with the engine's reason in `value`,
 /// when the instance received the request and refused it, and
 /// `INSTANCE_UNREACHABLE`, with the agent lookup key in `value`, otherwise.
-fn relay_refusal(
+pub(super) fn relay_refusal(
     error: &anyhow::Error,
     field: &str,
     agent_lookup_key: &str,
