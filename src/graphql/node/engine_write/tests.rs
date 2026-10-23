@@ -1525,4 +1525,54 @@ async fn a_new_node_or_a_hostname_change_is_refused_for_a_listed_name() {
             ("CUSTOMER_CHANGE_REFUSED", "hostname", source.as_str())
         );
     }
+
+    // A training definition holds the names as a document does.
+    ok(f.save(&f.engine_a, Some("detectors = []")).await);
+    f.store()
+        .insert_training_definition(NewTrainingDefinition {
+            name: "def".to_string(),
+            customer_id: A,
+            instance: f.engine_a.clone(),
+            method: ModelMethod::Multidimension,
+            event_kind: "http".to_string(),
+            sources: vec![f.sensor_a.clone(), f.logs_a.clone()],
+            indicator: None,
+            definition: String::new(),
+        })
+        .unwrap();
+    for (source, hostname) in [
+        (&f.sensor_a, "sensor-a.example.com"),
+        (&f.logs_a, "logs-a.example.com"),
+    ] {
+        let (_, extensions) = single_error(&f.sys(&insert_node(B, hostname, None)).await);
+        assert_eq!(
+            extensions,
+            json!({
+                "code": "CUSTOMER_CHANGE_REFUSED",
+                "field": "customer_id",
+                "value": source,
+                "definition": "def",
+            })
+        );
+        let node = f.source_node(&f.sensor_b);
+        let query = Fixture::move_query(&node, B, hostname);
+        let (_, extensions) = single_error(&f.sys(&query).await);
+        assert_eq!(
+            extensions,
+            json!({
+                "code": "CUSTOMER_CHANGE_REFUSED",
+                "field": "hostname",
+                "value": source,
+                "definition": "def",
+            })
+        );
+    }
+
+    // Once nothing lists the names, only the hostname's own node stands in
+    // the way.
+    f.store().remove_training_definition("def").unwrap();
+    let res = f.sys(&insert_node(B, "logs-a.example.com", None)).await;
+    let (message, extensions) = single_error(&res);
+    assert!(extensions.get("code").is_none(), "{extensions}");
+    assert!(message.contains("already in use"), "{message}");
 }
