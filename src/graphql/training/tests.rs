@@ -666,6 +666,51 @@ async fn insert_refusals_of_the_store_and_the_instance() {
 }
 
 #[tokio::test]
+async fn insert_refuses_an_instance_without_an_applied_hostname_or_profile() {
+    let f = fixture().await;
+    let text = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
+    let node_id = f.engine_a.node_id;
+    let edit_profile = |edit: &dyn Fn(&mut NodeUpdate)| {
+        let store = f.store();
+        let mut map = store.node_map();
+        let (node, _, _) = map
+            .get_by_id(node_id)
+            .expect("read engine node")
+            .expect("engine node exists");
+        let old = NodeUpdate::from(node.clone());
+        let mut new = NodeUpdate::from(node);
+        edit(&mut new);
+        map.update(node_id, &old, &new)
+            .expect("edit the applied profile");
+    };
+
+    edit_profile(&|new| {
+        new.profile.as_mut().expect("applied profile").hostname = String::new();
+    });
+    let res = f.sys(&insert(&f.engine_a, "def", &text)).await;
+    assert_eq!(
+        refused(&res),
+        (
+            "INSTANCE_NOT_ELIGIBLE".into(),
+            "nodeId".into(),
+            node_id.to_string()
+        )
+    );
+
+    edit_profile(&|new| new.profile = None);
+    let res = f.sys(&insert(&f.engine_a, "def", &text)).await;
+    assert_eq!(
+        refused(&res),
+        (
+            "INSTANCE_NOT_ELIGIBLE".into(),
+            "nodeId".into(),
+            node_id.to_string()
+        )
+    );
+    assert!(stored(&f.store(), "def").is_none(), "nothing is stored");
+}
+
+#[tokio::test]
 async fn update_refusals_of_the_store() {
     let f = fixture().await;
     let text = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
