@@ -3,7 +3,9 @@ use std::{collections::HashMap, fmt};
 use anyhow::Context as AnyhowContext;
 use async_graphql::{Error, InputObject, Result, types::ID};
 
-use super::{AgentKind, AgentStatus, ExternalServiceKind, ExternalServiceStatus};
+use super::{
+    AgentKind, AgentStatus, ExternalServiceKind, ExternalServiceStatus, engine_write::NotToml,
+};
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, InputObject, PartialEq)]
@@ -152,10 +154,68 @@ pub(super) struct NodeDraftInput {
     pub external_services: Option<Vec<ExternalServiceInput>>,
 }
 
+/// Converts the draft of agent `key` of `kind` to TOML.
+///
+/// # Errors
+///
+/// Returns `INVALID_DOCUMENT` for an Unsupervised Engine draft that is not
+/// TOML, and a plain error for another agent's.
+pub(super) fn agent_draft(
+    kind: AgentKind,
+    key: &str,
+    draft: Option<String>,
+) -> Result<Option<review_database::AgentConfig>> {
+    let Some(draft) = draft else {
+        return Ok(None);
+    };
+    if kind == AgentKind::Unsupervised {
+        super::engine_write::check_toml(&draft)?;
+    }
+    let draft = draft.try_into().map_err(|_| {
+        Error::new(format!(
+            "Failed to convert the draft to TOML for the agent: {key}"
+        ))
+    })?;
+    Ok(Some(draft))
+}
+
+/// Converts the draft of agent `key` of `kind` like [`agent_draft`], except
+/// that an Unsupervised Engine draft that is not TOML converts to no draft,
+/// its refusal set aside in `not_toml`.
+fn deferred_agent_draft(
+    kind: AgentKind,
+    key: &str,
+    draft: Option<String>,
+    not_toml: &mut Vec<NotToml>,
+) -> Result<Option<review_database::AgentConfig>> {
+    match agent_draft(kind, key, draft) {
+        Err(refusal) if kind == AgentKind::Unsupervised => {
+            not_toml.push(NotToml {
+                agent_key: key.to_string(),
+                refusal,
+            });
+            Ok(None)
+        }
+        draft => draft,
+    }
+}
+
+/// Converts the draft input `new` of a node read as `old` to a node update.
+///
+/// An Unsupervised Engine draft that is not TOML is not refused here, so that
+/// a request from a stale `old` is refused as stale rather than as an invalid
+/// document: its agent carries no draft in the update, and its refusal is
+/// returned beside it for [`check_not_toml`](super::engine_write::check_not_toml)
+/// once the stored node has been read.
+///
+/// # Errors
+///
+/// Returns an error for an input that does not convert, other than such a
+/// draft.
 pub(super) fn create_draft_update(
     old: &NodeInput,
     new: NodeDraftInput,
-) -> Result<review_database::NodeUpdate> {
+) -> Result<(review_database::NodeUpdate, Vec<NotToml>)> {
     if new.name_draft.is_empty() {
         return Err("missing name draft".into());
     }
@@ -172,6 +232,7 @@ pub(super) fn create_draft_update(
         .map(|agent| (agent.key.clone(), agent.config.clone()))
         .collect();
 
+    let mut not_toml = Vec::new();
     let agents: Vec<review_database::Agent> = new
         .agents
         .map(|new_agents| {
@@ -191,15 +252,12 @@ pub(super) fn create_draft_update(
                         None => None,
                     };
 
-                    let draft = match new_agent.draft {
-                        Some(draft) => Some(draft.try_into().map_err(|_| {
-                            Error::new(format!(
-                                "Failed to convert the draft to TOML for the agent: {}",
-                                new_agent.key
-                            ))
-                        })?),
-                        None => None,
-                    };
+                    let draft = deferred_agent_draft(
+                        new_agent.kind,
+                        &new_agent.key,
+                        new_agent.draft,
+                        &mut not_toml,
+                    )?;
 
                     Ok(review_database::Agent {
                         node_id: u32::MAX,
@@ -254,12 +312,13 @@ pub(super) fn create_draft_update(
         .transpose()?
         .unwrap_or_default();
 
-    Ok(review_database::NodeUpdate {
+    let update = review_database::NodeUpdate {
         name: Some(old.name.clone()),
         name_draft: Some(new.name_draft),
         profile: old.profile.clone().map(TryInto::try_into).transpose()?,
         profile_draft,
         agents,
         external_services,
-    })
+    };
+    Ok((update, not_toml))
 }

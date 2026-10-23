@@ -3,6 +3,7 @@ mod control;
 mod crud;
 mod customer_sensor_list;
 mod data_store_endpoint;
+mod engine_write;
 // `pub(super)` so `graphql::operation_attempt` reaches `bind_package_class`:
 // the class binding has one comparison site for the whole crate.
 pub(super) mod deploy;

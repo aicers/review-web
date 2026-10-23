@@ -11,12 +11,20 @@ use async_graphql::{Context, Result};
 /// indicator update or removal while an engine document or a training
 /// definition names it, for example — by scanning the references stored when
 /// the write's transaction runs. That scan cannot see a reference a
-/// concurrent transaction is creating, and `NodeTable::update` retries a
-/// conflicting commit without re-running its caller's checks. So every writer
-/// that checks or creates a reference to a source, a model or an indicator,
-/// or changes a node's customer or hostname, holds this one lock from before
-/// its checks until its store write returns. Every such writer takes this
-/// lock; none adds another.
+/// concurrent transaction is creating, and the node writers
+/// `NodeTable::update_with_engine_documents` (`updateNodeDraft`, `applyNode`,
+/// `applyNodeDraft`) and `NodeTable::put` (`insertNode`) retry a conflicting
+/// commit without re-running their caller's checks. So every writer that
+/// checks or creates a reference to a source, a model or an indicator, or
+/// changes a node's customer or hostname, holds this one lock from before its
+/// checks until its store write returns. Every such writer takes this lock;
+/// none adds another.
+///
+/// The writers that hold it are `insertIndicator`, `updateIndicator` and
+/// `removeIndicator`; `insertTrainingDefinition`, `updateTrainingDefinition`,
+/// `trainModel`, `cloneModel`, `removeModel` and `assignModel`; and the node
+/// writes `insertNode`, `updateNodeDraft`, `applyNode` and `applyNodeDraft`,
+/// which release it before any agent is notified.
 ///
 /// Take it before [`get_store`](super::get_store): the store guard is a
 /// `std::sync::RwLockReadGuard`, which cannot be held across the lock's

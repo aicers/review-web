@@ -19,6 +19,9 @@ pub(crate) enum RefusalCode {
     BoundViolated,
     /// A cross-customer clone by someone other than a System Administrator.
     CrossCustomerForbidden,
+    /// A node customer or hostname change, or a new node, refused by RFC 0006
+    /// §5.11.
+    CustomerChangeRefused,
     /// A `server_name` that is not an installed Data Store.
     DataStoreNotInstalled,
     /// A repeated source, a repeated detector id, or a model named by two
@@ -54,6 +57,9 @@ pub(crate) enum RefusalCode {
     /// A model delete refused by the guard, or a definition removal refused
     /// because it has a model.
     ModelInUse,
+    /// A document naming a model that does not exist or belongs to another
+    /// instance.
+    ModelNotOfInstance,
     /// A name the model-name rule refuses.
     NameInvalid,
     /// A definition or clone name already used by a model or a definition.
@@ -66,7 +72,8 @@ pub(crate) enum RefusalCode {
     RunInProgress,
     /// A cancel of a run that has finished.
     RunNotActive,
-    /// A source that is not a source name of the instance's customer.
+    /// A source that is not a source name of the instance's customer, or any
+    /// detector on a node without an applied profile.
     SourceNotAllowed,
     /// Method `timeseries`, not supported in phase 1.
     TimeseriesUnsupported,
@@ -83,6 +90,7 @@ impl RefusalCode {
             Self::AssignRefused => "ASSIGN_REFUSED",
             Self::BoundViolated => "BOUND_VIOLATED",
             Self::CrossCustomerForbidden => "CROSS_CUSTOMER_FORBIDDEN",
+            Self::CustomerChangeRefused => "CUSTOMER_CHANGE_REFUSED",
             Self::DataStoreNotInstalled => "DATA_STORE_NOT_INSTALLED",
             Self::DuplicateEntry => "DUPLICATE_ENTRY",
             Self::EngineRefused => "ENGINE_REFUSED",
@@ -97,6 +105,7 @@ impl RefusalCode {
             Self::InstanceUnreachable => "INSTANCE_UNREACHABLE",
             Self::InvalidDocument => "INVALID_DOCUMENT",
             Self::ModelInUse => "MODEL_IN_USE",
+            Self::ModelNotOfInstance => "MODEL_NOT_OF_INSTANCE",
             Self::NameInvalid => "NAME_INVALID",
             Self::NameTaken => "NAME_TAKEN",
             Self::NotFound => "NOT_FOUND",

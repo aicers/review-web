@@ -266,7 +266,7 @@ mod tests {
                             key: "unsupervised"
                             kind: UNSUPERVISED
                             status: ENABLED
-                            draft: "my_val=2"
+                            draft: "cpus = 2"
                         },
                         {
                             key: "semi-supervised"
@@ -299,7 +299,7 @@ mod tests {
                                 kind: UNSUPERVISED
                                 status: ENABLED
                                 config: null
-                                draft: "my_val=2"
+                                draft: "cpus = 2"
                             },
                             {
                                 key: "semi-supervised"
@@ -422,8 +422,8 @@ mod tests {
                                     {
                                         "kind": "UNSUPERVISED",
                                         "storedStatus": "ENABLED",
-                                        "config": "my_val=2",
-                                        "draft": "my_val=2"
+                                        "config": "cpus = 2",
+                                        "draft": "cpus = 2"
                                     },
                                     {
                                         "kind": "SEMI_SUPERVISED",

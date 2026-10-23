@@ -6414,6 +6414,18 @@ type Mutation {
 	Refuses, before any write or agent notification, an apply that would delete an installed
 	instance's row, change its kind, or change the hostname of the node that holds one; such an
 	instance is removed only with `removeService`.
+	
+	Each Unsupervised Engine agent's document being applied that differs from its applied
+	config is validated as an engine document (RFC 0006 §5.3) for the node's applied customer
+	before this apply, and any refusal refuses the whole apply. Refusals carry
+	`extensions.code`: `INVALID_DOCUMENT`, `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`,
+	`DUPLICATE_ENTRY`, `BOUND_VIOLATED`, `SOURCE_NOT_ALLOWED`, `MODEL_NOT_OF_INSTANCE`,
+	`DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` and `INDICATOR_NOT_ALLOWED`, with
+	`detectorId` for a detector's refusal; and `CUSTOMER_CHANGE_REFUSED` for a customer or
+	hostname change the node guards of RFC 0006 §5.11 refuse, which names another customer's
+	detector or definition only to a System Administrator. A `node` whose Unsupervised Engine
+	config or draft is not the stored one is refused with "the node changed since it was read;
+	reload and retry".
 	"""
 	applyNode(id: ID!, node: NodeInput!): ID!
 	"""
@@ -6427,6 +6439,18 @@ type Mutation {
 	Refuses an apply that would delete an installed instance's row, change its kind, or change
 	the hostname of the node that holds one; such an instance is removed only with
 	`removeService`.
+	
+	Each Unsupervised Engine agent's document being applied that differs from its applied
+	config is validated as an engine document (RFC 0006 §5.3) for the node's applied customer
+	before this apply, and any refusal refuses the whole apply. Refusals carry
+	`extensions.code`: `INVALID_DOCUMENT`, `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`,
+	`DUPLICATE_ENTRY`, `BOUND_VIOLATED`, `SOURCE_NOT_ALLOWED`, `MODEL_NOT_OF_INSTANCE`,
+	`DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` and `INDICATOR_NOT_ALLOWED`, with
+	`detectorId` for a detector's refusal; and `CUSTOMER_CHANGE_REFUSED` for a customer or
+	hostname change the node guards of RFC 0006 §5.11 refuse, which names another customer's
+	detector or definition only to a System Administrator. A `node` whose Unsupervised Engine
+	config or draft is not the stored one is refused with "the node changed since it was read;
+	reload and retry".
 	"""
 	applyNodeDraft(id: ID!, node: NodeInput!): Node!
 	"""
@@ -6443,6 +6467,15 @@ type Mutation {
 	applyAgentConfig(nodeId: ID!, agentKeys: [String!]): ApplyAgentConfigOutput!
 	"""
 	Inserts a new node, returning the ID of the new node.
+	
+	The draft of each Unsupervised Engine agent is validated as an engine document (RFC 0006
+	§5.3). A new node has no applied profile, so a document with any detector is refused with
+	`SOURCE_NOT_ALLOWED`. Refusals carry `extensions.code`: `INVALID_DOCUMENT`,
+	`UNKNOWN_FIELD`, `DUPLICATE_ENTRY`, `BOUND_VIOLATED` and `SOURCE_NOT_ALLOWED`, with
+	`detectorId` for a detector's refusal; and `CUSTOMER_CHANGE_REFUSED` for a hostname whose
+	`piglet.` or `reproduce.` name an engine document or training definition of another
+	customer lists (RFC 0006 §5.11), which names that detector or definition only to a System
+	Administrator. An Unsupervised Engine agent key listed more than once is refused.
 	"""
 	insertNode(name: String!, customerId: ID!, description: String!, hostname: String!, agents: [AgentDraftInput!]!, externalServices: [ExternalServiceInput!]!): ID!
 	"""
@@ -6458,6 +6491,17 @@ type Mutation {
 	
 	Refuses an update that would delete an installed instance's row or change its kind; such an
 	instance is removed only with `removeService`.
+	
+	An Unsupervised Engine agent's draft that differs from its stored draft is validated as an
+	engine document (RFC 0006 §5.3) for the node's applied customer; one left unchanged is not.
+	Refusals carry `extensions.code`: `INVALID_DOCUMENT`, `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`,
+	`DUPLICATE_ENTRY`, `BOUND_VIOLATED`, `SOURCE_NOT_ALLOWED`, `MODEL_NOT_OF_INSTANCE`,
+	`DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` and `INDICATOR_NOT_ALLOWED`, with
+	`detectorId` for a detector's refusal; and `CUSTOMER_CHANGE_REFUSED` for a customer or
+	hostname change the node guards of RFC 0006 §5.11 refuse, which names another customer's
+	detector or definition only to a System Administrator. An `old` Unsupervised Engine draft
+	that is not the stored one is refused with "the node changed since it was read; reload and
+	retry".
 	"""
 	updateNodeDraft(id: ID!, old: NodeInput!, new: NodeDraftInput!): ID!
 	"""
