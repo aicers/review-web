@@ -34,9 +34,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   relayed to the engine instance; `modelRuns` lists a model's runs
   (`ModelRun`). A clone run to another customer is not shown to the source
   customer.
-- `removeModel`, which deletes a model unless an engine document, an active
-  run or another definition's indicator uses it, and `assignModel`, which
-  gives a model with no instance an instance of its customer.
+- `removeModel`, which deletes a model unless an engine document names it, a
+  run of it is active, or an engine document or another definition names one
+  of its indicators, and `assignModel`, which gives a model with no instance
+  an instance of its customer.
 - `ModelDigest.state`, `definition`, `trainedDefinition`, `trainedRunId`,
   `trainingSources`, `activeRun` and `detectors`: the state of the model's
   training definition, the definition of its next training, the definition

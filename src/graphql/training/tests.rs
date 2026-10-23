@@ -1010,6 +1010,49 @@ async fn cancel_relays_to_the_instance_performing_the_run() {
 }
 
 #[tokio::test]
+async fn a_node_without_an_applied_hostname_is_not_relayed_to() {
+    let f = fixture().await;
+    f.define(
+        &f.engine_a,
+        "def",
+        &f.definition(&[&f.sensor_a], OWN_ADDRESS, ""),
+    )
+    .await;
+    let id = f.train("def").await;
+    {
+        let store = f.store();
+        let mut map = store.node_map();
+        let (node, _, _) = map
+            .get_by_id(f.engine_a.node_id)
+            .expect("read engine node")
+            .expect("engine node exists");
+        let old = NodeUpdate::from(node.clone());
+        let mut new = NodeUpdate::from(node);
+        new.profile.as_mut().expect("applied profile").hostname = String::new();
+        map.update(f.engine_a.node_id, &old, &new)
+            .expect("clear the applied hostname");
+    }
+    let calls = f.relay.calls().len();
+
+    let res = f.sec(&cancel(&id.to_string()), &[A]).await;
+    assert_eq!(
+        refused(&res),
+        (
+            "INSTANCE_UNREACHABLE".into(),
+            "runId".into(),
+            id.to_string()
+        )
+    );
+    assert_eq!(f.relay.calls().len(), calls, "no relay is made");
+    assert_eq!(f.run_state(id), Some(RunState::Failed));
+
+    let res = f.sec(&train("def"), &[A]).await;
+    assert_eq!(code(&res), "INSTANCE_NOT_ELIGIBLE");
+    assert_eq!(f.store().model_runs("def").unwrap().len(), 1, "no run");
+    assert_eq!(f.relay.calls().len(), calls, "no relay is made");
+}
+
+#[tokio::test]
 async fn an_undelivered_cancel_of_a_clone_removes_it_with_its_target() {
     let f = fixture().await;
     f.define(

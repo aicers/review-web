@@ -138,7 +138,8 @@ pub(crate) fn check_data_store(
     kept: &HashSet<(String, SocketAddr)>,
     system_admin: bool,
 ) -> anyhow::Result<Option<DataStoreRefusal>> {
-    let rows = listed_rows(store).map_err(|e| anyhow::anyhow!("cannot list Data Stores: {e:?}"))?;
+    let rows = listed_rows(store)
+        .map_err(|e| anyhow::anyhow!("cannot list Data Stores: {}", e.message))?;
     let Some(row) = rows
         .into_iter()
         .find(|row| row.server_name() == data_store.server_name)
