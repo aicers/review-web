@@ -170,6 +170,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn manager_is_recognized_by_profile_hostname_with_domain() {
+        let schema = TestSchema::new().await;
+        let os = gethostname::gethostname().to_string_lossy().into_owned();
+        assert_ne!(os, "");
+        let hostname = format!("{os}.example.com");
+        insert_active_node(&schema.store(), "manager", 1, &hostname);
+
+        let res = schema
+            .execute_as_system_admin(r"{nodeStatusList{edges{node{manager profile{hostname}}}}}")
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        // A dotted OS hostname is compared exactly, so only a single-label one
+        // is recognized as the first label of the profile hostname.
+        let manager = !os.contains('.');
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeStatusList": {
+                    "edges": [{"node": {
+                        "manager": manager,
+                        "profile": {"hostname": hostname}
+                    }}]
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn test_node_status_list() {
         let mut online_apps_by_host_id = HashMap::new();

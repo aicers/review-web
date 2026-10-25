@@ -1137,7 +1137,32 @@ pub fn matches_manager_hostname(hostname: &str) -> bool {
     // Current machine's hostname is the Manager server's hostname, because this code always runs on
     // the Manager server.
     let manager_hostname = gethostname::gethostname().to_string_lossy().into_owned();
-    !manager_hostname.is_empty() && manager_hostname == hostname
+    hostname_matches_manager(&manager_hostname, hostname)
+}
+
+/// Returns whether a node profile's hostname names the Manager host, whose OS
+/// hostname is `os`.
+///
+/// Both names are compared ASCII case-insensitively, after one trailing `.`
+/// is stripped from each. A single-label OS hostname, such as `manager`, also
+/// matches a profile hostname whose first DNS label it is, such as
+/// `manager.example.com`, because a host is often configured with its short
+/// name while its node is registered with the fully qualified one. A dotted OS
+/// hostname must equal the profile hostname.
+fn hostname_matches_manager(os: &str, profile: &str) -> bool {
+    let os = os.strip_suffix('.').unwrap_or(os);
+    let profile = profile.strip_suffix('.').unwrap_or(profile);
+    if os.is_empty() || profile.is_empty() {
+        return false;
+    }
+    if os.eq_ignore_ascii_case(profile) {
+        return true;
+    }
+    // `os` is non-empty here, so an empty first label never equals it.
+    !os.contains('.')
+        && profile
+            .split_once('.')
+            .is_some_and(|(first_label, _)| first_label.eq_ignore_ascii_case(os))
 }
 
 /// Builds the runtime agent lookup key from an agent key and node hostname.
@@ -1161,11 +1186,95 @@ mod tests {
 
     use serde_json::json;
 
+    use super::hostname_matches_manager;
     use super::test_support::{MockAgentManager, insert_active_node};
     use crate::graphql::{
         CustomerIds, Role, RoleGuard, SharedAgentManager, TestSchema,
         agent_lookup_key_service_token, gen_agent_lookup_key,
     };
+
+    #[test]
+    fn short_os_hostname_matches_profile_with_domain() {
+        assert!(hostname_matches_manager(
+            "security-test",
+            "security-test.example.com"
+        ));
+    }
+
+    #[test]
+    fn short_os_hostname_matches_equal_profile() {
+        assert!(hostname_matches_manager("security-test", "security-test"));
+    }
+
+    #[test]
+    fn dotted_os_hostname_matches_equal_profile() {
+        assert!(hostname_matches_manager(
+            "security-test.example.com",
+            "security-test.example.com"
+        ));
+    }
+
+    #[test]
+    fn exact_match_ignores_case() {
+        assert!(hostname_matches_manager(
+            "Security-Test.Example.com",
+            "security-test.example.com"
+        ));
+    }
+
+    #[test]
+    fn dotted_os_hostname_does_not_match_short_profile() {
+        assert!(!hostname_matches_manager(
+            "security-test.example.com",
+            "security-test"
+        ));
+    }
+
+    #[test]
+    fn first_label_must_equal_not_start_with_os_hostname() {
+        assert!(!hostname_matches_manager(
+            "security-test",
+            "security-test-2.example.com"
+        ));
+    }
+
+    #[test]
+    fn first_label_match_ignores_case_and_trailing_dot() {
+        assert!(hostname_matches_manager(
+            "Security-Test",
+            "security-test.example.com."
+        ));
+    }
+
+    #[test]
+    fn trailing_dot_is_stripped_before_exact_match() {
+        assert!(hostname_matches_manager("security-test", "security-test."));
+    }
+
+    #[test]
+    fn empty_first_label_does_not_match() {
+        assert!(!hostname_matches_manager("example", ".example.com"));
+    }
+
+    #[test]
+    fn os_hostname_of_only_a_dot_matches_nothing() {
+        for profile in [".", "", "example", ".example.com", "example.com."] {
+            assert!(!hostname_matches_manager(".", profile), "{profile:?}");
+        }
+    }
+
+    #[test]
+    fn empty_os_hostname_matches_nothing() {
+        for profile in ["", ".", "example", ".example.com", "example.com"] {
+            assert!(!hostname_matches_manager("", profile), "{profile:?}");
+        }
+    }
+
+    #[test]
+    fn short_os_hostname_matches_every_domain() {
+        assert!(hostname_matches_manager("manager", "manager.a.example"));
+        assert!(hostname_matches_manager("manager", "manager.b.example"));
+    }
 
     #[test]
     fn gen_agent_lookup_key_uses_mtls_separator() {
