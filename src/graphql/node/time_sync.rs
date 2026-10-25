@@ -516,6 +516,85 @@ mod tests {
         assert_eq!(stub.calls(), vec![Call::Get(manager); 3]);
     }
 
+    /// Returns the OS hostname and a profile hostname that adds a domain to it.
+    fn manager_hostname_with_domain(domain: &str) -> (String, String) {
+        let os = manager_hostname();
+        let hostname = format!("{os}.{domain}");
+        (os, hostname)
+    }
+
+    #[tokio::test]
+    async fn query_recognizes_manager_by_profile_hostname_with_domain() {
+        let (os, hostname) = manager_hostname_with_domain("example.com");
+        let (schema, stub) = schema_with(StubAgentManager::new()).await;
+        insert_active_node(&schema.store(), "follower", 1, FOLLOWER);
+        let id = insert_active_node(&schema.store(), "manager", 1, &hostname);
+
+        let res = schema.execute_as_system_admin(GET_QUERY).await;
+        if os.contains('.') {
+            // A dotted OS hostname is compared exactly.
+            assert_eq!(error_message(&res), MANAGER_NOT_REGISTERED);
+            assert_eq!(stub.calls(), vec![]);
+        } else {
+            assert!(res.errors.is_empty(), "{:?}", res.errors);
+            assert_eq!(
+                res.data.into_json().unwrap(),
+                json!({
+                    "centralManagerTimeSources": {
+                        "nodeId": id.to_string(),
+                        "servers": SERVERS,
+                    }
+                })
+            );
+            assert_eq!(stub.calls(), vec![Call::Get(hostname)]);
+        }
+    }
+
+    #[tokio::test]
+    async fn mutation_recognizes_manager_by_profile_hostname_with_domain() {
+        let (os, hostname) = manager_hostname_with_domain("example.com");
+        let (schema, stub) = schema_with(StubAgentManager::new()).await;
+        insert_active_node(&schema.store(), "follower", 1, FOLLOWER);
+        insert_active_node(&schema.store(), "manager", 1, &hostname);
+
+        let res = schema.execute_as_system_admin(SET_MUTATION).await;
+        if os.contains('.') {
+            // A dotted OS hostname is compared exactly.
+            assert_eq!(error_message(&res), MANAGER_NOT_REGISTERED);
+            assert_eq!(stub.calls(), vec![]);
+        } else {
+            assert!(res.errors.is_empty(), "{:?}", res.errors);
+            assert_eq!(
+                res.data.into_json().unwrap(),
+                json!({"setCentralManagerTimeSources": SERVERS})
+            );
+            assert_eq!(stub.calls(), vec![Call::Set(hostname, servers())]);
+        }
+    }
+
+    #[tokio::test]
+    async fn first_of_several_matching_nodes_is_the_manager() {
+        let (os, first) = manager_hostname_with_domain("a.example");
+        let (_, second) = manager_hostname_with_domain("b.example");
+        let (schema, stub) = schema_with(StubAgentManager::new()).await;
+        let id = insert_active_node(&schema.store(), "manager-a", 1, &first);
+        insert_active_node(&schema.store(), "manager-b", 1, &second);
+
+        let res = schema.execute_as_system_admin(GET_QUERY).await;
+        if os.contains('.') {
+            // A dotted OS hostname is compared exactly.
+            assert_eq!(error_message(&res), MANAGER_NOT_REGISTERED);
+            assert_eq!(stub.calls(), vec![]);
+        } else {
+            assert!(res.errors.is_empty(), "{:?}", res.errors);
+            assert_eq!(
+                res.data.into_json().unwrap()["centralManagerTimeSources"]["nodeId"],
+                json!(id.to_string())
+            );
+            assert_eq!(stub.calls(), vec![Call::Get(first)]);
+        }
+    }
+
     #[tokio::test]
     async fn query_without_manager_node_fails() {
         let (schema, stub) = schema_with(StubAgentManager::new()).await;

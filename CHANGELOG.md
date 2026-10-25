@@ -4,6 +4,17 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The Central Manager's node is recognized when the host's OS hostname is its
+  short name, such as `manager`, and the node is registered with the fully
+  qualified name, such as `manager.example.com`. Its status now reports it as
+  the Central Manager, and the upstream NTP servers of its host can be read
+  and set instead of failing with "the Central Manager node is not
+  registered".
+
 ## [0.48.0] - 2026-10-23
 
 ### Added
@@ -2514,6 +2525,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.48.0...main
 [0.48.0]: https://github.com/aicers/review-web/compare/0.47.0...0.48.0
 [0.47.0]: https://github.com/aicers/review-web/compare/0.46.0...0.47.0
 [0.46.0]: https://github.com/aicers/review-web/compare/0.45.0...0.46.0
