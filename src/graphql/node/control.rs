@@ -154,10 +154,18 @@ impl NodeControlMutation {
     /// refused with "the node changed since it was read; reload and retry".
     ///
     /// A change of a Time Series Generator's applied `giganto_name` is refused while a sampling
-    /// policy assigned to it is in use, naming the policies and their uses; otherwise the
-    /// generator's policies record the new Data Store. When the apply changes the node's applied
-    /// customer or hostname, every Time Series Generator holding a sampling policy whose sensor or
-    /// assignee is on the node is told that its policies changed.
+    /// policy assigned to it is in use, naming the policies and their uses. It is also refused
+    /// before anything is committed while a policy assigned to it, even an unused one, could not
+    /// be assigned to that generator again once the apply is stored, naming each such policy and
+    /// why. This includes an apply that also changes the node's customer away from the policy's
+    /// customer, or removes the policy's sensor name from that customer's sensors; the sensor names
+    /// are counted across all of the customer's nodes after the apply, so removing the name from
+    /// this node refuses the change only if no other node of that customer still provides it. To
+    /// make such a change, unassign the affected policy first, or apply the Data Store change with
+    /// the profile unchanged and apply the profile change separately. Only once these checks permit
+    /// the apply do the generator's policies record the new Data Store. When the apply changes the
+    /// node's applied customer or hostname, every Time Series Generator holding a sampling policy
+    /// whose sensor or assignee is on the node is told that its policies changed.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_node(&self, ctx: &Context<'_>, id: ID, node: NodeInput) -> Result<ID> {
@@ -277,10 +285,18 @@ impl NodeControlMutation {
     /// refused with "the node changed since it was read; reload and retry".
     ///
     /// A change of a Time Series Generator's applied `giganto_name` is refused while a sampling
-    /// policy assigned to it is in use, naming the policies and their uses; otherwise the
-    /// generator's policies record the new Data Store. When the apply changes the node's applied
-    /// customer or hostname, every Time Series Generator holding a sampling policy whose sensor or
-    /// assignee is on the node is told that its policies changed.
+    /// policy assigned to it is in use, naming the policies and their uses. It is also refused
+    /// before anything is committed while a policy assigned to it, even an unused one, could not
+    /// be assigned to that generator again once the apply is stored, naming each such policy and
+    /// why. This includes an apply that also changes the node's customer away from the policy's
+    /// customer, or removes the policy's sensor name from that customer's sensors; the sensor names
+    /// are counted across all of the customer's nodes after the apply, so removing the name from
+    /// this node refuses the change only if no other node of that customer still provides it. To
+    /// make such a change, unassign the affected policy first, or apply the Data Store change with
+    /// the profile unchanged and apply the profile change separately. Only once these checks permit
+    /// the apply do the generator's policies record the new Data Store. When the apply changes the
+    /// node's applied customer or hostname, every Time Series Generator holding a sampling policy
+    /// whose sensor or assignee is on the node is told that its policies changed.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_node_draft(&self, ctx: &Context<'_>, id: ID, node: NodeInput) -> Result<Node> {
