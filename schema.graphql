@@ -6700,7 +6700,8 @@ type Mutation {
 	"""
 	Removes sampling policies, returning the IDs that no longer exist.
 	
-	On error, some sampling policies may have been removed.
+	Every ID is checked before any policy is removed, so a refused ID
+	leaves every policy in place.
 	"""
 	removeSamplingPolicies(ids: [ID!]!): [String!]!
 	"""
