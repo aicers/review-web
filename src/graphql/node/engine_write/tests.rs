@@ -1126,6 +1126,63 @@ async fn an_insert_listing_an_engine_key_twice_is_refused() {
     assert_eq!(f.store().node_map().count().unwrap(), before);
 }
 
+#[tokio::test]
+async fn a_detector_id_a_removed_detector_used_is_refused_on_save_and_apply() {
+    let f = fixture().await;
+    let second = detector(
+        2,
+        "model-a1",
+        &[&f.sensor_a],
+        (&f.server_name, OWN_ADDRESS),
+        "",
+    );
+    let both = format!("{}{second}", f.valid());
+    ok(f.save(&f.engine_a, Some(&both)).await);
+    ok(f.apply(f.engine_a.node_id).await);
+    // The applied document still names detector 2, so its id is not retired
+    // until an apply removes it there too.
+    ok(f.save(&f.engine_a, Some(&f.valid())).await);
+    ok(f.save(&f.engine_a, Some(&both)).await);
+    ok(f.save(&f.engine_a, Some(&f.valid())).await);
+    ok(f.apply(f.engine_a.node_id).await);
+    let refs = f.refs(&f.engine_a);
+
+    let assert_retired = |res: &async_graphql::Response| {
+        assert_eq!(
+            refused(res),
+            (
+                "DUPLICATE_ENTRY".to_string(),
+                "detectors[1].id".to_string(),
+                "2".to_string(),
+                Value::from(2),
+            )
+        );
+        assert_eq!(
+            single_error(res).0,
+            format!(
+                "detector id 2 of agent \"{ENGINE_KEY}\" was used by a removed detector; a \
+                 detector id is never reused"
+            )
+        );
+    };
+    assert_retired(&f.save(&f.engine_a, Some(&both)).await);
+    assert_eq!(f.refs(&f.engine_a), refs);
+
+    f.seed(&f.engine_a, Some(&both));
+    assert_retired(&f.apply(f.engine_a.node_id).await);
+    let query = apply_draft(&f.node(f.engine_a.node_id));
+    assert_retired(&f.sec(&query, &[A]).await);
+    assert_eq!(
+        f.agent(&f.engine_a).config.as_ref().map(AsRef::as_ref),
+        Some(f.valid().as_str())
+    );
+    assert_eq!(f.refs(&f.engine_a), refs);
+
+    // A new detector takes an id above the mark.
+    ok(f.save(&f.engine_a, Some(&both.replace("id = 2", "id = 3")))
+        .await);
+}
+
 // ---------------------------------------------------------------------------
 // The refusals of the store
 
@@ -1204,6 +1261,36 @@ fn the_store_refusals_map_to_the_resolver_codes() {
         detector_id: 7,
     });
     assert_eq!(extensions(&duplicate_id)["code"], "DUPLICATE_ENTRY");
+    let retired = EngineDocumentError::DetectorIdRetired {
+        agent_key: key.clone(),
+        detector_id: 9,
+    };
+    let refused_retired = map(retired.clone());
+    assert_eq!(refused_retired.message, retired.to_string());
+    assert_eq!(
+        refused_retired.message,
+        format!(
+            "detector id 9 of agent \"{key}\" was used by a removed detector; a detector id is \
+             never reused"
+        )
+    );
+    assert_eq!(
+        extensions(&refused_retired),
+        json!({
+            "code": "DUPLICATE_ENTRY",
+            "field": "detectors[1].id",
+            "value": "9",
+            "detectorId": 9,
+        })
+    );
+    let unmatched = map(EngineDocumentError::DetectorIdRetired {
+        agent_key: key.clone(),
+        detector_id: 8,
+    });
+    assert_eq!(
+        extensions(&unmatched),
+        json!({ "code": "DUPLICATE_ENTRY", "field": "", "value": "8" })
+    );
     let indicator = map(EngineDocumentError::IndicatorNotFound {
         agent_key: key.clone(),
         indicator: "ind".to_string(),

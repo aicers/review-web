@@ -23,7 +23,7 @@ use review_database::{
 use crate::graphql::{
     engine_document::{
         Detector, DocumentTarget, EngineDocument, duplicate_id, duplicate_model,
-        indicator_not_allowed, kept_pairs, model_not_of_instance,
+        indicator_not_allowed, kept_pairs, model_not_of_instance, retired_id,
     },
     refusal::{RefusalCode, refusal},
     unsupervised::data_store_addrs,
@@ -442,6 +442,15 @@ pub(super) fn store_refusal(
         } => Some(
             match find_detector(detectors(agent_key), |d| d.id == *detector_id) {
                 Some((i, detector)) => duplicate_id(i, detector),
+                None => unnamed(RefusalCode::DuplicateEntry, &detector_id.to_string()),
+            },
+        ),
+        EngineDocumentError::DetectorIdRetired {
+            agent_key,
+            detector_id,
+        } => Some(
+            match find_detector(detectors(agent_key), |d| d.id == *detector_id) {
+                Some((i, detector)) => retired_id(i, detector, refused.to_string()),
                 None => unnamed(RefusalCode::DuplicateEntry, &detector_id.to_string()),
             },
         ),

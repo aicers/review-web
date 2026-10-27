@@ -232,7 +232,7 @@ fn stop(instance: &ModelInstance) -> String {
 fn read(instance: &ModelInstance) -> String {
     format!(
         "{{ engineInstance(nodeId: \"{}\", agentKey: \"{}\") {{ nodeId agentKey stopped \
-         detectors {{ detectorId state finishedAt outcome reason events \
+         lastDetectorId detectors {{ detectorId state finishedAt outcome reason events \
          sources {{ source state reason }} reportedAt }} }} }}",
         instance.node_id, instance.agent_key
     )
@@ -703,8 +703,14 @@ async fn a_caller_of_another_customer_is_refused() {
     let f = fixture().await;
     {
         let store = f.store();
+        write_refs(
+            &store,
+            &f.engine_a,
+            &[(1, "model-a1"), (5, "model-a3")],
+            &[],
+        );
         write_refs(&store, &f.engine_a, &[(1, "model-a1")], &[]);
-        write_refs(&store, &f.engine_b, &[(1, "model-b1")], &[]);
+        write_refs(&store, &f.engine_b, &[(1, "model-b1")], &[(2, "model-b2")]);
     }
 
     for (query, _) in operations(&f.engine_a) {
@@ -725,13 +731,18 @@ async fn a_caller_of_another_customer_is_refused() {
             .await,
     );
     assert_eq!(res["engineInstance"]["stopped"], json!(false));
+    assert_eq!(res["engineInstance"]["lastDetectorId"], json!(2));
+    let res = data(f.sec(&read(&f.engine_b), &[B]).await);
+    assert_eq!(res["engineInstance"]["lastDetectorId"], json!(2));
     assert_eq!(f.relay.calls().len(), 3);
 
-    for instance in [&f.engine_a, &f.engine_b] {
+    for (instance, mark) in [(&f.engine_a, 5), (&f.engine_b, 2)] {
         for (query, field) in operations(instance) {
             let res = data(f.sys(&query).await);
             assert!(!res[field].is_null(), "{query}");
         }
+        let res = data(f.sys(&read(instance)).await);
+        assert_eq!(res["engineInstance"]["lastDetectorId"], json!(mark));
     }
     assert_eq!(f.relay.calls().len(), 9);
 }
@@ -780,6 +791,7 @@ async fn the_read_returns_the_stopped_state_and_every_status() {
             "nodeId": f.engine_a.node_id.to_string(),
             "agentKey": ENGINE_KEY,
             "stopped": true,
+            "lastDetectorId": 3,
             "detectors": [
                 {
                     "detectorId": "2",
@@ -886,6 +898,7 @@ async fn the_read_of_an_instance_with_no_record_is_empty_and_not_stopped() {
                 "nodeId": f.engine_a.node_id.to_string(),
                 "agentKey": ENGINE_KEY,
                 "stopped": false,
+                "lastDetectorId": 0,
                 "detectors": [],
             }
         })
