@@ -22,7 +22,8 @@ pub(crate) enum RefusalCode {
     /// A node customer or hostname change, or a new node, refused by RFC 0006
     /// §5.11.
     CustomerChangeRefused,
-    /// A `server_name` that is not an installed Data Store.
+    /// A `server_name` that is not an installed Data Store, or a timeseries
+    /// source whose Time Series Generator has no applied Data Store.
     DataStoreNotInstalled,
     /// Run once of a detector id absent from the applied document.
     DetectorNotFound,
@@ -75,11 +76,13 @@ pub(crate) enum RefusalCode {
     RunInProgress,
     /// A cancel of a run that has finished.
     RunNotActive,
-    /// A source that is not a source name of the instance's customer, or any
-    /// detector on a node without an applied profile.
+    /// A source that is not a source name of the instance's customer, a
+    /// timeseries source that is not an assigned sampling policy of it, or
+    /// any detector on a node without an applied profile.
     SourceNotAllowed,
-    /// Method `timeseries`, not supported in phase 1.
-    TimeseriesUnsupported,
+    /// Timeseries sources of different shapes, or not all kept in the Data
+    /// Store the definition or detector reads.
+    SourcesIncompatible,
     /// A key outside the schema, at any level.
     UnknownField,
 }
@@ -116,7 +119,7 @@ impl RefusalCode {
             Self::RunInProgress => "RUN_IN_PROGRESS",
             Self::RunNotActive => "RUN_NOT_ACTIVE",
             Self::SourceNotAllowed => "SOURCE_NOT_ALLOWED",
-            Self::TimeseriesUnsupported => "TIMESERIES_UNSUPPORTED",
+            Self::SourcesIncompatible => "SOURCES_INCOMPATIBLE",
             Self::UnknownField => "UNKNOWN_FIELD",
         }
     }

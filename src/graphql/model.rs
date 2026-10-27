@@ -27,7 +27,7 @@ const DEFAULT_MIN_ZERO_COUNT_FOR_TREND: usize = 5;
 /// The record `kind` of each clustering method a model can be trained with.
 pub(crate) const MULTIFIELD_KIND: &str = "Multifield";
 const PREFIX_KIND: &str = "Prefix";
-const TIMESERIES_KIND: &str = "Timeseries";
+pub(crate) const TIMESERIES_KIND: &str = "Timeseries";
 
 #[derive(Default)]
 pub(super) struct ModelQuery;

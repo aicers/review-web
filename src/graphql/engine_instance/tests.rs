@@ -15,6 +15,9 @@ use crate::graphql::{
         Relay, RelayAnswer, RelayCall, insert_agent_node, insert_data_store_node,
         insert_engine_instance, insert_sensor_node, relay_schema,
     },
+    sampling_test_support::{
+        PolicyShape, generator_config, insert_assigned_policy, insert_generator_node_with,
+    },
 };
 
 const A: u32 = 1;
@@ -886,5 +889,88 @@ async fn the_read_of_an_instance_with_no_record_is_empty_and_not_stopped() {
                 "detectors": [],
             }
         })
+    );
+}
+
+#[tokio::test]
+async fn the_read_shows_the_delivery_of_each_applied_source() {
+    let f = fixture().await;
+    let generator = insert_generator_node_with(
+        &f.store(),
+        "gen-1.example.com",
+        A,
+        Some(generator_config(&f.server_name)),
+    );
+    let policy = {
+        let store = f.store();
+        let policy =
+            insert_assigned_policy(&store, "series", A, &generator, PolicyShape::default());
+        TestModel {
+            instance: f.engine_a.clone(),
+            kind: "Timeseries",
+            trained_sources: vec![policy.to_string()],
+            ..TestModel::new("ts-a", A)
+        }
+        .replace(&store);
+        let detector = |id, model: &str, sources: Vec<String>| EngineDetectorRef {
+            id,
+            model: model.to_string(),
+            sources,
+            indicator: None,
+        };
+        let mut map = store.node_map();
+        let (node, _, _) = map.get_by_id(f.engine_a.node_id).unwrap().unwrap();
+        let update = NodeUpdate::from(node);
+        let document = EngineDocumentWrite {
+            agent_key: f.engine_a.agent_key.clone(),
+            applied: Some(EngineDocumentRefs {
+                detectors: vec![
+                    detector(5, "ts-a", vec![policy.to_string(), "999".to_string()]),
+                    detector(6, "model-a1", vec![f.sensor_a.clone()]),
+                ],
+            }),
+            pending: Some(EngineDocumentRefs {
+                detectors: vec![detector(8, "model-a2", vec![f.sensor_a.clone()])],
+            }),
+        };
+        map.update_with_engine_documents(f.engine_a.node_id, &update, &update, &[document])
+            .unwrap();
+        // Detector 8 has a status, but only the pending document has it.
+        for id in [5, 6, 8] {
+            store
+                .set_detector_status(&f.engine_a, id, &finished_status())
+                .unwrap();
+        }
+        policy
+    };
+    f.relay.set_online("gen-1.example.com", &[&generator]);
+
+    let res = data(
+        f.sec(
+            &format!(
+                "{{ engineInstance(nodeId: \"{}\", agentKey: \"{ENGINE_KEY}\") {{ detectors {{ \
+                 detectorId sourceDelivery {{ source delivery }} }} }} }}",
+                f.engine_a.node_id
+            ),
+            &[A],
+        )
+        .await,
+    );
+    assert_eq!(
+        res["engineInstance"]["detectors"],
+        json!([
+            {
+                "detectorId": "5",
+                "sourceDelivery": [
+                    { "source": policy.to_string(), "delivery": "ASSIGNEE_ONLINE" },
+                    { "source": "999", "delivery": null },
+                ],
+            },
+            {
+                "detectorId": "6",
+                "sourceDelivery": [{ "source": f.sensor_a, "delivery": null }],
+            },
+            { "detectorId": "8", "sourceDelivery": [] },
+        ])
     );
 }

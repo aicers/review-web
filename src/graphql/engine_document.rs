@@ -20,8 +20,9 @@ use toml::de::{DeTable, DeValue};
 
 use super::{
     customer_access::{customer_source_names, model_by_name},
-    model::MULTIFIELD_KIND,
+    model::{MULTIFIELD_KIND, TIMESERIES_KIND},
     refusal::{RefusalCode, refusal},
+    sampling::{check_policy_sources, trained_shape},
     toml_refusal::parse_refusal,
     training::is_customer_indicator,
     unsupervised::{DataStore, check_data_store},
@@ -310,12 +311,18 @@ impl EngineDocument {
     /// profile, the model, `labeldb`, the sources, the Data Store and the
     /// indicator.
     ///
+    /// A detector of a timeseries model reads sampling policies of the
+    /// customer, as [`check_policy_sources`] checks them, each of the shape
+    /// of the policies the model was trained on; while none of those is
+    /// stored, the shape is unknown and any source is refused. Any other
+    /// detector reads source names of the customer.
+    ///
     /// # Errors
     ///
     /// Returns a refusal with `SOURCE_NOT_ALLOWED`, `MODEL_NOT_OF_INSTANCE`,
-    /// `FIELD_NOT_ALLOWED`, `DATA_STORE_NOT_INSTALLED`,
-    /// `ADDRESS_OVERRIDE_FORBIDDEN` or `INDICATOR_NOT_ALLOWED`, or an error
-    /// if the store cannot be read.
+    /// `FIELD_NOT_ALLOWED`, `SOURCES_INCOMPATIBLE`,
+    /// `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` or
+    /// `INDICATOR_NOT_ALLOWED`, or an error if the store cannot be read.
     pub(crate) fn check_stored(&self, store: &Store, target: &DocumentTarget<'_>) -> Result<()> {
         let mut customer_sources = None;
         for (i, detector) in self.detectors.iter().enumerate() {
@@ -352,23 +359,47 @@ impl EngineDocument {
                 ));
             }
 
-            let names = match customer_sources.take() {
-                Some(names) => names,
-                None => customer_source_names(store, customer_id)?,
-            };
-            for (j, source) in detector.sources.iter().enumerate() {
-                if !names.contains(source) {
-                    return Err(detector_refusal(
-                        RefusalCode::SourceNotAllowed,
-                        format!("{source:?} is not a source of customer {customer_id}"),
-                        i,
-                        &format!("sources[{j}]"),
-                        source.clone(),
-                        detector,
-                    ));
+            if model.kind == TIMESERIES_KIND {
+                let shape =
+                    trained_shape(store, &model.name, &model.trained_sources).map_err(|e| {
+                        format!(
+                            "cannot read the sources model {:?} was trained on: {e:#}",
+                            model.name
+                        )
+                    })?;
+                let refused = check_policy_sources(
+                    store,
+                    customer_id,
+                    &detector.sources,
+                    shape,
+                    &detector.data_store.server_name,
+                )
+                .map_err(|e| format!("cannot read sampling policies: {e:#}"))?;
+                if let Some(refused) = refused {
+                    let id = detector.id;
+                    return Err(refused
+                        .into_error(&format!("detectors[{i}]."))
+                        .extend_with(|_, extensions| extensions.set("detectorId", id)));
                 }
+            } else {
+                let names = match customer_sources.take() {
+                    Some(names) => names,
+                    None => customer_source_names(store, customer_id)?,
+                };
+                for (j, source) in detector.sources.iter().enumerate() {
+                    if !names.contains(source) {
+                        return Err(detector_refusal(
+                            RefusalCode::SourceNotAllowed,
+                            format!("{source:?} is not a source of customer {customer_id}"),
+                            i,
+                            &format!("sources[{j}]"),
+                            source.clone(),
+                            detector,
+                        ));
+                    }
+                }
+                customer_sources = Some(names);
             }
-            customer_sources = Some(names);
 
             let addrs = target
                 .addrs

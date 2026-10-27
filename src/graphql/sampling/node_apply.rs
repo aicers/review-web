@@ -13,10 +13,10 @@ use crate::graphql::customer_access::event_sensor_names;
 /// The key of the Data Store name in a Time Series Generator's configuration.
 const GIGANTO_NAME: &str = "giganto_name";
 
-/// Returns the `giganto_name` of a Time Series Generator's configuration;
-/// `None` if it has none or an empty one, as review-database records a
-/// policy's Data Store.
-fn data_store(agent: &review_database::Agent) -> Option<String> {
+/// Returns the `giganto_name` of a Time Series Generator's applied
+/// configuration; `None` if it has none or an empty one, as review-database
+/// records a policy's Data Store.
+pub(in crate::graphql) fn generator_data_store(agent: &review_database::Agent) -> Option<String> {
     let config = agent.config.as_ref()?;
     let table = config.as_ref().parse::<toml::Table>().ok()?;
     table
@@ -61,7 +61,7 @@ pub(in crate::graphql) fn check_data_store_changes(
         else {
             continue;
         };
-        if data_store(applied) == data_store(agent) {
+        if generator_data_store(applied) == generator_data_store(agent) {
             continue;
         }
         let instance = ModelInstance {

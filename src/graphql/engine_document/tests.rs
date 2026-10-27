@@ -1,6 +1,13 @@
+use review_database::SamplingInterval;
 use serde_json::Value;
 
 use super::*;
+use crate::graphql::{
+    model_test_support::{TestModel, insert_engine_node},
+    sampling_test_support::{
+        OWN_ADDRESS, POLICY_CUSTOMER, PolicyFixture, PolicyShape, sensor_name,
+    },
+};
 
 const VALID: &str = r#"
 cpus = 4
@@ -90,7 +97,12 @@ fn without(text: &str, key: &str) -> String {
 /// Returns the code, `field`, `value` and `detectorId` of the refusal of
 /// `text`.
 fn refused(text: &str) -> (String, String, String, Value) {
-    let error = EngineDocument::parse_and_validate(text).expect_err(text);
+    parts(&EngineDocument::parse_and_validate(text).expect_err(text))
+}
+
+/// Returns the code, `field`, `value` and `detectorId` of `error`, a
+/// refusal.
+fn parts(error: &async_graphql::Error) -> (String, String, String, Value) {
     let extensions =
         serde_json::to_value(error.extensions.as_ref().expect("a refusal has extensions")).unwrap();
     let get = |key: &str| match &extensions[key] {
@@ -606,4 +618,239 @@ fn kept_pairs_come_from_documents_that_parse() {
             "10.0.0.5:38371".parse().unwrap()
         )])
     );
+}
+
+// ---------------------------------------------------------------------------
+// Detectors of a timeseries model
+
+const TIMESERIES_MODEL: &str = "ts-model";
+const MULTIDIMENSION_MODEL: &str = "md-model";
+
+/// A [`PolicyFixture`] with an engine instance of its customer holding a
+/// timeseries model trained on the fixture's assigned policies, and a
+/// multidimension model.
+struct Detectors {
+    policies: PolicyFixture,
+    instance: ModelInstance,
+}
+
+impl Detectors {
+    fn new() -> Self {
+        let policies = PolicyFixture::new();
+        let instance = insert_engine_node(&policies.store, POLICY_CUSTOMER);
+        TestModel {
+            instance: instance.clone(),
+            kind: TIMESERIES_KIND,
+            trained_sources: policies.assigned.iter().map(ToString::to_string).collect(),
+            ..TestModel::new(TIMESERIES_MODEL, POLICY_CUSTOMER)
+        }
+        .replace(&policies.store);
+        TestModel {
+            instance: instance.clone(),
+            ..TestModel::new(MULTIDIMENSION_MODEL, POLICY_CUSTOMER)
+        }
+        .replace(&policies.store);
+        Self { policies, instance }
+    }
+
+    /// Returns a document with one detector of `model` reading `sources`
+    /// from the fixture's first Data Store, with `extra` lines.
+    fn document(&self, model: &str, sources: &[String], extra: &str) -> String {
+        format!(
+            r#"
+[[detectors]]
+id = 7
+enabled = true
+model = "{model}"
+sources = {sources}
+period = "15m"
+start = "2026-10-21T00:00:00Z"
+batch_size = 1000
+{extra}
+
+[detectors.data_store]
+address = "{OWN_ADDRESS}"
+server_name = "{}"
+"#,
+            self.policies.server_name,
+            sources = serde_json::to_string(sources).unwrap(),
+        )
+    }
+
+    /// Checks `text` as a draft save on the instance by a Security
+    /// Administrator does.
+    fn check(&self, text: &str) -> Result<()> {
+        let addrs = HashMap::from([(
+            self.policies.server_name.clone(),
+            vec!["10.0.0.5".parse().unwrap()],
+        )]);
+        EngineDocument::parse_and_validate(text)?.check_stored(
+            &self.policies.store,
+            &DocumentTarget {
+                instance: &self.instance,
+                customer_id: Some(POLICY_CUSTOMER),
+                addrs: &addrs,
+                kept: &HashSet::new(),
+                system_admin: false,
+            },
+        )
+    }
+
+    /// Returns the code, `field`, `value` and `detectorId` of the refusal of
+    /// `text`, and its message.
+    fn refused(&self, text: &str) -> ((String, String, String, Value), String) {
+        let error = self.check(text).expect_err(text);
+        (parts(&error), error.message)
+    }
+}
+
+#[test]
+fn a_timeseries_detector_reads_policies_of_the_trained_shape() {
+    let f = Detectors::new();
+    let [p1, p2] = f.policies.assigned.map(|id| id.to_string());
+    f.check(&f.document(TIMESERIES_MODEL, std::slice::from_ref(&p1), "stats = true"))
+        .unwrap();
+    f.check(&f.document(TIMESERIES_MODEL, &[p2, p1], "timeseries = false"))
+        .unwrap();
+    // A new policy of the same shape is accepted too.
+    let p3 = f
+        .policies
+        .assigned_policy("p3", &f.policies.generator, PolicyShape::default())
+        .to_string();
+    f.check(&f.document(TIMESERIES_MODEL, &[p3], "")).unwrap();
+}
+
+#[test]
+fn a_timeseries_detector_refuses_a_sensor() {
+    let f = Detectors::new();
+    let sensor = sensor_name("gen-a.example.com");
+    let ((code, field, value, detector_id), message) =
+        f.refused(&f.document(TIMESERIES_MODEL, std::slice::from_ref(&sensor), ""));
+    assert_eq!(
+        (code.as_str(), field.as_str(), value.as_str()),
+        (
+            "SOURCE_NOT_ALLOWED",
+            "detectors[0].sources[0]",
+            sensor.as_str()
+        )
+    );
+    assert_eq!(detector_id, 7);
+    assert_eq!(
+        message,
+        format!("{sensor:?} is not a sampling policy of customer {POLICY_CUSTOMER}")
+    );
+}
+
+#[test]
+fn a_timeseries_detector_refuses_a_policy_of_another_shape() {
+    let f = Detectors::new();
+    let other = f.policies.assigned_policy(
+        "other",
+        &f.policies.generator,
+        PolicyShape {
+            interval: SamplingInterval::OneHour,
+            ..PolicyShape::default()
+        },
+    );
+    // Alone, the policy is of one shape with itself, but not the model's.
+    let ((code, field, value, detector_id), message) =
+        f.refused(&f.document(TIMESERIES_MODEL, &[other.to_string()], ""));
+    assert_eq!(
+        (code.as_str(), field.as_str(), value),
+        (
+            "SOURCES_INCOMPATIBLE",
+            "detectors[0].sources[0]",
+            other.to_string()
+        )
+    );
+    assert_eq!(detector_id, 7);
+    assert_eq!(
+        message,
+        format!(
+            "sampling policy {other} differs in interval from the sampling policies model \
+             {TIMESERIES_MODEL:?} was trained on"
+        )
+    );
+}
+
+#[test]
+fn a_timeseries_detector_of_a_model_of_unknown_shape_is_refused() {
+    let f = Detectors::new();
+    let p1 = f.policies.assigned[0].to_string();
+    let unknown =
+        f.policies
+            .assigned_policy("unknown", &f.policies.generator, PolicyShape::default());
+    for (name, trained_sources) in [
+        ("ts-empty", Vec::new()),
+        (
+            "ts-unresolved",
+            vec![sensor_name("gen-a.example.com"), "9999".to_string()],
+        ),
+    ] {
+        TestModel {
+            instance: f.instance.clone(),
+            kind: TIMESERIES_KIND,
+            trained_sources,
+            ..TestModel::new(name, POLICY_CUSTOMER)
+        }
+        .replace(&f.policies.store);
+        // Even a policy of the shape every other source has is refused.
+        let ((code, field, value, detector_id), message) =
+            f.refused(&f.document(name, &[p1.clone(), unknown.to_string()], ""));
+        assert_eq!(
+            (code.as_str(), field.as_str(), value.as_str()),
+            (
+                "SOURCES_INCOMPATIBLE",
+                "detectors[0].sources[0]",
+                p1.as_str()
+            ),
+            "{name}"
+        );
+        assert_eq!(detector_id, 7);
+        assert_eq!(
+            message,
+            format!(
+                "none of the sampling policies model {name:?} was trained on is stored, so the \
+                 shape its sources must have is unknown"
+            )
+        );
+    }
+}
+
+#[test]
+fn a_timeseries_detector_reads_one_data_store() {
+    let f = Detectors::new();
+    let elsewhere = f.policies.assigned_policy(
+        "elsewhere",
+        &f.policies.other_generator,
+        PolicyShape::default(),
+    );
+    let sources = [f.policies.assigned[0].to_string(), elsewhere.to_string()];
+    let ((code, field, _, detector_id), _) = f.refused(&f.document(TIMESERIES_MODEL, &sources, ""));
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        (
+            "SOURCES_INCOMPATIBLE",
+            "detectors[0].data_store.server_name"
+        )
+    );
+    assert_eq!(detector_id, 7);
+}
+
+#[test]
+fn a_multidimension_detector_refuses_a_policy() {
+    let f = Detectors::new();
+    let p1 = f.policies.assigned[0].to_string();
+    let ((code, field, value, _), _) =
+        f.refused(&f.document(MULTIDIMENSION_MODEL, std::slice::from_ref(&p1), ""));
+    assert_eq!(
+        (code.as_str(), field.as_str(), value),
+        ("SOURCE_NOT_ALLOWED", "detectors[0].sources[0]", p1)
+    );
+    f.check(&f.document(
+        MULTIDIMENSION_MODEL,
+        &[sensor_name("gen-a.example.com")],
+        "",
+    ))
+    .unwrap();
 }

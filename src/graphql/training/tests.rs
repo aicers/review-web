@@ -3,7 +3,7 @@
 
 use review_database::{
     EngineDetectorRef, EngineDocumentRefs, EngineDocumentWrite, ModelInstance, NodeUpdate,
-    RunState, Store, TrainingDefinitionUpdate, types::ModelScores,
+    RunState, SamplingInterval, Store, TrainingDefinitionUpdate, types::ModelScores,
 };
 use serde_json::{Value, json};
 
@@ -14,6 +14,10 @@ use crate::graphql::{
     run_test_support::{
         Relay, RelayAnswer, RelayCall, insert_data_store_node, insert_engine_instance,
         insert_log_collector_node, insert_named_data_store_node, insert_sensor_node, relay_schema,
+    },
+    sampling_test_support::{
+        PolicyShape, SENSOR_KEY, generator_config, insert_assigned_policy,
+        insert_generator_node_with, insert_policy, sensor_name, timeseries_definition,
     },
 };
 
@@ -245,8 +249,21 @@ fn lookup_key(instance: &ModelInstance, hostname: &str) -> String {
 }
 
 /// Accepts the model upload of the run `run_id` that `instance` performs,
-/// creating or replacing the model `name`.
+/// creating or replacing the multidimension model `name`.
 fn complete(store: &Store, run_id: RunId, instance: &ModelInstance, name: &str) {
+    complete_as(store, run_id, instance, name, ("Multifield", "http"));
+}
+
+/// Accepts the model upload of the run `run_id` that `instance` performs,
+/// creating or replacing the model `name` of the record kind and event kind
+/// `kinds`.
+fn complete_as(
+    store: &Store,
+    run_id: RunId,
+    instance: &ModelInstance,
+    name: &str,
+    (kind, event_kind): (&str, &str),
+) {
     store
         .complete_run(
             run_id,
@@ -255,10 +272,10 @@ fn complete(store: &Store, run_id: RunId, instance: &ModelInstance, name: &str) 
                 id: 0,
                 name: name.to_string(),
                 version: 1,
-                kind: "Multifield".to_string(),
+                kind: kind.to_string(),
                 serialized_classifier: vec![1, 2, 3],
                 max_event_id_num: 25,
-                event_kind: "http".to_string(),
+                event_kind: event_kind.to_string(),
                 classification_id: 0,
                 batch_info: vec![],
                 scores: ModelScores::new(),
@@ -481,8 +498,303 @@ async fn validation_refusals_carry_their_codes() {
         .definition(&[&f.sensor_a], OWN_ADDRESS, "")
         .replace("multidimension", "timeseries");
     let res = f.sec(&insert(&f.engine_a, "def", &text), &[A]).await;
-    assert_eq!(code(&res), "TIMESERIES_UNSUPPORTED");
+    assert_eq!(
+        refused(&res),
+        ("FIELD_NOT_ALLOWED".into(), "csv".into(), String::new())
+    );
     assert!(stored(&f.store(), "def").is_none());
+}
+
+/// Moves node `node_id` to customer `customer_id`, keeping its hostname.
+fn move_to_customer(store: &Store, node_id: u32, customer_id: u32) {
+    let mut map = store.node_map();
+    let (node, _, _) = map.get_by_id(node_id).unwrap().unwrap();
+    let old = NodeUpdate::from(node.clone());
+    let mut new = NodeUpdate::from(node);
+    for profile in [&mut new.profile, &mut new.profile_draft]
+        .into_iter()
+        .flatten()
+    {
+        profile.customer_id = customer_id;
+    }
+    map.update(node_id, &old, &new).unwrap();
+}
+
+#[tokio::test]
+async fn a_timeseries_definition_reads_assigned_policies_and_shows_their_delivery() {
+    let f = fixture().await;
+    let generator = |hostname: &str| {
+        insert_generator_node_with(
+            &f.store(),
+            hostname,
+            A,
+            Some(generator_config(&f.server_name)),
+        )
+    };
+    let online = generator("gen-1.example.com");
+    let offline = generator("gen-2.example.com");
+    let moved = generator("gen-3.example.com");
+    let (p_online, p_offline, p_withheld, p_unassigned) = {
+        let store = f.store();
+        let policy = |name: &str, generator: &ModelInstance| {
+            insert_assigned_policy(&store, name, A, generator, PolicyShape::default())
+        };
+        let ids = (
+            policy("online", &online),
+            policy("offline", &offline),
+            policy("withheld", &moved),
+            insert_policy(&store, "unassigned", A, &sensor_name("gen-1.example.com")),
+        );
+        move_to_customer(&store, moved.node_id, B);
+        ids
+    };
+    f.relay.set_online("gen-1.example.com", &[&online]);
+    // The host of the offline generator is connected, but not the generator.
+    let sensor = ModelInstance {
+        node_id: offline.node_id,
+        agent_key: SENSOR_KEY.to_string(),
+    };
+    f.relay.set_online("gen-2.example.com", &[&sensor]);
+    // A withheld policy's generator being online does not matter.
+    f.relay.set_online("gen-3.example.com", &[&moved]);
+
+    let text = timeseries_definition(&[p_online, p_offline], &f.server_name, OWN_ADDRESS, "");
+    let res = f.sec(&insert(&f.engine_a, "series", &text), &[A]).await;
+    assert_eq!(data(res), json!({ "insertTrainingDefinition": "series" }));
+    let stored = stored(&f.store(), "series").expect("stored");
+    assert_eq!(stored.method, review_database::ModelMethod::Timeseries);
+    assert_eq!(stored.event_kind, "timeseries");
+
+    let res = f
+        .sec(
+            r#"{ trainingDefinition(name: "series") { sourceDelivery { source delivery } } }"#,
+            &[A],
+        )
+        .await;
+    assert_eq!(
+        data(res),
+        json!({ "trainingDefinition": { "sourceDelivery": [
+            { "source": p_online.to_string(), "delivery": "ASSIGNEE_ONLINE" },
+            { "source": p_offline.to_string(), "delivery": "ASSIGNEE_OFFLINE" },
+        ] } })
+    );
+
+    for (id, delivery) in [
+        (p_unassigned, "UNASSIGNED"),
+        (p_withheld, "WITHHELD"),
+        (p_offline, "ASSIGNEE_OFFLINE"),
+        (p_online, "ASSIGNEE_ONLINE"),
+    ] {
+        let res = f
+            .sec(
+                &format!(r#"{{ samplingPolicy(id: "{id}") {{ delivery }} }}"#),
+                &[A],
+            )
+            .await;
+        assert_eq!(
+            data(res),
+            json!({ "samplingPolicy": { "delivery": delivery } }),
+            "{id}"
+        );
+    }
+
+    // A source of another method is not a policy, even when it names one.
+    let text = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
+    f.define(&f.engine_a, "multi", &text).await;
+    let res = f
+        .sec(
+            r#"{ trainingDefinition(name: "multi") { sourceDelivery { source delivery } } }"#,
+            &[A],
+        )
+        .await;
+    assert_eq!(
+        data(res),
+        json!({ "trainingDefinition": { "sourceDelivery": [
+            { "source": f.sensor_a, "delivery": null },
+        ] } })
+    );
+}
+
+#[tokio::test]
+async fn a_timeseries_definition_is_refused_for_an_unassigned_policy_or_a_sensor() {
+    let f = fixture().await;
+    let generator = insert_generator_node_with(
+        &f.store(),
+        "gen-1.example.com",
+        A,
+        Some(generator_config(&f.server_name)),
+    );
+    let (assigned, unassigned) = {
+        let store = f.store();
+        (
+            insert_assigned_policy(&store, "assigned", A, &generator, PolicyShape::default()),
+            insert_policy(&store, "unassigned", A, &sensor_name("gen-1.example.com")),
+        )
+    };
+    let text = timeseries_definition(&[assigned, unassigned], &f.server_name, OWN_ADDRESS, "");
+    let res = f.sec(&insert(&f.engine_a, "series", &text), &[A]).await;
+    assert_eq!(
+        refused(&res),
+        (
+            "SOURCE_NOT_ALLOWED".into(),
+            "sources[1]".into(),
+            unassigned.to_string()
+        )
+    );
+    let text = timeseries_definition(&[assigned], &f.server_name, OWN_ADDRESS, "")
+        .replace(&format!("\"{assigned}\""), &format!("{:?}", f.sensor_a));
+    let res = f.sec(&insert(&f.engine_a, "series", &text), &[A]).await;
+    assert_eq!(code(&res), "SOURCE_NOT_ALLOWED");
+    assert!(stored(&f.store(), "series").is_none());
+}
+
+#[tokio::test]
+async fn a_timeseries_model_keeps_its_shape_through_update_retrain_and_clone() {
+    let f = fixture().await;
+    let generator = insert_generator_node_with(
+        &f.store(),
+        "gen-1.example.com",
+        A,
+        Some(generator_config(&f.server_name)),
+    );
+    let (quarter, quarter_2, hourly) = {
+        let store = f.store();
+        let policy = |name: &str, shape: PolicyShape| {
+            insert_assigned_policy(&store, name, A, &generator, shape)
+        };
+        (
+            policy("quarter", PolicyShape::default()),
+            policy("quarter-2", PolicyShape::default()),
+            policy(
+                "hourly",
+                PolicyShape {
+                    interval: SamplingInterval::OneHour,
+                    ..PolicyShape::default()
+                },
+            ),
+        )
+    };
+    let text = |sources: &[u32]| timeseries_definition(sources, &f.server_name, OWN_ADDRESS, "");
+    let differs = |source: u32| {
+        (
+            "SOURCES_INCOMPATIBLE".to_string(),
+            "sources[0]".to_string(),
+            source.to_string(),
+        )
+    };
+
+    // Before the model exists, the definition may change its shape.
+    f.define(&f.engine_a, "series", &text(&[hourly])).await;
+    let res = f.sec(&update("series", &text(&[quarter])), &[A]).await;
+    assert!(res.errors.is_empty(), "{res:?}");
+    let run_id = f.train("series").await;
+    complete_as(
+        &f.store(),
+        run_id,
+        &f.engine_a,
+        "series",
+        (TIMESERIES_KIND, "timeseries"),
+    );
+    let model = model_by_name(&f.store(), "series").unwrap().unwrap();
+    assert_eq!(model.kind, TIMESERIES_KIND);
+    assert_eq!(model.trained_sources, [quarter.to_string()]);
+    name_in_documents(&f.store(), &f.engine_a, "series", 7, Some(8));
+
+    // Once it exists, its detectors read the shape it was trained on, so
+    // neither an update nor a retrain may change it.
+    let res = f.sec(&update("series", &text(&[hourly])), &[A]).await;
+    assert_eq!(refused(&res), differs(hourly));
+    assert_eq!(
+        stored(&f.store(), "series").unwrap().sources,
+        [quarter.to_string()]
+    );
+    store_text(&f.store(), "series", &text(&[hourly]));
+    let res = f.sys(&train("series")).await;
+    assert_eq!(refused(&res), differs(hourly));
+    assert_eq!(f.store().model_runs("series").unwrap().len(), 1);
+    // Another policy of the same shape is accepted.
+    let res = f.sec(&update("series", &text(&[quarter_2])), &[A]).await;
+    assert!(res.errors.is_empty(), "{res:?}");
+
+    // A clone keeps the classifier, and so the shape.
+    let copy = |target: &str, source: u32| {
+        clone(
+            "series",
+            target,
+            &f.engine_a2,
+            (&f.server_name, OWN_ADDRESS),
+            &[&source.to_string()],
+            "",
+        )
+    };
+    let res = f.sec(&copy("copy", hourly), &[A]).await;
+    assert_eq!(refused(&res), differs(hourly));
+    assert!(stored(&f.store(), "copy").is_none());
+    let res = f.sec(&copy("copy", quarter_2), &[A]).await;
+    assert!(res.errors.is_empty(), "{res:?}");
+}
+
+#[tokio::test]
+async fn a_timeseries_model_of_unknown_shape_cannot_be_cloned() {
+    let f = fixture().await;
+    let generator = insert_generator_node_with(
+        &f.store(),
+        "gen-1.example.com",
+        A,
+        Some(generator_config(&f.server_name)),
+    );
+    let quarter =
+        insert_assigned_policy(&f.store(), "quarter", A, &generator, PolicyShape::default());
+    let text = timeseries_definition(&[quarter], &f.server_name, OWN_ADDRESS, "");
+    // A model trained before its sources were recorded.
+    f.store()
+        .replace_model(
+            review_database::Model {
+                id: 0,
+                name: "legacy".to_string(),
+                version: 1,
+                kind: TIMESERIES_KIND.to_string(),
+                serialized_classifier: vec![1, 2, 3],
+                max_event_id_num: 25,
+                event_kind: "timeseries".to_string(),
+                classification_id: 0,
+                batch_info: vec![],
+                scores: ModelScores::new(),
+            },
+            review_database::ModelOwner {
+                customer_id: A,
+                instance: f.engine_a.clone(),
+            },
+            chrono::Utc::now(),
+            review_database::TrainedWith {
+                run_id: 1,
+                definition: text,
+                sources: Vec::new(),
+            },
+        )
+        .unwrap();
+    let res = f
+        .sec(
+            &clone(
+                "legacy",
+                "copy",
+                &f.engine_a2,
+                (&f.server_name, OWN_ADDRESS),
+                &[&quarter.to_string()],
+                "",
+            ),
+            &[A],
+        )
+        .await;
+    assert_eq!(
+        refused(&res),
+        (
+            "SOURCES_INCOMPATIBLE".into(),
+            "sources[0]".into(),
+            quarter.to_string()
+        )
+    );
+    assert!(stored(&f.store(), "copy").is_none());
 }
 
 #[tokio::test]

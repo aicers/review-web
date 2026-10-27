@@ -89,6 +89,8 @@ struct RelayState {
     /// The addresses each `(hostname, instance)` Data Store resolves to.
     endpoints: Mutex<HashMap<(String, u32), Vec<IpAddr>>>,
     endpoint_pause: Mutex<Option<Arc<Pause>>>,
+    /// The online agents `online_apps_by_host_id` returns.
+    online_apps: Mutex<HashMap<String, Vec<(String, String)>>>,
     store: OnceLock<Arc<RwLock<Store>>>,
 }
 
@@ -110,6 +112,21 @@ impl Relay {
     /// Makes the relay end a failed run itself before returning.
     pub(super) fn end_failed_runs(&self) {
         *lock(&self.0.ends_runs) = true;
+    }
+
+    /// Makes `online_apps_by_host_id` list the agents of `instance` as online
+    /// on `hostname`, keyed by their agent lookup keys.
+    pub(super) fn set_online(&self, hostname: &str, instances: &[&ModelInstance]) {
+        let apps = instances
+            .iter()
+            .map(|instance| {
+                (
+                    super::gen_agent_lookup_key(&instance.agent_key, hostname),
+                    instance.agent_key.clone(),
+                )
+            })
+            .collect();
+        lock(&self.0.online_apps).insert(hostname.to_string(), apps);
     }
 
     /// Makes the Data Store `instance` on `hostname` resolve to `addrs`.
@@ -194,7 +211,7 @@ impl AgentManager for Relay {
     async fn online_apps_by_host_id(
         &self,
     ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error> {
-        Ok(HashMap::new())
+        Ok(lock(&self.0.online_apps).clone())
     }
 
     async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}

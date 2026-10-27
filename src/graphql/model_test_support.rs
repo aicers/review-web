@@ -37,6 +37,8 @@ pub(super) struct TestModel<'a> {
     /// The batch timestamps of the rounds the replace makes current.
     pub(super) rounds: &'a [i64],
     pub(super) trained_at: DateTime<Utc>,
+    /// The sources of the definition that trained the model.
+    pub(super) trained_sources: Vec<String>,
 }
 
 impl<'a> TestModel<'a> {
@@ -51,6 +53,7 @@ impl<'a> TestModel<'a> {
             version: 1,
             rounds: &[],
             trained_at: Utc::now(),
+            trained_sources: Vec::new(),
         }
     }
 
@@ -86,7 +89,7 @@ impl<'a> TestModel<'a> {
         let trained = TrainedWith {
             run_id: 1,
             definition: String::new(),
-            sources: Vec::new(),
+            sources: self.trained_sources,
         };
         store
             .replace_model(model, owner, self.trained_at, trained)

@@ -285,13 +285,13 @@ impl NodeMutation {
     /// An Unsupervised Engine agent's draft that differs from its stored draft is validated as an
     /// engine document (RFC 0006 §5.3) for the node's applied customer; one left unchanged is not.
     /// Refusals carry `extensions.code`: `INVALID_DOCUMENT`, `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`,
-    /// `DUPLICATE_ENTRY`, `BOUND_VIOLATED`, `SOURCE_NOT_ALLOWED`, `MODEL_NOT_OF_INSTANCE`,
-    /// `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` and `INDICATOR_NOT_ALLOWED`, with
-    /// `detectorId` for a detector's refusal; and `CUSTOMER_CHANGE_REFUSED` for a customer or
-    /// hostname change the node guards of RFC 0006 §5.11 refuse, which names another customer's
-    /// detector or definition only to a System Administrator. An `old` Unsupervised Engine draft
-    /// that is not the stored one is refused with "the node changed since it was read; reload and
-    /// retry".
+    /// `DUPLICATE_ENTRY`, `BOUND_VIOLATED`, `SOURCE_NOT_ALLOWED`, `SOURCES_INCOMPATIBLE`,
+    /// `MODEL_NOT_OF_INSTANCE`, `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` and
+    /// `INDICATOR_NOT_ALLOWED`, with `detectorId` for a detector's refusal; and
+    /// `CUSTOMER_CHANGE_REFUSED` for a customer or hostname change the node guards of RFC 0006
+    /// §5.11 refuse, which names another customer's detector or definition only to a System
+    /// Administrator. An `old` Unsupervised Engine draft that is not the stored one is refused with
+    /// "the node changed since it was read; reload and retry".
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn update_node_draft(

@@ -1,6 +1,14 @@
+use std::net::IpAddr;
+
+use review_database::{SamplingInterval, SamplingKind, SamplingPeriod};
 use serde_json::Value;
 
 use super::*;
+use crate::graphql::sampling_test_support::{
+    OTHER_POLICY_CUSTOMER, OWN_ADDRESS, POLICY_CUSTOMER, PolicyFixture, PolicyShape,
+    generator_config, insert_assigned_policy, insert_policy, sensor_name, set_generator_config,
+    timeseries_definition,
+};
 
 const VALID: &str = r#"
 event_kind = "http"
@@ -29,6 +37,18 @@ address = "10.0.0.5:38371"
 server_name = "001.giganto.store.example.com"
 "#;
 
+const TIMESERIES: &str = r#"
+event_kind = "timeseries"
+method = "timeseries"
+sources = ["3", "5"]
+window_start = "2026-10-14T00:00:00Z"
+window_end = "2026-10-21T00:00:00Z"
+
+[data_store]
+address = "10.0.0.5:38371"
+server_name = "001.giganto.store.example.com"
+"#;
+
 /// Returns `text` with the line starting with `key =` replaced by `line`, or
 /// `line` inserted before the first table when no such line exists.
 fn with(text: &str, key: &str, line: &str) -> String {
@@ -45,7 +65,11 @@ fn with(text: &str, key: &str, line: &str) -> String {
 
 /// Returns the code, `field` and `value` of the refusal of `text`.
 fn refused(text: &str) -> (String, String, String) {
-    let error = TrainingDocument::parse_and_validate(text).expect_err(text);
+    parts(&TrainingDocument::parse_and_validate(text).expect_err(text))
+}
+
+/// Returns the code, `field` and `value` of `error`, a refusal.
+fn parts(error: &async_graphql::Error) -> (String, String, String) {
     let extensions =
         serde_json::to_value(error.extensions.as_ref().expect("a refusal has extensions")).unwrap();
     let get = |key: &str| match &extensions[key] {
@@ -244,14 +268,59 @@ fn a_format_entry_needs_a_weight() {
 }
 
 #[test]
-fn timeseries_is_not_supported() {
-    let (code, field, _) = refused(&with(VALID, "method", "method = \"timeseries\""));
-    assert_eq!(code, "TIMESERIES_UNSUPPORTED");
-    assert_eq!(field, "method");
-    let error =
-        TrainingDocument::parse_and_validate(&with(VALID, "method", "method = \"timeseries\""))
-            .unwrap_err();
-    assert_eq!(error.message, "the timeseries method is not supported yet");
+fn timeseries_takes_its_event_kind_and_no_csv() {
+    let document = TrainingDocument::parse_and_validate(TIMESERIES).unwrap();
+    assert_eq!(document.method, Method::Timeseries);
+    assert_eq!(document.sources, ["3", "5"]);
+    let reparsed = TrainingDocument::parse_and_validate(&document.to_text().unwrap()).unwrap();
+    assert_eq!(reparsed, document);
+
+    for kind in ["conn", "log", "periodic_time_series", ""] {
+        let text = with(
+            TIMESERIES,
+            "event_kind",
+            &format!("event_kind = \"{kind}\""),
+        );
+        let (code, field, value) = refused(&text);
+        assert_eq!(code, "EVENT_KIND_NOT_ALLOWED", "{kind}");
+        assert_eq!((field.as_str(), value.as_str()), ("event_kind", kind));
+    }
+
+    let extra = format!("{TIMESERIES}\n[csv]\ntime_column = 0\n");
+    let (code, field, _) = refused(&extra);
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("FIELD_NOT_ALLOWED", "csv")
+    );
+}
+
+#[test]
+fn timeseries_refuses_each_prefix_only_field() {
+    for (field, line) in [
+        ("min_token_length", "min_token_length = 3"),
+        ("max_token_length", "max_token_length = 10"),
+        ("max_data_len", "max_data_len = 30"),
+        ("long_pattern_len", "long_pattern_len = 16000"),
+        ("suspicious_tokens", "suspicious_tokens = \"indicator\""),
+    ] {
+        let (code, refused_field, _) = refused(&with(TIMESERIES, field, line));
+        assert_eq!(
+            (code.as_str(), refused_field.as_str()),
+            ("FIELD_NOT_ALLOWED", field)
+        );
+    }
+    // The fields every method reads are taken.
+    for line in [
+        "batch_size = 1000",
+        "algorithm = \"dbscan\"",
+        "eps = 0.5",
+        "precision = 2",
+        "numbers_of_top_n = [3]",
+        "max_event_id_num = 10",
+    ] {
+        let key = line.split(" =").next().unwrap();
+        TrainingDocument::parse_and_validate(&with(TIMESERIES, key, line)).expect(line);
+    }
 }
 
 #[test]
@@ -415,4 +484,252 @@ fn sources_of_reads_a_definition_text() {
     assert_eq!(sources_of(VALID), ["piglet.a.example.com"]);
     assert_eq!(sources_of(""), Vec::<String>::new());
     assert_eq!(sources_of("not toml ="), Vec::<String>::new());
+}
+
+// ---------------------------------------------------------------------------
+// The timeseries source rule
+
+const A: u32 = POLICY_CUSTOMER;
+const B: u32 = OTHER_POLICY_CUSTOMER;
+
+impl PolicyFixture {
+    /// Checks `text` as an insert of customer A by a Security Administrator
+    /// does.
+    fn check(&self, text: &str) -> Result<()> {
+        let addrs = ["10.0.0.5".parse::<IpAddr>().unwrap()];
+        TrainingDocument::parse_and_validate(text)?.check_stored(
+            &self.store,
+            A,
+            &addrs,
+            &HashSet::new(),
+            ShapeReference::FirstSource,
+            false,
+        )
+    }
+
+    /// Returns the code, `field` and `value` of the refusal of `text`, and
+    /// its message.
+    fn refused(&self, text: &str) -> ((String, String, String), String) {
+        let error = self.check(text).expect_err(text);
+        (parts(&error), error.message)
+    }
+}
+
+#[test]
+fn assigned_policies_of_one_shape_and_data_store_are_accepted() {
+    let f = PolicyFixture::new();
+    f.check(&f.definition(&f.assigned)).unwrap();
+}
+
+#[test]
+fn a_source_must_be_an_assigned_policy_of_the_customer() {
+    let f = PolicyFixture::new();
+    let [p1, _] = f.assigned;
+    let policy_b =
+        insert_assigned_policy(&f.store, "of-b", B, &f.generator_b, PolicyShape::default());
+    let unassigned = insert_policy(&f.store, "unassigned", A, &sensor_name("gen-a.example.com"));
+    for (source, message) in [
+        (
+            policy_b.to_string(),
+            format!("\"{policy_b}\" is not a sampling policy of customer {A}"),
+        ),
+        (
+            "999".to_string(),
+            format!("\"999\" is not a sampling policy of customer {A}"),
+        ),
+        (
+            unassigned.to_string(),
+            format!("sampling policy {unassigned} has no assignee"),
+        ),
+        (
+            sensor_name("gen-a.example.com"),
+            format!(
+                "\"{}\" is not a sampling policy of customer {A}",
+                sensor_name("gen-a.example.com")
+            ),
+        ),
+        (
+            format!("0{p1}"),
+            format!("\"0{p1}\" is not a sampling policy of customer {A}"),
+        ),
+    ] {
+        let text = f
+            .definition(&[p1])
+            .replace(&format!("[\"{p1}\"]"), &format!("[\"{p1}\", {source:?}]"));
+        let ((code, field, value), refused_message) = f.refused(&text);
+        assert_eq!(
+            (code.as_str(), field.as_str(), value.as_str()),
+            ("SOURCE_NOT_ALLOWED", "sources[1]", source.as_str())
+        );
+        assert_eq!(refused_message, message);
+    }
+}
+
+#[test]
+fn sources_must_have_one_shape() {
+    let f = PolicyFixture::new();
+    let [p1, _] = f.assigned;
+    let shapes = [
+        (
+            "kind",
+            PolicyShape {
+                kind: SamplingKind::Dns,
+                ..PolicyShape::default()
+            },
+        ),
+        (
+            "column",
+            PolicyShape {
+                column: Some(2),
+                ..PolicyShape::default()
+            },
+        ),
+        (
+            "interval",
+            PolicyShape {
+                interval: SamplingInterval::FiveMinutes,
+                ..PolicyShape::default()
+            },
+        ),
+        (
+            "period",
+            PolicyShape {
+                period: SamplingPeriod::SixHours,
+                ..PolicyShape::default()
+            },
+        ),
+        (
+            "offset",
+            PolicyShape {
+                offset: 9,
+                ..PolicyShape::default()
+            },
+        ),
+    ];
+    for (attribute, shape) in shapes {
+        let other = f.assigned_policy(attribute, &f.generator, shape);
+        let ((code, field, value), message) = f.refused(&f.definition(&[p1, other]));
+        assert_eq!(
+            (code.as_str(), field.as_str(), value),
+            ("SOURCES_INCOMPATIBLE", "sources[1]", other.to_string())
+        );
+        assert_eq!(
+            message,
+            format!("sampling policy {other} differs in {attribute} from sampling policy {p1}")
+        );
+    }
+}
+
+#[test]
+fn sources_must_be_kept_in_the_data_store_read() {
+    let f = PolicyFixture::new();
+    let [p1, _] = f.assigned;
+    let elsewhere = f.assigned_policy("elsewhere", &f.other_generator, PolicyShape::default());
+    let ((code, field, value), message) = f.refused(&f.definition(&[p1, elsewhere]));
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("SOURCES_INCOMPATIBLE", "data_store.server_name")
+    );
+    assert_eq!(value, f.server_name);
+    assert_eq!(
+        message,
+        format!(
+            "sampling policy {elsewhere} keeps its series in Data Store {:?}, not {:?}",
+            f.other_server_name, f.server_name
+        )
+    );
+
+    // Read from the other Data Store, the first policy is the one refused.
+    let text = timeseries_definition(&[p1, elsewhere], &f.other_server_name, OWN_ADDRESS, "");
+    let ((code, field, _), message) = f.refused(&text);
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("SOURCES_INCOMPATIBLE", "data_store.server_name")
+    );
+    assert!(
+        message.starts_with(&format!("sampling policy {p1} keeps")),
+        "{message}"
+    );
+}
+
+#[test]
+fn an_assignee_writing_to_another_data_store_is_refused() {
+    let f = PolicyFixture::new();
+    // `assign` and `applyNode` keep the stored `data_store` equal to the
+    // applied `giganto_name`, so the store is written directly.
+    set_generator_config(
+        &f.store,
+        &f.generator,
+        Some(generator_config(&f.other_server_name)),
+    );
+    let ((code, field, value), message) = f.refused(&f.definition(&f.assigned));
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("SOURCES_INCOMPATIBLE", "data_store.server_name")
+    );
+    assert_eq!(value, f.server_name);
+    assert_eq!(
+        message,
+        format!(
+            "the Time Series Generator of sampling policy {} writes to Data Store {:?}, not {:?}",
+            f.assigned[0], f.other_server_name, f.server_name
+        )
+    );
+}
+
+#[test]
+fn an_assignee_with_no_applied_data_store_is_refused_first() {
+    for config in [Some(generator_config("")), Some(String::new()), None] {
+        let f = PolicyFixture::new();
+        // The empty name also leaves the stored `data_store` unequal to the
+        // one read, which is not what is refused.
+        set_generator_config(&f.store, &f.generator, config.clone());
+        let ((code, field, value), message) = f.refused(&f.definition(&f.assigned));
+        assert_eq!(
+            (code.as_str(), field.as_str()),
+            ("DATA_STORE_NOT_INSTALLED", "data_store.server_name"),
+            "{config:?}"
+        );
+        assert_eq!(value, f.server_name);
+        assert_eq!(
+            message,
+            format!(
+                "the Time Series Generator of sampling policy {} has no applied Data Store",
+                f.assigned[0]
+            )
+        );
+    }
+}
+
+#[test]
+fn the_data_store_rule_still_applies_to_the_address() {
+    let f = PolicyFixture::new();
+    let text = timeseries_definition(&f.assigned, &f.server_name, "192.0.2.1:9999", "");
+    let ((code, field, _), _) = f.refused(&text);
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("ADDRESS_OVERRIDE_FORBIDDEN", "data_store.address")
+    );
+}
+
+#[test]
+fn other_methods_still_take_only_source_names() {
+    let f = PolicyFixture::new();
+    let [p1, _] = f.assigned;
+    let text = PREFIX.replace("reproduce.a.example.com", &p1.to_string());
+    let document = TrainingDocument::parse_and_validate(&text).unwrap();
+    let (code, field, _) = parts(
+        &document
+            .check_sources(&f.store, A, ShapeReference::FirstSource)
+            .unwrap_err(),
+    );
+    assert_eq!(
+        (code.as_str(), field.as_str()),
+        ("SOURCE_NOT_ALLOWED", "sources[0]")
+    );
+    let text = PREFIX.replace("reproduce.a.example.com", &sensor_name("gen-a.example.com"));
+    TrainingDocument::parse_and_validate(&text)
+        .unwrap()
+        .check_sources(&f.store, A, ShapeReference::FirstSource)
+        .unwrap();
 }
