@@ -40,6 +40,8 @@ mod refusal;
 #[cfg(test)]
 mod run_test_support;
 mod sampling;
+#[cfg(test)]
+mod sampling_test_support;
 mod slicing;
 mod statistics;
 mod status;
@@ -95,9 +97,10 @@ pub use self::network_list::{get_allow_networks, get_block_networks};
 pub use self::node::{
     agent_lookup_key_service_token, agent_lookup_keys_by_customer_id, gen_agent_lookup_key,
 };
+pub(crate) use self::sampling::SamplingPoliciesLock;
 pub use self::sampling::{
     Interval as SamplingInterval, Kind as SamplingKind, Period as SamplingPeriod,
-    Policy as SamplingPolicy, get_sampling_policies,
+    Policy as SamplingPolicy, sampling_policies_for_generator,
 };
 pub(crate) use crate::backend::SharedAgentManager;
 use crate::backend::{AgentManager, CertManager, HostOnboarder, PackageDeployer};
@@ -153,10 +156,12 @@ where
     .data(host_onboarder)
     .data(cert_manager)
     .data(tls_reload_handle)
+    .data(Arc::clone(
+        customer_data_deletion_manager.sampling_policies_lock(),
+    ))
     .data(customer_data_deletion_manager)
     .data(Arc::new(network_list::NetworkListsLock::default()))
     .data(Arc::new(engine_config::EngineConfigLock::default()))
-    .data(Arc::new(sampling::SamplingPoliciesLock::default()))
     .extension(install_state::LatestBuildMemoExtension)
     .extension(MaintenanceExtension::new(maintenance_gate));
 
@@ -903,12 +908,7 @@ impl AgentManager for MockAgentManager {
         Ok(std::collections::HashMap::new())
     }
 
-    async fn broadcast_crusher_sampling_policy(
-        &self,
-        _sampling_policies: &[SamplingPolicy],
-    ) -> Result<(), anyhow::Error> {
-        unimplemented!()
-    }
+    async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
 
     // The mock host advertises the rollback supervisor, so the deployment
     // mutations' default `ROLLBACK` is not refused by the capability gate. A
@@ -1481,7 +1481,9 @@ impl TestSchema {
         let store = Arc::new(RwLock::new(store));
         let network_lists_lock = Arc::new(network_list::NetworkListsLock::default());
         let engine_config_lock = Arc::new(engine_config::EngineConfigLock::default());
-        let sampling_policies_lock = Arc::new(sampling::SamplingPoliciesLock::default());
+        let customer_data_deletion_manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let sampling_policies_lock =
+            Arc::clone(customer_data_deletion_manager.sampling_policies_lock());
 
         let builder = Schema::build(
             Query::default(),
@@ -1496,7 +1498,7 @@ impl TestSchema {
         .data(network_lists_lock.clone())
         .data(engine_config_lock.clone())
         .data(sampling_policies_lock.clone())
-        .data(Arc::new(CustomerDataDeletionTaskManager::default()))
+        .data(customer_data_deletion_manager)
         .extension(install_state::LatestBuildMemoExtension)
         .extension(MaintenanceExtension::new(MaintenanceGate::new()));
 

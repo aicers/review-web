@@ -159,7 +159,7 @@ mod tests {
     use crate::{
         backend::DataStoreReadEndpoint,
         graphql::{
-            AgentManager, SamplingPolicy, SharedAgentManager, TestSchema,
+            AgentManager, SharedAgentManager, TestSchema,
             customer::NetworksTargetAgentLookupKeysPair,
         },
     };
@@ -257,12 +257,7 @@ mod tests {
             unimplemented!("this stub answers the endpoint read only")
         }
 
-        async fn broadcast_crusher_sampling_policy(
-            &self,
-            _sampling_policies: &[SamplingPolicy],
-        ) -> Result<(), anyhow::Error> {
-            unimplemented!("this stub answers the endpoint read only")
-        }
+        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
 
         async fn capabilities(
             &self,

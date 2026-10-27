@@ -89,6 +89,29 @@ pub(crate) fn customer_source_names(store: &Store, customer_id: u32) -> Result<H
     Ok(names)
 }
 
+/// Returns the [`event_sensor_names`] of every node whose applied profile
+/// belongs to `customer_id`.
+///
+/// # Errors
+///
+/// Returns an error if a database iteration error occurs.
+pub(crate) fn customer_sensor_names(store: &Store, customer_id: u32) -> Result<HashSet<String>> {
+    let map = store.node_map();
+    let mut names = HashSet::new();
+    for entry in map.iter(Direction::Forward, None) {
+        let node = entry
+            .map_err(|e| async_graphql::Error::new(format!("failed to iterate nodes: {e}")))?;
+        if node
+            .profile
+            .as_ref()
+            .is_some_and(|profile| profile.customer_id == customer_id)
+        {
+            names.extend(event_sensor_names(&node));
+        }
+    }
+    Ok(names)
+}
+
 /// Builds a map from event sensor names to the customer ID of the node that
 /// emits them.
 ///

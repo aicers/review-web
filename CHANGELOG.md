@@ -6,8 +6,55 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- A sampling policy is a draft until it is fixed. `SamplingPolicy.state`
+  (`DRAFT` or `FIXED`) tells which; a draft's definition and name can change,
+  and only a fixed policy's name can. `fixSamplingPolicy` fixes a policy, and
+  nothing makes it a draft again.
+- `assignSamplingPolicy` assigns a fixed policy to a Time Series Generator of
+  its customer, or unassigns it when `nodeId` and `agentKey` are both null.
+  With `fix: true` it fixes a draft and assigns it in one step. A policy in
+  use by a timeseries training definition, detector or model cannot be
+  unassigned, and moves only to a generator with the same Data Store.
+- `SamplingPolicy.customerId` and `SamplingPolicy.assignee`.
+
+### Changed
+
+- **Breaking change:** `insertSamplingPolicy` takes the policy's
+  `customerId`, and inserts a draft. Its `node` must be a sensor name, such as
+  `piglet.sensor.example.com`, of one of that customer's nodes, and a draft's
+  new `node` in `updateSamplingPolicy` one of the policy's customer.
+  `updateSamplingPolicy` refuses a change to a fixed policy's definition.
+- **Breaking change:** `get_sampling_policies(db, customer_id)` is replaced
+  by `sampling_policies_for_generator(db, instance)`, which returns the
+  policies assigned to that Time Series Generator, leaving out any whose
+  customer is no longer the generator's node's, or whose sensor no longer
+  belongs to that customer.
+- **Breaking change:** `AgentManager::broadcast_crusher_sampling_policy` is
+  replaced by `AgentManager::sampling_policies_changed`, which is given the
+  generators whose policies changed and returns nothing. It is called after
+  an assignment or a removal, and after `applyNode` or `applyNodeDraft`
+  changes the customer or hostname of a node a generator's policies read or
+  sit on. Inserting a policy no longer pushes every immutable policy to every
+  connected generator of every customer.
+- `removeSamplingPolicies` refuses a policy in use, listing its uses.
+- `applyNode` and `applyNodeDraft` refuse to change a Time Series Generator's
+  `giganto_name` while a policy assigned to it is in use, or in the same
+  apply as a profile change after which a policy assigned to it could not be
+  assigned to it again, and otherwise record the new Data Store for its
+  policies.
+- Bumped `review-database` dependency to 0.57.0. Its store format moves to
+  0.57.0, so a store written by 0.56 must be migrated through
+  `review-database` before this version serves it; the migration makes every
+  stored sampling policy fixed and unassigned, and gives it the customer
+  whose sensor its `node` names, if any.
+
 ### Removed
 
+- The `immutable` argument of `insertSamplingPolicy` and field of
+  `SamplingPolicyInput`, and `SamplingPolicy.immutable`. A policy's `state`,
+  `fixSamplingPolicy` and `assignSamplingPolicy(fix: true)` replace them.
 - The data-source API: the `dataSourceList` query, the `insertDataSource`,
   `updateDataSource` and `removeDataSource` mutations, and the `DataSource`,
   `DataSourceConnection`, `DataSourceEdge`, `DataSourceInsertInput`,
@@ -17,29 +64,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
-- Sampling policies are scoped to customers. A sampling policy belongs to the
-  customer of the node whose sensor name, or for policies stored with a node
-  hostname, whose hostname its `node` is. A caller scoped to customers lists
-  and counts only their policies in `samplingPolicyList`, and is refused
-  reading, updating or removing any other policy, including one whose
-  customer cannot be resolved. `insertSamplingPolicy` and
-  `updateSamplingPolicy` require `node` to be a sensor name, such as
-  `piglet.sensor.example.com`, for every caller, and one in the caller's
-  scope for a scoped caller. `removeSamplingPolicies` checks every ID before
-  removing any, so a refused ID leaves every policy in place, and removes a
-  repeated ID once instead of failing after the first removal.
-- `get_sampling_policies` returns the policies a Time Series Generator can
-  produce data for: immutable policies whose `node` is a sensor name of the
-  requested customer. It used to match `node` against node hostnames, which
-  the Data Store never keys events by, so it dropped every such policy; it
-  also returned mutable policies, and policies without `node` to every
-  customer.
-
-### Known issues
-
-- Inserting an immutable sampling policy still pushes every immutable policy
-  to every connected Time Series Generator of every customer, until policies
-  are assigned to generators.
+- Sampling policies are scoped to customers. A caller scoped to customers
+  lists and counts only their customers' policies in `samplingPolicyList`,
+  and is refused reading, inserting, updating or removing any other policy.
+  A policy with no customer is visible to unscoped callers only.
+- `removeSamplingPolicies` checks every ID before removing any, so a refused
+  ID leaves every policy in place, and removes a repeated ID once instead of
+  failing after the first removal.
+- Deleting a customer's data removes the customer's sampling policies.
 
 ## [0.48.1] - 2026-10-25
 

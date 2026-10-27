@@ -18,7 +18,7 @@ use tracing::error;
 
 use crate::{
     backend::SharedAgentManager,
-    graphql::{RoleGuard, agent_lookup_key_service_token},
+    graphql::{RoleGuard, SamplingPoliciesLock, agent_lookup_key_service_token},
 };
 
 const TERMINAL_STATUS_UPDATE_ATTEMPTS: usize = 2;
@@ -73,6 +73,10 @@ pub enum CustomerDataDeletionRequestStatus {
 #[derive(Default)]
 pub struct CustomerDataDeletionTaskManager {
     state: Mutex<CustomerDataDeletionTaskState>,
+    /// The lock `removeSamplingPolicies` takes, which the deletion takes
+    /// around its removal of the customer's sampling policies. The GraphQL
+    /// schema is given this one, so the two share it.
+    sampling_policies_lock: Arc<SamplingPoliciesLock>,
 }
 
 #[derive(Default)]
@@ -82,6 +86,11 @@ struct CustomerDataDeletionTaskState {
 }
 
 impl CustomerDataDeletionTaskManager {
+    /// Returns the lock that orders the removals of sampling policies.
+    pub(crate) fn sampling_policies_lock(&self) -> &Arc<SamplingPoliciesLock> {
+        &self.sampling_policies_lock
+    }
+
     /// Blocks new deletion requests and waits for the active supervisor.
     pub async fn shutdown_and_wait(&self) {
         let active = {
@@ -320,6 +329,7 @@ async fn request_deletion(
     let supervisor = tokio::spawn(run_supervisor(
         Arc::clone(store),
         Arc::clone(agent_manager),
+        Arc::clone(task_manager.sampling_policies_lock()),
         plan,
     ));
     // There is deliberately no await between spawn and registration. The
@@ -614,6 +624,7 @@ fn restore_review_targets(
 async fn run_supervisor(
     store: Arc<RwLock<Store>>,
     agent_manager: SharedAgentManager,
+    policies_lock: Arc<SamplingPoliciesLock>,
     plan: CustomerDataDeletionExecutionPlan,
 ) {
     if !plan.remote_targets.is_empty()
@@ -642,11 +653,12 @@ async fn run_supervisor(
     let Some(targets) = plan.review_targets else {
         return;
     };
-    run_review_worker_and_persist(store, plan.customer_id, targets).await;
+    run_review_worker_and_persist(store, policies_lock, plan.customer_id, targets).await;
 }
 
 async fn run_review_worker_and_persist(
     store: Arc<RwLock<Store>>,
+    policies_lock: Arc<SamplingPoliciesLock>,
     customer_id: u32,
     targets: ReviewDeletionTargets,
 ) {
@@ -658,7 +670,7 @@ async fn run_review_worker_and_persist(
             tests::Stage::Worker,
             customer_id,
         )?;
-        delete_review_data(&worker_store, customer_id, &targets)
+        delete_review_data(&worker_store, &policies_lock, customer_id, &targets)
     })
     .await;
     let (status, error_message) = match outcome {
@@ -684,12 +696,16 @@ async fn run_review_worker_and_persist(
     }
 }
 
+/// Deletes the Review data of customer `customer_id`.
+///
+/// It runs on a blocking worker: it waits for `policies_lock` there.
 fn delete_review_data(
-    store: &RwLock<Store>,
+    store_lock: &RwLock<Store>,
+    policies_lock: &SamplingPoliciesLock,
     customer_id: u32,
     targets: &ReviewDeletionTargets,
 ) -> anyhow::Result<()> {
-    let store = read_store(store)?;
+    let store = read_store(store_lock)?;
     #[cfg(test)]
     tests::checkpoint(&store, tests::Stage::Events, customer_id).with_context(|| {
         format!(
@@ -755,6 +771,18 @@ fn delete_review_data(
             &invalid_external_services,
         )?;
     }
+    // Removing the nodes detached the customer's engine instances and
+    // cleared every assignment of its generators, so no generator is told.
+    // The customer's own definitions and models may still name these
+    // policies; they are removed whether in use or not. The lock keeps a
+    // `removeSamplingPolicies` from finding a policy it checked gone; it is
+    // taken before the store, as a removal takes it.
+    drop(store);
+    let _policies = policies_lock.blocking_lock();
+    read_store(store_lock)?
+        .sampling_policy_map()
+        .remove_customer_policies(customer_id)
+        .with_context(|| format!("deleting sampling policies for customer {customer_id}"))?;
     Ok(())
 }
 
@@ -942,6 +970,7 @@ pub async fn recover_customer_data_deletion_on_startup(
             if let Some(targets) = plan.review_targets {
                 run_review_worker_and_persist(
                     Arc::clone(&supervisor_store),
+                    Arc::clone(supervisor_manager.sampling_policies_lock()),
                     plan.customer_id,
                     targets,
                 )
@@ -973,7 +1002,7 @@ mod tests {
 
     use super::*;
     use crate::backend::{AgentManager, ResourceUsage};
-    use crate::graphql::{NetworksTargetAgentLookupKeysPair, SamplingPolicy};
+    use crate::graphql::NetworksTargetAgentLookupKeysPair;
 
     const RECOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -1064,12 +1093,7 @@ mod tests {
             Ok(HashMap::new())
         }
 
-        async fn broadcast_crusher_sampling_policy(
-            &self,
-            _sampling_policies: &[SamplingPolicy],
-        ) -> anyhow::Result<()> {
-            Ok(())
-        }
+        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
 
         async fn capabilities(&self, _hostname: &str) -> anyhow::Result<BTreeSet<String>> {
             Ok(BTreeSet::new())
@@ -2174,8 +2198,20 @@ mod tests {
         let plan = collect_initial_plan(&test_store.store, 1).unwrap().unwrap();
         let targets = plan.review_targets.unwrap();
 
-        delete_review_data(&test_store.store, 1, &targets).unwrap();
-        delete_review_data(&test_store.store, 1, &targets).unwrap();
+        delete_review_data(
+            &test_store.store,
+            &SamplingPoliciesLock::default(),
+            1,
+            &targets,
+        )
+        .unwrap();
+        delete_review_data(
+            &test_store.store,
+            &SamplingPoliciesLock::default(),
+            1,
+            &targets,
+        )
+        .unwrap();
 
         let store = read_store(&test_store.store).unwrap();
         assert!(store.customer_networks_map().get(1).unwrap().is_none());
@@ -2411,7 +2447,13 @@ mod tests {
             );
             let targets =
                 restore_review_targets(&test_store.store, 1, &["one.example".into()]).unwrap();
-            run_review_worker_and_persist(Arc::clone(&test_store.store), 1, targets).await;
+            run_review_worker_and_persist(
+                Arc::clone(&test_store.store),
+                Arc::default(),
+                1,
+                targets,
+            )
+            .await;
             let result = job(&test_store.store, 1).service_results.remove(0);
             assert_eq!(result.status, CustomerDataDeletionStatus::Failed);
             assert_eq!(result.requested_at, 123);
@@ -2422,6 +2464,167 @@ mod tests {
                 "injected deletion failure"
             }));
         }
+    }
+
+    /// Stores a draft sampling policy `name` of `customer_id` reading
+    /// `node`, and returns its ID.
+    fn put_policy(store: &Store, name: &str, customer_id: u32, node: &str) -> u32 {
+        store
+            .sampling_policy_map()
+            .insert(review_database::NewSamplingPolicy {
+                name: name.to_string(),
+                kind: review_database::SamplingKind::Conn,
+                interval: review_database::SamplingInterval::FifteenMinutes,
+                period: review_database::SamplingPeriod::OneDay,
+                offset: 0,
+                src_ip: None,
+                dst_ip: None,
+                node: Some(node.to_string()),
+                column: None,
+                customer_id,
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn deletion_removes_the_customers_sampling_policies_even_in_use() {
+        let test_store = TestStore::new();
+        put_active_node(&test_store, 1, "one.example");
+        put_active_node(&test_store, 2, "two.example");
+        let (own, used, other) = {
+            let store = read_store(&test_store.store).unwrap();
+            let mut engine = Agent::new(
+                0,
+                "001.unsupervised".to_string(),
+                AgentKind::Unsupervised,
+                AgentStatus::Enabled,
+                None,
+                None,
+            )
+            .unwrap();
+            engine.instance = Some(1);
+            let engine_node = store
+                .node_map()
+                .put(&Node {
+                    id: 0,
+                    name: "engine.one.example".to_string(),
+                    name_draft: None,
+                    profile: Some(NodeProfile {
+                        customer_id: 1,
+                        description: String::new(),
+                        hostname: "engine.one.example".to_string(),
+                    }),
+                    profile_draft: None,
+                    agents: vec![engine],
+                    external_services: vec![],
+                    creation_time: Utc::now(),
+                })
+                .unwrap();
+            let own = put_policy(&store, "own", 1, "piglet.one.example");
+            let used = put_policy(&store, "used", 1, "piglet.one.example");
+            let other = put_policy(&store, "other", 2, "piglet.two.example");
+            store
+                .insert_training_definition(review_database::NewTrainingDefinition {
+                    name: "series".to_string(),
+                    customer_id: 1,
+                    instance: review_database::ModelInstance {
+                        node_id: engine_node,
+                        agent_key: "001.unsupervised".to_string(),
+                    },
+                    method: review_database::ModelMethod::Timeseries,
+                    event_kind: "conn".to_string(),
+                    sources: vec![used.to_string()],
+                    indicator: None,
+                    definition: String::new(),
+                })
+                .unwrap();
+            assert_eq!(
+                store.sampling_policy_uses(used).unwrap(),
+                [review_database::PolicyUse::Definition {
+                    name: "series".to_string()
+                }]
+            );
+            (own, used, other)
+        };
+        put_job(
+            &test_store.store,
+            1,
+            vec![pending_result(
+                CustomerDataDeletionService::Review,
+                &["one.example"],
+            )],
+        );
+
+        let targets =
+            restore_review_targets(&test_store.store, 1, &["one.example".into()]).unwrap();
+        run_review_worker_and_persist(Arc::clone(&test_store.store), Arc::default(), 1, targets)
+            .await;
+        assert_eq!(
+            job(&test_store.store, 1).service_results.remove(0).status,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        let store = read_store(&test_store.store).unwrap();
+        let map = store.sampling_policy_map();
+        assert!(map.get_by_id(own).unwrap().is_none());
+        assert!(map.get_by_id(used).unwrap().is_none());
+        assert!(map.get_by_id(other).unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn deletion_waits_for_a_held_sampling_policies_lock() {
+        let test_store = TestStore::new();
+        let node = put_active_node(&test_store, 1, "one.example");
+        put_active_node(&test_store, 2, "two.example");
+        let (own, other) = {
+            let store = read_store(&test_store.store).unwrap();
+            (
+                put_policy(&store, "own", 1, "piglet.one.example"),
+                put_policy(&store, "other", 2, "piglet.two.example"),
+            )
+        };
+        put_job(
+            &test_store.store,
+            1,
+            vec![pending_result(
+                CustomerDataDeletionService::Review,
+                &["one.example"],
+            )],
+        );
+        let lock = Arc::new(SamplingPoliciesLock::default());
+        // A `removeSamplingPolicies` holds the lock from its checks through
+        // its last removal, so the deletion cannot take a policy it checked.
+        let guard = lock.hold().await;
+
+        let targets =
+            restore_review_targets(&test_store.store, 1, &["one.example".into()]).unwrap();
+        let worker = tokio::spawn(run_review_worker_and_persist(
+            Arc::clone(&test_store.store),
+            Arc::clone(&lock),
+            1,
+            targets,
+        ));
+        while lock.users() < 2 {
+            tokio::task::yield_now().await;
+        }
+        {
+            let store = read_store(&test_store.store).unwrap();
+            assert!(store.node_map().get_by_id(node).unwrap().is_none());
+            let map = store.sampling_policy_map();
+            assert!(map.get_by_id(own).unwrap().is_some());
+            assert!(map.get_by_id(other).unwrap().is_some());
+        }
+        drop(guard);
+        worker.await.unwrap();
+
+        assert_eq!(lock.users(), 0);
+        assert_eq!(
+            job(&test_store.store, 1).service_results.remove(0).status,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        let store = read_store(&test_store.store).unwrap();
+        let map = store.sampling_policy_map();
+        assert!(map.get_by_id(own).unwrap().is_none());
+        assert!(map.get_by_id(other).unwrap().is_some());
     }
 
     #[tokio::test]
@@ -2494,7 +2697,13 @@ mod tests {
             );
             let targets =
                 restore_review_targets(&test_store.store, 1, &["one.example".into()]).unwrap();
-            run_review_worker_and_persist(Arc::clone(&test_store.store), 1, targets).await;
+            run_review_worker_and_persist(
+                Arc::clone(&test_store.store),
+                Arc::default(),
+                1,
+                targets,
+            )
+            .await;
             let expected: Vec<_> = STAGES
                 .into_iter()
                 .take_while(|s| *s != fail_stage)
@@ -2741,6 +2950,7 @@ mod tests {
 
         let error = delete_review_data(
             &test_store.store,
+            &SamplingPoliciesLock::default(),
             1,
             &ReviewDeletionTargets {
                 node_ids: vec![first_node, second_node],

@@ -20,11 +20,18 @@ use async_graphql::{Context, Result};
 /// checks until its store write returns. Every such writer takes this lock;
 /// none adds another.
 ///
+/// Sampling-policy uses are found by such a scan too, so every writer that
+/// checks the uses of a sampling policy holds it as well.
+///
 /// The writers that hold it are `insertIndicator`, `updateIndicator` and
 /// `removeIndicator`; `insertTrainingDefinition`, `updateTrainingDefinition`,
-/// `trainModel`, `cloneModel`, `removeModel` and `assignModel`; and the node
-/// writes `insertNode`, `updateNodeDraft`, `applyNode` and `applyNodeDraft`,
-/// which release it before any agent is notified.
+/// `trainModel`, `cloneModel`, `removeModel` and `assignModel`;
+/// `removeSamplingPolicies`, which takes the sampling policies lock after
+/// it, and `assignSamplingPolicy`; and the node writes `insertNode`,
+/// `updateNodeDraft`, `applyNode` and `applyNodeDraft`, the last two of which
+/// also check the uses of a Time Series Generator's policies before its Data
+/// Store changes. The sampling-policy and node writers release it before any
+/// agent is notified.
 ///
 /// Take it before [`get_store`](super::get_store): the store guard is a
 /// `std::sync::RwLockReadGuard`, which cannot be held across the lock's

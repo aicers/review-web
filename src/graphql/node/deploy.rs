@@ -1092,7 +1092,7 @@ mod tests {
         },
         graphql::{
             BoxedHostOnboarder, BoxedPackageDeployer, Mutation, NetworksTargetAgentLookupKeysPair,
-            Query, RoleGuard, SamplingPolicy, Schema, SharedAgentManager, Subscription, TestSchema,
+            Query, RoleGuard, Schema, SharedAgentManager, Subscription, TestSchema,
         },
     };
 
@@ -1793,12 +1793,7 @@ mod tests {
             unimplemented!("this stub answers the capability read only")
         }
 
-        async fn broadcast_crusher_sampling_policy(
-            &self,
-            _sampling_policies: &[SamplingPolicy],
-        ) -> Result<(), anyhow::Error> {
-            unimplemented!("this stub answers the capability read only")
-        }
+        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
 
         async fn get_resource_usage(
             &self,

@@ -296,8 +296,7 @@ mod tests {
         },
         customer_data_deletion::CustomerDataDeletionTarget,
         graphql::{
-            BoxedPackageDeployer, NetworksTargetAgentLookupKeysPair, SamplingPolicy,
-            SharedAgentManager, TestSchema,
+            BoxedPackageDeployer, NetworksTargetAgentLookupKeysPair, SharedAgentManager, TestSchema,
         },
     };
 
@@ -685,12 +684,7 @@ mod tests {
             unimplemented!("this stub answers the capability read only")
         }
 
-        async fn broadcast_crusher_sampling_policy(
-            &self,
-            _sampling_policies: &[SamplingPolicy],
-        ) -> Result<(), anyhow::Error> {
-            unimplemented!("this stub answers the capability read only")
-        }
+        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
 
         async fn capabilities(&self, hostname: &str) -> Result<BTreeSet<String>, anyhow::Error> {
             self.reads.lock().unwrap().push(hostname.to_string());

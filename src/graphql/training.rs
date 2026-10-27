@@ -658,7 +658,8 @@ fn clone_document(
     TrainingDocument::parse_and_validate(&document.to_text()?)
 }
 
-/// An engine instance a request names, as [`resolve_instance`] read it.
+/// An engine instance a request names, as [`resolve_instance`] read it, or a
+/// Time Series Generator agent, as [`resolve_generator`] read it.
 ///
 /// A caller that checks or creates a reference holds the engine configuration
 /// lock across the read; one that only reads or relays does not.
@@ -681,6 +682,51 @@ pub(super) fn resolve_instance(
     users_customers: Option<&[u32]>,
     node_id: u32,
     agent_key: &str,
+) -> Result<TargetInstance> {
+    resolve_agent(
+        store,
+        users_customers,
+        node_id,
+        agent_key,
+        |agent| agent.kind == database::AgentKind::Unsupervised && agent.instance.is_some(),
+        "is not an installed Unsupervised Engine instance",
+    )
+}
+
+/// Resolves the Time Series Generator agent `agent_key` of node `node_id` and
+/// checks whether the requester can access its customer, as
+/// [`resolve_instance`] does for an engine instance.
+///
+/// The agent must be a Time Series Generator agent, on a node whose applied
+/// profile has a hostname; otherwise the request is refused with
+/// `INSTANCE_NOT_ELIGIBLE`. Its customer is that profile's.
+pub(super) fn resolve_generator(
+    store: &Store,
+    users_customers: Option<&[u32]>,
+    node_id: u32,
+    agent_key: &str,
+) -> Result<TargetInstance> {
+    resolve_agent(
+        store,
+        users_customers,
+        node_id,
+        agent_key,
+        |agent| agent.kind == database::AgentKind::TimeSeriesGenerator,
+        "is not a Time Series Generator agent",
+    )
+}
+
+/// Resolves the agent `agent_key` of node `node_id`, which `eligible` must
+/// accept, and checks whether the requester can access its customer.
+///
+/// `not_agent` completes the refusal of an agent `eligible` does not accept.
+fn resolve_agent(
+    store: &Store,
+    users_customers: Option<&[u32]>,
+    node_id: u32,
+    agent_key: &str,
+    eligible: impl Fn(&database::Agent) -> bool,
+    not_agent: &str,
 ) -> Result<TargetInstance> {
     let not_eligible = |reason: &str, field: &str, value: String| {
         refusal(
@@ -714,17 +760,12 @@ pub(super) fn resolve_instance(
             node_id.to_string(),
         ));
     }
-    let eligible = node.agents.iter().any(|agent| {
-        agent.key == agent_key
-            && agent.kind == database::AgentKind::Unsupervised
-            && agent.instance.is_some()
-    });
-    if !eligible {
-        return Err(not_eligible(
-            "is not an installed Unsupervised Engine instance",
-            "agentKey",
-            agent_key.to_string(),
-        ));
+    if !node
+        .agents
+        .iter()
+        .any(|agent| agent.key == agent_key && eligible(agent))
+    {
+        return Err(not_eligible(not_agent, "agentKey", agent_key.to_string()));
     }
     Ok(TargetInstance {
         instance: database::ModelInstance {

@@ -1,36 +1,62 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
 
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
-    Context, Enum, InputObject, Object, Result, StringNumber,
+    Context, Enum, InputObject, Object, Result, SimpleObject, StringNumber,
     connection::{Connection, Edge, EmptyFields},
     types::ID,
 };
 use chrono::{DateTime, Utc};
-use review_database::{Iterable, Store, UniqueKey, event::Direction};
+use review_database::{
+    Iterable, ModelInstance, NewSamplingPolicy, PolicyState, PolicyUse, SamplingPolicyError, Store,
+    UniqueKey, event::Direction,
+};
 use serde::{Deserialize, Serialize};
+use tracing::{error, warn};
 
 use super::{IpAddress, Role, RoleGuard, SharedAgentManager};
-use crate::graphql::customer_access::{
-    event_sensor_customer_id_map, hostname_customer_id_map, is_member, users_customers,
-};
+use crate::graphql::customer_access::{customer_sensor_names, is_member, users_customers};
+use crate::graphql::engine_config::lock_engine_config;
 use crate::graphql::query_with_constraints;
+use crate::graphql::training::resolve_generator;
 
-/// The lock that orders the removals and updates of sampling policies.
+mod node_apply;
+
+pub(super) use self::node_apply::{
+    check_data_store_changes, generators_of_node, refresh_data_stores,
+};
+
+const NO_SUCH_POLICY: &str = "no such sampling policy";
+const DEFINITION_FIXED: &str =
+    "the sampling definition of a fixed policy cannot change; duplicate it as a new policy";
+const FIX_BEFORE_ASSIGNING: &str =
+    "fix the policy before assigning it; the sampling definition cannot change afterwards";
+
+/// The lock that orders the removals of sampling policies.
 ///
 /// A removal checks every ID before it removes any, then removes them one
-/// by one, each in its own commit; the database offers no transaction that
-/// spans them. Without the lock, another removal could take one of the
-/// checked IDs in between, and this one would fail after removing the
-/// others. An update holding it cannot move a checked policy to another
-/// customer in between either. An insert does not take it: the ID it
-/// creates is not one any removal or update has checked.
+/// by one, each in its own transaction; review-database offers no
+/// transaction that spans them, and review-web cannot open one. Without the
+/// lock, another removal could take one of the checked IDs in between, and
+/// this one would fail after removing the others.
 ///
-/// Take it before [`get_store`](super::get_store): the store guard is a
+/// A removal takes it after
+/// [`lock_engine_config`](super::engine_config::lock_engine_config), and
+/// nothing takes the two in the reverse order. The only other delete, of a
+/// customer's data, takes it around its removal of the customer's policies
+/// with [`blocking_lock`](Self::blocking_lock), so a removal never finds a
+/// policy it checked taken by that deletion; it checks no uses, so it does
+/// not take the engine configuration lock. No other writer takes it: an
+/// insert creates an ID no removal has checked, and the uses a removal
+/// checks are created only under the engine configuration lock it holds.
+///
+/// Take it before [`get_store`](super::get_store), or before reading the
+/// store outside a request: the store guard is a
 /// `std::sync::RwLockReadGuard`, which cannot be held across the lock's
-/// `.await`.
+/// `.await`, and a reader holding it while waiting for this lock could wait
+/// on a writer queued behind a removal that holds this lock.
 #[derive(Default)]
 pub(crate) struct SamplingPoliciesLock {
     mutex: tokio::sync::Mutex<()>,
@@ -40,16 +66,34 @@ pub(crate) struct SamplingPoliciesLock {
 }
 
 impl SamplingPoliciesLock {
+    /// Waits for the sampling policies to be free and locks them, blocking
+    /// the thread.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called within an asynchronous execution context; call it
+    /// from a blocking worker.
+    pub(crate) fn blocking_lock(&self) -> SamplingPoliciesGuard<'_> {
+        #[cfg(test)]
+        let user = LockUser::new(&self.users);
+        let guard = self.mutex.blocking_lock();
+        SamplingPoliciesGuard {
+            _guard: guard,
+            #[cfg(test)]
+            _user: user,
+        }
+    }
+
     /// Returns how many operations hold or wait for the lock.
     #[cfg(test)]
-    pub(super) fn users(&self) -> usize {
+    pub(crate) fn users(&self) -> usize {
         self.users.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Takes the lock outside a request, as a test holding it off a resolver
     /// does.
     #[cfg(test)]
-    pub(super) async fn hold(&self) -> SamplingPoliciesGuard<'_> {
+    pub(crate) async fn hold(&self) -> SamplingPoliciesGuard<'_> {
         let user = LockUser::new(&self.users);
         let guard = self.mutex.lock().await;
         SamplingPoliciesGuard {
@@ -60,7 +104,7 @@ impl SamplingPoliciesLock {
 }
 
 /// The guard of a held [`SamplingPoliciesLock`].
-pub(super) struct SamplingPoliciesGuard<'a> {
+pub(crate) struct SamplingPoliciesGuard<'a> {
     _guard: tokio::sync::MutexGuard<'a, ()>,
     #[cfg(test)]
     _user: LockUser<'a>,
@@ -206,6 +250,45 @@ impl From<Kind> for review_database::SamplingKind {
         }
     }
 }
+
+/// The state of a sampling policy.
+#[derive(Clone, Copy, Eq, PartialEq, Enum)]
+pub(super) enum SamplingPolicyState {
+    /// The definition and the name can change, and the policy cannot be
+    /// assigned.
+    Draft,
+    /// The definition is frozen and only the name can change. A policy never
+    /// leaves this state.
+    Fixed,
+}
+
+impl From<PolicyState> for SamplingPolicyState {
+    fn from(input: PolicyState) -> Self {
+        match input {
+            PolicyState::Draft => Self::Draft,
+            PolicyState::Fixed => Self::Fixed,
+        }
+    }
+}
+
+/// The Time Series Generator agent a sampling policy is assigned to.
+#[derive(SimpleObject)]
+pub(super) struct SamplingPolicyAssignee {
+    /// The node of the generator.
+    node_id: ID,
+    /// The key of the generator's agent on the node.
+    agent_key: String,
+}
+
+impl From<&ModelInstance> for SamplingPolicyAssignee {
+    fn from(instance: &ModelInstance) -> Self {
+        Self {
+            node_id: ID(instance.node_id.to_string()),
+            agent_key: instance.agent_key.clone(),
+        }
+    }
+}
+
 pub(super) struct SamplingPolicy {
     inner: review_database::SamplingPolicy,
 }
@@ -252,8 +335,21 @@ impl SamplingPolicy {
         self.inner.column.map(StringNumber)
     }
 
-    async fn immutable(&self) -> bool {
-        self.inner.immutable
+    /// Whether the policy is a draft, whose definition can change, or fixed.
+    async fn state(&self) -> SamplingPolicyState {
+        self.inner.state.into()
+    }
+
+    /// The customer the policy belongs to, or null for a policy stored
+    /// before customers were recorded whose customer could not be derived.
+    async fn customer_id(&self) -> Option<ID> {
+        self.inner.customer_id.map(|id| ID(id.to_string()))
+    }
+
+    /// The Time Series Generator agent the policy is assigned to, or null if
+    /// it is unassigned.
+    async fn assignee(&self) -> Option<SamplingPolicyAssignee> {
+        self.inner.assignee.as_ref().map(Into::into)
     }
 
     async fn creation_time(&self) -> DateTime<Utc> {
@@ -267,57 +363,88 @@ impl From<review_database::SamplingPolicy> for SamplingPolicy {
     }
 }
 
-/// The customer lookups that resolve a sampling policy's `node`.
-struct PolicyCustomers {
-    sensors: HashMap<String, u32>,
-    hostnames: HashMap<String, u32>,
+/// Returns whether a caller scoped to `scope` may access `policy`.
+///
+/// `None` for `scope` is an unscoped caller, who may access every policy. A
+/// policy without a customer is accessible to unscoped callers only.
+fn in_scope(policy: &review_database::SamplingPolicy, scope: Option<&[u32]>) -> bool {
+    match policy.customer_id {
+        Some(customer_id) => is_member(scope, customer_id),
+        None => scope.is_none(),
+    }
 }
 
-impl PolicyCustomers {
-    fn load(store: &Store) -> Result<Self> {
-        Ok(Self {
-            sensors: event_sensor_customer_id_map(store)?,
-            hostnames: hostname_customer_id_map(store)?,
-        })
+/// Checks that `node` is a sensor name of customer `customer_id`.
+fn check_sensor_name(store: &Store, node: Option<&str>, customer_id: u32) -> Result<()> {
+    let Some(node) = node else {
+        return Err("node is required".into());
+    };
+    if customer_sensor_names(store, customer_id)?.contains(node) {
+        Ok(())
+    } else {
+        Err(format!("{node:?} is not a sensor name of customer {customer_id}").into())
     }
+}
 
-    /// Returns the customer of `policy`.
-    ///
-    /// `node` is resolved as a sensor name, and only failing that as a node
-    /// hostname, which is what policies written before sensor names were
-    /// required store. A policy without `node` has no customer.
-    fn customer_of(&self, policy: &review_database::SamplingPolicy) -> Option<u32> {
-        let node = policy.node.as_deref()?;
-        self.sensors
-            .get(node)
-            .or_else(|| self.hostnames.get(node))
-            .copied()
+/// Lists `uses` for an error message.
+fn list_uses(uses: &[PolicyUse]) -> String {
+    uses.iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Maps a refusal of a sampling-policy write to the error a resolver
+/// returns, passing every other error through.
+fn policy_refusal(error: &anyhow::Error) -> async_graphql::Error {
+    match error.downcast_ref::<SamplingPolicyError>() {
+        Some(SamplingPolicyError::NotFound { .. }) => NO_SUCH_POLICY.into(),
+        Some(SamplingPolicyError::DefinitionFixed { .. }) => DEFINITION_FIXED.into(),
+        Some(SamplingPolicyError::Draft { .. }) => FIX_BEFORE_ASSIGNING.into(),
+        Some(refusal) => refusal.to_string().into(),
+        None => format!("{error:#}").into(),
     }
+}
 
-    /// Returns whether a caller scoped to `scope` may access `policy`.
-    ///
-    /// A policy whose customer cannot be resolved is out of every scope.
-    fn in_scope(&self, policy: &review_database::SamplingPolicy, scope: &[u32]) -> bool {
-        self.customer_of(policy)
-            .is_some_and(|customer_id| is_member(Some(scope), customer_id))
+fn parse_id(id: &ID) -> Result<u32> {
+    id.as_str().parse::<u32>().map_err(|_| "invalid ID".into())
+}
+
+/// Reads the policy `id`, refusing one that does not exist or that a caller
+/// scoped to `scope` may not access.
+fn accessible_policy(
+    store: &Store,
+    scope: Option<&[u32]>,
+    id: u32,
+) -> Result<review_database::SamplingPolicy> {
+    let Some(policy) = store.sampling_policy_map().get_by_id(id)? else {
+        return Err(NO_SUCH_POLICY.into());
+    };
+    if in_scope(&policy, scope) {
+        Ok(policy)
+    } else {
+        Err("Forbidden".into())
     }
+}
 
-    /// Checks that `node` is a sensor name whose customer is in `scope`.
-    ///
-    /// `None` for `scope` is an unscoped caller, for whom any sensor name
-    /// passes.
-    fn check_node(&self, node: Option<&str>, scope: Option<&[u32]>) -> Result<()> {
-        let Some(node) = node else {
-            return Err("node is required".into());
-        };
-        let Some(&customer_id) = self.sensors.get(node) else {
-            return Err(format!("{node:?} is not a sensor name").into());
-        };
-        if is_member(scope, customer_id) {
-            Ok(())
-        } else {
-            Err("Forbidden".into())
-        }
+/// Tells the generators in `generators`, once each, that the policies they
+/// pull have changed. Nothing is sent if there are none.
+///
+/// It runs after the change is stored, so it fails nothing: the generators
+/// pull their lists again when they reconnect.
+pub(super) async fn notify_generators(ctx: &Context<'_>, mut generators: Vec<ModelInstance>) {
+    let mut seen = HashSet::new();
+    generators.retain(|generator| seen.insert(generator.clone()));
+    if generators.is_empty() {
+        return;
+    }
+    match ctx.data::<SharedAgentManager>() {
+        Ok(agents) => agents.sampling_policies_changed(&generators).await,
+        Err(e) => error!(
+            "cannot tell Time Series Generators {generators:?} that their sampling policies \
+             changed: {}",
+            e.message
+        ),
     }
 }
 
@@ -334,10 +461,9 @@ impl SamplingPolicyTotalCount {
         let Some(scope) = users_cids else {
             return Ok(StringNumber(map.count()?));
         };
-        let customers = PolicyCustomers::load(&store)?;
         let mut count = 0;
         for entry in map.iter(Direction::Forward, None) {
-            if customers.in_scope(&entry?, &scope) {
+            if in_scope(&entry?, Some(&scope)) {
                 count += 1;
             }
         }
@@ -356,14 +482,11 @@ pub(super) struct SamplingPolicyInput {
     pub dst_ip: Option<IpAddress>,
     pub node: Option<String>, // sensor name
     pub column: Option<u32>,
-    pub immutable: bool,
 }
 
-impl TryFrom<SamplingPolicyInput> for review_database::SamplingPolicyUpdate {
-    type Error = async_graphql::Error;
-
-    fn try_from(input: SamplingPolicyInput) -> Result<Self, Self::Error> {
-        Ok(Self {
+impl From<SamplingPolicyInput> for review_database::SamplingPolicyUpdate {
+    fn from(input: SamplingPolicyInput) -> Self {
+        Self {
             name: input.name,
             kind: input.kind.into(),
             interval: input.interval.into(),
@@ -373,8 +496,7 @@ impl TryFrom<SamplingPolicyInput> for review_database::SamplingPolicyUpdate {
             dst_ip: input.dst_ip.map(|ip| ip.0),
             node: input.node,
             column: input.column,
-            immutable: input.immutable,
-        })
+        }
     }
 }
 
@@ -407,20 +529,10 @@ impl SamplingPolicyQuery {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn sampling_policy(&self, ctx: &Context<'_>, id: ID) -> Result<SamplingPolicy> {
-        let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-
+        let i = parse_id(&id)?;
         let users_cids = users_customers(ctx)?;
         let store = crate::graphql::get_store(ctx)?;
-        let map = store.sampling_policy_map();
-        let Some(policy) = map.get_by_id(i)? else {
-            return Err("no such sampling policy".into());
-        };
-        if let Some(scope) = users_cids
-            && !PolicyCustomers::load(&store)?.in_scope(&policy, &scope)
-        {
-            return Err("Forbidden".into());
-        }
-        Ok(policy.into())
+        Ok(accessible_policy(&store, users_cids.as_deref(), i)?.into())
     }
 }
 
@@ -439,10 +551,9 @@ async fn load(
         return super::load_edges(&map, after, before, first, last, SamplingPolicyTotalCount);
     };
 
-    let customers = PolicyCustomers::load(&store)?;
     let (nodes, has_previous, has_next) =
         super::process_load_edges_filtered(&map, after, before, first, last, None, |policy| {
-            customers.in_scope(policy, &scope)
+            in_scope(policy, Some(&scope))
         });
 
     let mut connection =
@@ -491,88 +602,82 @@ impl From<review_database::SamplingPolicy> for Policy {
     }
 }
 
-async fn load_immutable(ctx: &Context<'_>) -> Result<Vec<Policy>> {
-    let store = crate::graphql::get_store(ctx)?;
-    let map = store.sampling_policy_map();
-
-    let mut rtn: Vec<Policy> = Vec::new();
-
-    for entry in map.iter(Direction::Forward, None) {
-        let pol = entry?;
-        if pol.immutable {
-            rtn.push(pol.into());
-        }
-    }
-
-    Ok(rtn)
-}
-
-/// Returns the sampling policies a Time Series Generator of the given
-/// customer pulls.
+/// Returns the sampling policies the Time Series Generator agent `instance`
+/// pulls: the policies assigned to it that it can produce data for.
 ///
-/// A policy is included if and only if it is immutable and its `node` is a
-/// sensor name (see `event_sensor_names`) of a node whose applied profile
-/// belongs to `customer_id`. The Data Store keys events by sensor name, so
-/// that is the only `node` that can produce data:
-/// - A mutable policy can still be edited, and a generator keeps the first
-///   definition it received for an ID, so pulling one would mix the series
-///   of two definitions under one ID.
-/// - A policy whose `node` is a node hostname never matches Data Store data.
-/// - A policy without `node` has no sensor, which the Data Store refuses.
-///
-/// Immutable policies whose `node` is not a sensor name are skipped with a
-/// warning.
+/// An assignment is checked when it is made, but the generator's node, or the
+/// node of a policy's sensor, can change customer or hostname afterwards. So
+/// a policy assigned to the generator is withheld, with a warning, if its
+/// customer is not the customer of the applied profile of the generator's
+/// node, or its `node` is not a sensor name (see `event_sensor_names`) of
+/// that customer. A generator on a node with no applied profile pulls
+/// nothing.
 ///
 /// # Errors
 ///
-/// Returns an error if the sampling policy or node database could not
-/// be read.
-pub fn get_sampling_policies(db: &Store, customer_id: u32) -> Result<Vec<Policy>> {
-    let policy_map = db.sampling_policy_map();
-    let sensor_customer = event_sensor_customer_id_map(db)?;
+/// Returns an error if the sampling policy or node database could not be
+/// read.
+pub fn sampling_policies_for_generator(
+    db: &Store,
+    instance: &ModelInstance,
+) -> Result<Vec<Policy>> {
+    let assigned = db.sampling_policies_assigned_to(instance)?;
+    if assigned.is_empty() {
+        return Ok(Vec::new());
+    }
+    let customer_id = db
+        .node_map()
+        .get_by_id(instance.node_id)?
+        .and_then(|(node, _, _)| node.profile)
+        .map(|profile| profile.customer_id);
+    let sensors = match customer_id {
+        Some(customer_id) => customer_sensor_names(db, customer_id)?,
+        None => HashSet::new(),
+    };
 
-    let mut policies = vec![];
-    for res in policy_map.iter(Direction::Forward, None) {
-        let policy = res?;
-        if !policy.immutable {
+    let mut policies = Vec::with_capacity(assigned.len());
+    for policy in assigned {
+        if customer_id.is_none() || policy.customer_id != customer_id {
+            warn!(
+                "sampling policy {:?} of customer {:?} is assigned to agent {:?} of node {}, \
+                 whose customer is {customer_id:?}; withholding it",
+                policy.name, policy.customer_id, instance.agent_key, instance.node_id,
+            );
             continue;
         }
-        match policy.node.as_deref().map(|node| sensor_customer.get(node)) {
-            Some(Some(&cid)) => {
-                if cid == customer_id {
-                    policies.push(policy.into());
-                }
-            }
-            Some(None) => {
-                tracing::warn!(
-                    "sampling policy {:?} references {:?}, which is not a sensor name; skipping",
-                    policy.name,
-                    policy.node,
-                );
-            }
-            None => {
-                tracing::warn!(
-                    "sampling policy {:?} has no sensor name; skipping",
-                    policy.name
-                );
-            }
+        if !policy
+            .node
+            .as_ref()
+            .is_some_and(|node| sensors.contains(node))
+        {
+            warn!(
+                "sampling policy {:?} reads {:?}, which is not a sensor name of customer \
+                 {customer_id:?}; withholding it",
+                policy.name, policy.node,
+            );
+            continue;
         }
+        policies.push(policy.into());
     }
     Ok(policies)
 }
 
 #[Object]
 impl SamplingPolicyMutation {
-    /// Inserts a new sampling policy, returning its ID.
+    /// Inserts a new sampling policy of customer `customerId`, a draft,
+    /// returning its ID.
     ///
-    /// `node` must be a sensor name, such as `piglet.sensor.example.com`, and
-    /// for a caller scoped to customers, one of a customer in scope.
+    /// A caller scoped to customers must belong to `customerId`. `node` must
+    /// be a sensor name of one of the customer's nodes, such as
+    /// `piglet.sensor.example.com`. A draft cannot be assigned; fix it with
+    /// `fixSamplingPolicy`, or with `assignSamplingPolicy(fix: true)`.
     #[allow(clippy::too_many_arguments)]
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn insert_sampling_policy(
         &self,
         ctx: &Context<'_>,
+        customer_id: ID,
         name: String,
         kind: Kind,
         interval: Interval,
@@ -582,57 +687,47 @@ impl SamplingPolicyMutation {
         dst_ip: Option<IpAddress>,
         node: Option<String>,
         column: Option<u32>,
-        immutable: bool,
     ) -> Result<ID> {
-        {
-            let users_cids = users_customers(ctx)?;
-            let store = crate::graphql::get_store(ctx)?;
-            PolicyCustomers::load(&store)?.check_node(node.as_deref(), users_cids.as_deref())?;
+        let customer_id = customer_id
+            .as_str()
+            .parse::<u32>()
+            .map_err(|_| "invalid customer ID")?;
+        if !is_member(users_customers(ctx)?.as_deref(), customer_id) {
+            return Err("Forbidden".into());
         }
-
-        let pol = review_database::SamplingPolicy {
-            id: u32::MAX,
-            name,
-            kind: kind.into(),
-            interval: interval.into(),
-            period: period.into(),
-            offset,
-            src_ip: src_ip.map(|ip| ip.0),
-            dst_ip: dst_ip.map(|ip| ip.0),
-            node,
-            column,
-            immutable,
-            creation_time: chrono::Utc::now(),
-        };
-
-        let id = {
-            let store = crate::graphql::get_store(ctx)?;
-            let map = store.sampling_policy_map();
-            map.put(pol.clone())?
-        };
-
-        if immutable {
-            let agents = ctx.data::<SharedAgentManager>()?;
-            let policies = load_immutable(ctx).await?;
-            if let Err(e) = agents.broadcast_crusher_sampling_policy(&policies).await {
-                // Change policy to mutable so that user can retry
-                let old: review_database::SamplingPolicyUpdate = pol.into();
-                let mut new = old.clone();
-                new.immutable = false;
-                let store = crate::graphql::get_store(ctx)?;
-                let mut map = store.sampling_policy_map();
-                map.update(id, &old, &new)?;
-                return Err(e.into());
-            }
-        }
-
+        let store = crate::graphql::get_store(ctx)?;
+        check_sensor_name(&store, node.as_deref(), customer_id)?;
+        let id = store
+            .sampling_policy_map()
+            .insert(NewSamplingPolicy {
+                name,
+                kind: kind.into(),
+                interval: interval.into(),
+                period: period.into(),
+                offset,
+                src_ip: src_ip.map(|ip| ip.0),
+                dst_ip: dst_ip.map(|ip| ip.0),
+                node,
+                column,
+                customer_id,
+            })
+            .map_err(|e| policy_refusal(&e))?;
         Ok(ID(id.to_string()))
     }
 
-    /// Removes sampling policies, returning the IDs that no longer exist.
+    /// Removes sampling policies, returning the names of the policies
+    /// removed.
     ///
-    /// Every ID is checked before any policy is removed, so a refused ID
-    /// leaves every policy in place. A repeated ID is removed once.
+    /// Every ID is checked before any policy is removed: it must exist, be
+    /// in the caller's scope and not be in use. A refused ID leaves every
+    /// policy in place, and the refusal of a policy in use lists its uses. A
+    /// repeated ID is removed once.
+    ///
+    /// Each policy is then removed in its own transaction: review-database
+    /// removes one ID per transaction, and review-web cannot open one that
+    /// spans them. So a storage failure after the first removal returns an
+    /// error with the policies before it already removed, and a retry with
+    /// the IDs that remain removes the rest.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn remove_sampling_policies(
@@ -640,53 +735,69 @@ impl SamplingPolicyMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
-        let mut ids = ids
-            .iter()
-            .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID".into()))
-            .collect::<Result<Vec<_>>>()?;
+        let mut ids = ids.iter().map(parse_id).collect::<Result<Vec<_>>>()?;
         // A repeated ID would pass every check and then fail its second
         // removal, after the first had already taken effect.
         let mut seen = HashSet::new();
         ids.retain(|&i| seen.insert(i));
 
         let users_cids = users_customers(ctx)?;
-        let _guard = lock_sampling_policies(ctx).await?;
-        let store = crate::graphql::get_store(ctx)?;
-        let map = store.sampling_policy_map();
-        let customers = users_cids
-            .is_some()
-            .then(|| PolicyCustomers::load(&store))
-            .transpose()?;
-        for &i in &ids {
-            let Some(policy) = map.get_by_id(i)? else {
-                return Err("no such sampling policy".into());
-            };
-            if let (Some(scope), Some(customers)) = (users_cids.as_deref(), customers.as_ref())
-                && !customers.in_scope(&policy, scope)
-            {
-                return Err("Forbidden".into());
+        let (removed, generators, failure) = {
+            let _config = lock_engine_config(ctx).await?;
+            let _policies = lock_sampling_policies(ctx).await?;
+            let store = crate::graphql::get_store(ctx)?;
+            let mut checked = Vec::with_capacity(ids.len());
+            for &i in &ids {
+                let policy = accessible_policy(&store, users_cids.as_deref(), i)?;
+                let uses = store.sampling_policy_uses(i)?;
+                if !uses.is_empty() {
+                    return Err(format!(
+                        "sampling policy {:?} is in use by {}",
+                        policy.name,
+                        list_uses(&uses)
+                    )
+                    .into());
+                }
+                checked.push(policy);
             }
+
+            let map = store.sampling_policy_map();
+            let mut removed = Vec::<String>::with_capacity(checked.len());
+            let mut generators = Vec::new();
+            let mut failure = None;
+            for policy in checked {
+                match map.remove_unused(policy.id) {
+                    Ok(key) => {
+                        removed.push(match String::from_utf8(key) {
+                            Ok(key) => key,
+                            Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
+                        });
+                        generators.extend(policy.assignee);
+                    }
+                    Err(e) => {
+                        failure = Some(policy_refusal(&e));
+                        break;
+                    }
+                }
+            }
+            (removed, generators, failure)
+        };
+
+        // The removals before a failure are stored, so their generators are
+        // told either way.
+        notify_generators(ctx, generators).await;
+        match failure {
+            Some(e) => Err(e),
+            None => Ok(removed),
         }
-
-        let mut removed = Vec::<String>::with_capacity(ids.len());
-        for i in ids {
-            let key = map.remove(i)?;
-
-            let name = match String::from_utf8(key) {
-                Ok(key) => key,
-                Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
-            };
-            removed.push(name);
-        }
-
-        Ok(removed)
     }
 
-    /// Updates an existing sampling policy.
+    /// Updates an existing sampling policy, returning its ID.
     ///
-    /// The new `node` must be a sensor name. A caller scoped to customers may
-    /// update only a policy of a customer in scope, and only to a sensor name
-    /// of a customer in scope.
+    /// A draft's definition and name can change, and its new `node` must be a
+    /// sensor name of one of its customer's nodes. Only the name of a fixed
+    /// policy can change. A caller scoped to customers may update only a
+    /// policy of a customer in scope.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn update_sampling_policy(
@@ -696,30 +807,104 @@ impl SamplingPolicyMutation {
         old: SamplingPolicyInput,
         new: SamplingPolicyInput,
     ) -> Result<ID> {
-        let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
-        if old.immutable {
-            return Err("immutable set by user".into());
+        let i = parse_id(&id)?;
+        let users_cids = users_customers(ctx)?;
+        let store = crate::graphql::get_store(ctx)?;
+        let stored = accessible_policy(&store, users_cids.as_deref(), i)?;
+        if stored.state == PolicyState::Draft {
+            let Some(customer_id) = stored.customer_id else {
+                return Err("the sampling policy has no customer".into());
+            };
+            check_sensor_name(&store, new.node.as_deref(), customer_id)?;
+        }
+
+        store
+            .sampling_policy_map()
+            .update(i, &old.into(), &new.into())
+            .map_err(|e| policy_refusal(&e))?;
+        Ok(id)
+    }
+
+    /// Fixes a draft sampling policy, returning its ID.
+    ///
+    /// A fixed policy's definition cannot change, and nothing makes it a
+    /// draft again. Fixing a fixed policy succeeds and changes nothing.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    async fn fix_sampling_policy(&self, ctx: &Context<'_>, id: ID) -> Result<ID> {
+        let i = parse_id(&id)?;
+        let users_cids = users_customers(ctx)?;
+        let store = crate::graphql::get_store(ctx)?;
+        accessible_policy(&store, users_cids.as_deref(), i)?;
+        store
+            .sampling_policy_map()
+            .fix(i)
+            .map_err(|e| policy_refusal(&e))?;
+        Ok(id)
+    }
+
+    /// Assigns a sampling policy to the Time Series Generator agent
+    /// `agentKey` of node `nodeId`, or unassigns it if both are null,
+    /// returning its ID.
+    ///
+    /// The caller must belong to the policy's customer and the generator's,
+    /// and the generator's node must be the policy's customer's, its `node`
+    /// a sensor name of that customer. A draft is refused unless `fix` is
+    /// true, which fixes it and assigns it in one transaction; a refused
+    /// assignment leaves it a draft, and `fix` on a fixed policy changes
+    /// nothing. `fix` cannot be given to unassign. While the policy is in use
+    /// it cannot be unassigned, and can be assigned only to a generator with
+    /// its Data Store; the refusal lists its uses.
+    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
+        .or(RoleGuard::new(Role::SecurityAdministrator))")]
+    async fn assign_sampling_policy(
+        &self,
+        ctx: &Context<'_>,
+        id: ID,
+        node_id: Option<ID>,
+        agent_key: Option<String>,
+        fix: Option<bool>,
+    ) -> Result<ID> {
+        let i = parse_id(&id)?;
+        let fix = fix.unwrap_or(false);
+        let assignee = match (node_id, agent_key) {
+            (Some(node_id), Some(agent_key)) => {
+                let node_id = node_id
+                    .as_str()
+                    .parse::<u32>()
+                    .map_err(|_| "invalid node ID")?;
+                Some((node_id, agent_key))
+            }
+            (None, None) => None,
+            _ => {
+                return Err(
+                    "nodeId and agentKey are given together, or are both null to unassign".into(),
+                );
+            }
+        };
+        if fix && assignee.is_none() {
+            return Err("a policy is fixed only by assigning it; fix cannot unassign".into());
         }
 
         let users_cids = users_customers(ctx)?;
-        let _guard = lock_sampling_policies(ctx).await?;
-        let store = crate::graphql::get_store(ctx)?;
-        let mut map = store.sampling_policy_map();
-        let customers = PolicyCustomers::load(&store)?;
-        if let Some(scope) = users_cids.as_deref() {
-            let Some(stored) = map.get_by_id(i)? else {
-                return Err("no such sampling policy".into());
-            };
-            if !customers.in_scope(&stored, scope) {
-                return Err("Forbidden".into());
-            }
-        }
-        customers.check_node(new.node.as_deref(), users_cids.as_deref())?;
+        let (previous, target) = {
+            let _lock = lock_engine_config(ctx).await?;
+            let store = crate::graphql::get_store(ctx)?;
+            let policy = accessible_policy(&store, users_cids.as_deref(), i)?;
+            let target = assignee
+                .map(|(node_id, agent_key)| {
+                    resolve_generator(&store, users_cids.as_deref(), node_id, &agent_key)
+                })
+                .transpose()?
+                .map(|target| target.instance);
+            store
+                .sampling_policy_map()
+                .assign(i, target.as_ref(), fix)
+                .map_err(|e| policy_refusal(&e))?;
+            (policy.assignee, target)
+        };
 
-        let old = old.try_into()?;
-        let new = new.try_into()?;
-        map.update(i, &old, &new)?;
-
+        notify_generators(ctx, previous.into_iter().chain(target).collect()).await;
         Ok(id)
     }
 }
@@ -727,125 +912,122 @@ impl SamplingPolicyMutation {
 #[cfg(test)]
 mod tests {
     use assert_json_diff::assert_json_eq;
-    use chrono::Utc;
-    use review_database::{Agent, AgentKind, AgentStatus, Iterable, Lifecycle, Role, Store};
+    use review_database::{
+        Iterable, ModelInstance, NodeProfile, NodeUpdate, PolicyState, Role, Store,
+    };
     use serde_json::json;
 
-    use crate::graphql::TestSchema;
+    use super::{DEFINITION_FIXED, FIX_BEFORE_ASSIGNING};
+    use crate::graphql::{
+        SharedAgentManager, TestSchema,
+        model_test_support::insert_engine_node,
+        sampling_test_support::{
+            Deliveries, DeliveryRecorder, NO_DELIVERIES, data_store_name, insert_generator_node,
+            insert_policy, sensor_name, use_policy,
+        },
+    };
 
-    const SENSOR_A: &str = "piglet.a.example.com";
-    const SENSOR_B: &str = "piglet.b.example.com";
+    const HOST_A: &str = "a.example.com";
+    const HOST_B: &str = "b.example.com";
 
-    fn sensor_agent() -> Agent {
-        Agent {
-            node_id: u32::MAX,
-            key: "001.piglet".to_string(),
-            kind: AgentKind::Sensor,
-            status: AgentStatus::Enabled,
-            config: None,
-            draft: None,
-            installed_version: None,
-            installed_commit: None,
-            lifecycle: Lifecycle::NotInstalled,
-            bound_addrs: vec![],
-            instance: None,
+    /// Customer 1 and customer 2, each with a node carrying a sensor and a
+    /// generator, and a draft policy of each reading its own sensor.
+    struct TwoCustomers {
+        generator_a: ModelInstance,
+        generator_b: ModelInstance,
+        policy_a: u32,
+        policy_b: u32,
+    }
+
+    fn setup_two_customers(schema: &TestSchema) -> TwoCustomers {
+        let store = schema.store();
+        let generator_a = insert_generator_node(&store, HOST_A, 1);
+        let generator_b = insert_generator_node(&store, HOST_B, 2);
+        TwoCustomers {
+            generator_a,
+            generator_b,
+            policy_a: insert_policy(&store, "policy_a", 1, &sensor_name(HOST_A)),
+            policy_b: insert_policy(&store, "policy_b", 2, &sensor_name(HOST_B)),
         }
     }
 
-    /// Inserts a node with an applied profile, carrying a Sensor agent when
-    /// `with_sensor` is set, so that it emits `piglet.<hostname>`.
-    fn insert_node(store: &Store, name: &str, hostname: &str, customer_id: u32, with_sensor: bool) {
-        let node = review_database::Node {
-            id: u32::MAX,
-            name: name.to_string(),
-            name_draft: Some(name.to_string()),
-            profile: Some(review_database::NodeProfile {
-                customer_id,
-                description: String::new(),
-                hostname: hostname.to_string(),
-            }),
-            profile_draft: None,
-            agents: if with_sensor {
-                vec![sensor_agent()]
-            } else {
-                vec![]
-            },
-            external_services: vec![],
-            creation_time: Utc::now(),
-        };
-        store.node_map().put(&node).expect("insert node");
+    async fn recording_schema() -> (TestSchema, Deliveries) {
+        let (agent_manager, deliveries): (SharedAgentManager, Deliveries) =
+            DeliveryRecorder::boxed();
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        (schema, deliveries)
     }
 
-    fn insert_policy(store: &Store, name: &str, node: Option<&str>, immutable: bool) -> u32 {
-        let policy = review_database::SamplingPolicy {
-            id: u32::MAX,
-            name: name.to_string(),
-            kind: review_database::SamplingKind::Conn,
-            interval: review_database::SamplingInterval::FifteenMinutes,
-            period: review_database::SamplingPeriod::OneDay,
-            offset: 0,
-            src_ip: None,
-            dst_ip: None,
-            node: node.map(ToString::to_string),
-            column: None,
-            immutable,
-            creation_time: Utc::now(),
-        };
-        store
-            .sampling_policy_map()
-            .put(policy)
-            .expect("insert policy")
+    fn literal(value: Option<&str>) -> String {
+        value.map_or_else(|| "null".to_string(), |value| format!("{value:?}"))
     }
 
-    fn insert_mutation(name: &str, node: Option<&str>) -> String {
-        let node = node.map_or_else(|| "null".to_string(), |node| format!("{node:?}"));
+    fn insert_mutation(customer_id: u32, name: &str, node: Option<&str>) -> String {
         format!(
             r#"mutation {{
                 insertSamplingPolicy(
+                    customerId: "{customer_id}",
                     name: "{name}",
                     kind: CONN,
                     interval: FIFTEEN_MINUTES,
                     period: ONE_DAY,
                     offset: 0,
-                    node: {node},
-                    immutable: false
+                    node: {}
                 )
-            }}"#
+            }}"#,
+            literal(node)
         )
     }
 
-    fn policy_input(name: &str, node: Option<&str>) -> String {
-        let node = node.map_or_else(|| "null".to_string(), |node| format!("{node:?}"));
+    /// A `SamplingPolicyInput` of a `CONN` policy with `offset`.
+    fn policy_input(name: &str, offset: i32, node: Option<&str>) -> String {
         format!(
             r#"{{
                 name: "{name}",
                 kind: CONN,
                 interval: FIFTEEN_MINUTES,
                 period: ONE_DAY,
-                offset: 0,
-                node: {node},
-                immutable: false
+                offset: {offset},
+                node: {}
+            }}"#,
+            literal(node)
+        )
+    }
+
+    fn update_mutation(id: u32, old: &str, new: &str) -> String {
+        format!(r#"mutation {{ updateSamplingPolicy(id: "{id}", old: {old}, new: {new}) }}"#)
+    }
+
+    /// Renames the policy `id`, of offset 0, keeping its `node`.
+    fn rename_mutation(id: u32, old: &str, new: &str, node: &str) -> String {
+        update_mutation(
+            id,
+            &policy_input(old, 0, Some(node)),
+            &policy_input(new, 0, Some(node)),
+        )
+    }
+
+    fn fix_mutation(id: u32) -> String {
+        format!(r#"mutation {{ fixSamplingPolicy(id: "{id}") }}"#)
+    }
+
+    fn assign_mutation(id: u32, generator: Option<&ModelInstance>, fix: Option<bool>) -> String {
+        let (node_id, agent_key) = generator.map_or_else(
+            || ("null".to_string(), "null".to_string()),
+            |generator| {
+                (
+                    format!("\"{}\"", generator.node_id),
+                    format!("{:?}", generator.agent_key),
+                )
+            },
+        );
+        let fix = fix.map_or_else(|| "null".to_string(), |fix| fix.to_string());
+        format!(
+            r#"mutation {{
+                assignSamplingPolicy(id: "{id}", nodeId: {node_id}, agentKey: {agent_key}, fix: {fix})
             }}"#
         )
     }
-
-    fn update_mutation(id: u32, old: (&str, Option<&str>), new: (&str, Option<&str>)) -> String {
-        format!(
-            r#"mutation {{
-                updateSamplingPolicy(id: "{id}", old: {}, new: {})
-            }}"#,
-            policy_input(old.0, old.1),
-            policy_input(new.0, new.1),
-        )
-    }
-
-    /// Lists policies, which come in name order.
-    const LIST_QUERY: &str = r"{
-        samplingPolicyList(first: 10) {
-            totalCount
-            nodes { name }
-        }
-    }";
 
     fn remove_mutation(ids: &[u32]) -> String {
         let ids = ids
@@ -855,6 +1037,14 @@ mod tests {
             .join(", ");
         format!("mutation {{ removeSamplingPolicies(ids: [{ids}]) }}")
     }
+
+    /// Lists policies, which come in name order.
+    const LIST_QUERY: &str = r"{
+        samplingPolicyList(first: 10) {
+            totalCount
+            nodes { name }
+        }
+    }";
 
     fn listed_names(res: async_graphql::Response) -> (Vec<String>, String) {
         assert!(res.errors.is_empty(), "list: {:?}", res.errors);
@@ -882,225 +1072,177 @@ mod tests {
         names
     }
 
+    fn stored_policy(schema: &TestSchema, id: u32) -> review_database::SamplingPolicy {
+        schema
+            .store()
+            .sampling_policy_map()
+            .get_by_id(id)
+            .expect("read policy")
+            .expect("policy exists")
+    }
+
     fn error_message(res: &async_graphql::Response) -> &str {
         &res.errors.first().expect("an error").message
     }
 
+    fn assert_ok(res: &async_graphql::Response) {
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+    }
+
+    /// Reads the policy `id` through `samplingPolicy`.
+    async fn read_policy(schema: &TestSchema, id: u32) -> serde_json::Value {
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"{{
+                    samplingPolicy(id: "{id}") {{
+                        name kind offset node state customerId
+                        assignee {{ nodeId agentKey }}
+                    }}
+                }}"#
+            ))
+            .await;
+        assert_ok(&res);
+        res.data.into_json().unwrap()["samplingPolicy"].clone()
+    }
+
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
-    async fn test_sampling_policy() {
+    async fn a_policy_is_a_draft_until_fixed() {
         let schema = TestSchema::new().await;
-        insert_node(&schema.store(), "sensor", "sensor.example.com", 0, true);
-        insert_node(&schema.store(), "manager", "manager.example.com", 0, true);
+        insert_generator_node(&schema.store(), HOST_A, 1);
+        insert_generator_node(&schema.store(), "a2.example.com", 1);
+        let sensor = sensor_name(HOST_A);
+        let other_sensor = sensor_name("a2.example.com");
 
         let res = schema
-            .execute_as_system_admin(r"{samplingPolicyList{totalCount}}")
+            .execute_as_system_admin(&insert_mutation(1, "Policy 1", Some(&sensor)))
             .await;
-        assert_eq!(
-            res.data.to_string(),
-            r#"{samplingPolicyList: {totalCount: "0"}}"#
+        assert_eq!(res.data.to_string(), r#"{insertSamplingPolicy: "0"}"#);
+        assert_json_eq!(
+            read_policy(&schema, 0).await,
+            json!({
+                "name": "Policy 1",
+                "kind": "CONN",
+                "offset": 0,
+                "node": sensor,
+                "state": "DRAFT",
+                "customerId": "1",
+                "assignee": null,
+            })
         );
 
         let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
+            .execute_as_system_admin(&format!(
+                r#"mutation {{
                     insertSamplingPolicy(
-                        name: "Policy 1",
-                        kind: CONN,
-                        interval: FIFTEEN_MINUTES,
-                        period: ONE_DAY,
-                        offset: 0,
-                        node: "piglet.sensor.example.com",
-                        immutable: false,
-                        srcIp: "127.0.0.1",
-                        dstIp: "127.0.0.2"
-                    )
-                }
-            "#,
-            )
-            .await;
-        assert_eq!(res.data.to_string(), r#"{insertSamplingPolicy: "0"}"#);
-
-        let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
-                    insertSamplingPolicy(
+                        customerId: "1",
                         name: "Policy 2",
                         kind: CONN,
                         interval: FIFTEEN_MINUTES,
                         period: ONE_DAY,
                         offset: 0,
-                        node: "piglet.sensor.example.com",
-                        immutable: false,
+                        node: {sensor:?},
                         srcIp: "127.0.0.1",
                         dstIp: "127.0.0.x"
                     )
-                }
-            "#,
-            )
+                }}"#
+            ))
             .await;
         assert_eq!(
-            res.errors.first().unwrap().message.clone(),
-            "Failed to parse \"IpAddress\": Invalid IP address: 127.0.0.x".to_string()
+            error_message(&res),
+            "Failed to parse \"IpAddress\": Invalid IP address: 127.0.0.x"
         );
 
+        // A draft's kind, offset and node can change.
         let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
-                    updateSamplingPolicy(
-                        id: "0",
-                        old: {
-                            name: "Policy 1",
-                            kind: CONN,
-                            interval: FIFTEEN_MINUTES,
-                            period: ONE_DAY,
-                            offset: 0,
-                            node: "piglet.sensor.example.com",
-                            immutable: false,
-                            srcIp: "127.0.0.1",
-                            dstIp: "127.0.0.2"
-                        },
-                        new:{
-                            name: "Policy 2",
-                            kind: CONN,
-                            interval: FIFTEEN_MINUTES,
-                            period: ONE_DAY,
-                            offset: 0,
-                            node: "piglet.manager.example.com",
-                            immutable: true,
-                            srcIp: "127.0.0.1",
-                            dstIp: "127.0.0.2"
-                        }
-                      )
-                }
-            "#,
-            )
+            .execute_as_system_admin(&update_mutation(
+                0,
+                &policy_input("Policy 1", 0, Some(&sensor)),
+                &format!(
+                    r#"{{
+                        name: "Policy 1",
+                        kind: DNS,
+                        interval: FIFTEEN_MINUTES,
+                        period: ONE_DAY,
+                        offset: 5,
+                        node: {other_sensor:?}
+                    }}"#
+                ),
+            ))
             .await;
         assert_eq!(res.data.to_string(), r#"{updateSamplingPolicy: "0"}"#);
+        let policy = read_policy(&schema, 0).await;
+        assert_eq!(policy["kind"], "DNS");
+        assert_eq!(policy["offset"], 5);
+        assert_eq!(policy["node"], other_sensor.as_str());
+        assert_eq!(policy["state"], "DRAFT");
 
-        let res = schema
-            .execute_as_system_admin(
-                r"query {
-                    samplingPolicyList(first: 10) {
-                        nodes {
-                            name
-                            kind
-                            interval
-                            period
-                            offset
-                            node
-                            immutable
-                            srcIp
-                            dstIp
-                        }
-                    }
-                }",
-            )
-            .await;
+        // Fixing is one-way, and fixing again succeeds without change.
+        for _ in 0..2 {
+            let res = schema.execute_as_system_admin(&fix_mutation(0)).await;
+            assert_eq!(res.data.to_string(), r#"{fixSamplingPolicy: "0"}"#);
+            assert_eq!(read_policy(&schema, 0).await["state"], "FIXED");
+        }
 
-        assert_json_eq!(
-            res.data.into_json().unwrap(),
-            json!({
-                "samplingPolicyList": {
-                    "nodes": [{
-                        "name": "Policy 2",
-                        "kind": "CONN",
-                        "interval": "FIFTEEN_MINUTES",
-                        "period": "ONE_DAY",
-                        "offset": 0,
-                        "node": "piglet.manager.example.com",
-                        "immutable": true,
-                        "srcIp": "127.0.0.1",
-                        "dstIp": "127.0.0.2",
-                    }]
-                }
-            })
+        let fixed = format!(
+            r#"{{
+                name: "Policy 1",
+                kind: DNS,
+                interval: FIFTEEN_MINUTES,
+                period: ONE_DAY,
+                offset: 5,
+                node: {other_sensor:?}
+            }}"#
         );
-
         let res = schema
-            .execute_as_system_admin(
-                r#"
-                mutation {
-                    updateSamplingPolicy(
-                        id: "0",
-                        old: {
-                            name: "Policy 2",
-                            kind: CONN,
-                            interval: FIFTEEN_MINUTES,
-                            period: ONE_DAY,
-                            offset: 0,
-                            node: "piglet.manager.example.com",
-                            immutable: true,
-                            srcIp: "127.0.0.1",
-                            dstIp: "127.0.0.2"
-                        },
-                        new:{
-                            name: "Policy 3",
-                            kind: CONN,
-                            interval: FIFTEEN_MINUTES,
-                            period: ONE_DAY,
-                            offset: 0,
-                            node: "piglet.manager.example.com",
-                            immutable: true,
-                            srcIp: "127.0.0.x",
-                            dstIp: "127.0.0.2"
-                        }
-                      )
-                }
-            "#,
-            )
+            .execute_as_system_admin(&update_mutation(
+                0,
+                &fixed,
+                &fixed.replace("offset: 5", "offset: 6"),
+            ))
             .await;
-        assert_eq!(
-            res.errors.first().unwrap().message.clone(),
-            "Failed to parse \"IpAddress\": Invalid IP address: 127.0.0.x \
-            (occurred while parsing \"SamplingPolicyInput\")"
-                .to_string()
-        );
+        assert_eq!(error_message(&res), DEFINITION_FIXED);
+        assert_eq!(read_policy(&schema, 0).await["offset"], 5);
 
         let res = schema
-            .execute_as_system_admin(
-                r#"mutation {
-                    removeSamplingPolicies(ids: ["0"])
-                }"#,
-            )
+            .execute_as_system_admin(&update_mutation(
+                0,
+                &fixed,
+                &fixed.replace("Policy 1", "Renamed"),
+            ))
+            .await;
+        assert_ok(&res);
+        assert_eq!(read_policy(&schema, 0).await["name"], "Renamed");
+
+        let res = schema.execute_as_system_admin(&fix_mutation(9999)).await;
+        assert_eq!(error_message(&res), "no such sampling policy");
+
+        // A draft and a fixed policy that are not in use can be deleted.
+        let res = schema
+            .execute_as_system_admin(&insert_mutation(1, "Draft", Some(&sensor)))
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertSamplingPolicy: "1"}"#);
+        let res = schema
+            .execute_as_system_admin(&remove_mutation(&[1, 0]))
             .await;
         assert_eq!(
             res.data.to_string(),
-            r#"{removeSamplingPolicies: ["Policy 2"]}"#
+            r#"{removeSamplingPolicies: ["Draft", "Renamed"]}"#
         );
-    }
-
-    /// Sets up customer 1 and customer 2, each with a sensor node, and four
-    /// policies: one per customer's sensor name, a legacy one whose `node` is
-    /// customer 2's hostname, and a node-less one.
-    ///
-    /// Returns the IDs of customer 1's policy, customer 2's policy, the legacy
-    /// policy and the node-less policy.
-    fn setup_two_customers(schema: &TestSchema) -> (u32, u32, u32, u32) {
-        let store = schema.store();
-        insert_node(&store, "node_a", "a.example.com", 1, true);
-        insert_node(&store, "node_b", "b.example.com", 2, true);
-        (
-            insert_policy(&store, "policy_a", Some(SENSOR_A), false),
-            insert_policy(&store, "policy_b", Some(SENSOR_B), false),
-            insert_policy(&store, "legacy_b", Some("b.example.com"), false),
-            insert_policy(&store, "global", None, false),
-        )
+        assert_eq!(listed_names_of_store(&schema), Vec::<String>::new());
     }
 
     #[tokio::test]
     async fn scoped_caller_lists_only_own_policies() {
         let schema = TestSchema::new().await;
         setup_two_customers(&schema);
+        insert_policy(&schema.store(), "policy_b2", 2, &sensor_name(HOST_B));
 
         let res = schema
             .execute_as_scoped_user(LIST_QUERY, Role::SecurityAdministrator, Some(vec![2]))
             .await;
         let (names, total) = listed_names(res);
-        assert_eq!(names, ["legacy_b", "policy_b"]);
+        assert_eq!(names, ["policy_b", "policy_b2"]);
         assert_eq!(total, "2");
 
         let res = schema
@@ -1116,24 +1258,6 @@ mod tests {
                 "samplingPolicyList": {
                     "totalCount": "2",
                     "pageInfo": { "hasNextPage": true },
-                    "nodes": [{ "name": "legacy_b" }],
-                }
-            })
-        );
-
-        let res = schema
-            .execute_as_scoped_user(
-                r"{ samplingPolicyList(last: 1) { totalCount pageInfo { hasPreviousPage } nodes { name } } }",
-                Role::SecurityAdministrator,
-                Some(vec![2]),
-            )
-            .await;
-        assert_json_eq!(
-            res.data.into_json().unwrap(),
-            json!({
-                "samplingPolicyList": {
-                    "totalCount": "2",
-                    "pageInfo": { "hasPreviousPage": true },
                     "nodes": [{ "name": "policy_b" }],
                 }
             })
@@ -1146,81 +1270,139 @@ mod tests {
         assert!(names.is_empty(), "{names:?}");
         assert_eq!(total, "0");
 
-        // Unscoped callers see every policy, including the node-less one.
         let res = schema.execute_as_system_admin(LIST_QUERY).await;
         let (names, total) = listed_names(res);
-        assert_eq!(names, ["global", "legacy_b", "policy_a", "policy_b"]);
-        assert_eq!(total, "4");
+        assert_eq!(names, ["policy_a", "policy_b", "policy_b2"]);
+        assert_eq!(total, "3");
 
         let res = schema
             .execute_as_scoped_user(LIST_QUERY, Role::SecurityAdministrator, None)
             .await;
         let (_, total) = listed_names(res);
-        assert_eq!(total, "4");
+        assert_eq!(total, "3");
     }
 
     #[tokio::test]
-    async fn scoped_caller_reads_only_own_policy() {
+    async fn scoped_caller_reads_and_fixes_only_own_policy() {
         let schema = TestSchema::new().await;
-        let (policy_a, policy_b, legacy_b, global) = setup_two_customers(&schema);
+        let setup = setup_two_customers(&schema);
         let query = |id: u32| format!(r#"{{ samplingPolicy(id: "{id}") {{ name }} }}"#);
 
-        let res = schema
-            .execute_as_scoped_user(&query(policy_a), Role::SecurityAdministrator, Some(vec![2]))
-            .await;
-        assert_eq!(error_message(&res), "Forbidden");
-
-        let res = schema
-            .execute_as_scoped_user(&query(global), Role::SecurityAdministrator, Some(vec![2]))
-            .await;
-        assert_eq!(error_message(&res), "Forbidden");
-
-        for (id, name) in [(policy_b, "policy_b"), (legacy_b, "legacy_b")] {
+        for scope in [vec![2], vec![999]] {
             let res = schema
-                .execute_as_scoped_user(&query(id), Role::SecurityAdministrator, Some(vec![2]))
+                .execute_as_scoped_user(
+                    &query(setup.policy_a),
+                    Role::SecurityAdministrator,
+                    Some(scope.clone()),
+                )
                 .await;
-            assert!(res.errors.is_empty(), "{:?}", res.errors);
-            assert_eq!(
-                res.data.into_json().unwrap(),
-                json!({ "samplingPolicy": { "name": name } })
-            );
-        }
+            assert_eq!(error_message(&res), "Forbidden");
 
-        let res = schema.execute_as_system_admin(&query(global)).await;
-        assert!(res.errors.is_empty(), "{:?}", res.errors);
+            let res = schema
+                .execute_as_scoped_user(
+                    &fix_mutation(setup.policy_a),
+                    Role::SecurityAdministrator,
+                    Some(scope),
+                )
+                .await;
+            assert_eq!(error_message(&res), "Forbidden");
+        }
+        assert_eq!(
+            stored_policy(&schema, setup.policy_a).state,
+            PolicyState::Draft
+        );
+
+        let res = schema
+            .execute_as_scoped_user(
+                &query(setup.policy_b),
+                Role::SecurityAdministrator,
+                Some(vec![2]),
+            )
+            .await;
+        assert_ok(&res);
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            json!({ "samplingPolicy": { "name": "policy_b" } })
+        );
+
+        let res = schema
+            .execute_as_scoped_user(
+                &fix_mutation(setup.policy_b),
+                Role::SecurityAdministrator,
+                Some(vec![2]),
+            )
+            .await;
+        assert_ok(&res);
+        assert_eq!(
+            stored_policy(&schema, setup.policy_b).state,
+            PolicyState::Fixed
+        );
+    }
+
+    /// Every resolver decides access with `in_scope`. A policy without a
+    /// customer cannot be stored through review-database's API, so the rule
+    /// for one is checked on the row read back with its customer cleared.
+    #[tokio::test]
+    async fn a_policy_without_a_customer_is_for_unscoped_callers_only() {
+        let schema = TestSchema::new().await;
+        let setup = setup_two_customers(&schema);
+        let mut policy = stored_policy(&schema, setup.policy_a);
+        assert!(super::in_scope(&policy, None));
+        assert!(super::in_scope(&policy, Some(&[1])));
+        assert!(!super::in_scope(&policy, Some(&[2])));
+
+        policy.customer_id = None;
+        assert!(super::in_scope(&policy, None));
+        for scope in [&[][..], &[1], &[1, 2]] {
+            assert!(!super::in_scope(&policy, Some(scope)), "{scope:?}");
+        }
     }
 
     #[tokio::test]
-    async fn insert_requires_sensor_name_in_scope() {
+    async fn insert_requires_a_customer_in_scope_and_its_sensor_name() {
         let schema = TestSchema::new().await;
         setup_two_customers(&schema);
+        let sensor_a = sensor_name(HOST_A);
+        let sensor_b = sensor_name(HOST_B);
+
+        for scope in [vec![2], vec![999]] {
+            let res = schema
+                .execute_as_scoped_user(
+                    &insert_mutation(1, "forged", Some(&sensor_a)),
+                    Role::SecurityAdministrator,
+                    Some(scope),
+                )
+                .await;
+            assert_eq!(error_message(&res), "Forbidden");
+        }
+
+        // Another customer's sensor name, even one in scope, is refused.
+        let res = schema
+            .execute_as_scoped_user(
+                &insert_mutation(2, "other sensor", Some(&sensor_a)),
+                Role::SecurityAdministrator,
+                Some(vec![1, 2]),
+            )
+            .await;
+        assert_eq!(
+            error_message(&res),
+            format!("{sensor_a:?} is not a sensor name of customer 2")
+        );
 
         let res = schema
             .execute_as_scoped_user(
-                &insert_mutation("other", Some(SENSOR_A)),
+                &insert_mutation(2, "own", Some(&sensor_b)),
                 Role::SecurityAdministrator,
                 Some(vec![2]),
             )
             .await;
-        assert_eq!(error_message(&res), "Forbidden");
-
-        let res = schema
-            .execute_as_scoped_user(
-                &insert_mutation("forged", Some(SENSOR_A)),
-                Role::SecurityAdministrator,
-                Some(vec![999]),
-            )
-            .await;
-        assert_eq!(error_message(&res), "Forbidden");
-
-        let res = schema
-            .execute_as_scoped_user(
-                &insert_mutation("own", Some(SENSOR_B)),
-                Role::SecurityAdministrator,
-                Some(vec![2]),
-            )
-            .await;
-        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_ok(&res);
+        let id = res.data.into_json().unwrap()["insertSamplingPolicy"]
+            .as_str()
+            .unwrap()
+            .parse::<u32>()
+            .unwrap();
+        assert_eq!(stored_policy(&schema, id).customer_id, Some(2));
 
         let callers = [
             (Role::SystemAdministrator, None),
@@ -1229,142 +1411,438 @@ mod tests {
         ];
         for (role, scope) in callers {
             let res = schema
-                .execute_as_scoped_user(&insert_mutation("no node", None), role, scope.clone())
+                .execute_as_scoped_user(&insert_mutation(2, "no node", None), role, scope.clone())
                 .await;
             assert_eq!(error_message(&res), "node is required");
 
             let res = schema
-                .execute_as_scoped_user(
-                    &insert_mutation("hostname", Some("b.example.com")),
-                    role,
-                    scope,
-                )
+                .execute_as_scoped_user(&insert_mutation(2, "hostname", Some(HOST_B)), role, scope)
                 .await;
             assert_eq!(
                 error_message(&res),
-                r#""b.example.com" is not a sensor name"#
+                format!("{HOST_B:?} is not a sensor name of customer 2")
             );
         }
 
         let res = schema.execute_as_system_admin(LIST_QUERY).await;
         let (names, _) = listed_names(res);
-        assert_eq!(names, ["global", "legacy_b", "own", "policy_a", "policy_b"]);
+        assert_eq!(names, ["own", "policy_a", "policy_b"]);
     }
 
     #[tokio::test]
-    async fn update_checks_stored_and_new_customer() {
+    async fn update_checks_the_stored_customer() {
         let schema = TestSchema::new().await;
-        let (policy_a, policy_b, legacy_b, global) = setup_two_customers(&schema);
+        let setup = setup_two_customers(&schema);
+        let sensor_a = sensor_name(HOST_A);
+        let sensor_b = sensor_name(HOST_B);
 
         let res = schema
             .execute_as_scoped_user(
-                &update_mutation(
-                    policy_a,
-                    ("policy_a", Some(SENSOR_A)),
-                    ("policy_a", Some(SENSOR_B)),
-                ),
+                &rename_mutation(setup.policy_a, "policy_a", "taken", &sensor_a),
                 Role::SecurityAdministrator,
                 Some(vec![2]),
             )
             .await;
         assert_eq!(error_message(&res), "Forbidden");
 
-        let res = schema
-            .execute_as_scoped_user(
-                &update_mutation(
-                    policy_b,
-                    ("policy_b", Some(SENSOR_B)),
-                    ("policy_b", Some(SENSOR_A)),
-                ),
-                Role::SecurityAdministrator,
-                Some(vec![2]),
-            )
-            .await;
-        assert_eq!(error_message(&res), "Forbidden");
-
-        // A node-less policy has no customer, so a scoped caller cannot claim
-        // it even with a sensor name in scope.
-        let res = schema
-            .execute_as_scoped_user(
-                &update_mutation(global, ("global", None), ("global", Some(SENSOR_B))),
-                Role::SecurityAdministrator,
-                Some(vec![2]),
-            )
-            .await;
-        assert_eq!(error_message(&res), "Forbidden");
+        // The stored customer decides the sensor names a draft may read, for
+        // every caller: a policy cannot move to another customer.
+        for scope in [Some(vec![2]), None] {
+            let res = schema
+                .execute_as_scoped_user(
+                    &update_mutation(
+                        setup.policy_b,
+                        &policy_input("policy_b", 0, Some(&sensor_b)),
+                        &policy_input("policy_b", 0, Some(&sensor_a)),
+                    ),
+                    Role::SecurityAdministrator,
+                    scope,
+                )
+                .await;
+            assert_eq!(
+                error_message(&res),
+                format!("{sensor_a:?} is not a sensor name of customer 2")
+            );
+        }
 
         let res = schema
             .execute_as_system_admin(&update_mutation(
-                global,
-                ("global", None),
-                ("global", Some("a.example.com")),
-            ))
-            .await;
-        assert_eq!(
-            error_message(&res),
-            r#""a.example.com" is not a sensor name"#
-        );
-
-        let res = schema
-            .execute_as_system_admin(&update_mutation(
-                policy_a,
-                ("policy_a", Some(SENSOR_A)),
-                ("policy_a", None),
+                setup.policy_a,
+                &policy_input("policy_a", 0, Some(&sensor_a)),
+                &policy_input("policy_a", 0, None),
             ))
             .await;
         assert_eq!(error_message(&res), "node is required");
 
-        // A legacy policy resolves to its customer through the hostname, and
-        // can be moved onto a sensor name in scope.
         let res = schema
             .execute_as_scoped_user(
-                &update_mutation(
-                    legacy_b,
-                    ("legacy_b", Some("b.example.com")),
-                    ("legacy_b", Some(SENSOR_B)),
-                ),
+                &rename_mutation(setup.policy_b, "policy_b", "renamed_b", &sensor_b),
                 Role::SecurityAdministrator,
                 Some(vec![2]),
             )
             .await;
-        assert!(res.errors.is_empty(), "{:?}", res.errors);
-
-        let res = schema
-            .execute_as_scoped_user(
-                &update_mutation(
-                    policy_b,
-                    ("policy_b", Some(SENSOR_B)),
-                    ("renamed_b", Some(SENSOR_B)),
-                ),
-                Role::SecurityAdministrator,
-                Some(vec![2]),
-            )
-            .await;
-        assert!(res.errors.is_empty(), "{:?}", res.errors);
-
-        // An unscoped caller can give a node-less policy a sensor name.
-        let res = schema
-            .execute_as_system_admin(&update_mutation(
-                global,
-                ("global", None),
-                ("global", Some(SENSOR_A)),
-            ))
-            .await;
-        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_ok(&res);
 
         let res = schema.execute_as_system_admin(LIST_QUERY).await;
         let (names, _) = listed_names(res);
-        assert_eq!(names, ["global", "legacy_b", "policy_a", "renamed_b"]);
+        assert_eq!(names, ["policy_a", "renamed_b"]);
+        assert_eq!(stored_policy(&schema, setup.policy_b).customer_id, Some(2));
+    }
+
+    #[tokio::test]
+    async fn a_fixed_policy_keeps_its_definition_where_its_sensor_left() {
+        let schema = TestSchema::new().await;
+        let setup = setup_two_customers(&schema);
+        let sensor_a = sensor_name(HOST_A);
+        let res = schema
+            .execute_as_system_admin(&fix_mutation(setup.policy_a))
+            .await;
+        assert_ok(&res);
+        move_node(&schema.store(), setup.generator_a.node_id, 2, HOST_A);
+
+        // The sensor check is the one a draft's new definition takes; a fixed
+        // policy's definition cannot change, so it can still be renamed.
+        let res = schema
+            .execute_as_system_admin(&rename_mutation(
+                setup.policy_a,
+                "policy_a",
+                "renamed_a",
+                &sensor_a,
+            ))
+            .await;
+        assert_ok(&res);
+        assert_eq!(stored_policy(&schema, setup.policy_a).name, "renamed_a");
+    }
+
+    #[tokio::test]
+    async fn assigning_a_draft_requires_fix() {
+        let (schema, deliveries) = recording_schema().await;
+        let setup = setup_two_customers(&schema);
+
+        for fix in [None, Some(false)] {
+            let res = schema
+                .execute_as_system_admin(&assign_mutation(
+                    setup.policy_a,
+                    Some(&setup.generator_a),
+                    fix,
+                ))
+                .await;
+            assert_eq!(error_message(&res), FIX_BEFORE_ASSIGNING);
+        }
+        let policy = stored_policy(&schema, setup.policy_a);
+        assert_eq!(policy.state, PolicyState::Draft);
+        assert_eq!(policy.assignee, None);
+        assert_eq!(deliveries.calls(), NO_DELIVERIES);
+
+        let res = schema
+            .execute_as_system_admin(&assign_mutation(
+                setup.policy_a,
+                Some(&setup.generator_a),
+                Some(true),
+            ))
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            format!("{{assignSamplingPolicy: \"{}\"}}", setup.policy_a)
+        );
+        assert_json_eq!(
+            read_policy(&schema, setup.policy_a).await,
+            json!({
+                "name": "policy_a",
+                "kind": "CONN",
+                "offset": 0,
+                "node": sensor_name(HOST_A),
+                "state": "FIXED",
+                "customerId": "1",
+                "assignee": {
+                    "nodeId": setup.generator_a.node_id.to_string(),
+                    "agentKey": setup.generator_a.agent_key,
+                },
+            })
+        );
+        assert_eq!(
+            stored_policy(&schema, setup.policy_a).data_store,
+            Some(data_store_name(HOST_A))
+        );
+        assert_eq!(deliveries.calls(), [vec![setup.generator_a.clone()]]);
+
+        // `fix` on a fixed policy changes nothing.
+        let res = schema
+            .execute_as_system_admin(&assign_mutation(
+                setup.policy_a,
+                Some(&setup.generator_a),
+                Some(true),
+            ))
+            .await;
+        assert_ok(&res);
+        assert_eq!(
+            stored_policy(&schema, setup.policy_a).state,
+            PolicyState::Fixed
+        );
+    }
+
+    #[tokio::test]
+    async fn assigning_to_another_customers_generator_is_refused() {
+        let (schema, deliveries) = recording_schema().await;
+        let setup = setup_two_customers(&schema);
+
+        for fix in [None, Some(true)] {
+            let res = schema
+                .execute_as_scoped_user(
+                    &assign_mutation(setup.policy_a, Some(&setup.generator_b), fix),
+                    Role::SecurityAdministrator,
+                    Some(vec![1]),
+                )
+                .await;
+            assert_eq!(error_message(&res), "Forbidden");
+
+            let res = schema
+                .execute_as_system_admin(&assign_mutation(
+                    setup.policy_a,
+                    Some(&setup.generator_b),
+                    fix,
+                ))
+                .await;
+            let expected = if fix.is_some() {
+                format!(
+                    "node {} does not belong to customer 1",
+                    setup.generator_b.node_id
+                )
+            } else {
+                FIX_BEFORE_ASSIGNING.to_string()
+            };
+            assert_eq!(error_message(&res), expected);
+        }
+
+        // A caller scoped to only the generator's customer cannot reach the
+        // policy either.
+        let res = schema
+            .execute_as_scoped_user(
+                &assign_mutation(setup.policy_a, Some(&setup.generator_b), Some(true)),
+                Role::SecurityAdministrator,
+                Some(vec![2]),
+            )
+            .await;
+        assert_eq!(error_message(&res), "Forbidden");
+
+        let policy = stored_policy(&schema, setup.policy_a);
+        assert_eq!(policy.state, PolicyState::Draft);
+        assert_eq!(policy.assignee, None);
+        assert_eq!(deliveries.calls(), NO_DELIVERIES);
+    }
+
+    #[tokio::test]
+    async fn assignment_takes_both_of_node_and_agent_or_neither() {
+        let (schema, deliveries) = recording_schema().await;
+        let setup = setup_two_customers(&schema);
+        let id = setup.policy_a;
+        let node_id = setup.generator_a.node_id;
+        let agent_key = &setup.generator_a.agent_key;
+
+        let half = [
+            format!(
+                r#"mutation {{ assignSamplingPolicy(id: "{id}", nodeId: "{node_id}", fix: true) }}"#
+            ),
+            format!(
+                r#"mutation {{ assignSamplingPolicy(id: "{id}", agentKey: {agent_key:?}, fix: true) }}"#
+            ),
+        ];
+        for mutation in &half {
+            let res = schema.execute_as_system_admin(mutation).await;
+            assert_eq!(
+                error_message(&res),
+                "nodeId and agentKey are given together, or are both null to unassign"
+            );
+        }
+        let res = schema
+            .execute_as_system_admin(&assign_mutation(id, None, Some(true)))
+            .await;
+        assert_eq!(
+            error_message(&res),
+            "a policy is fixed only by assigning it; fix cannot unassign"
+        );
+        assert_eq!(stored_policy(&schema, id).state, PolicyState::Draft);
+        assert_eq!(deliveries.calls(), NO_DELIVERIES);
+
+        let res = schema
+            .execute_as_system_admin(&assign_mutation(id, Some(&setup.generator_a), Some(true)))
+            .await;
+        assert_ok(&res);
+        let res = schema
+            .execute_as_system_admin(&assign_mutation(id, None, None))
+            .await;
+        assert_ok(&res);
+        let policy = stored_policy(&schema, id);
+        assert_eq!(policy.assignee, None);
+        assert_eq!(policy.state, PolicyState::Fixed);
+        assert_eq!(
+            deliveries.calls(),
+            [
+                vec![setup.generator_a.clone()],
+                vec![setup.generator_a.clone()]
+            ]
+        );
+
+        // Unassigning an unassigned policy tells no generator.
+        let res = schema
+            .execute_as_system_admin(&assign_mutation(id, None, Some(false)))
+            .await;
+        assert_ok(&res);
+        assert_eq!(deliveries.calls().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn reassigning_tells_the_old_and_the_new_generator() {
+        let (schema, deliveries) = recording_schema().await;
+        let setup = setup_two_customers(&schema);
+        let second = insert_generator_node(&schema.store(), "a2.example.com", 1);
+
+        let res = schema
+            .execute_as_system_admin(&assign_mutation(
+                setup.policy_a,
+                Some(&setup.generator_a),
+                Some(true),
+            ))
+            .await;
+        assert_ok(&res);
+        let res = schema
+            .execute_as_system_admin(&assign_mutation(setup.policy_a, Some(&second), None))
+            .await;
+        assert_ok(&res);
+        assert_eq!(
+            deliveries.calls(),
+            [
+                vec![setup.generator_a.clone()],
+                vec![setup.generator_a.clone(), second.clone()]
+            ]
+        );
+        assert_eq!(
+            stored_policy(&schema, setup.policy_a).assignee,
+            Some(second)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_used_policy_stays_assigned_and_stored() {
+        let (schema, deliveries) = recording_schema().await;
+        let setup = setup_two_customers(&schema);
+        let res = schema
+            .execute_as_system_admin(&assign_mutation(
+                setup.policy_a,
+                Some(&setup.generator_a),
+                Some(true),
+            ))
+            .await;
+        assert_ok(&res);
+        let engine = insert_engine_node(&schema.store(), 1);
+        use_policy(&schema.store(), "series", 1, &engine, setup.policy_a);
+        let in_use = "the sampling policy is in use by training definition \"series\"";
+
+        let res = schema
+            .execute_as_system_admin(&assign_mutation(setup.policy_a, None, None))
+            .await;
+        assert_eq!(error_message(&res), in_use);
+        assert_eq!(
+            stored_policy(&schema, setup.policy_a).assignee,
+            Some(setup.generator_a.clone())
+        );
+
+        // A generator with another Data Store would lose the policy's
+        // series.
+        let second = insert_generator_node(&schema.store(), "a2.example.com", 1);
+        let res = schema
+            .execute_as_system_admin(&assign_mutation(setup.policy_a, Some(&second), None))
+            .await;
+        assert!(
+            error_message(&res).contains("in use by training definition \"series\""),
+            "{:?}",
+            res.errors
+        );
+
+        let res = schema
+            .execute_as_system_admin(&remove_mutation(&[setup.policy_a]))
+            .await;
+        assert_eq!(
+            error_message(&res),
+            "sampling policy \"policy_a\" is in use by training definition \"series\""
+        );
+
+        // Neither does a request that also names an unused policy remove
+        // anything.
+        let res = schema
+            .execute_as_system_admin(&remove_mutation(&[setup.policy_b, setup.policy_a]))
+            .await;
+        assert_eq!(
+            error_message(&res),
+            "sampling policy \"policy_a\" is in use by training definition \"series\""
+        );
+        assert_eq!(listed_names_of_store(&schema), ["policy_a", "policy_b"]);
+        assert_eq!(deliveries.calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn removing_an_assigned_policy_tells_its_generator() {
+        let (schema, deliveries) = recording_schema().await;
+        let setup = setup_two_customers(&schema);
+        let res = schema
+            .execute_as_system_admin(&assign_mutation(
+                setup.policy_a,
+                Some(&setup.generator_a),
+                Some(true),
+            ))
+            .await;
+        assert_ok(&res);
+
+        let res = schema
+            .execute_as_system_admin(&remove_mutation(&[setup.policy_a, setup.policy_b]))
+            .await;
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            json!({ "removeSamplingPolicies": ["policy_a", "policy_b"] })
+        );
+        assert_eq!(
+            deliveries.calls(),
+            [
+                vec![setup.generator_a.clone()],
+                vec![setup.generator_a.clone()]
+            ]
+        );
+    }
+
+    /// A mutation that tells a generator succeeds with the row as written
+    /// when no generator is connected to be told.
+    #[tokio::test]
+    async fn delivery_reaching_no_generator_does_not_affect_the_mutation() {
+        let schema = TestSchema::new().await;
+        let setup = setup_two_customers(&schema);
+
+        let res = schema
+            .execute_as_system_admin(&assign_mutation(
+                setup.policy_a,
+                Some(&setup.generator_a),
+                Some(true),
+            ))
+            .await;
+        assert_ok(&res);
+        let policy = stored_policy(&schema, setup.policy_a);
+        assert_eq!(policy.state, PolicyState::Fixed);
+        assert_eq!(policy.assignee, Some(setup.generator_a.clone()));
+
+        let res = schema
+            .execute_as_system_admin(&remove_mutation(&[setup.policy_a]))
+            .await;
+        assert_ok(&res);
+        assert_eq!(listed_names_of_store(&schema), ["policy_b"]);
     }
 
     #[tokio::test]
     async fn remove_is_all_or_nothing() {
         let schema = TestSchema::new().await;
-        let (policy_a, policy_b, _, _) = setup_two_customers(&schema);
+        let setup = setup_two_customers(&schema);
 
         let res = schema
             .execute_as_scoped_user(
-                &remove_mutation(&[policy_b, policy_a]),
+                &remove_mutation(&[setup.policy_b, setup.policy_a]),
                 Role::SecurityAdministrator,
                 Some(vec![2]),
             )
@@ -1372,7 +1850,7 @@ mod tests {
         assert_eq!(error_message(&res), "Forbidden");
 
         let res = schema
-            .execute_as_system_admin(&remove_mutation(&[policy_b, 9999]))
+            .execute_as_system_admin(&remove_mutation(&[setup.policy_b, 9999]))
             .await;
         assert_eq!(error_message(&res), "no such sampling policy");
 
@@ -1384,44 +1862,41 @@ mod tests {
             )
             .await;
         assert_eq!(error_message(&res), "no such sampling policy");
-
-        let res = schema.execute_as_system_admin(LIST_QUERY).await;
-        let (_, total) = listed_names(res);
-        assert_eq!(total, "4");
+        assert_eq!(listed_names_of_store(&schema), ["policy_a", "policy_b"]);
 
         let res = schema
             .execute_as_scoped_user(
-                &remove_mutation(&[policy_b, policy_b]),
+                &remove_mutation(&[setup.policy_b, setup.policy_b]),
                 Role::SecurityAdministrator,
                 Some(vec![2]),
             )
             .await;
-        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_ok(&res);
         assert_eq!(
             res.data.into_json().unwrap(),
             json!({ "removeSamplingPolicies": ["policy_b"] })
         );
-
-        let res = schema.execute_as_system_admin(LIST_QUERY).await;
-        let (names, _) = listed_names(res);
-        assert_eq!(names, ["global", "legacy_b", "policy_a"]);
+        assert_eq!(listed_names_of_store(&schema), ["policy_a"]);
     }
 
     #[tokio::test]
     async fn overlapping_removals_do_not_remove_part() {
         let schema = TestSchema::new().await;
-        let (policy_a, policy_b, _, _) = setup_two_customers(&schema);
+        let setup = setup_two_customers(&schema);
         let before = listed_names_of_store(&schema);
 
-        let both = remove_mutation(&[policy_a, policy_b]);
-        let only_b = remove_mutation(&[policy_b]);
+        let both = remove_mutation(&[setup.policy_a, setup.policy_b]);
+        let only_b = remove_mutation(&[setup.policy_b]);
         let guard = schema.hold_sampling_policies_lock().await;
         let (res_both, res_b, ()) = tokio::join!(
             schema.execute_as_system_admin(&both),
             schema.execute_as_system_admin(&only_b),
             async {
-                // Waits until both removals wait for the lock the test holds.
-                while schema.sampling_policies_lock_users() < 3 {
+                // Waits until one removal waits for the lock the test holds,
+                // and the other for the engine configuration lock it holds.
+                while schema.sampling_policies_lock_users() < 2
+                    || schema.engine_config_lock_users() < 2
+                {
                     tokio::task::yield_now().await;
                 }
                 assert_eq!(listed_names_of_store(&schema), before);
@@ -1429,6 +1904,7 @@ mod tests {
             }
         );
         assert_eq!(schema.sampling_policies_lock_users(), 0);
+        assert_eq!(schema.engine_config_lock_users(), 0);
 
         // Whichever removal went second found `policy_b` gone before it
         // removed anything.
@@ -1436,79 +1912,122 @@ mod tests {
         match (res_both.errors.is_empty(), res_b.errors.is_empty()) {
             (true, false) => {
                 assert_eq!(error_message(&res_b), "no such sampling policy");
-                assert_eq!(after, ["global", "legacy_b"]);
+                assert!(after.is_empty(), "{after:?}");
             }
             (false, true) => {
                 assert_eq!(error_message(&res_both), "no such sampling policy");
-                assert_eq!(after, ["global", "legacy_b", "policy_a"]);
+                assert_eq!(after, ["policy_a"]);
             }
             results => panic!("exactly one removal succeeds: {results:?}"),
         }
     }
 
     #[tokio::test]
-    async fn update_waits_for_the_sampling_policies_lock() {
-        let schema = TestSchema::new().await;
-        let (_, policy_b, _, _) = setup_two_customers(&schema);
+    async fn removal_and_assignment_wait_for_the_engine_config_lock() {
+        let (schema, deliveries) = recording_schema().await;
+        let setup = setup_two_customers(&schema);
         let before = listed_names_of_store(&schema);
 
-        let update = update_mutation(
-            policy_b,
-            ("policy_b", Some(SENSOR_B)),
-            ("renamed_b", Some(SENSOR_B)),
-        );
-        let guard = schema.hold_sampling_policies_lock().await;
-        let (res, ()) = tokio::join!(schema.execute_as_system_admin(&update), async {
-            // Waits until the update waits for the lock the test holds.
-            while schema.sampling_policies_lock_users() < 2 {
-                tokio::task::yield_now().await;
+        let remove = remove_mutation(&[setup.policy_b]);
+        let assign = assign_mutation(setup.policy_a, Some(&setup.generator_a), Some(true));
+        let guard = schema.hold_engine_config_lock().await;
+        let (res_remove, res_assign, ()) = tokio::join!(
+            schema.execute_as_system_admin(&remove),
+            schema.execute_as_system_admin(&assign),
+            async {
+                // Waits until both wait for the lock the test holds.
+                while schema.engine_config_lock_users() < 3 {
+                    tokio::task::yield_now().await;
+                }
+                assert_eq!(listed_names_of_store(&schema), before);
+                let policy = stored_policy(&schema, setup.policy_a);
+                assert_eq!(policy.state, PolicyState::Draft);
+                assert_eq!(policy.assignee, None);
+                assert_eq!(deliveries.calls(), NO_DELIVERIES);
+                drop(guard);
             }
-            assert_eq!(listed_names_of_store(&schema), before);
-            drop(guard);
-        });
-        assert!(res.errors.is_empty(), "{:?}", res.errors);
-        assert_eq!(schema.sampling_policies_lock_users(), 0);
+        );
+        assert_ok(&res_remove);
+        assert_ok(&res_assign);
+        assert_eq!(schema.engine_config_lock_users(), 0);
+        assert_eq!(listed_names_of_store(&schema), ["policy_a"]);
         assert_eq!(
-            listed_names_of_store(&schema),
-            ["global", "legacy_b", "policy_a", "renamed_b"]
+            stored_policy(&schema, setup.policy_a).assignee,
+            Some(setup.generator_a)
         );
     }
 
+    /// Moves node `node_id` to `customer_id` and `hostname`, applied.
+    fn move_node(store: &Store, node_id: u32, customer_id: u32, hostname: &str) {
+        let mut map = store.node_map();
+        let (node, _, _) = map
+            .get_by_id(node_id)
+            .expect("read node")
+            .expect("node exists");
+        let old = NodeUpdate::from(node.clone());
+        let profile = NodeProfile {
+            customer_id,
+            description: String::new(),
+            hostname: hostname.to_string(),
+        };
+        let mut new = NodeUpdate::from(node);
+        new.profile = Some(profile.clone());
+        new.profile_draft = Some(profile);
+        map.update(node_id, &old, &new).expect("move node");
+    }
+
     #[test]
-    fn get_sampling_policies_filters_by_customer() {
+    fn the_pull_withholds_policies_the_generator_cannot_produce() {
         let db_dir = tempfile::tempdir().unwrap();
         let backup_dir = tempfile::tempdir().unwrap();
         let store = Store::new(db_dir.path(), backup_dir.path(), None).unwrap();
 
-        insert_node(&store, "node_a", "a.example.com", 1, true);
-        insert_node(&store, "node_b", "b.example.com", 2, true);
-        insert_node(&store, "node_c", "c.example.com", 1, false);
+        let generator = insert_generator_node(&store, "g.example.com", 1);
+        let sensor_1 = insert_generator_node(&store, "s1.example.com", 1);
+        let sensor_2 = insert_generator_node(&store, "s2.example.com", 1);
+        let other = insert_generator_node(&store, "o.example.com", 2);
+        let assigned = [
+            insert_policy(&store, "p1", 1, &sensor_name("s1.example.com")),
+            insert_policy(&store, "p2", 1, &sensor_name("s2.example.com")),
+        ];
+        for &id in &assigned {
+            store
+                .sampling_policy_map()
+                .assign(id, Some(&generator), true)
+                .expect("assign");
+        }
+        // Neither another generator's policy nor an unassigned one is pulled.
+        let elsewhere = insert_policy(&store, "elsewhere", 2, &sensor_name("o.example.com"));
+        store
+            .sampling_policy_map()
+            .assign(elsewhere, Some(&other), true)
+            .expect("assign");
+        insert_policy(&store, "unassigned", 1, &sensor_name("s1.example.com"));
 
-        // Only an immutable policy whose `node` is a sensor name of the
-        // customer is pulled:
-        //  - customer 1's and customer 2's sensor names -> their customer only
-        //  - a mutable policy on customer 1's sensor    -> skipped
-        //  - customer 1's node hostname                 -> skipped
-        //  - a hostname of a node without a sensor      -> skipped
-        //  - no node                                    -> skipped
-        //  - a name no node emits                       -> skipped
-        insert_policy(&store, "policy_a", Some(SENSOR_A), true);
-        insert_policy(&store, "policy_b", Some(SENSOR_B), true);
-        insert_policy(&store, "mutable_a", Some(SENSOR_A), false);
-        insert_policy(&store, "hostname_a", Some("a.example.com"), true);
-        insert_policy(&store, "hostname_c", Some("c.example.com"), true);
-        insert_policy(&store, "global", None, true);
-        insert_policy(&store, "orphan", Some("piglet.missing.example.com"), true);
-
-        let ids = |customer_id| {
-            super::get_sampling_policies(&store, customer_id)
+        let pulled = |instance: &ModelInstance| {
+            super::sampling_policies_for_generator(&store, instance)
                 .unwrap()
                 .into_iter()
-                .map(|p| (p.id, p.node))
+                .map(|policy| policy.id)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(ids(1), [(0, Some(SENSOR_A.to_string()))]);
-        assert_eq!(ids(2), [(1, Some(SENSOR_B.to_string()))]);
-        assert_eq!(ids(99), Vec::new());
+        assert_eq!(pulled(&generator), assigned);
+        assert_eq!(pulled(&other), [elsewhere]);
+
+        // The sensor of `p2` leaves the customer.
+        move_node(&store, sensor_2.node_id, 2, "s2.example.com");
+        assert_eq!(pulled(&generator), [assigned[0]]);
+
+        // The generator's node moves to another customer, whose policies
+        // these are not, though the sensor of `p1` goes with it.
+        move_node(&store, sensor_1.node_id, 2, "s1.example.com");
+        move_node(&store, generator.node_id, 2, "g.example.com");
+        assert_eq!(pulled(&generator), Vec::<u32>::new());
+
+        let unknown = ModelInstance {
+            node_id: 9999,
+            agent_key: generator.agent_key.clone(),
+        };
+        assert_eq!(pulled(&unknown), Vec::<u32>::new());
     }
 }

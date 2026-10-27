@@ -124,12 +124,7 @@ mod mtls_integration {
             Ok(std::collections::HashMap::new())
         }
 
-        async fn broadcast_crusher_sampling_policy(
-            &self,
-            _sampling_policies: &[review_web::graphql::SamplingPolicy],
-        ) -> Result<(), anyhow::Error> {
-            Ok(())
-        }
+        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
 
         // The stub host advertises nothing, which is the answer of a host
         // that sent no capability set.

@@ -155,9 +155,7 @@ mod tests {
 
     use super::*;
     use crate::graphql::node::test_support::insert_active_node;
-    use crate::graphql::{
-        AgentManager, SamplingPolicy, TestSchema, customer::NetworksTargetAgentLookupKeysPair,
-    };
+    use crate::graphql::{AgentManager, TestSchema, customer::NetworksTargetAgentLookupKeysPair};
 
     const FOLLOWER: &str = "follower.example.com";
     const SERVERS: [&str; 2] = ["192.0.2.10", "ntp.example.internal"];
@@ -247,12 +245,7 @@ mod tests {
             anyhow::bail!("not expected to be called")
         }
 
-        async fn broadcast_crusher_sampling_policy(
-            &self,
-            _sampling_policies: &[SamplingPolicy],
-        ) -> Result<(), anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
+        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
 
         async fn capabilities(&self, _hostname: &str) -> Result<BTreeSet<String>, anyhow::Error> {
             anyhow::bail!("not expected to be called")
