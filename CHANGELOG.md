@@ -4,7 +4,7 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.49.0] - 2026-10-28
 
 ### Added
 
@@ -96,6 +96,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   ID leaves every policy in place, and removes a repeated ID once instead of
   failing after the first removal.
 - Deleting a customer's data removes the customer's sampling policies.
+- A removed sampling policy's ID is never given to a new policy, also for
+  policies removed before the upgrade, so a new policy no longer inherits a
+  removed one's time series and checkpoint.
 
 ## [0.48.1] - 2026-10-25
 
@@ -2618,7 +2621,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
-[Unreleased]: https://github.com/aicers/review-web/compare/0.48.1...main
+[0.49.0]: https://github.com/aicers/review-web/compare/0.48.1...0.49.0
 [0.48.1]: https://github.com/aicers/review-web/compare/0.48.0...0.48.1
 [0.48.0]: https://github.com/aicers/review-web/compare/0.47.0...0.48.0
 [0.47.0]: https://github.com/aicers/review-web/compare/0.46.0...0.47.0
