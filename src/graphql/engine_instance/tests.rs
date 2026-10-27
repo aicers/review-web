@@ -363,14 +363,14 @@ async fn run_once_relays_a_detector_of_the_applied_document() {
     write_refs(
         &f.store(),
         &f.engine_a,
-        &[(1, "model-a1"), (-7, "model-a2")],
+        &[(1, "model-a1"), (7, "model-a2")],
         &[],
     );
     let before = f.records(&f.engine_a);
 
     let res = f.sec(&run_once(&f.engine_a, "1"), &[A]).await;
     assert_eq!(data(res), json!({ "runDetectorOnce": true }));
-    let res = f.sys(&run_once(&f.engine_a, "-7")).await;
+    let res = f.sys(&run_once(&f.engine_a, "7")).await;
     assert_eq!(data(res), json!({ "runDetectorOnce": true }));
     let key = lookup_key(&f.engine_a, ENGINE_A_HOST);
     assert_eq!(
@@ -382,7 +382,7 @@ async fn run_once_relays_a_detector_of_the_applied_document() {
             },
             RelayCall::RunDetectorOnce {
                 agent_lookup_key: key,
-                detector_id: -7,
+                detector_id: 7,
             },
         ]
     );

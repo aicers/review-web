@@ -27,7 +27,7 @@ mod ip_location;
 pub(crate) mod label_db;
 mod model;
 #[cfg(test)]
-mod model_test_support;
+pub(crate) mod model_test_support;
 pub(crate) mod network;
 mod network_list;
 mod node;

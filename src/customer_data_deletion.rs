@@ -771,12 +771,21 @@ fn delete_review_data(
             &invalid_external_services,
         )?;
     }
+    #[cfg(test)]
+    tests::checkpoint(&store, tests::Stage::Unsupervised, customer_id).with_context(|| {
+        format!("deleting Unsupervised Engine records for customer {customer_id}")
+    })?;
+    store
+        .remove_customer_unsupervised_records(customer_id)
+        .with_context(|| {
+            format!("deleting Unsupervised Engine records for customer {customer_id}")
+        })?;
     // Removing the nodes detached the customer's engine instances and
     // cleared every assignment of its generators, so no generator is told.
-    // The customer's own definitions and models may still name these
-    // policies; they are removed whether in use or not. The lock keeps a
-    // `removeSamplingPolicies` from finding a policy it checked gone; it is
-    // taken before the store, as a removal takes it.
+    // The customer's models and definitions, which may have named these
+    // policies, are already gone. The lock keeps a `removeSamplingPolicies`
+    // from finding a policy it checked gone; it is taken before the store,
+    // as a removal takes it.
     drop(store);
     let _policies = policies_lock.blocking_lock();
     read_store(store_lock)?
@@ -1003,6 +1012,10 @@ mod tests {
     use super::*;
     use crate::backend::{AgentManager, ResourceUsage};
     use crate::graphql::NetworksTargetAgentLookupKeysPair;
+    use crate::graphql::model_test_support::{
+        TestModel, insert_definition, insert_engine_node, insert_indicator,
+        name_in_applied_document,
+    };
 
     const RECOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -1300,6 +1313,7 @@ mod tests {
         CustomerNetworks,
         NetworkLists,
         Nodes,
+        Unsupervised,
         RetryAgent,
         RetryExternalService,
         PersistTerminal,
@@ -2627,16 +2641,250 @@ mod tests {
         assert!(map.get_by_id(other).unwrap().is_some());
     }
 
+    /// Stores the timeseries training definition `name` of `customer_id` on
+    /// `instance`, reading the sampling policy `policy`.
+    fn put_timeseries_definition(
+        store: &Store,
+        name: &str,
+        customer_id: u32,
+        instance: &review_database::ModelInstance,
+        policy: u32,
+    ) {
+        store
+            .insert_training_definition(review_database::NewTrainingDefinition {
+                name: name.to_string(),
+                customer_id,
+                instance: instance.clone(),
+                method: review_database::ModelMethod::Timeseries,
+                event_kind: "timeseries".to_string(),
+                sources: vec![policy.to_string()],
+                indicator: None,
+                definition: String::new(),
+            })
+            .unwrap();
+    }
+
+    /// Returns the names of the models of `customer_id`, from the table
+    /// `models` lists.
+    fn customer_models(store: &Store, customer_id: u32) -> Vec<String> {
+        store
+            .model_map()
+            .iter(Direction::Forward, None)
+            .map(Result::unwrap)
+            .filter(|model| model.customer_id == customer_id)
+            .map(|model| model.name)
+            .collect()
+    }
+
+    /// Returns the training definitions of `customer_id`, as
+    /// `trainingDefinitions` reads them.
+    fn customer_definitions(
+        store: &Store,
+        customer_id: u32,
+    ) -> Vec<review_database::TrainingDefinition> {
+        store
+            .training_definitions()
+            .unwrap()
+            .into_iter()
+            .filter(|definition| definition.customer_id == customer_id)
+            .collect()
+    }
+
+    /// Returns the ids of the sampling policies of `customer_id`, from the
+    /// table `samplingPolicyList` lists.
+    fn customer_policies(store: &Store, customer_id: u32) -> Vec<u32> {
+        store
+            .sampling_policy_map()
+            .iter(Direction::Forward, None)
+            .map(Result::unwrap)
+            .filter(|policy| policy.customer_id == Some(customer_id))
+            .map(|policy| policy.id)
+            .collect()
+    }
+
+    /// Requests the deletion of `customer_id` through `deleteCustomerData`,
+    /// waits for the work it starts, and returns the mutation's status.
+    async fn delete_customer_data(test_store: &TestStore, customer_id: u32) -> String {
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let schema = test_schema(
+            test_store,
+            Arc::new(RecordingAgentManager::default()),
+            Arc::clone(&manager),
+        );
+        let response = schema
+            .execute(admin_request(&format!(
+                r#"mutation {{ deleteCustomerData(customerId: "{customer_id}") }}"#
+            )))
+            .await;
+        assert!(response.errors.is_empty(), "{response:?}");
+        manager.shutdown_and_wait().await;
+        response.data.into_json().unwrap()["deleteCustomerData"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    fn review_result(store: &RwLock<Store>, customer_id: u32) -> CustomerDataDeletionServiceResult {
+        let mut job = job(store, customer_id);
+        assert_eq!(job.service_results.len(), 1, "{job:?}");
+        job.service_results.remove(0)
+    }
+
+    #[tokio::test]
+    async fn deletion_removes_the_customers_unsupervised_records() {
+        let test_store = TestStore::new();
+        let (other_definitions, other_policies) = {
+            let store = read_store(&test_store.store).unwrap();
+            let engine = insert_engine_node(&store, 1);
+            let detected = TestModel {
+                instance: engine.clone(),
+                ..TestModel::new("detected", 1)
+            }
+            .replace(&store);
+            insert_indicator(&store, "detected-indicator", detected);
+            name_in_applied_document(&store, &engine, 7, "detected", "detected-indicator");
+            let named = TestModel {
+                instance: engine.clone(),
+                ..TestModel::new("named", 1)
+            }
+            .replace(&store);
+            insert_indicator(&store, "named-indicator", named);
+            insert_definition(&store, "naming", 1, &engine, "named-indicator");
+            let policy = put_policy(&store, "own", 1, "piglet.one.example");
+            put_timeseries_definition(&store, "series", 1, &engine, policy);
+            assert_eq!(
+                store.sampling_policy_uses(policy).unwrap(),
+                [review_database::PolicyUse::Definition {
+                    name: "series".to_string()
+                }]
+            );
+
+            let other_engine = insert_engine_node(&store, 2);
+            let other = TestModel {
+                instance: other_engine.clone(),
+                ..TestModel::new("other", 2)
+            }
+            .replace(&store);
+            insert_indicator(&store, "other-indicator", other);
+            name_in_applied_document(&store, &other_engine, 7, "other", "other-indicator");
+            insert_definition(&store, "other-naming", 2, &other_engine, "other-indicator");
+            let other_policy = put_policy(&store, "other", 2, "piglet.two.example");
+            put_timeseries_definition(&store, "other-series", 2, &other_engine, other_policy);
+
+            assert_eq!(customer_models(&store, 1), ["detected", "named"]);
+            assert_eq!(customer_definitions(&store, 1).len(), 2);
+            assert_eq!(customer_policies(&store, 1), [policy]);
+            (
+                customer_definitions(&store, 2),
+                customer_policies(&store, 2),
+            )
+        };
+
+        assert_eq!(delete_customer_data(&test_store, 1).await, "ACCEPTED");
+        assert_eq!(
+            review_result(&test_store.store, 1).status,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        {
+            let store = read_store(&test_store.store).unwrap();
+            assert_eq!(customer_models(&store, 1), Vec::<String>::new());
+            assert_eq!(customer_definitions(&store, 1), []);
+            assert_eq!(customer_policies(&store, 1), Vec::<u32>::new());
+            for indicator in ["detected-indicator", "named-indicator"] {
+                assert!(
+                    store
+                        .model_indicator_map()
+                        .get(indicator)
+                        .unwrap()
+                        .is_none()
+                );
+            }
+            assert_eq!(customer_models(&store, 2), ["other"]);
+            assert_eq!(customer_definitions(&store, 2), other_definitions);
+            assert_eq!(customer_policies(&store, 2), other_policies);
+            assert!(
+                store
+                    .model_indicator_map()
+                    .get("other-indicator")
+                    .unwrap()
+                    .is_some()
+            );
+        }
+        assert_eq!(
+            delete_customer_data(&test_store, 1).await,
+            "ALREADY_COMPLETED"
+        );
+    }
+
+    #[tokio::test]
+    async fn deletion_fails_while_another_customer_names_its_indicator() {
+        let test_store = TestStore::new();
+        let (model, foreign) = {
+            let store = read_store(&test_store.store).unwrap();
+            let engine = insert_engine_node(&store, 1);
+            let model = TestModel {
+                instance: engine,
+                ..TestModel::new("model", 1)
+            }
+            .replace(&store);
+            insert_indicator(&store, "indicator", model);
+            let other_engine = insert_engine_node(&store, 2);
+            insert_definition(&store, "foreign", 2, &other_engine, "indicator");
+            (
+                model,
+                store.training_definition("foreign").unwrap().unwrap(),
+            )
+        };
+
+        assert_eq!(delete_customer_data(&test_store, 1).await, "ACCEPTED");
+        let failed = review_result(&test_store.store, 1);
+        assert_eq!(failed.status, CustomerDataDeletionStatus::Failed);
+        let error = failed.error.unwrap();
+        assert!(
+            error.contains("deleting Unsupervised Engine records for customer 1"),
+            "{error}"
+        );
+        assert!(error.contains("is used by training definition"), "{error}");
+        {
+            let store = read_store(&test_store.store).unwrap();
+            assert_eq!(store.training_definition("foreign").unwrap(), Some(foreign));
+            assert_eq!(store.model_map().load_model(model).unwrap().name, "model");
+            store.remove_training_definition("foreign").unwrap();
+        }
+
+        assert_eq!(delete_customer_data(&test_store, 1).await, "ACCEPTED");
+        assert_eq!(
+            review_result(&test_store.store, 1).status,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        {
+            let store = read_store(&test_store.store).unwrap();
+            assert_eq!(customer_models(&store, 1), Vec::<String>::new());
+            assert!(
+                store
+                    .model_indicator_map()
+                    .get("indicator")
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        assert_eq!(
+            delete_customer_data(&test_store, 1).await,
+            "ALREADY_COMPLETED"
+        );
+    }
+
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn deletion_stops_at_each_failed_boundary_and_retry_finishes() {
-        const STAGES: [Stage; 6] = [
+        const STAGES: [Stage; 7] = [
             Stage::Events,
             Stage::Hosts,
             Stage::TrafficFilters,
             Stage::CustomerNetworks,
             Stage::NetworkLists,
             Stage::Nodes,
+            Stage::Unsupervised,
         ];
         let test_store = TestStore::new();
         for (index, fail_stage) in STAGES.into_iter().enumerate() {
@@ -2672,6 +2920,7 @@ mod tests {
                         None,
                     )
                     .unwrap();
+                TestModel::new("model", 1).replace(&store);
             }
             put_job(
                 &test_store.store,
@@ -2728,12 +2977,13 @@ mod tests {
                 assert!(error.contains("reproduce.one.example"));
                 assert!(error.contains("injected RocksDB boundary error"));
             }
-            let network_error_context = match fail_stage {
+            let error_context = match fail_stage {
                 Stage::CustomerNetworks => Some("deleting customer networks for customer 1"),
                 Stage::NetworkLists => Some("deleting network lists for customer 1"),
+                Stage::Unsupervised => Some("deleting Unsupervised Engine records for customer 1"),
                 _ => None,
             };
-            if let Some(context) = network_error_context {
+            if let Some(context) = error_context {
                 let error = failed
                     .service_results
                     .first()
@@ -2790,21 +3040,28 @@ mod tests {
                             | Stage::NetworkLists
                     )
                 );
-                assert!(store.node_map().get_by_id(node).unwrap().is_some());
-                assert!(
+                let nodes_kept = fail_stage != Stage::Unsupervised;
+                assert_eq!(
+                    store.node_map().get_by_id(node).unwrap().is_some(),
+                    nodes_kept
+                );
+                assert_eq!(
                     store
                         .agents_map()
                         .get(node, "001.piglet")
                         .unwrap()
-                        .is_some()
+                        .is_some(),
+                    nodes_kept
                 );
-                assert!(
+                assert_eq!(
                     store
                         .external_service_map()
                         .get(node, "001.giganto")
                         .unwrap()
-                        .is_some()
+                        .is_some(),
+                    nodes_kept
                 );
+                assert_eq!(customer_models(&store, 1), ["model"]);
             }
             drop(hook);
             let manager = Arc::new(CustomerDataDeletionTaskManager::default());
@@ -2826,6 +3083,13 @@ mod tests {
                 CustomerDataDeletionStatus::Succeeded
             );
             assert!(agent.targets.lock().unwrap().is_empty());
+            let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+            assert_eq!(
+                request_deletion(1, &test_store.store, &shared, &manager)
+                    .await
+                    .unwrap(),
+                CustomerDataDeletionRequestStatus::AlreadyCompleted
+            );
             let store = read_store(&test_store.store).unwrap();
             assert!(store.customer_networks_map().get(1).unwrap().is_none());
             assert!(store.network_lists_map().get(1).unwrap().is_none());
@@ -2865,6 +3129,7 @@ mod tests {
                         if event.sensor == "piglet.one.example.extra"
                 )
             }));
+            assert_eq!(customer_models(&store, 1), Vec::<String>::new());
             drop(store);
         }
     }

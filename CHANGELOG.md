@@ -4,6 +4,21 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Deleting a customer's data also deletes its Unsupervised Engine models,
+  with their clusters, outliers, rounds, statistics, indicators and
+  classifiers, and its training definitions and their runs. While another
+  customer's training definition, or a detector, names one of the customer's
+  indicators, the Review deletion fails, saying which one; it can be retried
+  once that reference is removed.
+- Bumped `review-database` dependency to 0.58.0. Its store format moves to
+  0.58.0, so a store written by 0.57 must be migrated through
+  `review-database` before this version serves it; the migration gives every
+  stored engine instance its detector-id mark.
+
 ## [0.49.0] - 2026-10-28
 
 ### Added
@@ -2621,6 +2636,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.49.0...main
 [0.49.0]: https://github.com/aicers/review-web/compare/0.48.1...0.49.0
 [0.48.1]: https://github.com/aicers/review-web/compare/0.48.0...0.48.1
 [0.48.0]: https://github.com/aicers/review-web/compare/0.47.0...0.48.0

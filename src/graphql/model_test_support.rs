@@ -27,24 +27,24 @@ pub(super) fn test_instance(customer_id: u32) -> ModelInstance {
 }
 
 /// A model to create or replace with [`TestModel::replace`].
-pub(super) struct TestModel<'a> {
-    pub(super) name: &'a str,
-    pub(super) customer_id: u32,
-    pub(super) instance: ModelInstance,
+pub(crate) struct TestModel<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) customer_id: u32,
+    pub(crate) instance: ModelInstance,
     /// The record `kind`: `Multifield`, `Prefix` or `Timeseries`.
-    pub(super) kind: &'a str,
-    pub(super) version: i32,
+    pub(crate) kind: &'a str,
+    pub(crate) version: i32,
     /// The batch timestamps of the rounds the replace makes current.
-    pub(super) rounds: &'a [i64],
-    pub(super) trained_at: DateTime<Utc>,
+    pub(crate) rounds: &'a [i64],
+    pub(crate) trained_at: DateTime<Utc>,
     /// The sources of the definition that trained the model.
-    pub(super) trained_sources: Vec<String>,
+    pub(crate) trained_sources: Vec<String>,
 }
 
 impl<'a> TestModel<'a> {
     /// Returns a multidimension model `name` of `customer_id` on
     /// [`test_instance`], with no rounds.
-    pub(super) fn new(name: &'a str, customer_id: u32) -> Self {
+    pub(crate) fn new(name: &'a str, customer_id: u32) -> Self {
         Self {
             name,
             customer_id,
@@ -59,7 +59,7 @@ impl<'a> TestModel<'a> {
 
     /// Creates the model, or replaces it, making its current result the
     /// previous one. Returns its id.
-    pub(super) fn replace(self, store: &Store) -> u32 {
+    pub(crate) fn replace(self, store: &Store) -> u32 {
         let model = review_database::Model {
             id: 0,
             name: self.name.to_string(),
@@ -127,7 +127,7 @@ pub(super) async fn schema_with_models_through(id: u32) -> super::TestSchema {
 
 /// Stores a node of `customer_id` with an applied profile and an installed
 /// Unsupervised Engine agent [`TEST_AGENT_KEY`], and returns that instance.
-pub(super) fn insert_engine_node(store: &Store, customer_id: u32) -> ModelInstance {
+pub(crate) fn insert_engine_node(store: &Store, customer_id: u32) -> ModelInstance {
     let hostname = format!("engine-{customer_id}.example.com");
     let profile = review_database::NodeProfile {
         customer_id,
@@ -166,7 +166,7 @@ pub(super) fn insert_engine_node(store: &Store, customer_id: u32) -> ModelInstan
 
 /// Records that detector `detector_id` of `instance`'s applied engine document
 /// serves `model` with `indicator`.
-pub(super) fn name_in_applied_document(
+pub(crate) fn name_in_applied_document(
     store: &Store,
     instance: &ModelInstance,
     detector_id: i32,
@@ -197,7 +197,7 @@ pub(super) fn name_in_applied_document(
 
 /// Stores the training definition `name` of `customer_id` on `instance`,
 /// naming `indicator`.
-pub(super) fn insert_definition(
+pub(crate) fn insert_definition(
     store: &Store,
     name: &str,
     customer_id: u32,
@@ -219,7 +219,7 @@ pub(super) fn insert_definition(
 }
 
 /// Stores the indicator `name` of `model_id` through the guarded insert.
-pub(super) fn insert_indicator(store: &Store, name: &str, model_id: u32) {
+pub(crate) fn insert_indicator(store: &Store, name: &str, model_id: u32) {
     store
         .insert_model_indicator(review_database::ModelIndicator {
             name: name.to_string(),
