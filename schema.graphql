@@ -3697,98 +3697,6 @@ enum CustomerDataDeletionStatus {
 	FAILED
 }
 
-type DataSource {
-	"""
-	The ID of the data source.
-	"""
-	id: ID!
-	"""
-	The name of the data source.
-	"""
-	name: String!
-	"""
-	The `server_name` of the data source.
-	"""
-	serverName: String!
-	"""
-	The socket address of the data source.
-	"""
-	address: String!
-	"""
-	The source for the data source in giganto.
-	"""
-	dataType: DataType!
-	"""
-	The policy of the data source.
-	"""
-	policy: ID
-	"""
-	The source for the data source in giganto.
-	"""
-	source: String!
-	"""
-	The description of the data source.
-	"""
-	description: String!
-	"""
-	The kind of the data source.
-	"""
-	kind: String
-}
-
-type DataSourceConnection {
-	"""
-	Information to aid in pagination.
-	"""
-	pageInfo: PageInfo!
-	"""
-	A list of edges.
-	"""
-	edges: [DataSourceEdge!]!
-	"""
-	A list of nodes.
-	"""
-	nodes: [DataSource!]!
-	"""
-	The total number of edges.
-	"""
-	totalCount: StringNumber!
-}
-
-"""
-An edge in a connection.
-"""
-type DataSourceEdge {
-	"""
-	The item at the end of the edge
-	"""
-	node: DataSource!
-	"""
-	A cursor for use in pagination
-	"""
-	cursor: String!
-}
-
-input DataSourceInsertInput {
-	name: String!
-	serverName: String
-	address: String
-	dataType: DataType!
-	source: String
-	kind: String
-	description: String!
-}
-
-input DataSourceUpdateInput {
-	name: String
-	serverName: String
-	address: String
-	dataType: DataType
-	source: String
-	kind: String
-	description: String
-}
-
 """
 The endpoint at which `REview` reaches one installed Data Store (Giganto)
 instance.
@@ -3826,21 +3734,6 @@ input DataStoreInput {
 	The name of the Data Store, `<instance:03>.giganto.<hostname>`.
 	"""
 	serverName: String!
-}
-
-enum DataType {
-	"""
-	comma-separated values
-	"""
-	CSV
-	"""
-	line-based text data
-	"""
-	LOG
-	"""
-	time series data
-	"""
-	TIME_SERIES
 }
 
 """
@@ -6115,10 +6008,6 @@ type ModelDigest {
 	once for each.
 	"""
 	detectors: [ModelDetectorUse!]!
-	"""
-	Always null: a model carries no data source.
-	"""
-	dataSource: DataSource @deprecated(reason: "A model carries no data source; this field is always null.")
 }
 
 type ModelDigestConnection {
@@ -6367,19 +6256,6 @@ type Mutation {
 	"""
 	updateCluster(model: ID!, id: ID!, category: ID, qualifier: ID, status: ID): ID!
 	deleteCustomerData(customerId: ID!): CustomerDataDeletionRequestStatus!
-	"""
-	Inserts a new data source, returning the ID of the new data source.
-	"""
-	insertDataSource(input: DataSourceInsertInput!): ID!
-	"""
-	Removes a data source, returning the name of the removed data source if
-	it existed.
-	"""
-	removeDataSource(id: ID!): String!
-	"""
-	Updates the given data source.
-	"""
-	updateDataSource(id: ID!, old: DataSourceUpdateInput!, new: DataSourceUpdateInput!): ID!
 	backup(numOfBackupsToKeep: Int!): Boolean!
 	restoreFromLatestBackup: Boolean!
 	"""
@@ -8240,10 +8116,6 @@ type Query {
 	Returns persisted deletion results; null means no persisted job exists.
 	"""
 	customerDataDeletionResult(customerId: ID!): CustomerDataDeletionResult
-	"""
-	A list of data sources.
-	"""
-	dataSourceList(after: String, before: String, first: Int, last: Int): DataSourceConnection!
 	backups: [BackupInfo!]!
 	"""
 	Retrieves the current backup configuration.
@@ -10775,10 +10647,6 @@ type WindowsThreat implements Event {
 	learningMethod: LearningMethod!
 }
 
-"""
-Marks an element of a GraphQL schema as no longer supported.
-"""
-directive @deprecated(reason: String = "No longer supported") on FIELD_DEFINITION | ARGUMENT_DEFINITION | INPUT_FIELD_DEFINITION | ENUM_VALUE
 """
 Directs the executor to include this field or fragment only when the `if` argument is true.
 """
