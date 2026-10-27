@@ -6694,18 +6694,25 @@ type Mutation {
 	"""
 	updateQualifier(id: ID!, description: String!): ID!
 	"""
-	Inserts a new sampling policy, returning the ID of the new node.
+	Inserts a new sampling policy, returning its ID.
+	
+	`node` must be a sensor name, such as `piglet.sensor.example.com`, and
+	for a caller scoped to customers, one of a customer in scope.
 	"""
 	insertSamplingPolicy(name: String!, kind: Kind!, interval: Interval!, period: Period!, offset: Int!, srcIp: IpAddress, dstIp: IpAddress, node: String, column: Int, immutable: Boolean!): ID!
 	"""
 	Removes sampling policies, returning the IDs that no longer exist.
 	
 	Every ID is checked before any policy is removed, so a refused ID
-	leaves every policy in place.
+	leaves every policy in place. A repeated ID is removed once.
 	"""
 	removeSamplingPolicies(ids: [ID!]!): [String!]!
 	"""
 	Updates an existing sampling policy.
+	
+	The new `node` must be a sensor name. A caller scoped to customers may
+	update only a policy of a customer in scope, and only to a sensor name
+	of a customer in scope.
 	"""
 	updateSamplingPolicy(id: ID!, old: SamplingPolicyInput!, new: SamplingPolicyInput!): ID!
 	"""

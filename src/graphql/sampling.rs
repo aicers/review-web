@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 
 use async_graphql::connection::OpaqueCursor;
@@ -477,7 +477,10 @@ pub fn get_sampling_policies(db: &Store, customer_id: u32) -> Result<Vec<Policy>
 
 #[Object]
 impl SamplingPolicyMutation {
-    /// Inserts a new sampling policy, returning the ID of the new node.
+    /// Inserts a new sampling policy, returning its ID.
+    ///
+    /// `node` must be a sensor name, such as `piglet.sensor.example.com`, and
+    /// for a caller scoped to customers, one of a customer in scope.
     #[allow(clippy::too_many_arguments)]
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
@@ -543,7 +546,7 @@ impl SamplingPolicyMutation {
     /// Removes sampling policies, returning the IDs that no longer exist.
     ///
     /// Every ID is checked before any policy is removed, so a refused ID
-    /// leaves every policy in place.
+    /// leaves every policy in place. A repeated ID is removed once.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn remove_sampling_policies(
@@ -551,10 +554,14 @@ impl SamplingPolicyMutation {
         ctx: &Context<'_>,
         #[graphql(validator(min_items = 1))] ids: Vec<ID>,
     ) -> Result<Vec<String>> {
-        let ids = ids
+        let mut ids = ids
             .iter()
             .map(|id| id.as_str().parse::<u32>().map_err(|_| "invalid ID".into()))
             .collect::<Result<Vec<_>>>()?;
+        // A repeated ID would pass every check and then fail its second
+        // removal, after the first had already taken effect.
+        let mut seen = HashSet::new();
+        ids.retain(|&i| seen.insert(i));
 
         let users_cids = users_customers(ctx)?;
         let store = crate::graphql::get_store(ctx)?;
@@ -589,6 +596,10 @@ impl SamplingPolicyMutation {
     }
 
     /// Updates an existing sampling policy.
+    ///
+    /// The new `node` must be a sensor name. A caller scoped to customers may
+    /// update only a policy of a customer in scope, and only to a sensor name
+    /// of a customer in scope.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn update_sampling_policy(
@@ -1115,7 +1126,7 @@ mod tests {
     #[tokio::test]
     async fn update_checks_stored_and_new_customer() {
         let schema = TestSchema::new().await;
-        let (policy_a, policy_b, _, global) = setup_two_customers(&schema);
+        let (policy_a, policy_b, legacy_b, global) = setup_two_customers(&schema);
 
         let res = schema
             .execute_as_scoped_user(
@@ -1154,6 +1165,30 @@ mod tests {
             error_message(&res),
             r#""a.example.com" is not a sensor name"#
         );
+
+        let res = schema
+            .execute_as_system_admin(&update_mutation(
+                policy_a,
+                ("policy_a", Some(SENSOR_A)),
+                ("policy_a", None),
+            ))
+            .await;
+        assert_eq!(error_message(&res), "node is required");
+
+        // A legacy policy resolves to its customer through the hostname, and
+        // can be moved onto a sensor name in scope.
+        let res = schema
+            .execute_as_scoped_user(
+                &update_mutation(
+                    legacy_b,
+                    ("legacy_b", Some("b.example.com")),
+                    ("legacy_b", Some(SENSOR_B)),
+                ),
+                Role::SecurityAdministrator,
+                Some(vec![2]),
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
 
         let res = schema
             .execute_as_scoped_user(
@@ -1210,18 +1245,31 @@ mod tests {
             .await;
         assert_eq!(error_message(&res), "no such sampling policy");
 
+        let res = schema
+            .execute_as_scoped_user(
+                &mutation(&[999_999]),
+                Role::SecurityAdministrator,
+                Some(vec![2]),
+            )
+            .await;
+        assert_eq!(error_message(&res), "no such sampling policy");
+
         let res = schema.execute_as_system_admin(LIST_QUERY).await;
         let (_, total) = listed_names(res);
         assert_eq!(total, "4");
 
         let res = schema
             .execute_as_scoped_user(
-                &mutation(&[policy_b]),
+                &mutation(&[policy_b, policy_b]),
                 Role::SecurityAdministrator,
                 Some(vec![2]),
             )
             .await;
         assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            json!({ "removeSamplingPolicies": ["policy_b"] })
+        );
 
         let res = schema.execute_as_system_admin(LIST_QUERY).await;
         let (names, _) = listed_names(res);
