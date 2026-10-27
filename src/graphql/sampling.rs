@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
+use std::sync::Arc;
 
 use async_graphql::connection::OpaqueCursor;
 use async_graphql::{
@@ -16,6 +17,91 @@ use crate::graphql::customer_access::{
     event_sensor_customer_id_map, hostname_customer_id_map, is_member, users_customers,
 };
 use crate::graphql::query_with_constraints;
+
+/// The lock that orders the removals and updates of sampling policies.
+///
+/// A removal checks every ID before it removes any, then removes them one
+/// by one, each in its own commit; the database offers no transaction that
+/// spans them. Without the lock, another removal could take one of the
+/// checked IDs in between, and this one would fail after removing the
+/// others. An update holding it cannot move a checked policy to another
+/// customer in between either. An insert does not take it: the ID it
+/// creates is not one any removal or update has checked.
+///
+/// Take it before [`get_store`](super::get_store): the store guard is a
+/// `std::sync::RwLockReadGuard`, which cannot be held across the lock's
+/// `.await`.
+#[derive(Default)]
+pub(crate) struct SamplingPoliciesLock {
+    mutex: tokio::sync::Mutex<()>,
+    /// How many operations hold or wait for the lock.
+    #[cfg(test)]
+    users: std::sync::atomic::AtomicUsize,
+}
+
+impl SamplingPoliciesLock {
+    /// Returns how many operations hold or wait for the lock.
+    #[cfg(test)]
+    pub(super) fn users(&self) -> usize {
+        self.users.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Takes the lock outside a request, as a test holding it off a resolver
+    /// does.
+    #[cfg(test)]
+    pub(super) async fn hold(&self) -> SamplingPoliciesGuard<'_> {
+        let user = LockUser::new(&self.users);
+        let guard = self.mutex.lock().await;
+        SamplingPoliciesGuard {
+            _guard: guard,
+            _user: user,
+        }
+    }
+}
+
+/// The guard of a held [`SamplingPoliciesLock`].
+pub(super) struct SamplingPoliciesGuard<'a> {
+    _guard: tokio::sync::MutexGuard<'a, ()>,
+    #[cfg(test)]
+    _user: LockUser<'a>,
+}
+
+/// Counts an operation among the users of a [`SamplingPoliciesLock`] from
+/// before it waits for the lock until it releases it or stops waiting.
+#[cfg(test)]
+struct LockUser<'a>(&'a std::sync::atomic::AtomicUsize);
+
+#[cfg(test)]
+impl<'a> LockUser<'a> {
+    fn new(users: &'a std::sync::atomic::AtomicUsize) -> Self {
+        users.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self(users)
+    }
+}
+
+#[cfg(test)]
+impl Drop for LockUser<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Waits for the sampling policies to be free and locks them.
+///
+/// # Errors
+///
+/// Returns an error if the schema holds no [`SamplingPoliciesLock`].
+async fn lock_sampling_policies<'a>(ctx: &Context<'a>) -> Result<SamplingPoliciesGuard<'a>> {
+    let lock = ctx.data::<Arc<SamplingPoliciesLock>>()?;
+    #[cfg(test)]
+    let user = LockUser::new(&lock.users);
+    let guard = lock.mutex.lock().await;
+    Ok(SamplingPoliciesGuard {
+        _guard: guard,
+        #[cfg(test)]
+        _user: user,
+    })
+}
 
 #[derive(Default)]
 pub(super) struct SamplingPolicyQuery;
@@ -564,6 +650,7 @@ impl SamplingPolicyMutation {
         ids.retain(|&i| seen.insert(i));
 
         let users_cids = users_customers(ctx)?;
+        let _guard = lock_sampling_policies(ctx).await?;
         let store = crate::graphql::get_store(ctx)?;
         let map = store.sampling_policy_map();
         let customers = users_cids
@@ -615,6 +702,7 @@ impl SamplingPolicyMutation {
         }
 
         let users_cids = users_customers(ctx)?;
+        let _guard = lock_sampling_policies(ctx).await?;
         let store = crate::graphql::get_store(ctx)?;
         let mut map = store.sampling_policy_map();
         let customers = PolicyCustomers::load(&store)?;
@@ -640,7 +728,7 @@ impl SamplingPolicyMutation {
 mod tests {
     use assert_json_diff::assert_json_eq;
     use chrono::Utc;
-    use review_database::{Agent, AgentKind, AgentStatus, Lifecycle, Role, Store};
+    use review_database::{Agent, AgentKind, AgentStatus, Iterable, Lifecycle, Role, Store};
     use serde_json::json;
 
     use crate::graphql::TestSchema;
@@ -759,6 +847,15 @@ mod tests {
         }
     }";
 
+    fn remove_mutation(ids: &[u32]) -> String {
+        let ids = ids
+            .iter()
+            .map(|id| format!("\"{id}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("mutation {{ removeSamplingPolicies(ids: [{ids}]) }}")
+    }
+
     fn listed_names(res: async_graphql::Response) -> (Vec<String>, String) {
         assert!(res.errors.is_empty(), "list: {:?}", res.errors);
         let data = res.data.into_json().unwrap();
@@ -770,6 +867,19 @@ mod tests {
             .map(|node| node["name"].as_str().unwrap().to_string())
             .collect();
         (names, list["totalCount"].as_str().unwrap().to_string())
+    }
+
+    /// Returns the names of the stored policies, read from the store rather
+    /// than through a request.
+    fn listed_names_of_store(schema: &TestSchema) -> Vec<String> {
+        let store = schema.store();
+        let map = store.sampling_policy_map();
+        let mut names = map
+            .iter(review_database::event::Direction::Forward, None)
+            .map(|policy| policy.expect("readable policy").name)
+            .collect::<Vec<_>>();
+        names.sort_unstable();
+        names
     }
 
     fn error_message(res: &async_graphql::Response) -> &str {
@@ -1233,18 +1343,10 @@ mod tests {
     async fn remove_is_all_or_nothing() {
         let schema = TestSchema::new().await;
         let (policy_a, policy_b, _, _) = setup_two_customers(&schema);
-        let mutation = |ids: &[u32]| {
-            let ids = ids
-                .iter()
-                .map(|id| format!("\"{id}\""))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("mutation {{ removeSamplingPolicies(ids: [{ids}]) }}")
-        };
 
         let res = schema
             .execute_as_scoped_user(
-                &mutation(&[policy_b, policy_a]),
+                &remove_mutation(&[policy_b, policy_a]),
                 Role::SecurityAdministrator,
                 Some(vec![2]),
             )
@@ -1252,13 +1354,13 @@ mod tests {
         assert_eq!(error_message(&res), "Forbidden");
 
         let res = schema
-            .execute_as_system_admin(&mutation(&[policy_b, 9999]))
+            .execute_as_system_admin(&remove_mutation(&[policy_b, 9999]))
             .await;
         assert_eq!(error_message(&res), "no such sampling policy");
 
         let res = schema
             .execute_as_scoped_user(
-                &mutation(&[999_999]),
+                &remove_mutation(&[999_999]),
                 Role::SecurityAdministrator,
                 Some(vec![2]),
             )
@@ -1271,7 +1373,7 @@ mod tests {
 
         let res = schema
             .execute_as_scoped_user(
-                &mutation(&[policy_b, policy_b]),
+                &remove_mutation(&[policy_b, policy_b]),
                 Role::SecurityAdministrator,
                 Some(vec![2]),
             )
@@ -1285,6 +1387,73 @@ mod tests {
         let res = schema.execute_as_system_admin(LIST_QUERY).await;
         let (names, _) = listed_names(res);
         assert_eq!(names, ["global", "legacy_b", "policy_a"]);
+    }
+
+    #[tokio::test]
+    async fn overlapping_removals_do_not_remove_part() {
+        let schema = TestSchema::new().await;
+        let (policy_a, policy_b, _, _) = setup_two_customers(&schema);
+        let before = listed_names_of_store(&schema);
+
+        let both = remove_mutation(&[policy_a, policy_b]);
+        let only_b = remove_mutation(&[policy_b]);
+        let guard = schema.hold_sampling_policies_lock().await;
+        let (res_both, res_b, ()) = tokio::join!(
+            schema.execute_as_system_admin(&both),
+            schema.execute_as_system_admin(&only_b),
+            async {
+                // Waits until both removals wait for the lock the test holds.
+                while schema.sampling_policies_lock_users() < 3 {
+                    tokio::task::yield_now().await;
+                }
+                assert_eq!(listed_names_of_store(&schema), before);
+                drop(guard);
+            }
+        );
+        assert_eq!(schema.sampling_policies_lock_users(), 0);
+
+        // Whichever removal went second found `policy_b` gone before it
+        // removed anything.
+        let after = listed_names_of_store(&schema);
+        match (res_both.errors.is_empty(), res_b.errors.is_empty()) {
+            (true, false) => {
+                assert_eq!(error_message(&res_b), "no such sampling policy");
+                assert_eq!(after, ["global", "legacy_b"]);
+            }
+            (false, true) => {
+                assert_eq!(error_message(&res_both), "no such sampling policy");
+                assert_eq!(after, ["global", "legacy_b", "policy_a"]);
+            }
+            results => panic!("exactly one removal succeeds: {results:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn update_waits_for_the_sampling_policies_lock() {
+        let schema = TestSchema::new().await;
+        let (_, policy_b, _, _) = setup_two_customers(&schema);
+        let before = listed_names_of_store(&schema);
+
+        let update = update_mutation(
+            policy_b,
+            ("policy_b", Some(SENSOR_B)),
+            ("renamed_b", Some(SENSOR_B)),
+        );
+        let guard = schema.hold_sampling_policies_lock().await;
+        let (res, ()) = tokio::join!(schema.execute_as_system_admin(&update), async {
+            // Waits until the update waits for the lock the test holds.
+            while schema.sampling_policies_lock_users() < 2 {
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(listed_names_of_store(&schema), before);
+            drop(guard);
+        });
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(schema.sampling_policies_lock_users(), 0);
+        assert_eq!(
+            listed_names_of_store(&schema),
+            ["global", "legacy_b", "policy_a", "renamed_b"]
+        );
     }
 
     #[test]
