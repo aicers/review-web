@@ -13,9 +13,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
-- `updateNodeDraft`, `applyNode` and `applyNodeDraft` refuse a detector id
-  that a removed detector of the instance used, with `DUPLICATE_ENTRY` at that
-  detector's `id`.
+- **Breaking change:** `updateNodeDraft`, `applyNode` and `applyNodeDraft`
+  refuse, on a node with a hostname, a document naming a detector id that is
+  at most the engine instance's `lastDetectorId` and that neither its
+  applied nor its draft document names, with `DUPLICATE_ENTRY` at that
+  detector's `id`. This includes 0 and negative ids, which 0.49.0 accepted.
+  The mark is kept per agent key and hostname, so an engine removed and
+  installed again on the same host continues from it and its detectors need
+  new ids.
 - Deleting a customer's data also deletes its Unsupervised Engine models,
   with their clusters, outliers, rounds, statistics, indicators and
   classifiers, and its training definitions and their runs. While another
