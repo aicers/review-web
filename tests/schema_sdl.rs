@@ -86,6 +86,32 @@ fn schema_has_no_customer_allow_block_or_network_tag_api() {
     assert!(!insert_network.contains("tagIds"), "{REGENERATE}");
 }
 
+/// The data-source API has no operation, type or model field left in the
+/// schema.
+#[test]
+fn schema_has_no_data_source_api() {
+    let sdl = rendered_sdl();
+    for removed in [
+        "dataSourceList",
+        "insertDataSource",
+        "updateDataSource",
+        "removeDataSource",
+        "type DataSource {",
+        "DataSourceConnection",
+        "DataSourceEdge",
+        "DataSourceInsertInput",
+        "DataSourceUpdateInput",
+        "DataSourceTotalCount",
+        "enum DataType {",
+    ] {
+        assert!(!sdl.contains(removed), "{removed}: {REGENERATE}");
+    }
+    assert!(
+        !definition(&sdl, "type ModelDigest {").contains("dataSource"),
+        "{REGENERATE}"
+    );
+}
+
 /// Category counts preserve the nullable uncategorized bucket without making
 /// the count at the corresponding index nullable.
 #[test]

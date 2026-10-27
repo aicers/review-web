@@ -6,6 +6,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Removed
+
+- The data-source API: the `dataSourceList` query, the `insertDataSource`,
+  `updateDataSource` and `removeDataSource` mutations, and the `DataSource`,
+  `DataSourceConnection`, `DataSourceEdge`, `DataSourceInsertInput`,
+  `DataSourceUpdateInput`, `DataType` and `DataSourceTotalCount` types.
+  REconverge has not read data sources since 0.56.0.
+- The deprecated `ModelDigest.dataSource` field, which was always null.
+
 ### Fixed
 
 - Sampling policies are scoped to customers. A sampling policy belongs to the

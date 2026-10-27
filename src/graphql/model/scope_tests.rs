@@ -542,7 +542,7 @@ async fn model_digest_returns_the_record() {
     }
     let res = schema
         .execute_as_system_admin(
-            "{ models { nodes { name method eventKind customerId trainedAt dataSource { id }
+            "{ models { nodes { name method eventKind customerId trainedAt
                 instance { nodeId agentKey }
                 previousTrainingResult { trainedAt version clusterCount outlierCount } } } }",
         )
@@ -559,7 +559,6 @@ async fn model_digest_returns_the_record() {
                 "eventKind": "http",
                 "customerId": "1",
                 "trainedAt": retrained_at.to_rfc3339(),
-                "dataSource": null,
                 "instance": {
                     "nodeId": instance_a.node_id.to_string(),
                     "agentKey": instance_a.agent_key,
@@ -577,7 +576,6 @@ async fn model_digest_returns_the_record() {
                 "eventKind": "http",
                 "customerId": "2",
                 "trainedAt": res_time(&schema, "prefix"),
-                "dataSource": null,
                 "instance": {
                     "nodeId": instance_b.node_id.to_string(),
                     "agentKey": instance_b.agent_key,
@@ -590,7 +588,6 @@ async fn model_digest_returns_the_record() {
                 "eventKind": "http",
                 "customerId": "2",
                 "trainedAt": res_time(&schema, "timeseries"),
-                "dataSource": null,
                 "instance": null,
                 "previousTrainingResult": null,
             },
@@ -607,29 +604,6 @@ fn res_time(schema: &TestSchema, name: &str) -> String {
         .unwrap()
         .trained_at
         .to_rfc3339()
-}
-
-#[tokio::test]
-async fn data_source_is_deprecated() {
-    let schema = TestSchema::new().await;
-    let res = schema
-        .execute_as_system_admin(
-            r#"{ __type(name: "ModelDigest") {
-                fields(includeDeprecated: true) { name isDeprecated type { kind } } } }"#,
-        )
-        .await;
-    let fields = data(res)["__type"]["fields"].clone();
-    let data_source = fields
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|field| field["name"] == "dataSource")
-        .unwrap()
-        .clone();
-    assert_eq!(
-        data_source,
-        json!({ "name": "dataSource", "isDeprecated": true, "type": { "kind": "OBJECT" } })
-    );
 }
 
 fn put_batch_info(store: &Store, model: u32, id: i64) {

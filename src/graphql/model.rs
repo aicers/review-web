@@ -11,9 +11,7 @@ use super::{
     DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, MAX_TRENDI_ORDER, PositiveCutoffRate, Role,
     RoleGuard,
     cluster::TimeCount,
-    customer_access,
-    data_source::DataSource,
-    fill_vacant_time_slots, get_trend,
+    customer_access, fill_vacant_time_slots, get_trend,
     refusal::{RefusalCode, refusal},
     training::{self, ModelDetectorUse, ModelRun, TrainingDefinition, TrainingDefinitionState},
     training_result, zero_filled_length,
@@ -638,12 +636,6 @@ impl ModelDigest {
             .into_iter()
             .map(Into::into)
             .collect())
-    }
-
-    /// Always null: a model carries no data source.
-    #[graphql(deprecation = "A model carries no data source; this field is always null.")]
-    async fn data_source(&self) -> Option<DataSource> {
-        None
     }
 }
 

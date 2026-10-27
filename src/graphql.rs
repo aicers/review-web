@@ -15,7 +15,6 @@ mod customer_data_deletion {
 pub mod customer;
 pub mod customer_access;
 mod customer_network;
-mod data_source;
 mod db_management;
 mod engine_config;
 mod engine_document;
@@ -176,7 +175,6 @@ struct SubQueryOneA(
     category::CategoryQuery,
     cluster::ClusterQuery,
     customer_data_deletion::CustomerDataDeletionQuery,
-    data_source::DataSourceQuery,
     db_management::DbManagementQuery,
     engine_instance::EngineInstanceQuery,
     event::EventQuery,
@@ -239,7 +237,6 @@ struct SubMutationOneA(
     cert::CertMutation,
     cluster::ClusterMutation,
     customer_data_deletion::CustomerDataDeletionMutation,
-    data_source::DataSourceMutation,
     db_management::DbManagementMutation,
     engine_instance::EngineInstanceMutation,
 );
