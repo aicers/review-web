@@ -1122,6 +1122,24 @@ mod tests {
         );
 
         let res = schema
+            .execute_as_scoped_user(
+                r"{ samplingPolicyList(last: 1) { totalCount pageInfo { hasPreviousPage } nodes { name } } }",
+                Role::SecurityAdministrator,
+                Some(vec![2]),
+            )
+            .await;
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "samplingPolicyList": {
+                    "totalCount": "2",
+                    "pageInfo": { "hasPreviousPage": true },
+                    "nodes": [{ "name": "policy_b" }],
+                }
+            })
+        );
+
+        let res = schema
             .execute_as_scoped_user(LIST_QUERY, Role::SecurityAdministrator, Some(vec![999]))
             .await;
         let (names, total) = listed_names(res);
