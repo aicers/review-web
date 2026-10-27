@@ -1446,6 +1446,25 @@ mod tests {
         );
     }
 
+    /// Every resolver decides access with `in_scope`. A policy without a
+    /// customer cannot be stored through review-database's API, so the rule
+    /// for one is checked on the row read back with its customer cleared.
+    #[tokio::test]
+    async fn a_policy_without_a_customer_is_for_unscoped_callers_only() {
+        let schema = TestSchema::new().await;
+        let setup = setup_two_customers(&schema);
+        let mut policy = stored_policy(&schema, setup.policy_a);
+        assert!(super::in_scope(&policy, None));
+        assert!(super::in_scope(&policy, Some(&[1])));
+        assert!(!super::in_scope(&policy, Some(&[2])));
+
+        policy.customer_id = None;
+        assert!(super::in_scope(&policy, None));
+        for scope in [&[][..], &[1], &[1, 2]] {
+            assert!(!super::in_scope(&policy, Some(scope)), "{scope:?}");
+        }
+    }
+
     #[tokio::test]
     async fn insert_requires_a_customer_in_scope_and_its_sensor_name() {
         let schema = TestSchema::new().await;
