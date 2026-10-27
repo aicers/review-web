@@ -1154,6 +1154,17 @@ mod tests {
             .await;
         assert_eq!(error_message(&res), "Forbidden");
 
+        // A node-less policy has no customer, so a scoped caller cannot claim
+        // it even with a sensor name in scope.
+        let res = schema
+            .execute_as_scoped_user(
+                &update_mutation(global, ("global", None), ("global", Some(SENSOR_B))),
+                Role::SecurityAdministrator,
+                Some(vec![2]),
+            )
+            .await;
+        assert_eq!(error_message(&res), "Forbidden");
+
         let res = schema
             .execute_as_system_admin(&update_mutation(
                 global,
