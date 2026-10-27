@@ -151,7 +151,23 @@ async fn change_data_store(
     generator: &ModelInstance,
     giganto_name: &str,
 ) -> async_graphql::Response {
+    change_data_store_and_profile(schema, mutation, generator, giganto_name, None).await
+}
+
+/// Changes the Data Store the generator of the node `generator` is on is
+/// configured with to `giganto_name`, and the node's profile to `profile`
+/// unless it is `None`, in one apply through `mutation`.
+async fn change_data_store_and_profile(
+    schema: &TestSchema,
+    mutation: &str,
+    generator: &ModelInstance,
+    giganto_name: &str,
+    profile: Option<NodeProfile>,
+) -> async_graphql::Response {
     let node = stage(schema, generator.node_id, |node| {
+        if profile.is_some() {
+            node.profile_draft = profile;
+        }
         let agent = node
             .agents
             .iter_mut()
@@ -228,5 +244,127 @@ async fn a_generator_holding_unused_policies_moves_them_to_its_new_data_store() 
             data_store_of(&schema, elsewhere),
             Some(data_store_name("o.example.com"))
         );
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn a_data_store_change_its_policies_could_not_follow_is_refused() {
+    for mutation in MUTATIONS {
+        let (schema, deliveries) = recording_schema().await;
+        let generator = insert_generator_node(&schema.store(), "g.example.com", 1);
+        let own = assigned_policy(&schema, "own", 1, "g.example.com", &generator);
+        // A policy reading another node's sensor follows a hostname change.
+        insert_generator_node(&schema.store(), "s.example.com", 1);
+        let elsewhere = assigned_policy(&schema, "elsewhere", 1, "s.example.com", &generator);
+        let before = stored_node(&schema.store(), generator.node_id);
+
+        // The new hostname drops the sensor name `own` reads.
+        let res = change_data_store_and_profile(
+            &schema,
+            mutation,
+            &generator,
+            "002.giganto.x",
+            Some(profile(1, "g2.example.com")),
+        )
+        .await;
+        assert_eq!(
+            res.errors.first().expect("a refusal").message,
+            "the Data Store of a Time Series Generator cannot change while a sampling policy \
+             assigned to it could not be assigned to it again to record the new Data Store: \
+             sampling policy \"own\" of agent \"crusher@test\" reads \
+             \"piglet.g.example.com\", which is not a sensor name of customer 1 after this \
+             change; unassign the policy first, or change the Data Store in an apply that leaves \
+             the profile as it is",
+            "{mutation}"
+        );
+
+        // The new customer is not the policies' customer.
+        let res = change_data_store_and_profile(
+            &schema,
+            mutation,
+            &generator,
+            "002.giganto.x",
+            Some(profile(2, "g.example.com")),
+        )
+        .await;
+        assert_eq!(
+            res.errors.first().expect("a refusal").message,
+            "the Data Store of a Time Series Generator cannot change while a sampling policy \
+             assigned to it could not be assigned to it again to record the new Data Store: \
+             sampling policy \"elsewhere\" of agent \"crusher@test\" belongs to customer 1, \
+             and the node's customer becomes 2; sampling policy \"own\" of agent \
+             \"crusher@test\" belongs to customer 1, and the node's customer becomes 2; \
+             unassign the policy first, or change the Data Store in an apply that leaves the \
+             profile as it is",
+            "{mutation}"
+        );
+        let after = stored_node(&schema.store(), generator.node_id);
+        assert_eq!(after.profile, before.profile, "{mutation}");
+        assert_eq!(
+            after.agents.iter().map(|a| &a.config).collect::<Vec<_>>(),
+            before.agents.iter().map(|a| &a.config).collect::<Vec<_>>(),
+            "{mutation}"
+        );
+        for id in [own, elsewhere] {
+            assert_eq!(
+                data_store_of(&schema, id),
+                Some(data_store_name("g.example.com")),
+                "{mutation}"
+            );
+        }
+        assert_eq!(deliveries.calls(), NO_DELIVERIES, "{mutation}");
+
+        // The Data Store first, then the hostname, as the refusal suggests.
+        // The refused drafts are still staged, so the profile draft goes
+        // back to the applied profile.
+        let res = change_data_store_and_profile(
+            &schema,
+            mutation,
+            &generator,
+            "002.giganto.x",
+            before.profile.clone(),
+        )
+        .await;
+        assert!(res.errors.is_empty(), "{mutation}: {:?}", res.errors);
+        let node = stage(&schema, generator.node_id, |node| {
+            node.profile_draft = Some(profile(1, "g2.example.com"));
+        })
+        .await;
+        let res = apply(&schema, mutation, generator.node_id, &node).await;
+        assert!(res.errors.is_empty(), "{mutation}: {:?}", res.errors);
+        for id in [own, elsewhere] {
+            assert_eq!(
+                data_store_of(&schema, id),
+                Some("002.giganto.x".to_string()),
+                "{mutation}"
+            );
+        }
+        assert_eq!(deliveries.calls(), [vec![generator.clone()]], "{mutation}");
+
+        // A hostname change that keeps every policy's sensor moves the Data
+        // Store with it.
+        let node = stage(&schema, generator.node_id, |node| {
+            node.profile_draft = Some(profile(1, "g.example.com"));
+        })
+        .await;
+        let res = apply(&schema, mutation, generator.node_id, &node).await;
+        assert!(res.errors.is_empty(), "{mutation}: {:?}", res.errors);
+        let res = change_data_store_and_profile(
+            &schema,
+            mutation,
+            &generator,
+            "003.giganto.x",
+            Some(profile(1, "g.example.com")),
+        )
+        .await;
+        assert!(res.errors.is_empty(), "{mutation}: {:?}", res.errors);
+        for id in [own, elsewhere] {
+            assert_eq!(
+                data_store_of(&schema, id),
+                Some("003.giganto.x".to_string()),
+                "{mutation}"
+            );
+        }
     }
 }

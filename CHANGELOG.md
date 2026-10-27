@@ -40,8 +40,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   connected generator of every customer.
 - `removeSamplingPolicies` refuses a policy in use, listing its uses.
 - `applyNode` and `applyNodeDraft` refuse to change a Time Series Generator's
-  `giganto_name` while a policy assigned to it is in use, and otherwise
-  record the new Data Store for its policies.
+  `giganto_name` while a policy assigned to it is in use, or in the same
+  apply as a profile change after which a policy assigned to it could not be
+  assigned to it again, and otherwise record the new Data Store for its
+  policies.
 - Bumped `review-database` dependency to 0.57.0. Its store format moves to
   0.57.0, so a store written by 0.56 must be migrated through
   `review-database` before this version serves it; the migration makes every

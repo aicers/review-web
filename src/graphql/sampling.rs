@@ -17,7 +17,9 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
 use super::{IpAddress, Role, RoleGuard, SharedAgentManager};
-use crate::graphql::customer_access::{customer_sensor_names, is_member, users_customers};
+use crate::graphql::customer_access::{
+    customer_sensor_names, event_sensor_names, is_member, users_customers,
+};
 use crate::graphql::engine_config::lock_engine_config;
 use crate::graphql::query_with_constraints;
 use crate::graphql::training::resolve_generator;
@@ -41,16 +43,19 @@ const FIX_BEFORE_ASSIGNING: &str =
 ///
 /// A removal takes it after
 /// [`lock_engine_config`](super::engine_config::lock_engine_config), and
-/// nothing takes the two in the reverse order. No other writer takes it: an
+/// nothing takes the two in the reverse order. The only other delete, of a
+/// customer's data, takes it around its removal of the customer's policies
+/// with [`blocking_lock`](Self::blocking_lock), so a removal never finds a
+/// policy it checked taken by that deletion; it checks no uses, so it does
+/// not take the engine configuration lock. No other writer takes it: an
 /// insert creates an ID no removal has checked, and the uses a removal
 /// checks are created only under the engine configuration lock it holds.
-/// The only other delete, of a customer's data, runs outside any request
-/// and does not take it either, so a removal racing it can fail partway on
-/// a policy of that customer the deletion already took.
 ///
-/// Take it before [`get_store`](super::get_store): the store guard is a
+/// Take it before [`get_store`](super::get_store), or before reading the
+/// store outside a request: the store guard is a
 /// `std::sync::RwLockReadGuard`, which cannot be held across the lock's
-/// `.await`.
+/// `.await`, and a reader holding it while waiting for this lock could wait
+/// on a writer queued behind a removal that holds this lock.
 #[derive(Default)]
 pub(crate) struct SamplingPoliciesLock {
     mutex: tokio::sync::Mutex<()>,
@@ -60,16 +65,34 @@ pub(crate) struct SamplingPoliciesLock {
 }
 
 impl SamplingPoliciesLock {
+    /// Waits for the sampling policies to be free and locks them, blocking
+    /// the thread.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called within an asynchronous execution context; call it
+    /// from a blocking worker.
+    pub(crate) fn blocking_lock(&self) -> SamplingPoliciesGuard<'_> {
+        #[cfg(test)]
+        let user = LockUser::new(&self.users);
+        let guard = self.mutex.blocking_lock();
+        SamplingPoliciesGuard {
+            _guard: guard,
+            #[cfg(test)]
+            _user: user,
+        }
+    }
+
     /// Returns how many operations hold or wait for the lock.
     #[cfg(test)]
-    pub(super) fn users(&self) -> usize {
+    pub(crate) fn users(&self) -> usize {
         self.users.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Takes the lock outside a request, as a test holding it off a resolver
     /// does.
     #[cfg(test)]
-    pub(super) async fn hold(&self) -> SamplingPoliciesGuard<'_> {
+    pub(crate) async fn hold(&self) -> SamplingPoliciesGuard<'_> {
         let user = LockUser::new(&self.users);
         let guard = self.mutex.lock().await;
         SamplingPoliciesGuard {
@@ -80,7 +103,7 @@ impl SamplingPoliciesLock {
 }
 
 /// The guard of a held [`SamplingPoliciesLock`].
-pub(super) struct SamplingPoliciesGuard<'a> {
+pub(crate) struct SamplingPoliciesGuard<'a> {
     _guard: tokio::sync::MutexGuard<'a, ()>,
     #[cfg(test)]
     _user: LockUser<'a>,
@@ -652,22 +675,30 @@ fn data_store(agent: &review_database::Agent) -> Option<String> {
 }
 
 /// Returns the Time Series Generator agents of node `node_id` whose applied
-/// Data Store an update from `stored` to `agents` changes, refusing the
-/// update while a policy assigned to one of them is in use.
+/// Data Store an update from `stored` to `new` changes, refusing the update
+/// while a policy assigned to one of them is in use, or could not be
+/// assigned to it again once the update is stored.
 ///
 /// A policy's series are kept in its Data Store, so a policy in use cannot
-/// move to another one. The caller holds the engine configuration lock from
-/// before this check until its store write returns, as every writer that
-/// checks uses does.
+/// move to another one. An unused policy moves by being assigned to its
+/// generator again after the update, which
+/// [`refresh_data_stores`] does; that assignment checks the policy against
+/// the node as updated, so an update that also moves the node to another
+/// customer, or drops the sensor name the policy reads, is refused here
+/// rather than leaving the policy's Data Store behind. The caller holds the
+/// engine configuration lock from before this check until
+/// [`refresh_data_stores`] returns, as every writer that checks uses does.
 pub(super) fn check_data_store_changes(
     store: &Store,
     node_id: u32,
     stored: &review_database::Node,
-    agents: &[review_database::Agent],
+    new: &review_database::NodeUpdate,
 ) -> Result<Vec<ModelInstance>> {
     let mut changed = Vec::new();
     let mut in_use = Vec::new();
-    for agent in agents
+    let mut unused = Vec::new();
+    for agent in new
+        .agents
         .iter()
         .filter(|agent| agent.kind == AgentKind::TimeSeriesGenerator)
     {
@@ -687,7 +718,9 @@ pub(super) fn check_data_store_changes(
         };
         for policy in store.sampling_policies_assigned_to(&instance)? {
             let uses = store.sampling_policy_uses(policy.id)?;
-            if !uses.is_empty() {
+            if uses.is_empty() {
+                unused.push((&agent.key, policy));
+            } else {
                 in_use.push(format!(
                     "sampling policy {:?} of agent {:?} is in use by {}",
                     policy.name,
@@ -698,23 +731,110 @@ pub(super) fn check_data_store_changes(
         }
         changed.push(instance);
     }
-    if in_use.is_empty() {
-        Ok(changed)
-    } else {
-        Err(format!(
+    if !in_use.is_empty() {
+        return Err(format!(
             "the Data Store of a Time Series Generator cannot change while a sampling policy \
              assigned to it is in use: {}",
             in_use.join("; ")
         )
+        .into());
+    }
+    if unused.is_empty() {
+        return Ok(changed);
+    }
+
+    let customer_id = new.profile.as_ref().map(|profile| profile.customer_id);
+    let sensors = match customer_id {
+        Some(customer_id) => sensor_names_after(store, stored, new, customer_id)?,
+        None => HashSet::new(),
+    };
+    let unassignable: Vec<_> = unused
+        .iter()
+        .filter_map(|(agent_key, policy)| {
+            let reason = match (policy.customer_id, customer_id) {
+                (None, _) => "has no customer".to_string(),
+                (Some(policy_customer), None) => format!(
+                    "belongs to customer {policy_customer}, and the node has no customer after \
+                     this change"
+                ),
+                (Some(policy_customer), Some(node_customer))
+                    if policy_customer != node_customer =>
+                {
+                    format!(
+                        "belongs to customer {policy_customer}, and the node's customer becomes \
+                         {node_customer}"
+                    )
+                }
+                (Some(policy_customer), Some(_)) => match &policy.node {
+                    Some(node) if sensors.contains(node) => return None,
+                    Some(node) => format!(
+                        "reads {node:?}, which is not a sensor name of customer \
+                         {policy_customer} after this change"
+                    ),
+                    None => "reads no sensor".to_string(),
+                },
+            };
+            Some(format!(
+                "sampling policy {:?} of agent {agent_key:?} {reason}",
+                policy.name
+            ))
+        })
+        .collect();
+    if unassignable.is_empty() {
+        Ok(changed)
+    } else {
+        Err(format!(
+            "the Data Store of a Time Series Generator cannot change while a sampling policy \
+             assigned to it could not be assigned to it again to record the new Data Store: \
+             {}; unassign the policy first, or change the Data Store in an apply that leaves \
+             the profile as it is",
+            unassignable.join("; ")
+        )
         .into())
     }
+}
+
+/// Returns the [`event_sensor_names`] of every node whose applied profile
+/// belongs to `customer_id` once node `stored` is updated to `new`.
+fn sensor_names_after(
+    store: &Store,
+    stored: &review_database::Node,
+    new: &review_database::NodeUpdate,
+    customer_id: u32,
+) -> Result<HashSet<String>> {
+    let mut names = HashSet::new();
+    for entry in store.node_map().iter(Direction::Forward, None) {
+        let node = entry?;
+        if node.id != stored.id
+            && node
+                .profile
+                .as_ref()
+                .is_some_and(|profile| profile.customer_id == customer_id)
+        {
+            names.extend(event_sensor_names(&node));
+        }
+    }
+    if new
+        .profile
+        .as_ref()
+        .is_some_and(|profile| profile.customer_id == customer_id)
+    {
+        let mut updated = stored.clone();
+        updated.profile.clone_from(&new.profile);
+        updated.agents.clone_from(&new.agents);
+        names.extend(event_sensor_names(&updated));
+    }
+    Ok(names)
 }
 
 /// Assigns each policy of each generator in `generators` to it again, which
 /// records the generator's new Data Store as the policy's.
 ///
 /// It runs after the node update that changed the Data Stores is stored, so
-/// a failure is logged rather than returned.
+/// a failure is logged rather than returned. [`check_data_store_changes`]
+/// has already refused every update an assignment here would refuse, so
+/// only a storage failure is left; assigning the policy to the same agent
+/// with `assignSamplingPolicy` records the Data Store then.
 pub(super) fn refresh_data_stores(store: &Store, generators: &[ModelInstance]) {
     let map = store.sampling_policy_map();
     for generator in generators {
@@ -723,7 +843,7 @@ pub(super) fn refresh_data_stores(store: &Store, generators: &[ModelInstance]) {
             Err(e) => {
                 error!(
                     "cannot read the sampling policies of agent {:?} of node {} to record its \
-                     new Data Store: {e:#}",
+                     new Data Store; assign each policy to the agent again to record it: {e:#}",
                     generator.agent_key, generator.node_id
                 );
                 continue;
@@ -733,7 +853,7 @@ pub(super) fn refresh_data_stores(store: &Store, generators: &[ModelInstance]) {
             if let Err(e) = map.assign(policy.id, Some(generator), false) {
                 error!(
                     "cannot record the new Data Store of agent {:?} of node {} for sampling \
-                     policy {:?}: {e:#}",
+                     policy {:?}; assign the policy to the agent again to record it: {e:#}",
                     generator.agent_key, generator.node_id, policy.name
                 );
             }

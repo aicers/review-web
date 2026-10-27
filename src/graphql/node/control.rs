@@ -625,7 +625,7 @@ async fn update_db(
         new.profile.as_ref(),
         system_admin,
     )?;
-    let data_store_changes = sampling::check_data_store_changes(&store, i, &stored, &new.agents)?;
+    let data_store_changes = sampling::check_data_store_changes(&store, i, &stored, &new)?;
     let updated = map
         .update_with_engine_documents(
             i,
