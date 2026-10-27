@@ -15,6 +15,10 @@ use crate::graphql::{
         Relay, RelayAnswer, RelayCall, insert_data_store_node, insert_engine_instance,
         insert_log_collector_node, insert_named_data_store_node, insert_sensor_node, relay_schema,
     },
+    sampling_test_support::{
+        PolicyShape, SENSOR_KEY, generator_config, insert_assigned_policy,
+        insert_generator_node_with, insert_policy, sensor_name, timeseries_definition,
+    },
 };
 
 const A: u32 = 1;
@@ -481,8 +485,154 @@ async fn validation_refusals_carry_their_codes() {
         .definition(&[&f.sensor_a], OWN_ADDRESS, "")
         .replace("multidimension", "timeseries");
     let res = f.sec(&insert(&f.engine_a, "def", &text), &[A]).await;
-    assert_eq!(code(&res), "TIMESERIES_UNSUPPORTED");
+    assert_eq!(
+        refused(&res),
+        ("FIELD_NOT_ALLOWED".into(), "csv".into(), String::new())
+    );
     assert!(stored(&f.store(), "def").is_none());
+}
+
+/// Moves node `node_id` to customer `customer_id`, keeping its hostname.
+fn move_to_customer(store: &Store, node_id: u32, customer_id: u32) {
+    let mut map = store.node_map();
+    let (node, _, _) = map.get_by_id(node_id).unwrap().unwrap();
+    let old = NodeUpdate::from(node.clone());
+    let mut new = NodeUpdate::from(node);
+    for profile in [&mut new.profile, &mut new.profile_draft]
+        .into_iter()
+        .flatten()
+    {
+        profile.customer_id = customer_id;
+    }
+    map.update(node_id, &old, &new).unwrap();
+}
+
+#[tokio::test]
+async fn a_timeseries_definition_reads_assigned_policies_and_shows_their_delivery() {
+    let f = fixture().await;
+    let generator = |hostname: &str| {
+        insert_generator_node_with(
+            &f.store(),
+            hostname,
+            A,
+            Some(generator_config(&f.server_name)),
+        )
+    };
+    let online = generator("gen-1.example.com");
+    let offline = generator("gen-2.example.com");
+    let moved = generator("gen-3.example.com");
+    let (p_online, p_offline, p_withheld, p_unassigned) = {
+        let store = f.store();
+        let policy = |name: &str, generator: &ModelInstance| {
+            insert_assigned_policy(&store, name, A, generator, PolicyShape::default())
+        };
+        let ids = (
+            policy("online", &online),
+            policy("offline", &offline),
+            policy("withheld", &moved),
+            insert_policy(&store, "unassigned", A, &sensor_name("gen-1.example.com")),
+        );
+        move_to_customer(&store, moved.node_id, B);
+        ids
+    };
+    f.relay.set_online("gen-1.example.com", &[&online]);
+    // The host of the offline generator is connected, but not the generator.
+    let sensor = ModelInstance {
+        node_id: offline.node_id,
+        agent_key: SENSOR_KEY.to_string(),
+    };
+    f.relay.set_online("gen-2.example.com", &[&sensor]);
+    // A withheld policy's generator being online does not matter.
+    f.relay.set_online("gen-3.example.com", &[&moved]);
+
+    let text = timeseries_definition(&[p_online, p_offline], &f.server_name, OWN_ADDRESS, "");
+    let res = f.sec(&insert(&f.engine_a, "series", &text), &[A]).await;
+    assert_eq!(data(res), json!({ "insertTrainingDefinition": "series" }));
+    let stored = stored(&f.store(), "series").expect("stored");
+    assert_eq!(stored.method, review_database::ModelMethod::Timeseries);
+    assert_eq!(stored.event_kind, "timeseries");
+
+    let res = f
+        .sec(
+            r#"{ trainingDefinition(name: "series") { sourceDelivery { source delivery } } }"#,
+            &[A],
+        )
+        .await;
+    assert_eq!(
+        data(res),
+        json!({ "trainingDefinition": { "sourceDelivery": [
+            { "source": p_online.to_string(), "delivery": "ASSIGNEE_ONLINE" },
+            { "source": p_offline.to_string(), "delivery": "ASSIGNEE_OFFLINE" },
+        ] } })
+    );
+
+    for (id, delivery) in [
+        (p_unassigned, "UNASSIGNED"),
+        (p_withheld, "WITHHELD"),
+        (p_offline, "ASSIGNEE_OFFLINE"),
+        (p_online, "ASSIGNEE_ONLINE"),
+    ] {
+        let res = f
+            .sec(
+                &format!(r#"{{ samplingPolicy(id: "{id}") {{ delivery }} }}"#),
+                &[A],
+            )
+            .await;
+        assert_eq!(
+            data(res),
+            json!({ "samplingPolicy": { "delivery": delivery } }),
+            "{id}"
+        );
+    }
+
+    // A source of another method is not a policy, even when it names one.
+    let text = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
+    f.define(&f.engine_a, "multi", &text).await;
+    let res = f
+        .sec(
+            r#"{ trainingDefinition(name: "multi") { sourceDelivery { source delivery } } }"#,
+            &[A],
+        )
+        .await;
+    assert_eq!(
+        data(res),
+        json!({ "trainingDefinition": { "sourceDelivery": [
+            { "source": f.sensor_a, "delivery": null },
+        ] } })
+    );
+}
+
+#[tokio::test]
+async fn a_timeseries_definition_is_refused_for_an_unassigned_policy_or_a_sensor() {
+    let f = fixture().await;
+    let generator = insert_generator_node_with(
+        &f.store(),
+        "gen-1.example.com",
+        A,
+        Some(generator_config(&f.server_name)),
+    );
+    let (assigned, unassigned) = {
+        let store = f.store();
+        (
+            insert_assigned_policy(&store, "assigned", A, &generator, PolicyShape::default()),
+            insert_policy(&store, "unassigned", A, &sensor_name("gen-1.example.com")),
+        )
+    };
+    let text = timeseries_definition(&[assigned, unassigned], &f.server_name, OWN_ADDRESS, "");
+    let res = f.sec(&insert(&f.engine_a, "series", &text), &[A]).await;
+    assert_eq!(
+        refused(&res),
+        (
+            "SOURCE_NOT_ALLOWED".into(),
+            "sources[1]".into(),
+            unassigned.to_string()
+        )
+    );
+    let text = timeseries_definition(&[assigned], &f.server_name, OWN_ADDRESS, "")
+        .replace(&format!("\"{assigned}\""), &format!("{:?}", f.sensor_a));
+    let res = f.sec(&insert(&f.engine_a, "series", &text), &[A]).await;
+    assert_eq!(code(&res), "SOURCE_NOT_ALLOWED");
+    assert!(stored(&f.store(), "series").is_none());
 }
 
 #[tokio::test]

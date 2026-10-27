@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::graphql::{
     customer_access::customer_source_names,
     refusal::{RefusalCode, refusal},
+    sampling::check_policy_sources,
     toml_refusal::parse_refusal,
     unsupervised::{DataStore, check_data_store},
 };
@@ -31,6 +32,8 @@ const MAX_WINDOW_DAYS: i64 = 90;
 const MAX_EVENT_ID_NUM: u32 = 100;
 /// The engine's `min_token_length` when a definition sets none.
 const DEFAULT_MIN_TOKEN_LENGTH: usize = 3;
+/// The Giganto event kind a `timeseries` definition trains on.
+const TIMESERIES_EVENT_KIND: &str = "timeseries";
 
 /// The Giganto event kinds a `multidimension` definition can train on: the
 /// column-structured kinds.
@@ -252,8 +255,8 @@ impl TrainingDocument {
     /// # Errors
     ///
     /// Returns a refusal with `INVALID_DOCUMENT`, `UNKNOWN_FIELD`,
-    /// `TIMESERIES_UNSUPPORTED`, `FIELD_NOT_ALLOWED`,
-    /// `EVENT_KIND_NOT_ALLOWED`, `BOUND_VIOLATED` or `DUPLICATE_ENTRY`.
+    /// `FIELD_NOT_ALLOWED`, `EVENT_KIND_NOT_ALLOWED`, `BOUND_VIOLATED` or
+    /// `DUPLICATE_ENTRY`.
     pub(crate) fn parse_and_validate(text: &str) -> Result<Self> {
         let document = Self::parse(text)?;
         document.validate()?;
@@ -292,12 +295,37 @@ impl TrainingDocument {
 
     fn check_method(&self) -> Result<()> {
         match self.method {
-            Method::Timeseries => Err(refusal(
-                RefusalCode::TimeseriesUnsupported,
-                "the timeseries method is not supported yet",
-                "method",
-                "timeseries",
-            )),
+            Method::Timeseries => {
+                if self.csv.is_some() {
+                    return Err(refusal(
+                        RefusalCode::FieldNotAllowed,
+                        "the timeseries method does not take [csv]",
+                        "csv",
+                        "",
+                    ));
+                }
+                if let Some(field) = self.prefix_only_field() {
+                    return Err(refusal(
+                        RefusalCode::FieldNotAllowed,
+                        format!("the timeseries method does not take {field}"),
+                        field,
+                        "",
+                    ));
+                }
+                if self.event_kind != TIMESERIES_EVENT_KIND {
+                    return Err(refusal(
+                        RefusalCode::EventKindNotAllowed,
+                        format!(
+                            "the timeseries method takes event kind \"{TIMESERIES_EVENT_KIND}\", \
+                             not {:?}",
+                            self.event_kind
+                        ),
+                        "event_kind",
+                        self.event_kind.as_str(),
+                    ));
+                }
+                Ok(())
+            }
             Method::Multidimension => {
                 if self.csv.is_none() {
                     return Err(refusal(
@@ -345,6 +373,20 @@ impl TrainingDocument {
                 Ok(())
             }
         }
+    }
+
+    /// Returns the first field set that only the prefix method reads, if
+    /// any.
+    fn prefix_only_field(&self) -> Option<&'static str> {
+        [
+            ("min_token_length", self.min_token_length.is_some()),
+            ("max_token_length", self.max_token_length.is_some()),
+            ("max_data_len", self.max_data_len.is_some()),
+            ("long_pattern_len", self.long_pattern_len.is_some()),
+            ("suspicious_tokens", self.suspicious_tokens.is_some()),
+        ]
+        .into_iter()
+        .find_map(|(field, set)| set.then_some(field))
     }
 
     fn check_window(&self) -> Result<()> {
@@ -442,7 +484,7 @@ impl TrainingDocument {
     ///
     /// # Errors
     ///
-    /// Returns a refusal with `SOURCE_NOT_ALLOWED`,
+    /// Returns a refusal with `SOURCE_NOT_ALLOWED`, `SOURCES_INCOMPATIBLE`,
     /// `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` or
     /// `INDICATOR_NOT_ALLOWED`, or an error if the store cannot be read.
     pub(crate) fn check_stored(
@@ -458,13 +500,30 @@ impl TrainingDocument {
         self.check_indicator(store, customer_id)
     }
 
-    /// Checks that every source is a source name of the customer.
+    /// Checks the sources for the customer `customer_id`.
+    ///
+    /// A timeseries definition's sources must be assigned sampling policies
+    /// of the customer, of one shape, all kept in the Data Store
+    /// `[data_store]` names, as [`check_policy_sources`] checks them. Any
+    /// other definition's sources must be source names of the customer.
     ///
     /// # Errors
     ///
-    /// Returns a refusal with `SOURCE_NOT_ALLOWED`, or an error if the store
-    /// cannot be read.
+    /// Returns a refusal with `SOURCE_NOT_ALLOWED`, `SOURCES_INCOMPATIBLE` or
+    /// `DATA_STORE_NOT_INSTALLED`, or an error if the store cannot be read.
     pub(crate) fn check_sources(&self, store: &Store, customer_id: u32) -> Result<()> {
+        if self.method == Method::Timeseries {
+            return match check_policy_sources(
+                store,
+                customer_id,
+                &self.sources,
+                None,
+                &self.data_store.server_name,
+            )? {
+                Some(refused) => Err(refused.into_error("")),
+                None => Ok(()),
+            };
+        }
         let names = customer_source_names(store, customer_id)?;
         for (i, source) in self.sources.iter().enumerate() {
             if !names.contains(source) {

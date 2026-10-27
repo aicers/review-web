@@ -8,7 +8,8 @@
 //! confirms a start or a stop.
 
 use async_graphql::{
-    Context, Enum, ErrorExtensions, Object, Result, SimpleObject, StringNumber, types::ID,
+    ComplexObject, Context, Enum, ErrorExtensions, Object, Result, SimpleObject, StringNumber,
+    types::ID,
 };
 use chrono::{DateTime, Utc};
 use review_database as database;
@@ -16,9 +17,11 @@ use tracing::info;
 
 use super::{
     Role, RoleGuard, SharedAgentManager,
-    customer_access::{load_accessible_node, users_customers},
+    customer_access::{load_accessible_node, model_by_name, users_customers},
     gen_agent_lookup_key,
+    model::TIMESERIES_KIND,
     refusal::{RefusalCode, refusal},
+    sampling::{SourceDelivery, source_deliveries},
     training::{TargetInstance, relay_refusal, resolve_instance},
 };
 use crate::info_with_username;
@@ -48,16 +51,36 @@ impl EngineInstanceQuery {
     ) -> Result<EngineInstance> {
         let target = eligible_instance(ctx, &node_id, &agent_key)?;
         let store = super::get_store(ctx)?;
-        let stopped = store.engine_instance_state(&target.instance)?.stopped;
-        let detectors = store
-            .detector_statuses(&target.instance)?
-            .into_iter()
-            .map(Into::into)
-            .collect();
+        let state = store.engine_instance_state(&target.instance)?;
+        let mut detectors = Vec::new();
+        for (detector_id, status) in store.detector_statuses(&target.instance)? {
+            let applied = state
+                .applied
+                .detectors
+                .iter()
+                .find(|detector| detector.id == detector_id);
+            let (sources, timeseries) = match applied {
+                Some(detector) => (
+                    detector.sources.clone(),
+                    model_by_name(&store, &detector.model)?
+                        .is_some_and(|model| model.kind == TIMESERIES_KIND),
+                ),
+                None => (Vec::new(), false),
+            };
+            detectors.push(DetectorStatus::new(
+                detector_id,
+                status,
+                AppliedSources {
+                    customer_id: target.customer_id,
+                    sources,
+                    timeseries,
+                },
+            ));
+        }
         Ok(EngineInstance {
             node_id: ID(target.instance.node_id.to_string()),
             agent_key,
-            stopped,
+            stopped: state.stopped,
             detectors,
         })
     }
@@ -256,6 +279,7 @@ struct EngineInstance {
 
 /// The status a detector of an engine instance last reported.
 #[derive(SimpleObject)]
+#[graphql(complex)]
 struct DetectorStatus {
     /// The detector's id in the engine document.
     detector_id: ID,
@@ -273,10 +297,23 @@ struct DetectorStatus {
     sources: Vec<DetectorSourceStatus>,
     /// When the Central Manager stored the report.
     reported_at: DateTime<Utc>,
+    #[graphql(skip)]
+    applied: AppliedSources,
 }
 
-impl From<(i32, database::DetectorStatus)> for DetectorStatus {
-    fn from((detector_id, status): (i32, database::DetectorStatus)) -> Self {
+/// The sources the applied document's detector reads.
+struct AppliedSources {
+    /// The customer of the instance.
+    customer_id: u32,
+    /// The detector's sources, none if the applied document has no detector
+    /// of its id.
+    sources: Vec<String>,
+    /// Whether the detector's model is a timeseries model.
+    timeseries: bool,
+}
+
+impl DetectorStatus {
+    fn new(detector_id: i32, status: database::DetectorStatus, applied: AppliedSources) -> Self {
         Self {
             detector_id: ID(detector_id.to_string()),
             state: status.state.into(),
@@ -286,7 +323,25 @@ impl From<(i32, database::DetectorStatus)> for DetectorStatus {
             events: StringNumber(status.events),
             sources: status.sources.into_iter().map(Into::into).collect(),
             reported_at: status.reported_at,
+            applied,
         }
+    }
+}
+
+#[ComplexObject]
+impl DetectorStatus {
+    /// The delivery of each source of the applied document's detector, in
+    /// its order; empty if the applied document has no detector of this id.
+    /// Only a timeseries model's sources are sampling policies; any other
+    /// source's `delivery` is null.
+    async fn source_delivery(&self, ctx: &Context<'_>) -> Result<Vec<SourceDelivery>> {
+        source_deliveries(
+            ctx,
+            self.applied.customer_id,
+            &self.applied.sources,
+            self.applied.timeseries,
+        )
+        .await
     }
 }
 

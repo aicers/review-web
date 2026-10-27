@@ -22,11 +22,16 @@ use crate::graphql::engine_config::lock_engine_config;
 use crate::graphql::query_with_constraints;
 use crate::graphql::training::resolve_generator;
 
+mod delivery;
 mod node_apply;
+mod policy_source;
 
+use self::delivery::{SamplingPolicyDelivery, policy_delivery};
+pub(super) use self::delivery::{SourceDelivery, source_deliveries};
 pub(super) use self::node_apply::{
-    check_data_store_changes, generators_of_node, refresh_data_stores,
+    check_data_store_changes, generator_data_store, generators_of_node, refresh_data_stores,
 };
+pub(super) use self::policy_source::{check_policy_sources, policy_id, trained_shape};
 
 const NO_SUCH_POLICY: &str = "no such sampling policy";
 const DEFINITION_FIXED: &str =
@@ -289,6 +294,70 @@ impl From<&ModelInstance> for SamplingPolicyAssignee {
     }
 }
 
+/// What uses a sampling policy.
+#[derive(Clone, Copy, Eq, PartialEq, Enum)]
+pub(super) enum SamplingPolicyUseKind {
+    /// A timeseries training definition.
+    Definition,
+    /// A detector of a timeseries model.
+    Detector,
+    /// A timeseries model trained on the policy.
+    Model,
+}
+
+/// A use of a sampling policy.
+#[derive(SimpleObject)]
+pub(super) struct SamplingPolicyUse {
+    kind: SamplingPolicyUseKind,
+    /// The name of the definition or the model; null for a detector.
+    name: Option<String>,
+    /// The node of a detector's engine instance; null for anything else.
+    node_id: Option<ID>,
+    /// The key of a detector's engine instance agent on the node; null for
+    /// anything else.
+    agent_key: Option<String>,
+    /// The id of a detector; null for anything else.
+    detector_id: Option<ID>,
+    /// Whether the applied document's detector names the policy; null for
+    /// anything but a detector.
+    applied: Option<bool>,
+    /// Whether the pending document's detector names the policy; null for
+    /// anything but a detector.
+    pending: Option<bool>,
+}
+
+impl From<PolicyUse> for SamplingPolicyUse {
+    fn from(input: PolicyUse) -> Self {
+        let named = |kind, name| Self {
+            kind,
+            name: Some(name),
+            node_id: None,
+            agent_key: None,
+            detector_id: None,
+            applied: None,
+            pending: None,
+        };
+        match input {
+            PolicyUse::Definition { name } => named(SamplingPolicyUseKind::Definition, name),
+            PolicyUse::Model { name } => named(SamplingPolicyUseKind::Model, name),
+            PolicyUse::Detector {
+                instance,
+                detector_id,
+                applied,
+                pending,
+            } => Self {
+                kind: SamplingPolicyUseKind::Detector,
+                name: None,
+                node_id: Some(ID(instance.node_id.to_string())),
+                agent_key: Some(instance.agent_key),
+                detector_id: Some(ID(detector_id.to_string())),
+                applied: Some(applied),
+                pending: Some(pending),
+            },
+        }
+    }
+}
+
 pub(super) struct SamplingPolicy {
     inner: review_database::SamplingPolicy,
 }
@@ -350,6 +419,35 @@ impl SamplingPolicy {
     /// it is unassigned.
     async fn assignee(&self) -> Option<SamplingPolicyAssignee> {
         self.inner.assignee.as_ref().map(Into::into)
+    }
+
+    /// The Data Store the policy's series are kept in: the `giganto_name`
+    /// of the generator it was last assigned to. Null if it was never
+    /// assigned, or was last assigned to a generator with no `giganto_name`;
+    /// unassigning the policy keeps it.
+    async fn data_store(&self) -> Option<&str> {
+        self.inner.data_store.as_deref()
+    }
+
+    /// What uses the policy by naming its ID as a source: timeseries
+    /// training definitions, in name order; detectors of timeseries models
+    /// in an applied or pending engine document, by node, agent and detector;
+    /// and timeseries models trained on it, in name order. A policy in use
+    /// cannot be unassigned or removed.
+    async fn used_by(&self, ctx: &Context<'_>) -> Result<Vec<SamplingPolicyUse>> {
+        let store = crate::graphql::get_store(ctx)?;
+        Ok(store
+            .sampling_policy_uses(self.inner.id)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// Whether the policy's series are being produced, as far as the Central
+    /// Manager can tell: the first of `UNASSIGNED`, `WITHHELD`,
+    /// `ASSIGNEE_OFFLINE` and `ASSIGNEE_ONLINE` that holds.
+    async fn delivery(&self, ctx: &Context<'_>) -> Result<SamplingPolicyDelivery> {
+        policy_delivery(ctx, &self.inner).await
     }
 
     async fn creation_time(&self) -> DateTime<Utc> {
@@ -637,29 +735,45 @@ pub fn sampling_policies_for_generator(
 
     let mut policies = Vec::with_capacity(assigned.len());
     for policy in assigned {
-        if customer_id.is_none() || policy.customer_id != customer_id {
+        if let Some(reason) = withholding_reason(&policy, customer_id, &sensors) {
             warn!(
-                "sampling policy {:?} of customer {:?} is assigned to agent {:?} of node {}, \
-                 whose customer is {customer_id:?}; withholding it",
-                policy.name, policy.customer_id, instance.agent_key, instance.node_id,
-            );
-            continue;
-        }
-        if !policy
-            .node
-            .as_ref()
-            .is_some_and(|node| sensors.contains(node))
-        {
-            warn!(
-                "sampling policy {:?} reads {:?}, which is not a sensor name of customer \
-                 {customer_id:?}; withholding it",
-                policy.name, policy.node,
+                "sampling policy {:?} is assigned to agent {:?} of node {}, but {reason}; \
+                 withholding it",
+                policy.name, instance.agent_key, instance.node_id,
             );
             continue;
         }
         policies.push(policy.into());
     }
     Ok(policies)
+}
+
+/// Returns why [`sampling_policies_for_generator`] withholds `policy` from
+/// its generator, whose node's applied profile is of `customer_id`, `None`
+/// if the node has none; `sensors` are the sensor names of that customer.
+/// Returns `None` if the policy is not withheld.
+fn withholding_reason(
+    policy: &review_database::SamplingPolicy,
+    customer_id: Option<u32>,
+    sensors: &HashSet<String>,
+) -> Option<String> {
+    if customer_id.is_none() || policy.customer_id != customer_id {
+        return Some(format!(
+            "the policy's customer is {:?} and the node's {customer_id:?}",
+            policy.customer_id
+        ));
+    }
+    if !policy
+        .node
+        .as_ref()
+        .is_some_and(|node| sensors.contains(node))
+    {
+        return Some(format!(
+            "the policy reads {:?}, which is not a sensor name of customer {customer_id:?}",
+            policy.node
+        ));
+    }
+    None
 }
 
 #[Object]
@@ -913,14 +1027,15 @@ impl SamplingPolicyMutation {
 mod tests {
     use assert_json_diff::assert_json_eq;
     use review_database::{
-        Iterable, ModelInstance, NodeProfile, NodeUpdate, PolicyState, Role, Store,
+        EngineDetectorRef, EngineDocumentRefs, EngineDocumentWrite, Iterable, ModelInstance,
+        NodeProfile, NodeUpdate, PolicyState, Role, Store,
     };
     use serde_json::json;
 
     use super::{DEFINITION_FIXED, FIX_BEFORE_ASSIGNING};
     use crate::graphql::{
         SharedAgentManager, TestSchema,
-        model_test_support::insert_engine_node,
+        model_test_support::{TestModel, insert_engine_node},
         sampling_test_support::{
             Deliveries, DeliveryRecorder, NO_DELIVERIES, data_store_name, insert_generator_node,
             insert_policy, sensor_name, use_policy,
@@ -1778,6 +1893,92 @@ mod tests {
         );
         assert_eq!(listed_names_of_store(&schema), ["policy_a", "policy_b"]);
         assert_eq!(deliveries.calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_policy_reads_its_data_store_and_its_uses() {
+        let schema = TestSchema::new().await;
+        let setup = setup_two_customers(&schema);
+        let engine = {
+            let store = schema.store();
+            store
+                .sampling_policy_map()
+                .assign(setup.policy_a, Some(&setup.generator_a), true)
+                .unwrap();
+            let engine = insert_engine_node(&store, 1);
+            use_policy(&store, "series", 1, &engine, setup.policy_a);
+            TestModel {
+                instance: engine.clone(),
+                kind: "Timeseries",
+                trained_sources: vec![setup.policy_a.to_string()],
+                ..TestModel::new("trained", 1)
+            }
+            .replace(&store);
+            let mut map = store.node_map();
+            let (node, _, _) = map.get_by_id(engine.node_id).unwrap().unwrap();
+            let update = NodeUpdate::from(node);
+            let refs = |id| EngineDocumentRefs {
+                detectors: vec![EngineDetectorRef {
+                    id,
+                    model: "trained".to_string(),
+                    sources: vec![setup.policy_a.to_string()],
+                    indicator: None,
+                }],
+            };
+            let document = EngineDocumentWrite {
+                agent_key: engine.agent_key.clone(),
+                applied: Some(refs(4)),
+                pending: Some(refs(4)),
+            };
+            map.update_with_engine_documents(engine.node_id, &update, &update, &[document])
+                .unwrap();
+            engine
+        };
+
+        let query = |id: u32| {
+            format!(
+                r#"{{
+                    samplingPolicy(id: "{id}") {{
+                        dataStore
+                        usedBy {{ kind name nodeId agentKey detectorId applied pending }}
+                    }}
+                }}"#
+            )
+        };
+        let res = schema.execute_as_system_admin(&query(setup.policy_a)).await;
+        assert_ok(&res);
+        let named = |kind: &str, name: &str| {
+            json!({
+                "kind": kind, "name": name, "nodeId": null, "agentKey": null,
+                "detectorId": null, "applied": null, "pending": null,
+            })
+        };
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "samplingPolicy": {
+                    "dataStore": data_store_name(HOST_A),
+                    "usedBy": [
+                        named("DEFINITION", "series"),
+                        {
+                            "kind": "DETECTOR", "name": null,
+                            "nodeId": engine.node_id.to_string(),
+                            "agentKey": engine.agent_key,
+                            "detectorId": "4", "applied": true, "pending": true,
+                        },
+                        named("MODEL", "trained"),
+                    ],
+                }
+            })
+        );
+
+        // A policy never assigned has no Data Store and no use.
+        let res = schema.execute_as_system_admin(&query(setup.policy_b)).await;
+        assert_ok(&res);
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({ "samplingPolicy": { "dataStore": null, "usedBy": [] } })
+        );
     }
 
     #[tokio::test]

@@ -18,6 +18,26 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   use by a timeseries training definition, detector or model cannot be
   unassigned, and moves only to a generator with the same Data Store.
 - `SamplingPolicy.customerId` and `SamplingPolicy.assignee`.
+- Training definitions take the `timeseries` method, with event kind
+  `timeseries` and neither `[csv]` nor `min_token_length`,
+  `max_token_length`, `max_data_len`, `long_pattern_len` or
+  `suspicious_tokens`. Its sources, and those of a detector of a timeseries
+  model, are the IDs of assigned sampling policies of the customer, all of
+  one kind, column, interval, period and offset (for a detector, those of
+  the policies its model was trained on), and kept in the Data Store the
+  definition or detector reads, which their generators must still write to.
+  Sources that break this are refused with the new code
+  `SOURCES_INCOMPATIBLE`, and a generator with no applied `giganto_name`
+  with `DATA_STORE_NOT_INSTALLED`. A detector of any other model still takes
+  only source names.
+- `SamplingPolicy.dataStore`, the Data Store the policy's series are kept
+  in; `SamplingPolicy.usedBy`, the training definitions, detectors and
+  models that use the policy; and `SamplingPolicy.delivery`, which tells
+  whether the policy is unassigned, withheld from its generator, or assigned
+  to a generator that is offline or online.
+- `TrainingDefinition.sourceDelivery` and `DetectorStatus.sourceDelivery`,
+  the delivery of each sampling policy a timeseries definition or the
+  applied detector reads.
 
 ### Changed
 
@@ -52,6 +72,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Removed
 
+- The `TIMESERIES_UNSUPPORTED` refusal code: the timeseries method is
+  accepted.
 - The `immutable` argument of `insertSamplingPolicy` and field of
   `SamplingPolicyInput`, and `SamplingPolicy.immutable`. A policy's `state`,
   `fixSamplingPolicy` and `assignSamplingPolicy(fix: true)` replace them.

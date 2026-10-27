@@ -3854,6 +3854,13 @@ type DetectorStatus {
 	When the Central Manager stored the report.
 	"""
 	reportedAt: DateTime!
+	"""
+	The delivery of each source of the applied document's detector, in
+	its order; empty if the applied document has no detector of this id.
+	Only a timeseries model's sources are sampling policies; any other
+	source's `delivery` is null.
+	"""
+	sourceDelivery: [SourceDelivery!]!
 }
 
 type DhcpOption {
@@ -6468,13 +6475,13 @@ type Mutation {
 	config is validated as an engine document (RFC 0006 §5.3) for the node's applied customer
 	before this apply, and any refusal refuses the whole apply. Refusals carry
 	`extensions.code`: `INVALID_DOCUMENT`, `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`,
-	`DUPLICATE_ENTRY`, `BOUND_VIOLATED`, `SOURCE_NOT_ALLOWED`, `MODEL_NOT_OF_INSTANCE`,
-	`DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` and `INDICATOR_NOT_ALLOWED`, with
-	`detectorId` for a detector's refusal; and `CUSTOMER_CHANGE_REFUSED` for a customer or
-	hostname change the node guards of RFC 0006 §5.11 refuse, which names another customer's
-	detector or definition only to a System Administrator. A `node` whose Unsupervised Engine
-	config or draft is not the stored one is refused with "the node changed since it was read;
-	reload and retry".
+	`DUPLICATE_ENTRY`, `BOUND_VIOLATED`, `SOURCE_NOT_ALLOWED`, `SOURCES_INCOMPATIBLE`,
+	`MODEL_NOT_OF_INSTANCE`, `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` and
+	`INDICATOR_NOT_ALLOWED`, with `detectorId` for a detector's refusal; and
+	`CUSTOMER_CHANGE_REFUSED` for a customer or hostname change the node guards of RFC 0006
+	§5.11 refuse, which names another customer's detector or definition only to a System
+	Administrator. A `node` whose Unsupervised Engine config or draft is not the stored one is
+	refused with "the node changed since it was read; reload and retry".
 	
 	A change of a Time Series Generator's applied `giganto_name` is refused while a sampling
 	policy assigned to it is in use, naming the policies and their uses; otherwise the
@@ -6499,13 +6506,13 @@ type Mutation {
 	config is validated as an engine document (RFC 0006 §5.3) for the node's applied customer
 	before this apply, and any refusal refuses the whole apply. Refusals carry
 	`extensions.code`: `INVALID_DOCUMENT`, `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`,
-	`DUPLICATE_ENTRY`, `BOUND_VIOLATED`, `SOURCE_NOT_ALLOWED`, `MODEL_NOT_OF_INSTANCE`,
-	`DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` and `INDICATOR_NOT_ALLOWED`, with
-	`detectorId` for a detector's refusal; and `CUSTOMER_CHANGE_REFUSED` for a customer or
-	hostname change the node guards of RFC 0006 §5.11 refuse, which names another customer's
-	detector or definition only to a System Administrator. A `node` whose Unsupervised Engine
-	config or draft is not the stored one is refused with "the node changed since it was read;
-	reload and retry".
+	`DUPLICATE_ENTRY`, `BOUND_VIOLATED`, `SOURCE_NOT_ALLOWED`, `SOURCES_INCOMPATIBLE`,
+	`MODEL_NOT_OF_INSTANCE`, `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` and
+	`INDICATOR_NOT_ALLOWED`, with `detectorId` for a detector's refusal; and
+	`CUSTOMER_CHANGE_REFUSED` for a customer or hostname change the node guards of RFC 0006
+	§5.11 refuse, which names another customer's detector or definition only to a System
+	Administrator. A `node` whose Unsupervised Engine config or draft is not the stored one is
+	refused with "the node changed since it was read; reload and retry".
 	
 	A change of a Time Series Generator's applied `giganto_name` is refused while a sampling
 	policy assigned to it is in use, naming the policies and their uses; otherwise the
@@ -6556,13 +6563,13 @@ type Mutation {
 	An Unsupervised Engine agent's draft that differs from its stored draft is validated as an
 	engine document (RFC 0006 §5.3) for the node's applied customer; one left unchanged is not.
 	Refusals carry `extensions.code`: `INVALID_DOCUMENT`, `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`,
-	`DUPLICATE_ENTRY`, `BOUND_VIOLATED`, `SOURCE_NOT_ALLOWED`, `MODEL_NOT_OF_INSTANCE`,
-	`DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` and `INDICATOR_NOT_ALLOWED`, with
-	`detectorId` for a detector's refusal; and `CUSTOMER_CHANGE_REFUSED` for a customer or
-	hostname change the node guards of RFC 0006 §5.11 refuse, which names another customer's
-	detector or definition only to a System Administrator. An `old` Unsupervised Engine draft
-	that is not the stored one is refused with "the node changed since it was read; reload and
-	retry".
+	`DUPLICATE_ENTRY`, `BOUND_VIOLATED`, `SOURCE_NOT_ALLOWED`, `SOURCES_INCOMPATIBLE`,
+	`MODEL_NOT_OF_INSTANCE`, `DATA_STORE_NOT_INSTALLED`, `ADDRESS_OVERRIDE_FORBIDDEN` and
+	`INDICATOR_NOT_ALLOWED`, with `detectorId` for a detector's refusal; and
+	`CUSTOMER_CHANGE_REFUSED` for a customer or hostname change the node guards of RFC 0006
+	§5.11 refuse, which names another customer's detector or definition only to a System
+	Administrator. An `old` Unsupervised Engine draft that is not the stored one is refused with
+	"the node changed since it was read; reload and retry".
 	"""
 	updateNodeDraft(id: ID!, old: NodeInput!, new: NodeDraftInput!): ID!
 	"""
@@ -6708,10 +6715,16 @@ type Mutation {
 	
 	Refusals carry `extensions.code`: `INVALID_DOCUMENT`,
 	`UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`, `DUPLICATE_ENTRY`,
-	`BOUND_VIOLATED`, `TIMESERIES_UNSUPPORTED`, `EVENT_KIND_NOT_ALLOWED`,
-	`SOURCE_NOT_ALLOWED`, `DATA_STORE_NOT_INSTALLED`,
+	`BOUND_VIOLATED`, `EVENT_KIND_NOT_ALLOWED`, `SOURCE_NOT_ALLOWED`,
+	`SOURCES_INCOMPATIBLE`, `DATA_STORE_NOT_INSTALLED`,
 	`ADDRESS_OVERRIDE_FORBIDDEN` and `INDICATOR_NOT_ALLOWED` for the
 	definition; `NAME_TAKEN`, `NAME_INVALID` and `INSTANCE_NOT_ELIGIBLE`.
+	
+	A `timeseries` definition takes event kind `timeseries`, neither
+	`[csv]` nor a field only the prefix method reads, and as sources the
+	IDs of sampling policies of the customer that are assigned, of one
+	kind, column, interval, period and offset, and kept in the Data Store
+	`[data_store]` names, which their generators still write to.
 	"""
 	insertTrainingDefinition(nodeId: ID!, agentKey: String!, name: String!, definition: String!): String!
 	"""
@@ -6747,8 +6760,9 @@ type Mutation {
 	definition text the run starts with is relayed to the instance.
 	
 	Refusals carry `extensions.code`: `NOT_FOUND`; `INVALID_DOCUMENT` if
-	the stored definition does not parse; `SOURCE_NOT_ALLOWED` and
-	`DATA_STORE_NOT_INSTALLED`; `INSTANCE_NOT_ELIGIBLE`,
+	the stored definition does not parse; `SOURCE_NOT_ALLOWED`,
+	`SOURCES_INCOMPATIBLE` and `DATA_STORE_NOT_INSTALLED`;
+	`INSTANCE_NOT_ELIGIBLE`,
 	`INSTANCE_STOPPED` and `RUN_IN_PROGRESS`; and, once the run is
 	stored, `ENGINE_REFUSED` with the engine's reason in `value` or
 	`INSTANCE_UNREACHABLE`, either leaving the run failed.
@@ -9178,6 +9192,27 @@ type SamplingPolicy {
 	it is unassigned.
 	"""
 	assignee: SamplingPolicyAssignee
+	"""
+	The Data Store the policy's series are kept in: the `giganto_name`
+	of the generator it was last assigned to. Null if it was never
+	assigned, or was last assigned to a generator with no `giganto_name`;
+	unassigning the policy keeps it.
+	"""
+	dataStore: String
+	"""
+	What uses the policy by naming its ID as a source: timeseries
+	training definitions, in name order; detectors of timeseries models
+	in an applied or pending engine document, by node, agent and detector;
+	and timeseries models trained on it, in name order. A policy in use
+	cannot be unassigned or removed.
+	"""
+	usedBy: [SamplingPolicyUse!]!
+	"""
+	Whether the policy's series are being produced, as far as the Central
+	Manager can tell: the first of `UNASSIGNED`, `WITHHELD`,
+	`ASSIGNEE_OFFLINE` and `ASSIGNEE_ONLINE` that holds.
+	"""
+	delivery: SamplingPolicyDelivery!
 	creationTime: DateTime!
 }
 
@@ -9212,6 +9247,35 @@ type SamplingPolicyConnection {
 	The total number of edges.
 	"""
 	totalCount: StringNumber!
+}
+
+"""
+Whether the series of a sampling policy are being produced, as far as the
+Central Manager can tell.
+
+An assigned policy whose generator is online has no window yet for up to
+one period and the generator's grace after it is assigned, which is
+normal and not told apart here.
+"""
+enum SamplingPolicyDelivery {
+	"""
+	The policy has no assignee.
+	"""
+	UNASSIGNED
+	"""
+	The policy is assigned, but its generator is not given it: the
+	generator's node is not of the policy's customer, or the policy's
+	`node` is not a sensor name of that customer.
+	"""
+	WITHHELD
+	"""
+	The policy's generator is not connected.
+	"""
+	ASSIGNEE_OFFLINE
+	"""
+	The policy's generator is connected.
+	"""
+	ASSIGNEE_ONLINE
 }
 
 """
@@ -9254,6 +9318,58 @@ enum SamplingPolicyState {
 	leaves this state.
 	"""
 	FIXED
+}
+
+"""
+A use of a sampling policy.
+"""
+type SamplingPolicyUse {
+	kind: SamplingPolicyUseKind!
+	"""
+	The name of the definition or the model; null for a detector.
+	"""
+	name: String
+	"""
+	The node of a detector's engine instance; null for anything else.
+	"""
+	nodeId: ID
+	"""
+	The key of a detector's engine instance agent on the node; null for
+	anything else.
+	"""
+	agentKey: String
+	"""
+	The id of a detector; null for anything else.
+	"""
+	detectorId: ID
+	"""
+	Whether the applied document's detector names the policy; null for
+	anything but a detector.
+	"""
+	applied: Boolean
+	"""
+	Whether the pending document's detector names the policy; null for
+	anything but a detector.
+	"""
+	pending: Boolean
+}
+
+"""
+What uses a sampling policy.
+"""
+enum SamplingPolicyUseKind {
+	"""
+	A timeseries training definition.
+	"""
+	DEFINITION
+	"""
+	A detector of a timeseries model.
+	"""
+	DETECTOR
+	"""
+	A timeseries model trained on the policy.
+	"""
+	MODEL
 }
 
 input SearchFilterInput {
@@ -9341,6 +9457,21 @@ type SkippedAgent {
 	"""
 	agentKey: String!
 	reason: SkipReason!
+}
+
+"""
+The delivery of one source of a training definition or a detector.
+"""
+type SourceDelivery {
+	"""
+	The source, as the definition or the detector names it.
+	"""
+	source: String!
+	"""
+	The delivery of the sampling policy the source names, or null for a
+	source that is not a sampling policy.
+	"""
+	delivery: SamplingPolicyDelivery
 }
 
 """
@@ -10256,9 +10387,16 @@ type TrainingDefinition {
 	"""
 	eventKind: String!
 	"""
-	The source names the definition reads events of.
+	The source names the definition reads events of; for the timeseries
+	method, the IDs of the sampling policies it reads the series of.
 	"""
 	sources: [String!]!
+	"""
+	The delivery of each source, in the order of `sources`. Only a
+	timeseries definition's sources are sampling policies; any other
+	source's `delivery` is null.
+	"""
+	sourceDelivery: [SourceDelivery!]!
 	"""
 	The model indicator `suspicious_tokens` names, if any.
 	"""

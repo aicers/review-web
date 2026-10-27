@@ -33,6 +33,7 @@ use super::{
     gen_agent_lookup_key,
     model::{ModelDigest, ModelInstance, ModelMethod},
     refusal::{RefusalCode, refusal},
+    sampling::{SourceDelivery, source_deliveries},
     unsupervised::{DataStore, data_store_addrs},
 };
 use crate::backend::EngineRefused;
@@ -151,10 +152,16 @@ impl TrainingMutation {
     ///
     /// Refusals carry `extensions.code`: `INVALID_DOCUMENT`,
     /// `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`, `DUPLICATE_ENTRY`,
-    /// `BOUND_VIOLATED`, `TIMESERIES_UNSUPPORTED`, `EVENT_KIND_NOT_ALLOWED`,
-    /// `SOURCE_NOT_ALLOWED`, `DATA_STORE_NOT_INSTALLED`,
+    /// `BOUND_VIOLATED`, `EVENT_KIND_NOT_ALLOWED`, `SOURCE_NOT_ALLOWED`,
+    /// `SOURCES_INCOMPATIBLE`, `DATA_STORE_NOT_INSTALLED`,
     /// `ADDRESS_OVERRIDE_FORBIDDEN` and `INDICATOR_NOT_ALLOWED` for the
     /// definition; `NAME_TAKEN`, `NAME_INVALID` and `INSTANCE_NOT_ELIGIBLE`.
+    ///
+    /// A `timeseries` definition takes event kind `timeseries`, neither
+    /// `[csv]` nor a field only the prefix method reads, and as sources the
+    /// IDs of sampling policies of the customer that are assigned, of one
+    /// kind, column, interval, period and offset, and kept in the Data Store
+    /// `[data_store]` names, which their generators still write to.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn insert_training_definition(
@@ -267,8 +274,9 @@ impl TrainingMutation {
     /// definition text the run starts with is relayed to the instance.
     ///
     /// Refusals carry `extensions.code`: `NOT_FOUND`; `INVALID_DOCUMENT` if
-    /// the stored definition does not parse; `SOURCE_NOT_ALLOWED` and
-    /// `DATA_STORE_NOT_INSTALLED`; `INSTANCE_NOT_ELIGIBLE`,
+    /// the stored definition does not parse; `SOURCE_NOT_ALLOWED`,
+    /// `SOURCES_INCOMPATIBLE` and `DATA_STORE_NOT_INSTALLED`;
+    /// `INSTANCE_NOT_ELIGIBLE`,
     /// `INSTANCE_STOPPED` and `RUN_IN_PROGRESS`; and, once the run is
     /// stored, `ENGINE_REFUSED` with the engine's reason in `value` or
     /// `INSTANCE_UNREACHABLE`, either leaving the run failed.
@@ -1162,9 +1170,23 @@ impl TrainingDefinition {
         &self.inner.event_kind
     }
 
-    /// The source names the definition reads events of.
+    /// The source names the definition reads events of; for the timeseries
+    /// method, the IDs of the sampling policies it reads the series of.
     async fn sources(&self) -> &[String] {
         &self.inner.sources
+    }
+
+    /// The delivery of each source, in the order of `sources`. Only a
+    /// timeseries definition's sources are sampling policies; any other
+    /// source's `delivery` is null.
+    async fn source_delivery(&self, ctx: &Context<'_>) -> Result<Vec<SourceDelivery>> {
+        source_deliveries(
+            ctx,
+            self.inner.customer_id,
+            &self.inner.sources,
+            self.inner.method == database::ModelMethod::Timeseries,
+        )
+        .await
     }
 
     /// The model indicator `suspicious_tokens` names, if any.
