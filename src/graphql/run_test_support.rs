@@ -17,9 +17,7 @@ use review_database::{
 };
 use tokio::sync::Notify;
 
-use super::{
-    AgentManager, SamplingPolicy, TestSchema, customer::NetworksTargetAgentLookupKeysPair,
-};
+use super::{AgentManager, TestSchema, customer::NetworksTargetAgentLookupKeysPair};
 use crate::backend::{DataStoreReadEndpoint, EngineRefused};
 
 /// The port of `publish_srv_addr` in every test Data Store's draft.
@@ -199,12 +197,7 @@ impl AgentManager for Relay {
         Ok(HashMap::new())
     }
 
-    async fn broadcast_crusher_sampling_policy(
-        &self,
-        _sampling_policies: &[SamplingPolicy],
-    ) -> Result<(), anyhow::Error> {
-        anyhow::bail!("not expected to be called")
-    }
+    async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
 
     async fn capabilities(
         &self,

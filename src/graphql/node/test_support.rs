@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use review_protocol::types::ResourceUsage;
 
-use crate::graphql::{AgentManager, SamplingPolicy, customer::NetworksTargetAgentLookupKeysPair};
+use crate::graphql::{AgentManager, customer::NetworksTargetAgentLookupKeysPair};
 
 pub(super) struct MockAgentManager {
     pub(super) online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,
@@ -46,12 +46,7 @@ impl AgentManager for MockAgentManager {
         Ok(self.online_apps_by_host_id.clone())
     }
 
-    async fn broadcast_crusher_sampling_policy(
-        &self,
-        _sampling_policies: &[SamplingPolicy],
-    ) -> Result<(), anyhow::Error> {
-        unimplemented!()
-    }
+    async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
 
     async fn capabilities(
         &self,

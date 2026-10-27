@@ -9,6 +9,7 @@ use tracing::{error, info, warn};
 use super::{
     super::{
         Role, RoleGuard, SharedAgentManager, customer_access, engine_config::lock_engine_config,
+        sampling,
     },
     Node, NodeControlMutation, SEMI_SUPERVISED_AGENT,
     engine_write::{self, Slot},
@@ -151,6 +152,12 @@ impl NodeControlMutation {
     /// detector or definition only to a System Administrator. A `node` whose Unsupervised Engine
     /// config or draft is not the stored one is refused with "the node changed since it was read;
     /// reload and retry".
+    ///
+    /// A change of a Time Series Generator's applied `giganto_name` is refused while a sampling
+    /// policy assigned to it is in use, naming the policies and their uses; otherwise the
+    /// generator's policies record the new Data Store. When the apply changes the node's applied
+    /// customer or hostname, every Time Series Generator holding a sampling policy whose sensor or
+    /// assignee is on the node is told that its policies changed.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_node(&self, ctx: &Context<'_>, id: ID, node: NodeInput) -> Result<ID> {
@@ -199,7 +206,8 @@ impl NodeControlMutation {
             );
 
             send_customer_change_if_needed(ctx, i, &node).await;
-            Some(updated)
+            sampling::notify_generators(ctx, updated.generators).await;
+            Some(updated.node)
         } else {
             None
         };
@@ -267,6 +275,12 @@ impl NodeControlMutation {
     /// detector or definition only to a System Administrator. A `node` whose Unsupervised Engine
     /// config or draft is not the stored one is refused with "the node changed since it was read;
     /// reload and retry".
+    ///
+    /// A change of a Time Series Generator's applied `giganto_name` is refused while a sampling
+    /// policy assigned to it is in use, naming the policies and their uses; otherwise the
+    /// generator's policies record the new Data Store. When the apply changes the node's applied
+    /// customer or hostname, every Time Series Generator holding a sampling policy whose sensor or
+    /// assignee is on the node is told that its policies changed.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_node_draft(&self, ctx: &Context<'_>, id: ID, node: NodeInput) -> Result<Node> {
@@ -315,7 +329,8 @@ impl NodeControlMutation {
             );
 
             send_customer_change_if_needed(ctx, i, &node).await;
-            Ok(updated.into())
+            sampling::notify_generators(ctx, updated.generators).await;
+            Ok(updated.node.into())
         } else {
             Ok(current_node.into())
         }
@@ -548,7 +563,7 @@ async fn update_db(
     i: u32,
     node: &NodeInput,
     disable_agent_keys: &[&str],
-) -> Result<review_database::Node> {
+) -> Result<AppliedNode> {
     let mut update = node.clone();
     update
         .name
@@ -610,13 +625,54 @@ async fn update_db(
         new.profile.as_ref(),
         system_admin,
     )?;
-    map.update_with_engine_documents(
-        i,
-        &old,
-        &new,
-        &engine_write::document_writes(&documents, Slot::Config),
-    )
-    .map_err(|e| engine_write::store_refusal(e, &old, &documents))
+    let data_store_changes = sampling::check_data_store_changes(&store, i, &stored, &new.agents)?;
+    let updated = map
+        .update_with_engine_documents(
+            i,
+            &old,
+            &new,
+            &engine_write::document_writes(&documents, Slot::Config),
+        )
+        .map_err(|e| engine_write::store_refusal(e, &old, &documents))?;
+
+    // Still under the lock: an assignment checks the policy's uses.
+    sampling::refresh_data_stores(&store, &data_store_changes);
+    let generators = if applied_customer_and_hostname(&stored)
+        == applied_customer_and_hostname(&updated)
+    {
+        Vec::new()
+    } else {
+        let mut sensor_names = customer_access::event_sensor_names(&stored);
+        sensor_names.extend(customer_access::event_sensor_names(&updated));
+        sampling::generators_of_node(&store, i, &sensor_names).unwrap_or_else(|e| {
+            error_with_username!(
+                ctx,
+                "Failed to find the Time Series Generators of node {i} to tell of its customer or hostname change: {}",
+                e.message
+            );
+            Vec::new()
+        })
+    };
+    Ok(AppliedNode {
+        node: updated,
+        generators,
+    })
+}
+
+/// A node an apply stored.
+struct AppliedNode {
+    node: review_database::Node,
+    /// The Time Series Generators whose sampling policies the apply changed: those that hold a
+    /// policy whose sensor or assignee is on the node, if the apply changed its applied customer
+    /// or hostname.
+    generators: Vec<review_database::ModelInstance>,
+}
+
+/// Returns the customer and the hostname of `node`'s applied profile.
+fn applied_customer_and_hostname(node: &review_database::Node) -> Option<(u32, &str)> {
+    node.profile
+        .as_ref()
+        .map(|profile| (profile.customer_id, profile.hostname.as_str()))
 }
 
 async fn send_customer_change_if_needed(ctx: &Context<'_>, i: u32, node: &NodeInput) {
@@ -746,7 +802,7 @@ mod tests {
         node_input, put_node, stored_node,
     };
     use crate::graphql::{
-        AgentManager, Role, SamplingPolicy, SharedAgentManager, TestSchema,
+        AgentManager, Role, SharedAgentManager, TestSchema,
         customer::NetworksTargetAgentLookupKeysPair,
         gen_agent_lookup_key,
         push_test_support::{
@@ -2897,12 +2953,7 @@ mod tests {
             Ok(self.online_apps_by_host_id.clone())
         }
 
-        async fn broadcast_crusher_sampling_policy(
-            &self,
-            _sampling_policies: &[SamplingPolicy],
-        ) -> Result<(), anyhow::Error> {
-            Ok(())
-        }
+        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
 
         async fn capabilities(
             &self,
@@ -3000,12 +3051,7 @@ mod tests {
             Ok(self.online_apps_by_host_id.clone())
         }
 
-        async fn broadcast_crusher_sampling_policy(
-            &self,
-            _sampling_policies: &[SamplingPolicy],
-        ) -> Result<(), anyhow::Error> {
-            anyhow::bail!("Failed to broadcast crusher sampling policy")
-        }
+        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
 
         async fn capabilities(
             &self,
@@ -5257,12 +5303,7 @@ mod tests {
             Ok(HashMap::new())
         }
 
-        async fn broadcast_crusher_sampling_policy(
-            &self,
-            _sampling_policies: &[SamplingPolicy],
-        ) -> Result<(), anyhow::Error> {
-            anyhow::bail!("not expected to be called")
-        }
+        async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
 
         async fn capabilities(
             &self,

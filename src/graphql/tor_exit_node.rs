@@ -135,8 +135,7 @@ mod tests {
     use async_trait::async_trait;
 
     use crate::graphql::{
-        AgentManager, SamplingPolicy, SharedAgentManager, TestSchema,
-        customer::NetworksTargetAgentLookupKeysPair,
+        AgentManager, SharedAgentManager, TestSchema, customer::NetworksTargetAgentLookupKeysPair,
     };
 
     const TOR_EXIT_NODE_LIST_QUERY: &str =
@@ -190,6 +189,8 @@ mod tests {
                 }
                 Ok(())
             }
+
+            async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
         }
         unreachable {
             fn request_customer_data_deletion(&self, _targets: &[crate::customer_data_deletion::CustomerDataDeletionTarget]) -> ();
@@ -197,7 +198,6 @@ mod tests {
             fn send_agent_specific_allow_networks(&self, _networks: &[NetworksTargetAgentLookupKeysPair]) -> Vec<String>;
             fn send_agent_specific_block_networks(&self, _networks: &[NetworksTargetAgentLookupKeysPair]) -> Vec<String>;
             fn online_apps_by_host_id(&self) -> HashMap<String, Vec<(String, String)>>;
-            fn broadcast_crusher_sampling_policy(&self, _sampling_policies: &[SamplingPolicy]) -> ();
             fn capabilities(&self, _hostname: &str) -> BTreeSet<String>;
             fn get_resource_usage(&self, _hostname: &str) -> review_protocol::types::ResourceUsage;
             fn halt(&self, _hostname: &str) -> ();

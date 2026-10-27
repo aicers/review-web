@@ -112,6 +112,29 @@ fn schema_has_no_data_source_api() {
     );
 }
 
+/// A sampling policy has a state instead of `immutable`, and no input takes
+/// `immutable`.
+#[test]
+fn sampling_policies_have_no_immutable_api() {
+    let sdl = rendered_sdl();
+    for header in ["type SamplingPolicy {", "input SamplingPolicyInput {"] {
+        assert!(
+            !definition(&sdl, header).contains("immutable"),
+            "{header}: {REGENERATE}"
+        );
+    }
+    let insert = sdl
+        .lines()
+        .find(|line| line.trim_start().starts_with("insertSamplingPolicy("))
+        .expect("the schema defines insertSamplingPolicy");
+    assert!(!insert.contains("immutable"), "{REGENERATE}");
+    assert!(insert.contains("customerId: ID!"), "{REGENERATE}");
+    assert!(
+        definition(&sdl, "type SamplingPolicy {").contains("state: SamplingPolicyState!"),
+        "{REGENERATE}"
+    );
+}
+
 /// Category counts preserve the nullable uncategorized bucket without making
 /// the count at the corresponding index nullable.
 #[test]

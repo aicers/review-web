@@ -86,6 +86,7 @@ impl<'a> TestModel<'a> {
         let trained = TrainedWith {
             run_id: 1,
             definition: String::new(),
+            sources: Vec::new(),
         };
         store
             .replace_model(model, owner, self.trained_at, trained)

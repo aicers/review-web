@@ -6475,6 +6475,12 @@ type Mutation {
 	detector or definition only to a System Administrator. A `node` whose Unsupervised Engine
 	config or draft is not the stored one is refused with "the node changed since it was read;
 	reload and retry".
+	
+	A change of a Time Series Generator's applied `giganto_name` is refused while a sampling
+	policy assigned to it is in use, naming the policies and their uses; otherwise the
+	generator's policies record the new Data Store. When the apply changes the node's applied
+	customer or hostname, every Time Series Generator holding a sampling policy whose sensor or
+	assignee is on the node is told that its policies changed.
 	"""
 	applyNode(id: ID!, node: NodeInput!): ID!
 	"""
@@ -6500,6 +6506,12 @@ type Mutation {
 	detector or definition only to a System Administrator. A `node` whose Unsupervised Engine
 	config or draft is not the stored one is refused with "the node changed since it was read;
 	reload and retry".
+	
+	A change of a Time Series Generator's applied `giganto_name` is refused while a sampling
+	policy assigned to it is in use, naming the policies and their uses; otherwise the
+	generator's policies record the new Data Store. When the apply changes the node's applied
+	customer or hostname, every Time Series Generator holding a sampling policy whose sensor or
+	assignee is on the node is told that its policies changed.
 	"""
 	applyNodeDraft(id: ID!, node: NodeInput!): Node!
 	"""
@@ -6570,27 +6582,62 @@ type Mutation {
 	"""
 	updateQualifier(id: ID!, description: String!): ID!
 	"""
-	Inserts a new sampling policy, returning its ID.
+	Inserts a new sampling policy of customer `customerId`, a draft,
+	returning its ID.
 	
-	`node` must be a sensor name, such as `piglet.sensor.example.com`, and
-	for a caller scoped to customers, one of a customer in scope.
+	A caller scoped to customers must belong to `customerId`. `node` must
+	be a sensor name of one of the customer's nodes, such as
+	`piglet.sensor.example.com`. A draft cannot be assigned; fix it with
+	`fixSamplingPolicy`, or with `assignSamplingPolicy(fix: true)`.
 	"""
-	insertSamplingPolicy(name: String!, kind: Kind!, interval: Interval!, period: Period!, offset: Int!, srcIp: IpAddress, dstIp: IpAddress, node: String, column: Int, immutable: Boolean!): ID!
+	insertSamplingPolicy(customerId: ID!, name: String!, kind: Kind!, interval: Interval!, period: Period!, offset: Int!, srcIp: IpAddress, dstIp: IpAddress, node: String, column: Int): ID!
 	"""
-	Removes sampling policies, returning the IDs that no longer exist.
+	Removes sampling policies, returning the names of the policies
+	removed.
 	
-	Every ID is checked before any policy is removed, so a refused ID
-	leaves every policy in place. A repeated ID is removed once.
+	Every ID is checked before any policy is removed: it must exist, be
+	in the caller's scope and not be in use. A refused ID leaves every
+	policy in place, and the refusal of a policy in use lists its uses. A
+	repeated ID is removed once.
+	
+	Each policy is then removed in its own transaction: review-database
+	removes one ID per transaction, and review-web cannot open one that
+	spans them. So a storage failure after the first removal returns an
+	error with the policies before it already removed, and a retry with
+	the IDs that remain removes the rest.
 	"""
 	removeSamplingPolicies(ids: [ID!]!): [String!]!
 	"""
-	Updates an existing sampling policy.
+	Updates an existing sampling policy, returning its ID.
 	
-	The new `node` must be a sensor name. A caller scoped to customers may
-	update only a policy of a customer in scope, and only to a sensor name
-	of a customer in scope.
+	A draft's definition and name can change, and its new `node` must be a
+	sensor name of one of its customer's nodes. Only the name of a fixed
+	policy can change. A caller scoped to customers may update only a
+	policy of a customer in scope.
 	"""
 	updateSamplingPolicy(id: ID!, old: SamplingPolicyInput!, new: SamplingPolicyInput!): ID!
+	"""
+	Fixes a draft sampling policy, returning its ID.
+	
+	A fixed policy's definition cannot change, and nothing makes it a
+	draft again. Fixing a fixed policy succeeds and changes nothing.
+	"""
+	fixSamplingPolicy(id: ID!): ID!
+	"""
+	Assigns a sampling policy to the Time Series Generator agent
+	`agentKey` of node `nodeId`, or unassigns it if both are null,
+	returning its ID.
+	
+	The caller must belong to the policy's customer and the generator's,
+	and the generator's node must be the policy's customer's, its `node`
+	a sensor name of that customer. A draft is refused unless `fix` is
+	true, which fixes it and assigns it in one transaction; a refused
+	assignment leaves it a draft, and `fix` on a fixed policy changes
+	nothing. `fix` cannot be given to unassign. While the policy is in use
+	it cannot be unassigned, and can be assigned only to a generator with
+	its Data Store; the refusal lists its uses.
+	"""
+	assignSamplingPolicy(id: ID!, nodeId: ID, agentKey: String, fix: Boolean): ID!
 	"""
 	Adds a new status.
 	"""
@@ -9117,8 +9164,35 @@ type SamplingPolicy {
 	dstIp: String
 	node: String
 	column: StringNumber
-	immutable: Boolean!
+	"""
+	Whether the policy is a draft, whose definition can change, or fixed.
+	"""
+	state: SamplingPolicyState!
+	"""
+	The customer the policy belongs to, or null for a policy stored
+	before customers were recorded whose customer could not be derived.
+	"""
+	customerId: ID
+	"""
+	The Time Series Generator agent the policy is assigned to, or null if
+	it is unassigned.
+	"""
+	assignee: SamplingPolicyAssignee
 	creationTime: DateTime!
+}
+
+"""
+The Time Series Generator agent a sampling policy is assigned to.
+"""
+type SamplingPolicyAssignee {
+	"""
+	The node of the generator.
+	"""
+	nodeId: ID!
+	"""
+	The key of the generator's agent on the node.
+	"""
+	agentKey: String!
 }
 
 type SamplingPolicyConnection {
@@ -9164,7 +9238,22 @@ input SamplingPolicyInput {
 	dstIp: IpAddress
 	node: String
 	column: Int
-	immutable: Boolean!
+}
+
+"""
+The state of a sampling policy.
+"""
+enum SamplingPolicyState {
+	"""
+	The definition and the name can change, and the policy cannot be
+	assigned.
+	"""
+	DRAFT
+	"""
+	The definition is frozen and only the name can change. A policy never
+	leaves this state.
+	"""
+	FIXED
 }
 
 input SearchFilterInput {

@@ -40,6 +40,8 @@ mod refusal;
 #[cfg(test)]
 mod run_test_support;
 mod sampling;
+#[cfg(test)]
+mod sampling_test_support;
 mod slicing;
 mod statistics;
 mod status;
@@ -97,7 +99,7 @@ pub use self::node::{
 };
 pub use self::sampling::{
     Interval as SamplingInterval, Kind as SamplingKind, Period as SamplingPeriod,
-    Policy as SamplingPolicy, get_sampling_policies,
+    Policy as SamplingPolicy, sampling_policies_for_generator,
 };
 pub(crate) use crate::backend::SharedAgentManager;
 use crate::backend::{AgentManager, CertManager, HostOnboarder, PackageDeployer};
@@ -903,12 +905,7 @@ impl AgentManager for MockAgentManager {
         Ok(std::collections::HashMap::new())
     }
 
-    async fn broadcast_crusher_sampling_policy(
-        &self,
-        _sampling_policies: &[SamplingPolicy],
-    ) -> Result<(), anyhow::Error> {
-        unimplemented!()
-    }
+    async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
 
     // The mock host advertises the rollback supervisor, so the deployment
     // mutations' default `ROLLBACK` is not refused by the capability gate. A

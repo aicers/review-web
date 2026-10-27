@@ -15,8 +15,7 @@ use review_database::{
 use tokio::sync::Notify;
 
 use super::{
-    AgentManager, SamplingPolicy, SharedAgentManager, TestSchema,
-    customer::NetworksTargetAgentLookupKeysPair,
+    AgentManager, SharedAgentManager, TestSchema, customer::NetworksTargetAgentLookupKeysPair,
 };
 
 /// One push: the target lookup keys and the group of each pair it sent.
@@ -194,12 +193,7 @@ impl AgentManager for RecordingAgentManager {
         Ok(HashMap::new())
     }
 
-    async fn broadcast_crusher_sampling_policy(
-        &self,
-        _sampling_policies: &[SamplingPolicy],
-    ) -> Result<(), anyhow::Error> {
-        anyhow::bail!("not expected to be called")
-    }
+    async fn sampling_policies_changed(&self, _generators: &[review_database::ModelInstance]) {}
 
     async fn capabilities(
         &self,

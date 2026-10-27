@@ -16,7 +16,9 @@ use ipnet::IpNet;
 // `review_database::Lifecycle` and `review_protocol::types::node::Lifecycle` are
 // two distinct types with the same name, so nothing here glob-imports either
 // module and neither `Lifecycle` is brought into scope.
-use review_database::{BuildSelector, ListenerBinding, ListenerTransport, PortOwner, RunId};
+use review_database::{
+    BuildSelector, ListenerBinding, ListenerTransport, ModelInstance, PortOwner, RunId,
+};
 pub use review_protocol::types::ResourceUsage;
 use review_protocol::types::node::{BootstrapMaterial, DeliveryMode, FailurePolicy, PackageState};
 
@@ -80,10 +82,17 @@ pub trait AgentManager: Send + Sync {
         &self,
     ) -> Result<HashMap<String, Vec<(String, String)>>, anyhow::Error>; // (hostname, (agent_key, app_name))
 
-    async fn broadcast_crusher_sampling_policy(
-        &self,
-        _sampling_policies: &[SamplingPolicy],
-    ) -> Result<(), anyhow::Error>;
+    /// Tells the given Time Series Generators that the sampling policies they
+    /// pull have changed.
+    ///
+    /// It is called after a change is stored, with every generator whose
+    /// list [`sampling_policies_for_generator`] returns may differ. An
+    /// implementor delivers the new lists and logs a failure to reach a
+    /// generator rather than returning it: the change is already stored, and
+    /// a generator pulls its list again when it reconnects.
+    ///
+    /// [`sampling_policies_for_generator`]: crate::graphql::sampling_policies_for_generator
+    async fn sampling_policies_changed(&self, generators: &[ModelInstance]);
 
     /// Returns the capability tags the given host advertises.
     ///
