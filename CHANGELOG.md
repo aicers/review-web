@@ -4,6 +4,34 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Sampling policies are scoped to customers. A sampling policy belongs to the
+  customer of the node whose sensor name, or for policies stored with a node
+  hostname, whose hostname its `node` is. A caller scoped to customers lists
+  and counts only their policies in `samplingPolicyList`, and is refused
+  reading, updating or removing any other policy, including one whose
+  customer cannot be resolved. `insertSamplingPolicy` and
+  `updateSamplingPolicy` require `node` to be a sensor name, such as
+  `piglet.sensor.example.com`, for every caller, and one in the caller's
+  scope for a scoped caller. `removeSamplingPolicies` checks every ID before
+  removing any, so a refused ID leaves every policy in place, and removes a
+  repeated ID once instead of failing after the first removal.
+- `get_sampling_policies` returns the policies a Time Series Generator can
+  produce data for: immutable policies whose `node` is a sensor name of the
+  requested customer. It used to match `node` against node hostnames, which
+  the Data Store never keys events by, so it dropped every such policy; it
+  also returned mutable policies, and policies without `node` to every
+  customer.
+
+### Known issues
+
+- Inserting an immutable sampling policy still pushes every immutable policy
+  to every connected Time Series Generator of every customer, until policies
+  are assigned to generators.
+
 ## [0.48.1] - 2026-10-25
 
 ### Fixed
@@ -2525,6 +2553,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.48.1...main
 [0.48.1]: https://github.com/aicers/review-web/compare/0.48.0...0.48.1
 [0.48.0]: https://github.com/aicers/review-web/compare/0.47.0...0.48.0
 [0.47.0]: https://github.com/aicers/review-web/compare/0.46.0...0.47.0

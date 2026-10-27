@@ -157,6 +157,7 @@ where
     .data(customer_data_deletion_manager)
     .data(Arc::new(network_list::NetworkListsLock::default()))
     .data(Arc::new(engine_config::EngineConfigLock::default()))
+    .data(Arc::new(sampling::SamplingPoliciesLock::default()))
     .extension(install_state::LatestBuildMemoExtension)
     .extension(MaintenanceExtension::new(maintenance_gate));
 
@@ -1414,6 +1415,7 @@ struct TestSchema {
     next_customer_id: AtomicU32,   // handed out by `setup_customer_and_node`
     network_lists_lock: Arc<network_list::NetworkListsLock>,
     engine_config_lock: Arc<engine_config::EngineConfigLock>,
+    sampling_policies_lock: Arc<sampling::SamplingPoliciesLock>,
 }
 
 #[cfg(test)]
@@ -1482,6 +1484,7 @@ impl TestSchema {
         let store = Arc::new(RwLock::new(store));
         let network_lists_lock = Arc::new(network_list::NetworkListsLock::default());
         let engine_config_lock = Arc::new(engine_config::EngineConfigLock::default());
+        let sampling_policies_lock = Arc::new(sampling::SamplingPoliciesLock::default());
 
         let builder = Schema::build(
             Query::default(),
@@ -1495,6 +1498,7 @@ impl TestSchema {
         .data(username.to_string())
         .data(network_lists_lock.clone())
         .data(engine_config_lock.clone())
+        .data(sampling_policies_lock.clone())
         .data(Arc::new(CustomerDataDeletionTaskManager::default()))
         .extension(install_state::LatestBuildMemoExtension)
         .extension(MaintenanceExtension::new(MaintenanceGate::new()));
@@ -1510,6 +1514,7 @@ impl TestSchema {
             next_customer_id: AtomicU32::new(0),
             network_lists_lock,
             engine_config_lock,
+            sampling_policies_lock,
         }
     }
 
@@ -1533,6 +1538,18 @@ impl TestSchema {
     /// lock.
     fn engine_config_lock_users(&self) -> usize {
         self.engine_config_lock.users()
+    }
+
+    /// Takes the sampling policies lock, as a removal or update holding it
+    /// would.
+    async fn hold_sampling_policies_lock(&self) -> sampling::SamplingPoliciesGuard<'_> {
+        self.sampling_policies_lock.hold().await
+    }
+
+    /// Returns how many operations hold or wait for the sampling policies
+    /// lock.
+    fn sampling_policies_lock_users(&self) -> usize {
+        self.sampling_policies_lock.users()
     }
 
     async fn execute_as_system_admin(&self, query: &str) -> async_graphql::Response {
