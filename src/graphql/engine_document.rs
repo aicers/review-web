@@ -494,6 +494,19 @@ pub(crate) fn duplicate_id(i: usize, detector: &Detector) -> async_graphql::Erro
     )
 }
 
+/// Returns the `DUPLICATE_ENTRY` refusal of detector `i` taking an id that a
+/// removed detector used, carrying the store's `message`.
+pub(crate) fn retired_id(i: usize, detector: &Detector, message: String) -> async_graphql::Error {
+    detector_refusal(
+        RefusalCode::DuplicateEntry,
+        message,
+        i,
+        "id",
+        detector.id.to_string(),
+        detector,
+    )
+}
+
 /// Returns the `DUPLICATE_ENTRY` refusal of detector `i` naming a model
 /// another detector names.
 pub(crate) fn duplicate_model(i: usize, detector: &Detector) -> async_graphql::Error {

@@ -32,7 +32,8 @@ pub(super) struct EngineInstanceQuery;
 #[Object]
 impl EngineInstanceQuery {
     /// The engine instance `agentKey` of node `nodeId`: whether it is
-    /// stopped, and the last status each of its detectors reported.
+    /// stopped, the highest detector id its documents have named, and the
+    /// last status each of its detectors reported.
     ///
     /// Scope is the node's customer: a node of none of the caller's customers
     /// is refused with `Forbidden`, and an unknown node with `no such node`.
@@ -81,6 +82,7 @@ impl EngineInstanceQuery {
             node_id: ID(target.instance.node_id.to_string()),
             agent_key,
             stopped: state.stopped,
+            last_detector_id: state.last_detector_id,
             detectors,
         })
     }
@@ -263,7 +265,8 @@ fn unit_refusal(error: &anyhow::Error, agent_key: &str) -> async_graphql::Error 
     )
 }
 
-/// An Unsupervised Engine instance's stopped state and detector statuses.
+/// An Unsupervised Engine instance's stopped state, detector-id mark and
+/// detector statuses.
 #[derive(SimpleObject)]
 struct EngineInstance {
     /// The node of the instance.
@@ -272,6 +275,11 @@ struct EngineInstance {
     agent_key: String,
     /// Whether the instance is stopped.
     stopped: bool,
+    /// The highest detector id any applied or draft document of the instance
+    /// has named, or 0 if none has. A new detector takes an id above it: an
+    /// id at most this that neither stored document names belonged to a
+    /// removed detector and is refused.
+    last_detector_id: i32,
     /// The last status of each detector that has reported one, ordered by
     /// detector id.
     detectors: Vec<DetectorStatus>,

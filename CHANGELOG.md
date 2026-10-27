@@ -6,8 +6,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- `EngineInstance.lastDetectorId`: the highest detector id any applied or
+  draft document of the instance has named, or 0.
+
 ### Changed
 
+- `updateNodeDraft`, `applyNode` and `applyNodeDraft` refuse a detector id
+  that a removed detector of the instance used, with `DUPLICATE_ENTRY` at that
+  detector's `id`.
 - Deleting a customer's data also deletes its Unsupervised Engine models,
   with their clusters, outliers, rounds, statistics, indicators and
   classifiers, and its training definitions and their runs. While another
