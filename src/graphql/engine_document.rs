@@ -313,8 +313,9 @@ impl EngineDocument {
     ///
     /// A detector of a timeseries model reads sampling policies of the
     /// customer, as [`check_policy_sources`] checks them, each of the shape
-    /// of the policies the model was trained on. Any other detector reads
-    /// source names of the customer.
+    /// of the policies the model was trained on; while none of those is
+    /// stored, the shape is unknown and any source is refused. Any other
+    /// detector reads source names of the customer.
     ///
     /// # Errors
     ///
@@ -359,7 +360,7 @@ impl EngineDocument {
             }
 
             if model.kind == TIMESERIES_KIND {
-                let reference =
+                let shape =
                     trained_shape(store, &model.name, &model.trained_sources).map_err(|e| {
                         format!(
                             "cannot read the sources model {:?} was trained on: {e:#}",
@@ -370,7 +371,7 @@ impl EngineDocument {
                     store,
                     customer_id,
                     &detector.sources,
-                    reference.as_ref(),
+                    shape,
                     &detector.data_store.server_name,
                 )
                 .map_err(|e| format!("cannot read sampling policies: {e:#}"))?;

@@ -3,7 +3,7 @@
 
 use review_database::{
     EngineDetectorRef, EngineDocumentRefs, EngineDocumentWrite, ModelInstance, NodeUpdate,
-    RunState, Store, TrainingDefinitionUpdate, types::ModelScores,
+    RunState, SamplingInterval, Store, TrainingDefinitionUpdate, types::ModelScores,
 };
 use serde_json::{Value, json};
 
@@ -249,8 +249,21 @@ fn lookup_key(instance: &ModelInstance, hostname: &str) -> String {
 }
 
 /// Accepts the model upload of the run `run_id` that `instance` performs,
-/// creating or replacing the model `name`.
+/// creating or replacing the multidimension model `name`.
 fn complete(store: &Store, run_id: RunId, instance: &ModelInstance, name: &str) {
+    complete_as(store, run_id, instance, name, ("Multifield", "http"));
+}
+
+/// Accepts the model upload of the run `run_id` that `instance` performs,
+/// creating or replacing the model `name` of the record kind and event kind
+/// `kinds`.
+fn complete_as(
+    store: &Store,
+    run_id: RunId,
+    instance: &ModelInstance,
+    name: &str,
+    (kind, event_kind): (&str, &str),
+) {
     store
         .complete_run(
             run_id,
@@ -259,10 +272,10 @@ fn complete(store: &Store, run_id: RunId, instance: &ModelInstance, name: &str) 
                 id: 0,
                 name: name.to_string(),
                 version: 1,
-                kind: "Multifield".to_string(),
+                kind: kind.to_string(),
                 serialized_classifier: vec![1, 2, 3],
                 max_event_id_num: 25,
-                event_kind: "http".to_string(),
+                event_kind: event_kind.to_string(),
                 classification_id: 0,
                 batch_info: vec![],
                 scores: ModelScores::new(),
@@ -633,6 +646,155 @@ async fn a_timeseries_definition_is_refused_for_an_unassigned_policy_or_a_sensor
     let res = f.sec(&insert(&f.engine_a, "series", &text), &[A]).await;
     assert_eq!(code(&res), "SOURCE_NOT_ALLOWED");
     assert!(stored(&f.store(), "series").is_none());
+}
+
+#[tokio::test]
+async fn a_timeseries_model_keeps_its_shape_through_update_retrain_and_clone() {
+    let f = fixture().await;
+    let generator = insert_generator_node_with(
+        &f.store(),
+        "gen-1.example.com",
+        A,
+        Some(generator_config(&f.server_name)),
+    );
+    let (quarter, quarter_2, hourly) = {
+        let store = f.store();
+        let policy = |name: &str, shape: PolicyShape| {
+            insert_assigned_policy(&store, name, A, &generator, shape)
+        };
+        (
+            policy("quarter", PolicyShape::default()),
+            policy("quarter-2", PolicyShape::default()),
+            policy(
+                "hourly",
+                PolicyShape {
+                    interval: SamplingInterval::OneHour,
+                    ..PolicyShape::default()
+                },
+            ),
+        )
+    };
+    let text = |sources: &[u32]| timeseries_definition(sources, &f.server_name, OWN_ADDRESS, "");
+    let differs = |source: u32| {
+        (
+            "SOURCES_INCOMPATIBLE".to_string(),
+            "sources[0]".to_string(),
+            source.to_string(),
+        )
+    };
+
+    // Before the model exists, the definition may change its shape.
+    f.define(&f.engine_a, "series", &text(&[hourly])).await;
+    let res = f.sec(&update("series", &text(&[quarter])), &[A]).await;
+    assert!(res.errors.is_empty(), "{res:?}");
+    let run_id = f.train("series").await;
+    complete_as(
+        &f.store(),
+        run_id,
+        &f.engine_a,
+        "series",
+        (TIMESERIES_KIND, "timeseries"),
+    );
+    let model = model_by_name(&f.store(), "series").unwrap().unwrap();
+    assert_eq!(model.kind, TIMESERIES_KIND);
+    assert_eq!(model.trained_sources, [quarter.to_string()]);
+    name_in_documents(&f.store(), &f.engine_a, "series", 7, Some(8));
+
+    // Once it exists, its detectors read the shape it was trained on, so
+    // neither an update nor a retrain may change it.
+    let res = f.sec(&update("series", &text(&[hourly])), &[A]).await;
+    assert_eq!(refused(&res), differs(hourly));
+    assert_eq!(
+        stored(&f.store(), "series").unwrap().sources,
+        [quarter.to_string()]
+    );
+    store_text(&f.store(), "series", &text(&[hourly]));
+    let res = f.sys(&train("series")).await;
+    assert_eq!(refused(&res), differs(hourly));
+    assert_eq!(f.store().model_runs("series").unwrap().len(), 1);
+    // Another policy of the same shape is accepted.
+    let res = f.sec(&update("series", &text(&[quarter_2])), &[A]).await;
+    assert!(res.errors.is_empty(), "{res:?}");
+
+    // A clone keeps the classifier, and so the shape.
+    let copy = |target: &str, source: u32| {
+        clone(
+            "series",
+            target,
+            &f.engine_a2,
+            (&f.server_name, OWN_ADDRESS),
+            &[&source.to_string()],
+            "",
+        )
+    };
+    let res = f.sec(&copy("copy", hourly), &[A]).await;
+    assert_eq!(refused(&res), differs(hourly));
+    assert!(stored(&f.store(), "copy").is_none());
+    let res = f.sec(&copy("copy", quarter_2), &[A]).await;
+    assert!(res.errors.is_empty(), "{res:?}");
+}
+
+#[tokio::test]
+async fn a_timeseries_model_of_unknown_shape_cannot_be_cloned() {
+    let f = fixture().await;
+    let generator = insert_generator_node_with(
+        &f.store(),
+        "gen-1.example.com",
+        A,
+        Some(generator_config(&f.server_name)),
+    );
+    let quarter =
+        insert_assigned_policy(&f.store(), "quarter", A, &generator, PolicyShape::default());
+    let text = timeseries_definition(&[quarter], &f.server_name, OWN_ADDRESS, "");
+    // A model trained before its sources were recorded.
+    f.store()
+        .replace_model(
+            review_database::Model {
+                id: 0,
+                name: "legacy".to_string(),
+                version: 1,
+                kind: TIMESERIES_KIND.to_string(),
+                serialized_classifier: vec![1, 2, 3],
+                max_event_id_num: 25,
+                event_kind: "timeseries".to_string(),
+                classification_id: 0,
+                batch_info: vec![],
+                scores: ModelScores::new(),
+            },
+            review_database::ModelOwner {
+                customer_id: A,
+                instance: f.engine_a.clone(),
+            },
+            chrono::Utc::now(),
+            review_database::TrainedWith {
+                run_id: 1,
+                definition: text,
+                sources: Vec::new(),
+            },
+        )
+        .unwrap();
+    let res = f
+        .sec(
+            &clone(
+                "legacy",
+                "copy",
+                &f.engine_a2,
+                (&f.server_name, OWN_ADDRESS),
+                &[&quarter.to_string()],
+                "",
+            ),
+            &[A],
+        )
+        .await;
+    assert_eq!(
+        refused(&res),
+        (
+            "SOURCES_INCOMPATIBLE".into(),
+            "sources[0]".into(),
+            quarter.to_string()
+        )
+    );
+    assert!(stored(&f.store(), "copy").is_none());
 }
 
 #[tokio::test]

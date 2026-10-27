@@ -6739,6 +6739,11 @@ type Mutation {
 	`insertTrainingDefinition` lists them; `NOT_FOUND`, `RUN_IN_PROGRESS`
 	while a run of the definition is active, and `FIELD_FIXED` when the
 	method or the event kind would change after the model exists.
+	
+	Once its timeseries model exists, a timeseries definition's sources
+	must have the shape of the policies the model was trained on, which
+	the model's detectors read; otherwise they are refused with
+	`SOURCES_INCOMPATIBLE`.
 	"""
 	updateTrainingDefinition(name: String!, definition: String!): String!
 	"""
@@ -6757,7 +6762,9 @@ type Mutation {
 	
 	Scope is the definition's customer. The stored definition is checked
 	again for its customer's sources and an installed Data Store, and the
-	definition text the run starts with is relayed to the instance.
+	definition text the run starts with is relayed to the instance. A
+	retrain of a timeseries model keeps the shape of the policies it was
+	trained on, as `updateTrainingDefinition` does.
 	
 	Refusals carry `extensions.code`: `NOT_FOUND`; `INVALID_DOCUMENT` if
 	the stored definition does not parse; `SOURCE_NOT_ALLOWED`,
@@ -6790,7 +6797,11 @@ type Mutation {
 	that produced its classifier, with `dataStore`, `sources` and
 	`suspiciousTokens` replaced. Left out, `suspiciousTokens` keeps the
 	trained definition's indicator for a clone within a customer and
-	clears it for a clone to another customer; null clears it.
+	clears it for a clone to another customer; null clears it. The
+	target keeps the source's classifier, so a timeseries target's
+	sources must have the shape of the policies the source was trained
+	on, and while none of those is stored, the shape is unknown and any
+	source is refused with `SOURCES_INCOMPATIBLE`.
 	
 	The caller must belong to the source's customer and the target
 	instance's, or is refused with `Forbidden`; a clone to another

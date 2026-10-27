@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::graphql::{
     customer_access::customer_source_names,
     refusal::{RefusalCode, refusal},
-    sampling::check_policy_sources,
+    sampling::{ShapeReference, check_policy_sources},
     toml_refusal::parse_refusal,
     unsupervised::{DataStore, check_data_store},
 };
@@ -480,7 +480,8 @@ impl TrainingDocument {
     /// definition's customer `customer_id`.
     ///
     /// `addrs` and `kept` are the Data Store rule's, as [`check_data_store`]
-    /// takes them.
+    /// takes them, and `shape` the shape a timeseries definition's sources
+    /// must have, as [`check_policy_sources`] takes it.
     ///
     /// # Errors
     ///
@@ -493,9 +494,10 @@ impl TrainingDocument {
         customer_id: u32,
         addrs: &[IpAddr],
         kept: &HashSet<(String, SocketAddr)>,
+        shape: ShapeReference<'_>,
         system_admin: bool,
     ) -> Result<()> {
-        self.check_sources(store, customer_id)?;
+        self.check_sources(store, customer_id, shape)?;
         self.check_data_store(store, addrs, kept, system_admin)?;
         self.check_indicator(store, customer_id)
     }
@@ -503,21 +505,27 @@ impl TrainingDocument {
     /// Checks the sources for the customer `customer_id`.
     ///
     /// A timeseries definition's sources must be assigned sampling policies
-    /// of the customer, of one shape, all kept in the Data Store
-    /// `[data_store]` names, as [`check_policy_sources`] checks them. Any
-    /// other definition's sources must be source names of the customer.
+    /// of the customer, of the shape `shape` gives, all kept in the Data
+    /// Store `[data_store]` names, as [`check_policy_sources`] checks them.
+    /// Any other definition's sources must be source names of the customer,
+    /// and `shape` is not read.
     ///
     /// # Errors
     ///
     /// Returns a refusal with `SOURCE_NOT_ALLOWED`, `SOURCES_INCOMPATIBLE` or
     /// `DATA_STORE_NOT_INSTALLED`, or an error if the store cannot be read.
-    pub(crate) fn check_sources(&self, store: &Store, customer_id: u32) -> Result<()> {
+    pub(crate) fn check_sources(
+        &self,
+        store: &Store,
+        customer_id: u32,
+        shape: ShapeReference<'_>,
+    ) -> Result<()> {
         if self.method == Method::Timeseries {
             return match check_policy_sources(
                 store,
                 customer_id,
                 &self.sources,
-                None,
+                shape,
                 &self.data_store.server_name,
             )? {
                 Some(refused) => Err(refused.into_error("")),

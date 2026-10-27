@@ -23,13 +23,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `max_token_length`, `max_data_len`, `long_pattern_len` or
   `suspicious_tokens`. Its sources, and those of a detector of a timeseries
   model, are the IDs of assigned sampling policies of the customer, all of
-  one kind, column, interval, period and offset (for a detector, those of
-  the policies its model was trained on), and kept in the Data Store the
-  definition or detector reads, which their generators must still write to.
-  Sources that break this are refused with the new code
-  `SOURCES_INCOMPATIBLE`, and a generator with no applied `giganto_name`
-  with `DATA_STORE_NOT_INSTALLED`. A detector of any other model still takes
-  only source names.
+  one kind, column, interval, period and offset, and kept in the Data Store
+  the definition or detector reads, which their generators must still write
+  to. Once a timeseries model exists, its detectors, the clones made from
+  it, and any update or retrain of its definition keep the shape of the
+  policies it was trained on; a model none of whose trained policies is
+  stored takes no detector and no clone. Sources that break this are
+  refused with the new code `SOURCES_INCOMPATIBLE`, and a generator with no
+  applied `giganto_name` with `DATA_STORE_NOT_INSTALLED`. A detector of any
+  other model still takes only source names.
 - `SamplingPolicy.dataStore`, the Data Store the policy's series are kept
   in; `SamplingPolicy.usedBy`, the training definitions, detectors and
   models that use the policy; and `SamplingPolicy.delivery`, which tells

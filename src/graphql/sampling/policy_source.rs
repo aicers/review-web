@@ -53,14 +53,16 @@ impl Shape {
     }
 }
 
-/// The shape every source of a detector must have, and what it was taken
-/// from, for the refusal's message.
-#[derive(Clone, Debug)]
-pub(in crate::graphql) struct ReferenceShape {
-    shape: Shape,
-    /// Describes the policies the shape is theirs, such as `the sampling
-    /// policies model "m" was trained on`.
-    origin: String,
+/// The shape every source must have.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::graphql) enum ShapeReference<'a> {
+    /// The shape of the first source: a definition whose model is not yet
+    /// trained on sampling policies.
+    FirstSource,
+    /// The shape of the policies the model `name` was trained on, as
+    /// [`trained_shape`] reads it; `None` if none of them is stored, and the
+    /// shape is then unknown.
+    Model { name: &'a str, shape: Option<Shape> },
 }
 
 /// A refusal of the source rule.
@@ -90,9 +92,9 @@ impl SourceRefusal {
     }
 }
 
-/// Returns the shape of the policies the model `model` was trained on, its
-/// `trained_sources`, as the shape of the first of them that is stored; `None`
-/// if none is.
+/// Returns the shape of the policies the model `name` was trained on, its
+/// `trained_sources`, as the shape of the first of them that is stored, or
+/// with none stored, as an unknown shape.
 ///
 /// The policies a model's `trained_sources` names are in use while the model
 /// exists, so none of them can be deleted, and a fixed policy's shape never
@@ -102,24 +104,23 @@ impl SourceRefusal {
 /// # Errors
 ///
 /// Returns an error if the store cannot be read.
-pub(in crate::graphql) fn trained_shape(
+pub(in crate::graphql) fn trained_shape<'a>(
     store: &Store,
-    model: &str,
+    name: &'a str,
     trained_sources: &[String],
-) -> anyhow::Result<Option<ReferenceShape>> {
+) -> anyhow::Result<ShapeReference<'a>> {
     let map = store.sampling_policy_map();
+    let mut shape = None;
     for source in trained_sources {
         let Some(id) = policy_id(source) else {
             continue;
         };
         if let Some(policy) = map.get_by_id(id)? {
-            return Ok(Some(ReferenceShape {
-                shape: Shape::of(&policy),
-                origin: format!("the sampling policies model {model:?} was trained on"),
-            }));
+            shape = Some(Shape::of(&policy));
+            break;
         }
     }
-    Ok(None)
+    Ok(ShapeReference::Model { name, shape })
 }
 
 /// Applies the source rule of the timeseries method to `sources`, read from
@@ -130,9 +131,11 @@ pub(in crate::graphql) fn trained_shape(
 ///
 /// 1. Every source is the decimal ID of a sampling policy of the customer
 ///    that has an assignee; otherwise `SOURCE_NOT_ALLOWED` at the source.
-/// 2. Every source has the shape of `reference`, or with none, of the first
-///    source: the same kind, column, interval, period and offset; otherwise
-///    `SOURCES_INCOMPATIBLE` at the first source that differs.
+/// 2. Every source has the shape `reference` gives: the same kind, column,
+///    interval, period and offset; otherwise `SOURCES_INCOMPATIBLE` at the
+///    first source that differs. A model whose shape is unknown gives none
+///    a source can have, so any source is refused with
+///    `SOURCES_INCOMPATIBLE` at `sources[0]`.
 /// 3. Every source's assignee has a non-empty `giganto_name` in its applied
 ///    configuration; otherwise `DATA_STORE_NOT_INSTALLED` at
 ///    `data_store.server_name`.
@@ -149,7 +152,7 @@ pub(in crate::graphql) fn check_policy_sources(
     store: &Store,
     customer_id: u32,
     sources: &[String],
-    reference: Option<&ReferenceShape>,
+    reference: ShapeReference<'_>,
     server_name: &str,
 ) -> anyhow::Result<Option<SourceRefusal>> {
     let map = store.sampling_policy_map();
@@ -179,24 +182,8 @@ pub(in crate::graphql) fn check_policy_sources(
         policies.push(policy);
     }
 
-    let first = policies.first().map(|policy| ReferenceShape {
-        shape: Shape::of(policy),
-        origin: format!("sampling policy {}", policy.id),
-    });
-    if let Some(reference) = reference.or(first.as_ref()) {
-        for (j, policy) in policies.iter().enumerate() {
-            if let Some(attribute) = reference.shape.difference(&Shape::of(policy)) {
-                return Ok(Some(SourceRefusal {
-                    code: RefusalCode::SourcesIncompatible,
-                    message: format!(
-                        "sampling policy {} differs in {attribute} from {}",
-                        policy.id, reference.origin
-                    ),
-                    source: Some(j),
-                    value: sources.get(j).cloned().unwrap_or_default(),
-                }));
-            }
-        }
+    if let Some(refused) = check_shape(&policies, sources, reference) {
+        return Ok(Some(refused));
     }
 
     let mut generators = Vec::with_capacity(policies.len());
@@ -242,6 +229,55 @@ pub(in crate::graphql) fn check_policy_sources(
         }));
     }
     Ok(None)
+}
+
+/// Returns the refusal of step 2 of [`check_policy_sources`] for the
+/// `policies` the `sources` name, in order; `None` if every one has the shape
+/// `reference` gives.
+fn check_shape(
+    policies: &[SamplingPolicy],
+    sources: &[String],
+    reference: ShapeReference<'_>,
+) -> Option<SourceRefusal> {
+    let (shape, origin) = match reference {
+        ShapeReference::FirstSource => {
+            let first = policies.first()?;
+            (Shape::of(first), format!("sampling policy {}", first.id))
+        }
+        ShapeReference::Model {
+            name,
+            shape: Some(shape),
+        } => (
+            shape,
+            format!("the sampling policies model {name:?} was trained on"),
+        ),
+        ShapeReference::Model { name, shape: None } => {
+            let first = sources.first()?;
+            return Some(SourceRefusal {
+                code: RefusalCode::SourcesIncompatible,
+                message: format!(
+                    "none of the sampling policies model {name:?} was trained on is stored, so \
+                     the shape its sources must have is unknown"
+                ),
+                source: Some(0),
+                value: first.clone(),
+            });
+        }
+    };
+    let (j, policy, attribute) = policies.iter().enumerate().find_map(|(j, policy)| {
+        shape
+            .difference(&Shape::of(policy))
+            .map(|attribute| (j, policy, attribute))
+    })?;
+    Some(SourceRefusal {
+        code: RefusalCode::SourcesIncompatible,
+        message: format!(
+            "sampling policy {} differs in {attribute} from {origin}",
+            policy.id
+        ),
+        source: Some(j),
+        value: sources.get(j).cloned().unwrap_or_default(),
+    })
 }
 
 /// Returns the ID a source names if it is a decimal ID in canonical form,

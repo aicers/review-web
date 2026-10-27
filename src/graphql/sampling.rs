@@ -31,7 +31,9 @@ pub(super) use self::delivery::{SourceDelivery, source_deliveries};
 pub(super) use self::node_apply::{
     check_data_store_changes, generator_data_store, generators_of_node, refresh_data_stores,
 };
-pub(super) use self::policy_source::{check_policy_sources, policy_id, trained_shape};
+pub(super) use self::policy_source::{
+    ShapeReference, check_policy_sources, policy_id, trained_shape,
+};
 
 const NO_SUCH_POLICY: &str = "no such sampling policy";
 const DEFINITION_FIXED: &str =

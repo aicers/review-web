@@ -774,6 +774,50 @@ fn a_timeseries_detector_refuses_a_policy_of_another_shape() {
 }
 
 #[test]
+fn a_timeseries_detector_of_a_model_of_unknown_shape_is_refused() {
+    let f = Detectors::new();
+    let p1 = f.policies.assigned[0].to_string();
+    let unknown =
+        f.policies
+            .assigned_policy("unknown", &f.policies.generator, PolicyShape::default());
+    for (name, trained_sources) in [
+        ("ts-empty", Vec::new()),
+        (
+            "ts-unresolved",
+            vec![sensor_name("gen-a.example.com"), "9999".to_string()],
+        ),
+    ] {
+        TestModel {
+            instance: f.instance.clone(),
+            kind: TIMESERIES_KIND,
+            trained_sources,
+            ..TestModel::new(name, POLICY_CUSTOMER)
+        }
+        .replace(&f.policies.store);
+        // Even a policy of the shape every other source has is refused.
+        let ((code, field, value, detector_id), message) =
+            f.refused(&f.document(name, &[p1.clone(), unknown.to_string()], ""));
+        assert_eq!(
+            (code.as_str(), field.as_str(), value.as_str()),
+            (
+                "SOURCES_INCOMPATIBLE",
+                "detectors[0].sources[0]",
+                p1.as_str()
+            ),
+            "{name}"
+        );
+        assert_eq!(detector_id, 7);
+        assert_eq!(
+            message,
+            format!(
+                "none of the sampling policies model {name:?} was trained on is stored, so the \
+                 shape its sources must have is unknown"
+            )
+        );
+    }
+}
+
+#[test]
 fn a_timeseries_detector_reads_one_data_store() {
     let f = Detectors::new();
     let elsewhere = f.policies.assigned_policy(

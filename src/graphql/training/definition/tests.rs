@@ -502,6 +502,7 @@ impl PolicyFixture {
             A,
             &addrs,
             &HashSet::new(),
+            ShapeReference::FirstSource,
             false,
         )
     }
@@ -717,7 +718,11 @@ fn other_methods_still_take_only_source_names() {
     let [p1, _] = f.assigned;
     let text = PREFIX.replace("reproduce.a.example.com", &p1.to_string());
     let document = TrainingDocument::parse_and_validate(&text).unwrap();
-    let (code, field, _) = parts(&document.check_sources(&f.store, A).unwrap_err());
+    let (code, field, _) = parts(
+        &document
+            .check_sources(&f.store, A, ShapeReference::FirstSource)
+            .unwrap_err(),
+    );
     assert_eq!(
         (code.as_str(), field.as_str()),
         ("SOURCE_NOT_ALLOWED", "sources[0]")
@@ -725,6 +730,6 @@ fn other_methods_still_take_only_source_names() {
     let text = PREFIX.replace("reproduce.a.example.com", &sensor_name("gen-a.example.com"));
     TrainingDocument::parse_and_validate(&text)
         .unwrap()
-        .check_sources(&f.store, A)
+        .check_sources(&f.store, A, ShapeReference::FirstSource)
         .unwrap();
 }

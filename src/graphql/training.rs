@@ -31,9 +31,9 @@ use super::{
     },
     engine_config::lock_engine_config,
     gen_agent_lookup_key,
-    model::{ModelDigest, ModelInstance, ModelMethod},
+    model::{ModelDigest, ModelInstance, ModelMethod, TIMESERIES_KIND},
     refusal::{RefusalCode, refusal},
-    sampling::{SourceDelivery, source_deliveries},
+    sampling::{ShapeReference, SourceDelivery, source_deliveries, trained_shape},
     unsupervised::{DataStore, data_store_addrs},
 };
 use crate::backend::EngineRefused;
@@ -186,6 +186,7 @@ impl TrainingMutation {
             target.customer_id,
             &addrs,
             &HashSet::new(),
+            ShapeReference::FirstSource,
             system_admin,
         )?;
         store
@@ -214,6 +215,11 @@ impl TrainingMutation {
     /// `insertTrainingDefinition` lists them; `NOT_FOUND`, `RUN_IN_PROGRESS`
     /// while a run of the definition is active, and `FIELD_FIXED` when the
     /// method or the event kind would change after the model exists.
+    ///
+    /// Once its timeseries model exists, a timeseries definition's sources
+    /// must have the shape of the policies the model was trained on, which
+    /// the model's detectors read; otherwise they are refused with
+    /// `SOURCES_INCOMPATIBLE`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn update_training_definition(
@@ -231,7 +237,15 @@ impl TrainingMutation {
         let store = super::get_store(ctx)?;
         let stored = accessible_definition(&store, users_customers.as_deref(), &name)?;
         let kept = kept_pair(&stored.definition);
-        document.check_stored(&store, stored.customer_id, &addrs, &kept, system_admin)?;
+        let shape = retrain_shape(&store, &name)?;
+        document.check_stored(
+            &store,
+            stored.customer_id,
+            &addrs,
+            &kept,
+            shape,
+            system_admin,
+        )?;
         store
             .update_training_definition(
                 &name,
@@ -271,7 +285,9 @@ impl TrainingMutation {
     ///
     /// Scope is the definition's customer. The stored definition is checked
     /// again for its customer's sources and an installed Data Store, and the
-    /// definition text the run starts with is relayed to the instance.
+    /// definition text the run starts with is relayed to the instance. A
+    /// retrain of a timeseries model keeps the shape of the policies it was
+    /// trained on, as `updateTrainingDefinition` does.
     ///
     /// Refusals carry `extensions.code`: `NOT_FOUND`; `INVALID_DOCUMENT` if
     /// the stored definition does not parse; `SOURCE_NOT_ALLOWED`,
@@ -303,7 +319,7 @@ impl TrainingMutation {
                     &name,
                 )
             })?;
-            document.check_sources(&store, stored.customer_id)?;
+            document.check_sources(&store, stored.customer_id, retrain_shape(&store, &name)?)?;
             document.check_data_store(
                 &store,
                 &[],
@@ -405,7 +421,11 @@ impl TrainingMutation {
     /// that produced its classifier, with `dataStore`, `sources` and
     /// `suspiciousTokens` replaced. Left out, `suspiciousTokens` keeps the
     /// trained definition's indicator for a clone within a customer and
-    /// clears it for a clone to another customer; null clears it.
+    /// clears it for a clone to another customer; null clears it. The
+    /// target keeps the source's classifier, so a timeseries target's
+    /// sources must have the shape of the policies the source was trained
+    /// on, and while none of those is stored, the shape is unknown and any
+    /// source is refused with `SOURCES_INCOMPATIBLE`.
     ///
     /// The caller must belong to the source's customer and the target
     /// instance's, or is refused with `Forbidden`; a clone to another
@@ -483,11 +503,13 @@ impl TrainingMutation {
             let trained_pair = TrainingDocument::parse(&model.trained_definition)
                 .map(|trained| HashSet::from([trained.data_store.pair()]))
                 .unwrap_or_default();
+            // The target keeps the source's classifier, and so its shape.
             document.check_stored(
                 &store,
                 target.customer_id,
                 &addrs,
                 &trained_pair,
+                trained_shape(&store, &source, &model.trained_sources)?,
                 system_admin,
             )?;
             let run = store
@@ -632,6 +654,29 @@ fn kept_pair(text: &str) -> HashSet<(String, SocketAddr)> {
     TrainingDocument::parse(text)
         .map(|document| HashSet::from([document.data_store.pair()]))
         .unwrap_or_default()
+}
+
+/// Returns the shape the sources of the timeseries definition `name` must
+/// have. While its timeseries model exists, that is the shape of the policies
+/// the model was trained on, so that a retrain keeps the shape the model's
+/// detectors read; with no such model, or one that keeps none of those
+/// policies stored, and so can have no detector, it is the shape of the first
+/// source.
+///
+/// # Errors
+///
+/// Returns an error if the store cannot be read.
+fn retrain_shape<'a>(store: &Store, name: &'a str) -> Result<ShapeReference<'a>> {
+    let Some(model) = model_by_name(store, name)? else {
+        return Ok(ShapeReference::FirstSource);
+    };
+    if model.kind != TIMESERIES_KIND {
+        return Ok(ShapeReference::FirstSource);
+    }
+    Ok(match trained_shape(store, name, &model.trained_sources)? {
+        ShapeReference::Model { shape: None, .. } => ShapeReference::FirstSource,
+        shape => shape,
+    })
 }
 
 /// Returns the target definition of a clone: the source's trained definition
