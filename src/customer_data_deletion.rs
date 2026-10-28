@@ -17,6 +17,11 @@
 //! a restart skips what is done. A deletion that stops leaves no result it
 //! did not dispatch `InProgress`.
 //!
+//! A retry may give up hosts and Data Stores that are gone for good. Every
+//! stage skips a given-up host: nothing is sent to it or to its Data Stores,
+//! and its rows are given up, without reaching it, before stage 5. The work
+//! given up is recorded `Succeeded` with an error text naming what is left.
+//!
 //! What a deletion leaves behind:
 //!
 //! - A sampling policy ID recycled before the store's policy IDs became
@@ -33,6 +38,9 @@
 //!   records only, and keeps running.
 //! - A Data Store uninstalled with the customer leaves its data directory on
 //!   the host.
+//! - The modules on a given-up host keep running and writing until their
+//!   current certificates expire, and are no longer renewed. The customer's
+//!   data in a given-up Data Store stays in it.
 #![allow(clippy::unused_async_trait_impl)]
 
 use std::collections::{BTreeMap, HashMap};
@@ -63,6 +71,7 @@ use tokio::{
 use tracing::{error, warn};
 
 use crate::{
+    auth::MtlsIdentity,
     backend::{DeployError, MODULE_PACKAGE_IDS, SharedAgentManager, SharedPackageDeployer},
     graphql::{
         RoleGuard, SamplingPoliciesLock, agent_lookup_key_service_token, data_store_in_use_message,
@@ -102,6 +111,19 @@ const REPORT_DEADLINE_NANOS: i64 = 60 * 60 * 1_000_000_000;
 /// How long `remove` may keep answering, for one row, that a teardown is
 /// still owed or that `REview` is under maintenance.
 const REMOVE_REFUSAL_LIMIT: Duration = Duration::from_hours(1);
+/// How long `give_up_removal` may keep answering, for one row, that `REview`
+/// is under maintenance.
+const GIVE_UP_MAINTENANCE_LIMIT: Duration = Duration::from_hours(1);
+/// The refusal of a give-up while the customer's deletion runs.
+const GIVE_UP_STILL_RUNNING: &str =
+    "the deletion is still running; give up hosts or Data Stores only once it has stopped";
+/// The refusal of a give-up that is not a retry of a failed deletion, or
+/// that names a host or a Data Store outside it.
+const GIVE_UP_INVALID: &str = "abandonHosts and abandonDataStores apply only to retrying a failed \
+                               deletion, and only to its hosts and failed Data Stores";
+/// The prefix of the error text of a result recorded `Succeeded` because
+/// its host or its Data Store was given up.
+const ABANDONED_PREFIX: &str = "abandoned: ";
 
 /// A deletion refused, before anything is written, because a Data Store on
 /// the customer's nodes is used by another customer or by a system log
@@ -448,11 +470,31 @@ impl CustomerDataDeletionMutation {
     /// customer's data was already deleted and it holds nodes, sampling
     /// policies, models or training definitions created since. Once they are
     /// removed, the request is answered `ALREADY_COMPLETED`.
+    ///
+    /// `abandonHosts` and `abandonDataStores` give up, on a retry of a
+    /// stopped deletion, hosts and Data Stores that are gone for good. The
+    /// Central Manager never decides on its own that one is gone. Each host
+    /// is a host of the deletion; each Data Store is the server name of a
+    /// `DATA_STORE` result that is `FAILED`. Nothing is sent to them again,
+    /// and their work is recorded `SUCCEEDED` with an error text starting
+    /// "abandoned: " that names what is left on the host. The modules
+    /// installed on a given-up host are given up without reaching it. Left
+    /// out or empty, the lists change nothing, and duplicates are dropped.
+    ///
+    /// A request naming either is refused before anything is written, with
+    /// no `extensions.code`: while the deletion runs, with "the deletion is
+    /// still running; give up hosts or Data Stores only once it has stopped";
+    /// and when there is no stopped deletion to retry, or a host or a Data
+    /// Store is outside it, with "abandonHosts and abandonDataStores apply
+    /// only to retrying a failed deletion, and only to its hosts and failed
+    /// Data Stores".
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn delete_customer_data(
         &self,
         ctx: &Context<'_>,
         customer_id: ID,
+        abandon_hosts: Option<Vec<String>>,
+        abandon_data_stores: Option<Vec<String>>,
     ) -> GraphqlResult<CustomerDataDeletionRequestStatus> {
         let customer_id = customer_id
             .as_str()
@@ -462,30 +504,125 @@ impl CustomerDataDeletionMutation {
         let store = ctx.data::<Arc<RwLock<Store>>>()?;
         let agent_manager = ctx.data::<SharedAgentManager>()?;
         let deployer = ctx.data::<SharedPackageDeployer>()?;
-        request_deletion(customer_id, store, agent_manager, deployer, task_manager)
-            .await
-            .map_err(|error| {
-                if let Some(DataStoreInUseError(message)) = error.downcast_ref() {
-                    async_graphql::Error::new(message)
-                        .extend_with(|_, extensions| extensions.set("code", DATA_STORE_IN_USE))
-                } else if let Some(CustomerDataAlreadyDeletedError(message)) = error.downcast_ref()
-                {
-                    async_graphql::Error::new(message).extend_with(|_, extensions| {
-                        extensions.set("code", CUSTOMER_DATA_ALREADY_DELETED);
-                    })
-                } else {
-                    async_graphql::Error::new(format!("{error:#}"))
-                }
-            })
+        let give_up = GiveUp::new(
+            abandon_hosts.unwrap_or_default(),
+            abandon_data_stores.unwrap_or_default(),
+        );
+        let caller = ctx.data_opt::<MtlsIdentity>();
+        request_deletion(
+            customer_id,
+            store,
+            agent_manager,
+            deployer,
+            task_manager,
+            give_up,
+            caller,
+        )
+        .await
+        .map_err(|error| {
+            if let Some(DataStoreInUseError(message)) = error.downcast_ref() {
+                async_graphql::Error::new(message)
+                    .extend_with(|_, extensions| extensions.set("code", DATA_STORE_IN_USE))
+            } else if let Some(CustomerDataAlreadyDeletedError(message)) = error.downcast_ref() {
+                async_graphql::Error::new(message).extend_with(|_, extensions| {
+                    extensions.set("code", CUSTOMER_DATA_ALREADY_DELETED);
+                })
+            } else {
+                async_graphql::Error::new(format!("{error:#}"))
+            }
+        })
     }
 }
 
+/// The hosts and Data Stores a retry gives up, each sorted and without
+/// duplicates.
+#[derive(Debug, Default)]
+struct GiveUp {
+    hosts: Vec<String>,
+    data_stores: Vec<String>,
+}
+
+impl GiveUp {
+    fn new(mut hosts: Vec<String>, mut data_stores: Vec<String>) -> Self {
+        sort_dedup(&mut hosts);
+        sort_dedup(&mut data_stores);
+        Self { hosts, data_stores }
+    }
+
+    /// Returns whether the request gives up anything; with both lists empty
+    /// it is a plain request.
+    fn is_empty(&self) -> bool {
+        self.hosts.is_empty() && self.data_stores.is_empty()
+    }
+
+    /// Refuses the give-up unless `job` is a stopped deletion whose hosts
+    /// and `Failed` Data Stores hold every one named.
+    fn check(&self, job: Option<&CustomerDataDeletionJob>) -> anyhow::Result<()> {
+        let Some(job) = job.filter(|job| {
+            !job.service_results
+                .iter()
+                .all(|result| result.status == CustomerDataDeletionStatus::Succeeded)
+        }) else {
+            bail!(GIVE_UP_INVALID);
+        };
+        if job
+            .service_results
+            .iter()
+            .any(|result| result.status == CustomerDataDeletionStatus::InProgress)
+        {
+            bail!(GIVE_UP_STILL_RUNNING);
+        }
+        let review_hosts = review_hosts(job);
+        let failed_data_store = |server_name: &String| {
+            job.service_results.iter().any(|result| {
+                result.service == CustomerDataDeletionService::DataStore
+                    && result.status == CustomerDataDeletionStatus::Failed
+                    && result.host_fqdns.first() == Some(server_name)
+            })
+        };
+        if !self.hosts.iter().all(|host| review_hosts.contains(host))
+            || !self.data_stores.iter().all(failed_data_store)
+        {
+            bail!(GIVE_UP_INVALID);
+        }
+        Ok(())
+    }
+}
+
+/// Returns the host FQDNs of `job`'s Review result.
+fn review_hosts(job: &CustomerDataDeletionJob) -> &[String] {
+    job.service_results
+        .iter()
+        .find(|result| result.service == CustomerDataDeletionService::Review)
+        .map_or(&[][..], |result| result.host_fqdns.as_slice())
+}
+
+/// Returns the host of the Data Store named `server_name`,
+/// `<instance:03>.giganto.<host>`, or `None` for another name.
+fn data_store_host(server_name: &str) -> Option<&str> {
+    let (instance, host) = server_name.split_once(".giganto.")?;
+    (!instance.is_empty() && instance.bytes().all(|byte| byte.is_ascii_digit())).then_some(host)
+}
+
+/// Returns the error text of a Data Store result on `host` given up with it.
+fn abandoned_host_data_store(host: &str, server_name: &str) -> String {
+    format!(
+        "{ABANDONED_PREFIX}host {host} was given up; left on the host: the customer's data in \
+         {server_name}"
+    )
+}
+
+/// Requests the deletion of customer `customer_id`, or a retry of its
+/// stopped deletion that gives up what `give_up` names, on behalf of
+/// `caller`.
 async fn request_deletion(
     customer_id: u32,
     store: &Arc<RwLock<Store>>,
     agent_manager: &SharedAgentManager,
     deployer: &SharedPackageDeployer,
     task_manager: &Arc<CustomerDataDeletionTaskManager>,
+    give_up: GiveUp,
+    caller: Option<&MtlsIdentity>,
 ) -> anyhow::Result<CustomerDataDeletionRequestStatus> {
     let mut state = task_manager.state.lock().await;
     if state.shutting_down {
@@ -493,11 +630,13 @@ async fn request_deletion(
     }
     if let Some((active_customer_id, supervisor)) = state.active.as_ref() {
         if !supervisor.is_finished() {
-            return Ok(if *active_customer_id == customer_id {
-                CustomerDataDeletionRequestStatus::DeletionInProgress
-            } else {
-                CustomerDataDeletionRequestStatus::BlockedByAnotherDeletion
-            });
+            if *active_customer_id != customer_id {
+                return Ok(CustomerDataDeletionRequestStatus::BlockedByAnotherDeletion);
+            }
+            if !give_up.is_empty() {
+                bail!(GIVE_UP_STILL_RUNNING);
+            }
+            return Ok(CustomerDataDeletionRequestStatus::DeletionInProgress);
         }
         // A finished handle owns no live work. The persisted state below is
         // authoritative even if the completed task panicked after persisting.
@@ -527,6 +666,9 @@ async fn request_deletion(
         existing
     };
 
+    if !give_up.is_empty() {
+        give_up.check(existing.as_ref())?;
+    }
     let plan = if let Some(job) = existing {
         if job
             .service_results
@@ -550,23 +692,7 @@ async fn request_deletion(
         }
         // A job exists, so the customer's nodes can no longer leave it.
         check_data_stores_in_use(store, customer_id, false)?;
-        let requested_at = timestamp_nanos()?;
-        let plan = retry_plan(store, &job)?;
-        let mut updated_job = job.clone();
-        // A Data Store result stays `Failed` until the Data Store step sends
-        // to it again, which sets it `InProgress` itself.
-        for result in &mut updated_job.service_results {
-            if result.status == CustomerDataDeletionStatus::Failed
-                && result.service != CustomerDataDeletionService::DataStore
-            {
-                result.status = CustomerDataDeletionStatus::InProgress;
-                result.requested_at = requested_at;
-                result.completed_at = None;
-                result.error = None;
-            }
-        }
-        persist_retry_request(store, &job, &updated_job)?;
-        plan
+        retry(store, &job, &give_up, caller)?
     } else {
         let Some(plan) = collect_initial_plan(store, customer_id)? else {
             return Ok(CustomerDataDeletionRequestStatus::NoTarget);
@@ -700,6 +826,130 @@ fn persist_retry_request(
         .with_context(|| {
             format!(
                 "persisting customer data deletion retry for customer {}",
+                old.customer_id
+            )
+        })
+}
+
+/// Records a retry of the stopped deletion `job`, giving up what `give_up`
+/// names on behalf of `caller`, and returns its plan.
+fn retry(
+    store: &RwLock<Store>,
+    job: &CustomerDataDeletionJob,
+    give_up: &GiveUp,
+    caller: Option<&MtlsIdentity>,
+) -> anyhow::Result<CustomerDataDeletionExecutionPlan> {
+    let mut plan = retry_plan(store, job)?;
+    let updated_job = retry_job(job, give_up, timestamp_nanos()?);
+    plan.remote_targets
+        .retain(|target| !updated_job.abandoned_hosts.contains(&target.host_fqdn));
+    if give_up.is_empty() {
+        persist_retry_request(store, job, &updated_job)?;
+    } else {
+        warn!(
+            customer_id = job.customer_id,
+            hosts = ?give_up.hosts,
+            data_stores = ?give_up.data_stores,
+            caller = %caller.map_or_else(
+                || "an unauthenticated caller".to_string(),
+                |identity| format!(
+                    "{}.{}.{}.{}",
+                    identity.instance, identity.service, identity.host, identity.domain
+                ),
+            ),
+            "giving up hosts and Data Stores of a customer deletion"
+        );
+        persist_give_up(store, job, &updated_job)?;
+    }
+    Ok(plan)
+}
+
+/// Returns the job a retry of `job` at `requested_at` writes, giving up what
+/// `give_up` names.
+///
+/// The given-up hosts join the job's. Every `Failed` result whose work was
+/// given up is recorded `Succeeded` with the text [`abandoned_error`] gives
+/// it. Every other `Failed` result is reset `InProgress`, except a Data Store
+/// result: it stays `Failed` until the Data Store step sends to it again,
+/// which sets it `InProgress` itself.
+fn retry_job(
+    job: &CustomerDataDeletionJob,
+    give_up: &GiveUp,
+    requested_at: i64,
+) -> CustomerDataDeletionJob {
+    let mut new = job.clone();
+    new.abandoned_hosts.extend(give_up.hosts.iter().cloned());
+    sort_dedup(&mut new.abandoned_hosts);
+    for result in &mut new.service_results {
+        if result.status != CustomerDataDeletionStatus::Failed {
+            continue;
+        }
+        if let Some(error) = abandoned_error(result, &new.abandoned_hosts, &give_up.data_stores) {
+            result.status = CustomerDataDeletionStatus::Succeeded;
+            result.completed_at = Some(requested_at);
+            result.error = Some(error);
+        } else if result.service != CustomerDataDeletionService::DataStore {
+            result.status = CustomerDataDeletionStatus::InProgress;
+            result.requested_at = requested_at;
+            result.completed_at = None;
+            result.error = None;
+        }
+    }
+    new
+}
+
+/// Returns the error text of `result` if its work was given up, naming what
+/// is left on the host: a Sensor or Semi-supervised result on one of the
+/// given-up `hosts`, or a Data Store result of a Data Store on one of them
+/// or among the given-up `data_stores`.
+fn abandoned_error(
+    result: &CustomerDataDeletionServiceResult,
+    hosts: &[String],
+    data_stores: &[String],
+) -> Option<String> {
+    let name = result.host_fqdns.first()?;
+    let given_up = |host: &&str| hosts.iter().any(|given_up| given_up == host);
+    match result.service {
+        CustomerDataDeletionService::Sensor | CustomerDataDeletionService::SemiSupervised => {
+            given_up(&name.as_str()).then(|| {
+                format!(
+                    "{ABANDONED_PREFIX}host {name} was given up; left on the host: the \
+                     customer's files"
+                )
+            })
+        }
+        CustomerDataDeletionService::DataStore => {
+            if let Some(host) = data_store_host(name).filter(given_up) {
+                Some(abandoned_host_data_store(host, name))
+            } else {
+                data_stores.contains(name).then(|| {
+                    format!(
+                        "{ABANDONED_PREFIX}the Data Store {name} was given up; left on the \
+                         host: the customer's data in {name}"
+                    )
+                })
+            }
+        }
+        CustomerDataDeletionService::Review | CustomerDataDeletionService::ModuleRemoval => None,
+    }
+}
+
+/// Writes the retry `new` of `old` that gives up hosts or Data Stores, the
+/// whole job at once, unless `old` is no longer what is stored.
+fn persist_give_up(
+    store: &RwLock<Store>,
+    old: &CustomerDataDeletionJob,
+    new: &CustomerDataDeletionJob,
+) -> anyhow::Result<()> {
+    let store = read_store(store)?;
+    #[cfg(test)]
+    tests::checkpoint(&store, tests::Stage::PersistRequest, old.customer_id)?;
+    store
+        .customer_data_deletion_map()
+        .give_up(old, new)
+        .with_context(|| {
+            format!(
+                "persisting customer data deletion give-up for customer {}",
                 old.customer_id
             )
         })
@@ -960,6 +1210,10 @@ fn plan_from_results(
             .host_fqdns
             .first()
             .ok_or_else(|| anyhow!("remote deletion result has no host FQDN"))?;
+        // Nothing is sent to a given-up host.
+        if job.abandoned_hosts.contains(host_fqdn) {
+            continue;
+        }
         remote_targets.push(CustomerDataDeletionTarget::new(
             job.customer_id,
             host_fqdn.clone(),
@@ -1137,10 +1391,11 @@ enum Reports {
 /// What one host's uninstall has done in the current stage.
 #[derive(Debug, Default)]
 struct HostProgress {
-    /// Whether `remove` was called for any of the host's rows.
+    /// Whether `remove` or `give_up_removal` was called for any of the
+    /// host's rows.
     remove_called: bool,
-    /// The rows `remove` was called for that are gone, as
-    /// `<package_id> <instance>`.
+    /// The rows `remove` or `give_up_removal` was called for that are gone,
+    /// as `<package_id> <instance>`.
     removed: Vec<String>,
 }
 
@@ -1215,14 +1470,17 @@ fn numbered_rows(store: &RwLock<Store>, customer_id: u32) -> anyhow::Result<Vec<
     Ok(rows)
 }
 
-/// Returns the host FQDN of each `ModuleRemoval` result of `job`, and
-/// whether that result is `InProgress`.
+/// Returns the host FQDN of each `ModuleRemoval` result of `job` whose host
+/// was not given up, and whether that result is `InProgress`.
 fn module_removal_hosts(job: &CustomerDataDeletionJob) -> Vec<(String, bool)> {
     job.service_results
         .iter()
         .filter(|result| result.service == CustomerDataDeletionService::ModuleRemoval)
         .filter_map(|result| {
             let host = result.host_fqdns.first()?;
+            if job.abandoned_hosts.contains(host) {
+                return None;
+            }
             Some((
                 host.clone(),
                 result.status == CustomerDataDeletionStatus::InProgress,
@@ -1508,12 +1766,12 @@ impl Supervisor {
     /// result recorded `Succeeded`.
     async fn remove_senders(&self, customer_id: u32) -> Result<(), Halt> {
         let job = read_job(&self.store, customer_id).map_err(|error| Halt::stop(&error))?;
-        let review_hosts: Vec<String> = job
-            .service_results
+        let abandoned = &job.abandoned_hosts;
+        let review_hosts: Vec<String> = review_hosts(&job)
             .iter()
-            .find(|result| result.service == CustomerDataDeletionService::Review)
-            .map(|result| result.host_fqdns.clone())
-            .unwrap_or_default();
+            .filter(|host| !abandoned.contains(host))
+            .cloned()
+            .collect();
         let hosts = module_removal_hosts(&job);
         let progress = std::sync::Mutex::default();
         let removal = async {
@@ -1523,7 +1781,7 @@ impl Supervisor {
                 let rows: Vec<_> = numbered_rows(&self.store, customer_id)
                     .map_err(|error| Halt::stop(&error))?
                     .into_iter()
-                    .filter(|row| !row.data_store)
+                    .filter(|row| !row.data_store && !abandoned.contains(&row.host))
                     .collect();
                 if closing && !found && rows.is_empty() {
                     return Ok(());
@@ -1540,19 +1798,29 @@ impl Supervisor {
     }
 
     /// Stage 4: uninstalls the customer's own Data Stores, each only while no
-    /// one else uses one of them.
+    /// one else uses one of them, then gives up every row on the given-up
+    /// hosts.
     async fn remove_data_stores(&self, customer_id: u32) -> Result<(), Halt> {
         let job = read_job(&self.store, customer_id).map_err(|error| Halt::stop(&error))?;
+        let abandoned = &job.abandoned_hosts;
         let hosts = module_removal_hosts(&job);
         let rows = numbered_rows(&self.store, customer_id)
             .map_err(|error| Halt::stop(&error))?
             .into_iter()
-            .filter(|row| row.data_store)
+            .filter(|row| row.data_store && !abandoned.contains(&row.host))
             .collect();
         let progress = std::sync::Mutex::default();
-        self.remove_rows(customer_id, rows, &hosts, &progress, true)
+        let removal = async {
+            self.remove_rows(customer_id, rows, &hosts, &progress, true)
+                .await?;
+            for host in abandoned {
+                self.give_up_host(customer_id, host, &progress).await?;
+            }
+            Ok(())
+        };
+        removal
             .await
-            .map_err(|halt| halt.after_removals(&progress))?;
+            .map_err(|halt: Halt| halt.after_removals(&progress))?;
         self.finish_hosts(customer_id, &hosts, true)
     }
 
@@ -1664,23 +1932,7 @@ impl Supervisor {
             if self.shutting_down() {
                 return Err(Halt::ShutDown);
             }
-            let (live, latest) = read_store(&self.store)
-                .and_then(|store| {
-                    let map = store.operation_attempt_map();
-                    let live = map.live_attempt(&row.host, &row.package_id, Some(row.instance))?;
-                    let latest = if live.is_none() {
-                        map.latest_attempt(&row.host, &row.package_id, Some(row.instance))?
-                    } else {
-                        None
-                    };
-                    Ok((live, latest))
-                })
-                .map_err(|error| {
-                    Stop::on_host(
-                        &row.host,
-                        format!("reading the attempts of {}: {error:#}", row.on_host()),
-                    )
-                })?;
+            let (live, latest) = self.read_attempts(row)?;
             if let Some(attempt) = live {
                 self.wait_for_attempt(attempt).await?;
                 continue;
@@ -1689,10 +1941,7 @@ impl Supervisor {
             // also one waited for before a restart or by the scan for live
             // attempts; calling `remove` again before the row is gone would
             // start a second removal of the same instance.
-            if latest.is_some_and(|attempt| {
-                attempt.action == OperationAction::Remove
-                    && attempt.outcome == Some(OperationOutcome::Succeeded)
-            }) {
+            if latest.is_some_and(|attempt| removed_by(&attempt)) {
                 self.wait_until_gone(customer_id, row).await?;
                 record_removed(progress, row, called);
                 return Ok(());
@@ -1701,21 +1950,10 @@ impl Supervisor {
                 record_removed(progress, row, called);
                 return Ok(());
             }
-            if check_in_use
-                && let Err(error) = check_data_stores_in_use(&self.store, customer_id, false)
-            {
-                let reason = match error.downcast_ref::<DataStoreInUseError>() {
-                    Some(DataStoreInUseError(message)) => message.clone(),
-                    None => format!("{error:#}"),
-                };
-                return Err(Stop::new(reason).into());
+            if check_in_use {
+                self.refuse_data_stores_in_use(customer_id)?;
             }
-            progress
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .entry(row.host.clone())
-                .or_default()
-                .remove_called = true;
+            record_called(progress, row);
             called = true;
             let removal = self
                 .deployer
@@ -1799,6 +2037,203 @@ impl Supervisor {
         }
     }
 
+    /// Returns the live attempt on `row`, or, without one, its latest
+    /// attempt.
+    fn read_attempts(
+        &self,
+        row: &NumberedRow,
+    ) -> Result<(Option<OperationAttempt>, Option<OperationAttempt>), Halt> {
+        read_store(&self.store)
+            .and_then(|store| {
+                let map = store.operation_attempt_map();
+                let live = map.live_attempt(&row.host, &row.package_id, Some(row.instance))?;
+                let latest = if live.is_none() {
+                    map.latest_attempt(&row.host, &row.package_id, Some(row.instance))?
+                } else {
+                    None
+                };
+                Ok((live, latest))
+            })
+            .map_err(|error| {
+                Stop::on_host(
+                    &row.host,
+                    format!("reading the attempts of {}: {error:#}", row.on_host()),
+                )
+                .into()
+            })
+    }
+
+    /// Stops the deletion while someone else uses one of the customer's Data
+    /// Stores, which a user added since the request may.
+    fn refuse_data_stores_in_use(&self, customer_id: u32) -> Result<(), Halt> {
+        check_data_stores_in_use(&self.store, customer_id, false).map_err(|error| {
+            let reason = match error.downcast_ref::<DataStoreInUseError>() {
+                Some(DataStoreInUseError(message)) => message.clone(),
+                None => format!("{error:#}"),
+            };
+            Stop::new(reason).into()
+        })
+    }
+
+    /// Gives up every row with an instance number on the given-up `host`, one
+    /// at a time in node order, then records its `ModuleRemoval` result, if
+    /// it is `InProgress`, `Succeeded` with what is left on the host.
+    async fn give_up_host(
+        &self,
+        customer_id: u32,
+        host: &str,
+        progress: &std::sync::Mutex<HashMap<String, HostProgress>>,
+    ) -> Result<(), Halt> {
+        let rows: Vec<_> = numbered_rows(&self.store, customer_id)
+            .map_err(|error| Halt::stop(&error))?
+            .into_iter()
+            .filter(|row| row.host == host)
+            .collect();
+        for row in &rows {
+            self.give_up_row(customer_id, row, progress).await?;
+        }
+        let job = read_job(&self.store, customer_id).map_err(|error| Halt::stop(&error))?;
+        let on_host = |result: &&CustomerDataDeletionServiceResult| {
+            result.host_fqdns.first().map(String::as_str) == Some(host)
+        };
+        if !job.service_results.iter().filter(on_host).any(|result| {
+            result.service == CustomerDataDeletionService::ModuleRemoval
+                && result.status == CustomerDataDeletionStatus::InProgress
+        }) {
+            return Ok(());
+        }
+        let mut left = progress
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(host)
+            .map(|host_progress| host_progress.removed.clone())
+            .unwrap_or_default();
+        if job
+            .service_results
+            .iter()
+            .filter(on_host)
+            .any(|result| is_remote_service(result.service) && is_abandoned(result))
+        {
+            left.push("the customer's files".to_string());
+        }
+        for result in &job.service_results {
+            if let Some(server_name) = result.host_fqdns.first()
+                && result.service == CustomerDataDeletionService::DataStore
+                && data_store_host(server_name) == Some(host)
+                && is_abandoned(result)
+            {
+                left.push(format!("the customer's data in {server_name}"));
+            }
+        }
+        let left = if left.is_empty() {
+            "nothing the Central Manager recorded".to_string()
+        } else {
+            left.join(", ")
+        };
+        if self.shutting_down() {
+            return Err(Halt::ShutDown);
+        }
+        persist_terminal(
+            &self.store,
+            customer_id,
+            CustomerDataDeletionService::ModuleRemoval,
+            Some(host),
+            CustomerDataDeletionStatus::Succeeded,
+            Some(&format!(
+                "{ABANDONED_PREFIX}host {host} was given up; left on the host: {left}"
+            )),
+        )
+        .map_err(|error| Halt::stop(&error))
+    }
+
+    /// Gives up one row on a given-up host, without reaching the host, and
+    /// returns once it is gone.
+    ///
+    /// A live attempt on the row is waited for until it ends, whatever its
+    /// outcome; review bounds it by its deadline. Each call for a Data
+    /// Store's row is preceded by the check that no one else uses the
+    /// customer's Data Stores.
+    async fn give_up_row(
+        &self,
+        customer_id: u32,
+        row: &NumberedRow,
+        progress: &std::sync::Mutex<HashMap<String, HostProgress>>,
+    ) -> Result<(), Halt> {
+        let mut under_maintenance_since = None;
+        let mut called = false;
+        loop {
+            if self.shutting_down() {
+                return Err(Halt::ShutDown);
+            }
+            let (live, latest) = self.read_attempts(row)?;
+            if let Some(attempt) = live {
+                self.wait_until_ended(attempt).await?;
+                continue;
+            }
+            if latest.is_some_and(|attempt| removed_by(&attempt)) {
+                self.wait_until_gone(customer_id, row).await?;
+                record_removed(progress, row, called);
+                return Ok(());
+            }
+            if !self.row_present(customer_id, row)? {
+                record_removed(progress, row, called);
+                return Ok(());
+            }
+            if row.data_store {
+                self.refuse_data_stores_in_use(customer_id)?;
+            }
+            record_called(progress, row);
+            called = true;
+            let give_up = self.deployer.give_up_removal(
+                customer_id,
+                &row.host,
+                &row.package_id,
+                row.instance,
+            );
+            let Some(answer) = self.unless_shutdown(give_up).await else {
+                return Err(Halt::ShutDown);
+            };
+            match answer {
+                Ok(()) => {
+                    if self.row_present(customer_id, row)? {
+                        return Err(Stop::on_host(
+                            &row.host,
+                            format!("giving up {}: the row is still recorded", row.on_host()),
+                        )
+                        .into());
+                    }
+                    record_removed(progress, row, called);
+                    return Ok(());
+                }
+                Err(DeployError::UnderMaintenance) => {
+                    let since =
+                        *under_maintenance_since.get_or_insert_with(tokio::time::Instant::now);
+                    if since.elapsed() >= GIVE_UP_MAINTENANCE_LIMIT {
+                        return Err(Stop::on_host(
+                            &row.host,
+                            format!(
+                                "giving up {}: REview stayed under maintenance for 1 hour",
+                                row.on_host()
+                            ),
+                        )
+                        .into());
+                    }
+                }
+                Err(error) => {
+                    if self.shutting_down() {
+                        return Err(Halt::ShutDown);
+                    }
+                    return Err(Stop::on_host(
+                        &row.host,
+                        format!("giving up {} failed: {error:#}", row.on_host()),
+                    )
+                    .into());
+                }
+            }
+            self.pause().await?;
+        }
+    }
+
     /// Returns whether `row` is still on one of the customer's nodes.
     fn row_present(&self, customer_id: u32, row: &NumberedRow) -> Result<bool, Halt> {
         Ok(numbered_rows(&self.store, customer_id)
@@ -1823,15 +2258,27 @@ impl Supervisor {
     /// by its deadline.
     async fn wait_for_attempt(
         &self,
+        attempt: OperationAttempt,
+    ) -> Result<Option<OperationAttempt>, Halt> {
+        let ended = self.wait_until_ended(attempt).await?;
+        if let Some(attempt) = &ended
+            && attempt.action == OperationAction::Remove
+            && attempt.outcome != Some(OperationOutcome::Succeeded)
+        {
+            return Err(failed_removal(attempt).into());
+        }
+        Ok(ended)
+    }
+
+    /// Waits until `attempt` is terminal, whatever its outcome, re-reading it
+    /// every poll interval, and returns it as it ended, or `None` if the
+    /// ledger no longer holds it.
+    async fn wait_until_ended(
+        &self,
         mut attempt: OperationAttempt,
     ) -> Result<Option<OperationAttempt>, Halt> {
         loop {
             if attempt.is_terminal() {
-                if attempt.action == OperationAction::Remove
-                    && attempt.outcome != Some(OperationOutcome::Succeeded)
-                {
-                    return Err(failed_removal(&attempt).into());
-                }
                 return Ok(Some(attempt));
             }
             self.pause().await?;
@@ -1911,8 +2358,35 @@ fn live_module_attempts(
     Ok(attempts)
 }
 
-/// Records `row` removed in its host's progress, if `remove` was called for
-/// it.
+/// Returns whether `attempt` is a removal that succeeded, whose row review's
+/// finalizer drops.
+fn removed_by(attempt: &OperationAttempt) -> bool {
+    attempt.action == OperationAction::Remove
+        && attempt.outcome == Some(OperationOutcome::Succeeded)
+}
+
+/// Returns whether `result` was recorded `Succeeded` because its host or its
+/// Data Store was given up.
+fn is_abandoned(result: &CustomerDataDeletionServiceResult) -> bool {
+    result.status == CustomerDataDeletionStatus::Succeeded
+        && result
+            .error
+            .as_deref()
+            .is_some_and(|error| error.starts_with(ABANDONED_PREFIX))
+}
+
+/// Records in its host's progress that a call was made for `row`.
+fn record_called(progress: &std::sync::Mutex<HashMap<String, HostProgress>>, row: &NumberedRow) {
+    progress
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entry(row.host.clone())
+        .or_default()
+        .remove_called = true;
+}
+
+/// Records `row` removed in its host's progress, if `remove` or
+/// `give_up_removal` was called for it.
 fn record_removed(
     progress: &std::sync::Mutex<HashMap<String, HostProgress>>,
     row: &NumberedRow,
@@ -2105,8 +2579,9 @@ async fn drive_data_stores(
     customer_id: u32,
     stop_reason: Option<&str>,
 ) -> DataStoreStepOutcome {
-    let starts = match data_store_starts(store, customer_id, stop_reason.is_none()) {
-        Ok(starts) => starts,
+    let starts = match data_store_starts(store, shutdown, customer_id, stop_reason.is_none()) {
+        Ok(Some(starts)) => starts,
+        Ok(None) => return DataStoreStepOutcome::ShutDown,
         Err(error) => {
             return DataStoreStepOutcome::Stopped {
                 reason: format!("{error:#}"),
@@ -2162,21 +2637,18 @@ struct DataStoreStart {
 /// longer listed.
 ///
 /// Unless `sending`, only the Data Stores with an `InProgress` result are
-/// considered.
+/// considered. Returns `None`, before recording a given-up Data Store, once
+/// shutdown has started.
 fn data_store_starts(
     store: &RwLock<Store>,
+    shutdown: &watch::Receiver<bool>,
     customer_id: u32,
     sending: bool,
-) -> anyhow::Result<Vec<DataStoreStart>> {
+) -> anyhow::Result<Option<Vec<DataStoreStart>>> {
     let job = read_job(store, customer_id)?;
-    let review_hosts = job
-        .service_results
-        .iter()
-        .find(|result| result.service == CustomerDataDeletionService::Review)
-        .map_or(&[][..], |result| result.host_fqdns.as_slice());
-    let service_fqdns = data_store_service_fqdns(review_hosts);
+    let service_fqdns = data_store_service_fqdns(review_hosts(&job));
     if service_fqdns.is_empty() && job.periodic_time_series_ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Some(Vec::new()));
     }
     let mut rows = listed_rows(&*read_store(store)?)
         .map_err(|error| anyhow!("listing the Data Stores: {}", error.message))?;
@@ -2215,6 +2687,33 @@ fn data_store_starts(
     let now = timestamp_nanos()?;
     let mut starts = Vec::new();
     for row in rows {
+        // A Data Store on a given-up host is never sent to. Its result, if
+        // any, was recorded `Succeeded` when the host was given up.
+        if job.abandoned_hosts.contains(&row.hostname) {
+            let server_name = row.server_name();
+            if sending
+                && !existing
+                    .iter()
+                    .any(|result| result.host_fqdns.first() == Some(&server_name))
+            {
+                let mut result = service_result(
+                    CustomerDataDeletionService::DataStore,
+                    vec![server_name.clone()],
+                    now,
+                );
+                result.status = CustomerDataDeletionStatus::Succeeded;
+                result.completed_at = Some(now);
+                result.error = Some(abandoned_host_data_store(&row.hostname, &server_name));
+                if *shutdown.borrow() {
+                    return Ok(None);
+                }
+                read_store(store)?
+                    .customer_data_deletion_map()
+                    .add_service(customer_id, &result)
+                    .with_context(|| format!("recording the given-up Data Store {server_name}"))?;
+            }
+            continue;
+        }
         let target = DataStoreDeletionTarget::new(
             customer_id,
             row.hostname,
@@ -2247,7 +2746,7 @@ fn data_store_starts(
             next,
         });
     }
-    Ok(starts)
+    Ok(Some(starts))
 }
 
 /// Returns the sorted service FQDNs of `hosts` the Data Store accepts.
@@ -3324,6 +3823,18 @@ mod tests {
         Hang,
     }
 
+    /// What [`RecordingDeployer`] does with one `give_up_removal` call.
+    #[derive(Clone, Debug)]
+    enum GiveUpAnswer {
+        /// Drops the row, as review does.
+        Succeed,
+        /// Answers `Ok` but leaves the row.
+        KeepRow,
+        UnderMaintenance,
+        /// Never returns.
+        Hang,
+    }
+
     /// A `remove` call: the host, the package-id and the instance.
     type RemoveCall = (String, String, u32);
 
@@ -3339,6 +3850,11 @@ mod tests {
         /// `Succeed`.
         answers: std::sync::Mutex<HashMap<RemoveCall, VecDeque<RemoveAnswer>>>,
         removes: std::sync::Mutex<Vec<RemoveCall>>,
+        /// The answers to the `give_up_removal` calls for one row, in order;
+        /// after them, `Succeed`.
+        give_up_answers: std::sync::Mutex<HashMap<RemoveCall, VecDeque<GiveUpAnswer>>>,
+        give_ups: std::sync::Mutex<Vec<RemoveCall>>,
+        give_up_started: tokio::sync::Notify,
         /// Every job when a call was made.
         jobs_at_remove: std::sync::Mutex<Vec<CustomerDataDeletionJob>>,
         /// The order of the calls, shared with an agent manager's.
@@ -3349,7 +3865,7 @@ mod tests {
         shut_down_on_remove: Option<Arc<CustomerDataDeletionTaskManager>>,
         /// Ends a `Hang` call's apply.
         release: Arc<tokio::sync::Notify>,
-        /// Runs when the first call is made.
+        /// Runs when the first `remove` or `give_up_removal` call is made.
         on_remove: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
         applies: std::sync::Mutex<Vec<JoinHandle<()>>>,
         next_key: AtomicUsize,
@@ -3361,6 +3877,9 @@ mod tests {
                 store: Arc::clone(store),
                 answers: std::sync::Mutex::default(),
                 removes: std::sync::Mutex::default(),
+                give_up_answers: std::sync::Mutex::default(),
+                give_ups: std::sync::Mutex::default(),
+                give_up_started: tokio::sync::Notify::new(),
                 jobs_at_remove: std::sync::Mutex::default(),
                 log: Arc::default(),
                 remove_started: tokio::sync::Notify::new(),
@@ -3390,6 +3909,24 @@ mod tests {
 
         fn removes(&self) -> Vec<RemoveCall> {
             self.removes.lock().unwrap().clone()
+        }
+
+        fn give_up_answer(
+            self,
+            call: RemoveCall,
+            answers: impl IntoIterator<Item = GiveUpAnswer>,
+        ) -> Self {
+            self.give_up_answers
+                .lock()
+                .unwrap()
+                .entry(call)
+                .or_default()
+                .extend(answers);
+            self
+        }
+
+        fn give_ups(&self) -> Vec<RemoveCall> {
+            self.give_ups.lock().unwrap().clone()
         }
     }
 
@@ -3595,6 +4132,43 @@ mod tests {
                     self.applies.lock().unwrap().push(apply);
                     std::future::pending().await
                 }
+            }
+        }
+
+        async fn give_up_removal(
+            &self,
+            customer_id: u32,
+            host: &str,
+            target: &str,
+            instance: u32,
+        ) -> Result<(), DeployError> {
+            assert_eq!(customer_id, 7, "the give-up tests delete customer 7");
+            let call = remove_call(host, target, instance);
+            self.give_ups.lock().unwrap().push(call.clone());
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("give up {target} {instance} on {host}"));
+            self.give_up_started.notify_one();
+            let on_remove = self.on_remove.lock().unwrap().take();
+            if let Some(on_remove) = on_remove {
+                on_remove();
+            }
+            let answer = self
+                .give_up_answers
+                .lock()
+                .unwrap()
+                .get_mut(&call)
+                .and_then(VecDeque::pop_front)
+                .unwrap_or(GiveUpAnswer::Succeed);
+            match answer {
+                GiveUpAnswer::Succeed => {
+                    drop_row(&self.store, host, target, instance);
+                    Ok(())
+                }
+                GiveUpAnswer::KeepRow => Ok(()),
+                GiveUpAnswer::UnderMaintenance => Err(DeployError::UnderMaintenance),
+                GiveUpAnswer::Hang => std::future::pending().await,
             }
         }
 
@@ -4475,6 +5049,8 @@ mod tests {
             &agent_manager,
             &deployer(&test_store),
             &manager,
+            GiveUp::default(),
+            None,
         )
         .await
         .unwrap_err();
@@ -4504,6 +5080,8 @@ mod tests {
             &agent_manager,
             &deployer(&test_store),
             &manager,
+            GiveUp::default(),
+            None,
         )
         .await
         .unwrap_err();
@@ -4607,6 +5185,8 @@ mod tests {
             &agent_manager,
             &deployer(&test_store),
             &Arc::new(CustomerDataDeletionTaskManager::default()),
+            GiveUp::default(),
+            None,
         )
         .await
         .unwrap();
@@ -4636,7 +5216,9 @@ mod tests {
                 &test_store.store,
                 &agent_manager,
                 &deployer(&test_store),
-                &manager
+                &manager,
+                GiveUp::default(),
+                None
             )
             .await
             .unwrap(),
@@ -4656,7 +5238,9 @@ mod tests {
                 &test_store.store,
                 &agent_manager,
                 &deployer(&test_store),
-                &manager
+                &manager,
+                GiveUp::default(),
+                None
             )
             .await
             .unwrap(),
@@ -4680,7 +5264,9 @@ mod tests {
                 &test_store.store,
                 &agent_manager,
                 &deployer(&test_store),
-                &manager
+                &manager,
+                GiveUp::default(),
+                None
             )
             .await
             .unwrap(),
@@ -4692,7 +5278,9 @@ mod tests {
                 &test_store.store,
                 &agent_manager,
                 &deployer(&test_store),
-                &manager
+                &manager,
+                GiveUp::default(),
+                None
             )
             .await
             .unwrap(),
@@ -4787,6 +5375,8 @@ mod tests {
             &shared_agent_manager,
             &deployer(&test_store),
             &task_manager,
+            GiveUp::default(),
+            None,
         )
         .await
         .unwrap();
@@ -4980,6 +5570,8 @@ mod tests {
             &agent_manager,
             &deployer(&test_store),
             &manager,
+            GiveUp::default(),
+            None,
         )
         .await
         .unwrap();
@@ -5020,7 +5612,9 @@ mod tests {
                 &test_store.store,
                 &shared,
                 &deployer(&test_store),
-                &manager
+                &manager,
+                GiveUp::default(),
+                None
             )
             .await
             .unwrap(),
@@ -5076,7 +5670,9 @@ mod tests {
                     &test_store.store,
                     &shared,
                     &deployer(&test_store),
-                    &manager
+                    &manager,
+                    GiveUp::default(),
+                    None
                 )
                 .await
                 .unwrap(),
@@ -5797,7 +6393,9 @@ mod tests {
                     &test_store.store,
                     &shared,
                     &deployer(&test_store),
-                    &manager
+                    &manager,
+                    GiveUp::default(),
+                    None
                 )
                 .await
                 .unwrap(),
@@ -5820,7 +6418,9 @@ mod tests {
                     &test_store.store,
                     &shared,
                     &deployer(&test_store),
-                    &manager
+                    &manager,
+                    GiveUp::default(),
+                    None
                 )
                 .await
                 .unwrap(),
@@ -6103,7 +6703,9 @@ mod tests {
                 &test_store.store,
                 &shared_agent_manager,
                 &deployer(&test_store),
-                &manager
+                &manager,
+                GiveUp::default(),
+                None
             )
             .await
             .unwrap(),
@@ -6293,7 +6895,9 @@ mod tests {
                         &test_store.store,
                         &agent_manager,
                         &deployer(&test_store),
-                        &manager
+                        &manager,
+                        GiveUp::default(),
+                        None
                     )
                     .await
                     .unwrap(),
@@ -6660,7 +7264,15 @@ mod tests {
         tokio::pin!(shutdown);
         assert!(futures::poll!(&mut shutdown).is_pending());
         let deployer = deployer(&test_store);
-        let request = request_deletion(1, &test_store.store, &shared, &deployer, &manager);
+        let request = request_deletion(
+            1,
+            &test_store.store,
+            &shared,
+            &deployer,
+            &manager,
+            GiveUp::default(),
+            None,
+        );
         tokio::pin!(request);
         assert!(futures::poll!(&mut request).is_pending());
         drop(state);
@@ -6857,7 +7469,9 @@ mod tests {
                 &test_store.store,
                 &shared,
                 &deployer(&test_store),
-                &manager
+                &manager,
+                GiveUp::default(),
+                None
             )
             .await
             .unwrap(),
@@ -6982,6 +7596,8 @@ mod tests {
             &shared,
             &deployer(&test_store),
             &manager,
+            GiveUp::default(),
+            None,
         )
         .await
         .unwrap();
@@ -7026,7 +7642,9 @@ mod tests {
                     &test_store.store,
                     &shared,
                     &deployer(&test_store),
-                    &manager
+                    &manager,
+                    GiveUp::default(),
+                    None
                 )
                 .await
                 .unwrap(),
@@ -7075,7 +7693,9 @@ mod tests {
                 &test_store.store,
                 &shared,
                 &deployer(&test_store),
-                &manager
+                &manager,
+                GiveUp::default(),
+                None
             )
             .await
             .unwrap(),
@@ -7119,7 +7739,9 @@ mod tests {
                 &test_store.store,
                 &shared,
                 &deployer(&test_store),
-                &manager
+                &manager,
+                GiveUp::default(),
+                None
             )
             .await
             .unwrap(),
@@ -7143,7 +7765,9 @@ mod tests {
                 &test_store.store,
                 &shared,
                 &deployer(test_store),
-                &manager
+                &manager,
+                GiveUp::default(),
+                None
             )
             .await
             .unwrap(),
@@ -7463,6 +8087,8 @@ mod tests {
             &shared,
             &deployer(&test_store),
             &manager,
+            GiveUp::default(),
+            None,
         )
         .await
         .unwrap();
@@ -7533,7 +8159,9 @@ mod tests {
                 &test_store.store,
                 &shared,
                 &deployer(&test_store),
-                &manager
+                &manager,
+                GiveUp::default(),
+                None
             )
             .await
             .unwrap(),
@@ -7590,6 +8218,8 @@ mod tests {
             &shared,
             &deployer(&test_store),
             &manager,
+            GiveUp::default(),
+            None,
         )
         .await
         .unwrap();
@@ -7606,7 +8236,9 @@ mod tests {
                 &test_store.store,
                 &shared,
                 &deployer(&test_store),
-                &manager
+                &manager,
+                GiveUp::default(),
+                None
             )
             .await
             .unwrap(),
@@ -7668,9 +8300,17 @@ mod tests {
         let recording = Arc::new(RecordingDeployer::new(&test_store.store).logging_with(&agent));
         let deployer: SharedPackageDeployer = recording.clone();
         let manager = Arc::new(CustomerDataDeletionTaskManager::default());
-        request_deletion(7, &test_store.store, &shared, &deployer, &manager)
-            .await
-            .unwrap();
+        request_deletion(
+            7,
+            &test_store.store,
+            &shared,
+            &deployer,
+            &manager,
+            GiveUp::default(),
+            None,
+        )
+        .await
+        .unwrap();
 
         // The closed gate keeps both targets `InProgress`: nothing is
         // removed, and no Data Store is asked.
@@ -8239,9 +8879,17 @@ server_name = "{server_name}"
     ) -> CustomerDataDeletionRequestStatus {
         let shared: SharedAgentManager = agent.clone();
         let deployer: SharedPackageDeployer = deployer.clone();
-        request_deletion(customer_id, &test_store.store, &shared, &deployer, manager)
-            .await
-            .unwrap()
+        request_deletion(
+            customer_id,
+            &test_store.store,
+            &shared,
+            &deployer,
+            manager,
+            GiveUp::default(),
+            None,
+        )
+        .await
+        .unwrap()
     }
 
     /// Lets paused time run, a second at a time, until `condition` holds.
@@ -9635,5 +10283,1062 @@ server_name = "{server_name}"
             "{message}"
         );
         assert!(manager.state.lock().await.active.is_none());
+    }
+
+    const A_DATA_STORE: &str = "001.giganto.a.example";
+
+    /// Answers as `RecordingDeployer` does, except that `give_up_removal`
+    /// keeps the trait's default.
+    struct WithoutGiveUp(Arc<RecordingDeployer>);
+
+    #[async_trait]
+    impl PackageDeployer for WithoutGiveUp {
+        async fn install(
+            &self,
+            host: &str,
+            target: &str,
+            selector: review_database::BuildSelector,
+            on_failure: review_protocol::types::node::FailurePolicy,
+            bind_addrs: Option<Vec<crate::backend::BindAddrInput>>,
+            config_template: Option<String>,
+            request_key: &str,
+        ) -> Result<(crate::backend::DeployOutcome, crate::backend::OperationId), DeployError>
+        {
+            self.0
+                .install(
+                    host,
+                    target,
+                    selector,
+                    on_failure,
+                    bind_addrs,
+                    config_template,
+                    request_key,
+                )
+                .await
+        }
+
+        async fn update(
+            &self,
+            host: &str,
+            target: &str,
+            instance: Option<u32>,
+            selector: review_database::BuildSelector,
+            on_failure: review_protocol::types::node::FailurePolicy,
+        ) -> Result<(crate::backend::DeployOutcome, crate::backend::OperationId), DeployError>
+        {
+            self.0
+                .update(host, target, instance, selector, on_failure)
+                .await
+        }
+
+        async fn remove(
+            &self,
+            host: &str,
+            target: &str,
+            instance: Option<u32>,
+        ) -> Result<crate::backend::OperationId, DeployError> {
+            self.0.remove(host, target, instance).await
+        }
+
+        async fn recommend_bind_addrs(
+            &self,
+            host: &str,
+            target: &str,
+        ) -> Result<Vec<review_database::ListenerBinding>, DeployError> {
+            self.0.recommend_bind_addrs(host, target).await
+        }
+
+        async fn latest_build(
+            &self,
+            target: &str,
+        ) -> anyhow::Result<Option<crate::backend::BuildId>> {
+            self.0.latest_build(target).await
+        }
+
+        async fn servable_builds(
+            &self,
+            target: &str,
+        ) -> anyhow::Result<Vec<crate::backend::BuildId>> {
+            self.0.servable_builds(target).await
+        }
+
+        async fn config_templates(
+            &self,
+            target: &str,
+        ) -> anyhow::Result<crate::backend::ConfigTemplateCatalog> {
+            self.0.config_templates(target).await
+        }
+
+        async fn is_build_withdrawn(
+            &self,
+            target: &str,
+            build: &crate::backend::BuildId,
+        ) -> anyhow::Result<bool> {
+            self.0.is_build_withdrawn(target, build).await
+        }
+
+        async fn package_status(
+            &self,
+            host: &str,
+            target: &str,
+            instance: Option<u32>,
+        ) -> anyhow::Result<review_protocol::types::node::PackageState> {
+            self.0.package_status(host, target, instance).await
+        }
+
+        async fn read_version(
+            &self,
+            host: &str,
+            target: &str,
+            instance: Option<u32>,
+        ) -> anyhow::Result<Option<crate::backend::BuildId>> {
+            self.0.read_version(host, target, instance).await
+        }
+
+        async fn register(
+            &self,
+            service_name: &str,
+            host: &str,
+            instance: Option<u32>,
+            mode: review_protocol::types::node::DeliveryMode,
+        ) -> anyhow::Result<review_protocol::types::node::BootstrapMaterial> {
+            self.0.register(service_name, host, instance, mode).await
+        }
+
+        async fn deregister(
+            &self,
+            service_name: &str,
+            host: &str,
+            instance: Option<u32>,
+        ) -> anyhow::Result<()> {
+            self.0.deregister(service_name, host, instance).await
+        }
+    }
+
+    /// Stores customer 7's nodes for a give-up: a Sensor and a Data Store
+    /// nothing else uses on `a.example`, and a Time Series Generator on
+    /// `c.example`.
+    fn put_give_up_fixture(test_store: &TestStore) {
+        put_customer_data_store(
+            test_store,
+            7,
+            A,
+            1,
+            vec![numbered_agent(AgentKind::Sensor, 1)],
+        );
+        put_customer_node(
+            test_store,
+            7,
+            C,
+            vec![numbered_agent(AgentKind::TimeSeriesGenerator, 1)],
+        );
+    }
+
+    /// Requests customer 7's deletion of the give-up fixture, which stops in
+    /// stage 2 when the removal of the Sensor on `a.example` fails, and
+    /// returns the deployer.
+    async fn stop_in_stage_2_on_a(test_store: &TestStore) -> Arc<RecordingDeployer> {
+        put_give_up_fixture(test_store);
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let deployer = Arc::new(
+            RecordingDeployer::new(&test_store.store)
+                .answer(remove_call(A, "piglet", 1), [RemoveAnswer::Other]),
+        );
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        request_with(test_store, 7, &agent, &deployer, &manager).await;
+        finish_supervisor(&manager).await;
+        let stopped = job(&test_store.store, 7);
+        assert_eq!(
+            error_of(&stopped, CustomerDataDeletionService::ModuleRemoval, A),
+            "removing piglet 1 on a.example failed: the apply was aborted"
+        );
+        assert!(!in_progress(&stopped));
+        deployer
+    }
+
+    /// Requests a retry of customer 7's deletion that gives up `hosts` and
+    /// `data_stores`.
+    async fn give_up_with(
+        test_store: &TestStore,
+        hosts: &[&str],
+        data_stores: &[&str],
+        agent: &Arc<RecordingAgentManager>,
+        deployer: SharedPackageDeployer,
+        manager: &Arc<CustomerDataDeletionTaskManager>,
+    ) -> anyhow::Result<CustomerDataDeletionRequestStatus> {
+        let shared: SharedAgentManager = agent.clone();
+        let names = |names: &[&str]| names.iter().map(ToString::to_string).collect();
+        request_deletion(
+            7,
+            &test_store.store,
+            &shared,
+            &deployer,
+            manager,
+            GiveUp::new(names(hosts), names(data_stores)),
+            None,
+        )
+        .await
+    }
+
+    fn removes_on(deployer: &RecordingDeployer, host: &str) -> usize {
+        deployer
+            .removes()
+            .iter()
+            .filter(|(on, _, _)| on == host)
+            .count()
+    }
+
+    fn all_succeeded(job: &CustomerDataDeletionJob) -> bool {
+        job.service_results
+            .iter()
+            .all(|result| result.status == CustomerDataDeletionStatus::Succeeded)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn giving_up_a_host_after_a_stage_2_failure_completes_the_deletion() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        let deployer = stop_in_stage_2_on_a(&test_store).await;
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        assert_eq!(
+            give_up_with(&test_store, &[A], &[], &agent, deployer.clone(), &manager)
+                .await
+                .unwrap(),
+            CustomerDataDeletionRequestStatus::Accepted
+        );
+        finish_supervisor(&manager).await;
+
+        assert_eq!(removes_on(&deployer, A), 1);
+        assert!(agent.dispatched_nothing());
+        assert!(agent.sent.lock().unwrap().is_empty());
+        assert_eq!(
+            deployer.give_ups(),
+            [remove_call(A, "piglet", 1), remove_call(A, "giganto", 1)]
+        );
+        let done = job(&test_store.store, 7);
+        assert_eq!(done.abandoned_hosts, [A]);
+        assert_eq!(
+            error_of(&done, CustomerDataDeletionService::ModuleRemoval, A),
+            "abandoned: host a.example was given up; left on the host: piglet 1, giganto 1, \
+             the customer's data in 001.giganto.a.example"
+        );
+        assert_eq!(
+            data_store_result(&done, A_DATA_STORE).error.as_deref(),
+            Some(
+                "abandoned: host a.example was given up; left on the host: the customer's data \
+                 in 001.giganto.a.example"
+            )
+        );
+        assert_eq!(
+            service_of(&done, CustomerDataDeletionService::ModuleRemoval, C)
+                .unwrap()
+                .error,
+            None
+        );
+        assert!(all_succeeded(&done), "{done:?}");
+        assert_eq!(nodes_of(&test_store, 7), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_records_no_result_for_a_data_store_on_a_given_up_host() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        put_give_up_fixture(&test_store);
+        let mut stored = CustomerDataDeletionJob::new(
+            7,
+            vec![pending_result(CustomerDataDeletionService::Review, &[A, C])],
+        );
+        stored.abandoned_hosts = vec![A.to_string()];
+        read_store(&test_store.store)
+            .unwrap()
+            .customer_data_deletion_map()
+            .put(&stored)
+            .unwrap();
+        let before = job(&test_store.store, 7);
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let shared: SharedAgentManager = agent.clone();
+
+        let (_stopping, mut shutdown) = watch::channel(true);
+        assert_eq!(
+            data_store_step(&test_store.store, &shared, &mut shutdown, 7).await,
+            DataStoreStepOutcome::ShutDown
+        );
+        assert_eq!(job(&test_store.store, 7), before);
+        assert!(agent.sent.lock().unwrap().is_empty());
+
+        // Without shutdown, the same step records it.
+        let (_running, mut shutdown) = watch::channel(false);
+        assert_eq!(
+            data_store_step(&test_store.store, &shared, &mut shutdown, 7).await,
+            DataStoreStepOutcome::Completed
+        );
+        let result = data_store_result(&job(&test_store.store, 7), A_DATA_STORE);
+        assert_eq!(result.status, CustomerDataDeletionStatus::Succeeded);
+        assert!(agent.sent.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_given_up_host_stays_given_up_across_a_shutdown_and_a_restart() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        stop_in_stage_2_on_a(&test_store).await;
+        let hanging = Arc::new(
+            RecordingDeployer::new(&test_store.store)
+                .give_up_answer(remove_call(A, "piglet", 1), [GiveUpAnswer::Hang]),
+        );
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        give_up_with(&test_store, &[A], &[], &agent, hanging.clone(), &manager)
+            .await
+            .unwrap();
+        hanging.give_up_started.notified().await;
+        let before = job(&test_store.store, 7);
+        manager.begin_shutdown().await;
+        let supervisor = manager.state.lock().await.active.take().unwrap().1;
+        tokio::time::timeout(Duration::from_secs(15), supervisor)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(job(&test_store.store, 7), before);
+        assert_eq!(nodes_of(&test_store, 7), 2);
+
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let deployer = Arc::new(RecordingDeployer::new(&test_store.store));
+        let recovered =
+            recover_customer_data_deletion_on_startup(Arc::clone(&test_store.store)).unwrap();
+        assert_eq!(recovered.remote_targets(), []);
+        recovered
+            .start(deployer.clone(), agent.clone(), Arc::clone(&manager))
+            .await
+            .unwrap();
+        finish_supervisor(&manager).await;
+
+        assert_eq!(removes_on(&deployer, A), 0);
+        assert_eq!(
+            deployer.give_ups(),
+            [remove_call(A, "piglet", 1), remove_call(A, "giganto", 1)]
+        );
+        assert!(agent.dispatched_nothing());
+        assert!(agent.sent.lock().unwrap().is_empty());
+        let done = job(&test_store.store, 7);
+        assert_eq!(done.abandoned_hosts, [A]);
+        assert!(all_succeeded(&done), "{done:?}");
+        assert_eq!(nodes_of(&test_store, 7), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn giving_up_a_host_whose_sensor_never_reported_completes_the_deletion() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        put_customer_node(
+            &test_store,
+            7,
+            A,
+            vec![numbered_agent(AgentKind::Sensor, 1)],
+        );
+        let agent = Arc::new(RecordingAgentManager {
+            hold_delivery: true,
+            ..RecordingAgentManager::with_store(&test_store.store)
+        });
+        let deployer = Arc::new(RecordingDeployer::new(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        request_with(&test_store, 7, &agent, &deployer, &manager).await;
+        finish_supervisor(&manager).await;
+        let stopped = job(&test_store.store, 7);
+        let sensor = service_of(&stopped, CustomerDataDeletionService::Sensor, A)
+            .unwrap()
+            .clone();
+        assert_eq!(sensor.status, CustomerDataDeletionStatus::Failed);
+
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        assert_eq!(
+            give_up_with(&test_store, &[A], &[], &agent, deployer.clone(), &manager)
+                .await
+                .unwrap(),
+            CustomerDataDeletionRequestStatus::Accepted
+        );
+        let given_up = job(&test_store.store, 7);
+        let abandoned = service_of(&given_up, CustomerDataDeletionService::Sensor, A).unwrap();
+        assert_eq!(abandoned.requested_at, sensor.requested_at);
+        assert_eq!(
+            abandoned.error.as_deref(),
+            Some("abandoned: host a.example was given up; left on the host: the customer's files")
+        );
+        finish_supervisor(&manager).await;
+
+        assert!(agent.dispatched_nothing());
+        assert_eq!(deployer.removes(), Vec::<RemoveCall>::new());
+        assert_eq!(deployer.give_ups(), [remove_call(A, "piglet", 1)]);
+        let done = job(&test_store.store, 7);
+        let module_removal =
+            service_of(&done, CustomerDataDeletionService::ModuleRemoval, A).unwrap();
+        assert_eq!(module_removal.status, CustomerDataDeletionStatus::Succeeded);
+        assert_eq!(
+            module_removal.error.as_deref(),
+            Some(
+                "abandoned: host a.example was given up; left on the host: piglet 1, the \
+                 customer's files"
+            )
+        );
+        assert!(all_succeeded(&done), "{done:?}");
+        assert_eq!(nodes_of(&test_store, 7), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn giving_up_another_customers_data_store_that_is_gone_completes_the_deletion() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        put_customer_node(
+            &test_store,
+            7,
+            A,
+            vec![numbered_agent(AgentKind::Sensor, 1)],
+        );
+        put_data_store(&test_store, "gone.example", 1);
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        *agent.answers.lock().unwrap() = VecDeque::from([Err("connection refused".to_string())]);
+        let deployer = Arc::new(RecordingDeployer::new(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        request_with(&test_store, 7, &agent, &deployer, &manager).await;
+        finish_supervisor(&manager).await;
+        let stopped = job(&test_store.store, 7);
+        assert_eq!(
+            data_store_result(&stopped, GONE).status,
+            CustomerDataDeletionStatus::Failed
+        );
+        assert!(!in_progress(&stopped));
+
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        assert_eq!(
+            give_up_with(
+                &test_store,
+                &[],
+                &[GONE],
+                &agent,
+                deployer.clone(),
+                &manager
+            )
+            .await
+            .unwrap(),
+            CustomerDataDeletionRequestStatus::Accepted
+        );
+        finish_supervisor(&manager).await;
+
+        assert!(agent.sent.lock().unwrap().is_empty());
+        assert_eq!(deployer.give_ups(), Vec::<RemoveCall>::new());
+        let done = job(&test_store.store, 7);
+        assert_eq!(
+            data_store_result(&done, GONE).error.as_deref(),
+            Some(
+                "abandoned: the Data Store 001.giganto.gone.example was given up; left on the \
+                 host: the customer's data in 001.giganto.gone.example"
+            )
+        );
+        assert_eq!(done.abandoned_hosts, Vec::<String>::new());
+        assert!(all_succeeded(&done), "{done:?}");
+        assert_eq!(nodes_of(&test_store, 7), 0);
+        assert_eq!(nodes_of(&test_store, 0), 1);
+    }
+
+    /// Asks the schema to give up `arguments` of customer 7's deletion, and
+    /// returns the refusal's code and message.
+    async fn give_up_refusal(
+        schema: &Schema<TestQuery, CustomerDataDeletionMutation, EmptySubscription>,
+        arguments: &str,
+    ) -> (String, String) {
+        let response = schema
+            .execute(admin_request(&format!(
+                r#"mutation {{ deleteCustomerData(customerId: "7", {arguments}) }}"#
+            )))
+            .await;
+        refusal(&response)
+    }
+
+    #[tokio::test]
+    async fn a_give_up_outside_a_stopped_deletion_is_refused_and_writes_nothing() {
+        let test_store = TestStore::new();
+        put_customer_node(
+            &test_store,
+            7,
+            A,
+            vec![numbered_agent(AgentKind::Sensor, 1)],
+        );
+        put_data_store(&test_store, "gone.example", 1);
+        let agent: SharedAgentManager =
+            Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let schema = test_schema(&test_store, agent, Arc::clone(&manager));
+        let invalid = (String::new(), GIVE_UP_INVALID.to_string());
+        let running = (String::new(), GIVE_UP_STILL_RUNNING.to_string());
+
+        // A first request.
+        assert_eq!(
+            give_up_refusal(&schema, r#"abandonHosts: ["a.example"]"#).await,
+            invalid
+        );
+        assert_eq!(job_of(&test_store, 7), None);
+
+        let stopped = vec![
+            terminal_result(
+                CustomerDataDeletionService::Review,
+                A,
+                CustomerDataDeletionStatus::Failed,
+            ),
+            terminal_result(
+                CustomerDataDeletionService::ModuleRemoval,
+                A,
+                CustomerDataDeletionStatus::Failed,
+            ),
+            terminal_result(
+                CustomerDataDeletionService::DataStore,
+                GONE,
+                CustomerDataDeletionStatus::Succeeded,
+            ),
+        ];
+        put_job(&test_store.store, 7, stopped.clone());
+        let before = job(&test_store.store, 7);
+        for arguments in [
+            r#"abandonHosts: ["x.example"]"#,
+            r#"abandonHosts: ["a.example", "x.example"]"#,
+            r#"abandonDataStores: ["001.giganto.gone.example"]"#,
+            r#"abandonDataStores: ["001.giganto.a.example"]"#,
+        ] {
+            assert_eq!(
+                give_up_refusal(&schema, arguments).await,
+                invalid,
+                "{arguments}"
+            );
+            assert_eq!(job(&test_store.store, 7), before);
+        }
+
+        // A part still in progress.
+        let mut running_job = stopped.clone();
+        running_job[1].status = CustomerDataDeletionStatus::InProgress;
+        put_job(&test_store.store, 7, running_job);
+        let before = job(&test_store.store, 7);
+        for arguments in [
+            r#"abandonHosts: ["a.example"]"#,
+            r#"abandonDataStores: ["001.giganto.gone.example"]"#,
+        ] {
+            assert_eq!(
+                give_up_refusal(&schema, arguments).await,
+                running,
+                "{arguments}"
+            );
+            assert_eq!(job(&test_store.store, 7), before);
+        }
+
+        // A completed deletion.
+        let mut completed = stopped.clone();
+        for result in &mut completed {
+            result.status = CustomerDataDeletionStatus::Succeeded;
+        }
+        put_job(&test_store.store, 7, completed);
+        let before = job(&test_store.store, 7);
+        assert_eq!(
+            give_up_refusal(&schema, r#"abandonHosts: ["a.example"]"#).await,
+            invalid
+        );
+        assert_eq!(job(&test_store.store, 7), before);
+
+        // A deletion with no host.
+        put_job(
+            &test_store.store,
+            7,
+            vec![CustomerDataDeletionServiceResult {
+                status: CustomerDataDeletionStatus::Failed,
+                ..pending_result(CustomerDataDeletionService::Review, &[])
+            }],
+        );
+        let before = job(&test_store.store, 7);
+        assert_eq!(
+            give_up_refusal(&schema, r#"abandonHosts: ["a.example"]"#).await,
+            invalid
+        );
+        assert_eq!(job(&test_store.store, 7), before);
+        assert!(manager.state.lock().await.active.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_give_up_while_the_supervisor_runs_is_refused() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        put_customer_node(
+            &test_store,
+            7,
+            A,
+            vec![numbered_agent(AgentKind::Sensor, 1)],
+        );
+        let agent = Arc::new(RecordingAgentManager {
+            hold_delivery: true,
+            ..RecordingAgentManager::with_store(&test_store.store)
+        });
+        let deployer = Arc::new(RecordingDeployer::new(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        request_with(&test_store, 7, &agent, &deployer, &manager).await;
+        agent.delivery_started.notified().await;
+        let before = job(&test_store.store, 7);
+        let error = give_up_with(&test_store, &[A], &[], &agent, deployer.clone(), &manager)
+            .await
+            .unwrap_err();
+        assert_eq!(format!("{error:#}"), GIVE_UP_STILL_RUNNING);
+        assert_eq!(job(&test_store.store, 7), before);
+        manager.shutdown_and_wait().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn empty_lists_are_a_plain_retry() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        put_customer_node(
+            &test_store,
+            7,
+            A,
+            vec![numbered_agent(AgentKind::Sensor, 1)],
+        );
+        put_job(
+            &test_store.store,
+            7,
+            vec![
+                terminal_result(
+                    CustomerDataDeletionService::Review,
+                    A,
+                    CustomerDataDeletionStatus::Failed,
+                ),
+                terminal_result(
+                    CustomerDataDeletionService::Sensor,
+                    A,
+                    CustomerDataDeletionStatus::Succeeded,
+                ),
+                terminal_result(
+                    CustomerDataDeletionService::ModuleRemoval,
+                    A,
+                    CustomerDataDeletionStatus::Failed,
+                ),
+            ],
+        );
+        let agent: SharedAgentManager =
+            Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let schema = test_schema(&test_store, agent, Arc::clone(&manager));
+        let response = schema
+            .execute(admin_request(
+                r#"mutation { deleteCustomerData(customerId: "7", abandonHosts: [], abandonDataStores: []) }"#,
+            ))
+            .await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        assert_eq!(
+            response.data.into_json().unwrap(),
+            serde_json::json!({ "deleteCustomerData": "ACCEPTED" })
+        );
+        finish_supervisor(&manager).await;
+        let done = job(&test_store.store, 7);
+        assert_eq!(done.abandoned_hosts, Vec::<String>::new());
+        assert_eq!(
+            service_of(&done, CustomerDataDeletionService::ModuleRemoval, A)
+                .unwrap()
+                .error,
+            None
+        );
+        assert!(all_succeeded(&done), "{done:?}");
+        assert_eq!(nodes_of(&test_store, 7), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_give_up_never_completes_the_review_result_or_reopens_a_finished_host() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        put_customer_node(
+            &test_store,
+            7,
+            A,
+            vec![numbered_agent(AgentKind::Sensor, 1)],
+        );
+        let failed_once = Arc::new(AtomicBool::new(false));
+        let fails = Arc::clone(&failed_once);
+        let at_review = Arc::new(std::sync::Mutex::new(None));
+        let snapshot = Arc::clone(&at_review);
+        let hook_store = Arc::clone(&test_store.store);
+        let _hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(move |stage, customer_id| {
+                if stage == Stage::Worker {
+                    *snapshot.lock().unwrap() = read_store(&hook_store)?
+                        .customer_data_deletion_map()
+                        .get(customer_id)?;
+                }
+                if stage == Stage::Events && !fails.swap(true, Ordering::SeqCst) {
+                    bail!("the events could not be deleted");
+                }
+                Ok(())
+            }),
+        );
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let deployer = Arc::new(RecordingDeployer::new(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        request_with(&test_store, 7, &agent, &deployer, &manager).await;
+        finish_supervisor(&manager).await;
+        let stopped = job(&test_store.store, 7);
+        assert_eq!(
+            review_of(&stopped).status,
+            CustomerDataDeletionStatus::Failed
+        );
+        let finished = service_of(&stopped, CustomerDataDeletionService::ModuleRemoval, A)
+            .unwrap()
+            .clone();
+        assert_eq!(finished.status, CustomerDataDeletionStatus::Succeeded);
+
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        give_up_with(&test_store, &[A], &[], &agent, deployer.clone(), &manager)
+            .await
+            .unwrap();
+        assert_eq!(
+            review_of(&job(&test_store.store, 7)).status,
+            CustomerDataDeletionStatus::InProgress
+        );
+        finish_supervisor(&manager).await;
+
+        let at_review = at_review.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            review_of(&at_review).status,
+            CustomerDataDeletionStatus::InProgress
+        );
+        let done = job(&test_store.store, 7);
+        assert_eq!(
+            review_of(&done).status,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        assert_eq!(
+            service_of(&done, CustomerDataDeletionService::ModuleRemoval, A),
+            Some(&finished)
+        );
+        assert_eq!(deployer.give_ups(), Vec::<RemoveCall>::new());
+        assert_eq!(nodes_of(&test_store, 7), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_concurrent_retry_makes_the_give_up_stale() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        let deployer = stop_in_stage_2_on_a(&test_store).await;
+        let hook_store = Arc::clone(&test_store.store);
+        let _hook = HookGuard::install(
+            &test_store.store,
+            Arc::new(move |stage, customer_id| {
+                if stage == Stage::PersistRequest {
+                    let store = read_store(&hook_store)?;
+                    let map = store.customer_data_deletion_map();
+                    let mut review = map
+                        .get(customer_id)?
+                        .unwrap()
+                        .service_results
+                        .into_iter()
+                        .find(|result| result.service == CustomerDataDeletionService::Review)
+                        .unwrap();
+                    review.requested_at += 1;
+                    map.update_service(customer_id, &review)?;
+                }
+                Ok(())
+            }),
+        );
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let before = job(&test_store.store, 7);
+        let error = give_up_with(&test_store, &[A], &[], &agent, deployer.clone(), &manager)
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{error:#}").starts_with("persisting customer data deletion give-up"),
+            "{error:#}"
+        );
+        let after = job(&test_store.store, 7);
+        assert_eq!(
+            review_of(&after).requested_at,
+            review_of(&before).requested_at + 1
+        );
+        let mut expected = before;
+        expected.service_results = after.service_results.clone();
+        assert_eq!(after, expected);
+        assert_eq!(after.abandoned_hosts, Vec::<String>::new());
+        assert!(manager.state.lock().await.active.is_none());
+        assert_eq!(deployer.give_ups(), Vec::<RemoveCall>::new());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_removal_live_at_the_give_up_is_waited_for_even_if_it_fails() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        let deployer = stop_in_stage_2_on_a(&test_store).await;
+        let removal = live_attempt("remove-live", OperationAction::Remove, A, "piglet", Some(1));
+        write_attempt(&test_store.store, &removal);
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        give_up_with(&test_store, &[A], &[], &agent, deployer.clone(), &manager)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_mins(20)).await;
+        assert_eq!(deployer.give_ups(), Vec::<RemoveCall>::new());
+        write_attempt(
+            &test_store.store,
+            &ended(
+                removal,
+                OperationOutcome::Failed,
+                OperationFailureKind::ServiceFailed,
+            ),
+        );
+        finish_supervisor(&manager).await;
+        assert_eq!(
+            deployer.give_ups(),
+            [remove_call(A, "piglet", 1), remove_call(A, "giganto", 1)]
+        );
+        let done = job(&test_store.store, 7);
+        assert!(all_succeeded(&done), "{done:?}");
+        assert_eq!(nodes_of(&test_store, 7), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_plain_retry_after_a_give_up_keeps_the_host_given_up() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        put_give_up_fixture(&test_store);
+        let first = Arc::new(RecordingAgentManager {
+            fail_reports: vec![format!("piglet.{A}")],
+            ..RecordingAgentManager::with_store(&test_store.store)
+        });
+        let deployer = Arc::new(
+            RecordingDeployer::new(&test_store.store)
+                .answer(remove_call(C, "crusher", 1), [RemoveAnswer::Other]),
+        );
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        request_with(&test_store, 7, &first, &deployer, &manager).await;
+        finish_supervisor(&manager).await;
+        assert_eq!(deployer.removes(), Vec::<RemoveCall>::new());
+
+        // The give-up stops on `c`'s removal, before any row of `a` is given
+        // up.
+        let second = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        give_up_with(&test_store, &[A], &[], &second, deployer.clone(), &manager)
+            .await
+            .unwrap();
+        finish_supervisor(&manager).await;
+        let stopped = job(&test_store.store, 7);
+        assert_eq!(
+            error_of(&stopped, CustomerDataDeletionService::ModuleRemoval, A),
+            "stopped before this part: removing crusher 1 on c.example failed: the apply was \
+             aborted"
+        );
+        assert!(!in_progress(&stopped));
+        assert_eq!(deployer.give_ups(), Vec::<RemoveCall>::new());
+
+        let third = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        assert_eq!(
+            request_with(&test_store, 7, &third, &deployer, &manager).await,
+            CustomerDataDeletionRequestStatus::Accepted
+        );
+        finish_supervisor(&manager).await;
+
+        assert_eq!(removes_on(&deployer, A), 0);
+        assert_eq!(
+            deployer.give_ups(),
+            [remove_call(A, "piglet", 1), remove_call(A, "giganto", 1)]
+        );
+        for agent in [&second, &third] {
+            assert!(agent.dispatched_nothing());
+            assert!(agent.sent.lock().unwrap().is_empty());
+        }
+        let done = job(&test_store.store, 7);
+        assert_eq!(done.abandoned_hosts, [A]);
+        assert_eq!(
+            error_of(&done, CustomerDataDeletionService::ModuleRemoval, A),
+            "abandoned: host a.example was given up; left on the host: piglet 1, giganto 1, \
+             the customer's files, the customer's data in 001.giganto.a.example"
+        );
+        assert!(all_succeeded(&done), "{done:?}");
+        assert_eq!(nodes_of(&test_store, 7), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_give_up_under_maintenance_is_called_again_for_an_hour() {
+        {
+            let test_store = TestStore::new();
+            let _clock = ClockGuard::install(&test_store);
+            stop_in_stage_2_on_a(&test_store).await;
+            let deployer = Arc::new(RecordingDeployer::new(&test_store.store).give_up_answer(
+                remove_call(A, "piglet", 1),
+                [GiveUpAnswer::UnderMaintenance],
+            ));
+            let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+            let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+            give_up_with(&test_store, &[A], &[], &agent, deployer.clone(), &manager)
+                .await
+                .unwrap();
+            finish_supervisor(&manager).await;
+            assert_eq!(
+                deployer.give_ups(),
+                [
+                    remove_call(A, "piglet", 1),
+                    remove_call(A, "piglet", 1),
+                    remove_call(A, "giganto", 1)
+                ]
+            );
+            let done = job(&test_store.store, 7);
+            assert_eq!(
+                status_of(&done, CustomerDataDeletionService::ModuleRemoval, A),
+                CustomerDataDeletionStatus::Succeeded
+            );
+            assert!(all_succeeded(&done), "{done:?}");
+        }
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        stop_in_stage_2_on_a(&test_store).await;
+        let deployer = Arc::new(RecordingDeployer::new(&test_store.store).give_up_answer(
+            remove_call(A, "piglet", 1),
+            std::iter::repeat_n(GiveUpAnswer::UnderMaintenance, 1_000),
+        ));
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        give_up_with(&test_store, &[A], &[], &agent, deployer.clone(), &manager)
+            .await
+            .unwrap();
+        finish_supervisor(&manager).await;
+        let stopped = job(&test_store.store, 7);
+        assert_eq!(
+            error_of(&stopped, CustomerDataDeletionService::ModuleRemoval, A),
+            "giving up piglet 1 on a.example: REview stayed under maintenance for 1 hour"
+        );
+        assert_eq!(deployer.give_ups().len(), 361);
+        assert_eq!(
+            review_of(&stopped).status,
+            CustomerDataDeletionStatus::Failed
+        );
+        assert!(!in_progress(&stopped));
+        assert_eq!(stopped.abandoned_hosts, [A]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_deployer_without_give_up_stops_the_deletion() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        let deployer = stop_in_stage_2_on_a(&test_store).await;
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        give_up_with(
+            &test_store,
+            &[A],
+            &[],
+            &agent,
+            Arc::new(WithoutGiveUp(deployer.clone())),
+            &manager,
+        )
+        .await
+        .unwrap();
+        finish_supervisor(&manager).await;
+        let stopped = job(&test_store.store, 7);
+        assert_eq!(
+            error_of(&stopped, CustomerDataDeletionService::ModuleRemoval, A),
+            "giving up piglet 1 on a.example failed: Not supported"
+        );
+        assert_eq!(
+            review_of(&stopped).status,
+            CustomerDataDeletionStatus::Failed
+        );
+        assert!(!in_progress(&stopped));
+        assert_eq!(removes_on(&deployer, A), 1);
+        assert_eq!(nodes_of(&test_store, 7), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_user_added_during_a_give_up_stops_it_before_the_data_store() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        stop_in_stage_2_on_a(&test_store).await;
+        let mut deployer = RecordingDeployer::new(&test_store.store);
+        let user_store = Arc::clone(&test_store.store);
+        deployer.on_remove = std::sync::Mutex::new(Some(Box::new(move || {
+            read_store(&user_store)
+                .unwrap()
+                .node_map()
+                .put(&Node {
+                    id: 0,
+                    name: "other.example".to_string(),
+                    name_draft: None,
+                    profile: Some(NodeProfile {
+                        customer_id: 2,
+                        description: String::new(),
+                        hostname: "other.example".to_string(),
+                    }),
+                    profile_draft: None,
+                    agents: vec![agent_naming(
+                        "001.piglet",
+                        AgentKind::Sensor,
+                        Some(giganto_name(A_DATA_STORE)),
+                        None,
+                    )],
+                    external_services: Vec::new(),
+                    creation_time: Utc::now(),
+                })
+                .unwrap();
+        })));
+        let deployer = Arc::new(deployer);
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        give_up_with(&test_store, &[A], &[], &agent, deployer.clone(), &manager)
+            .await
+            .unwrap();
+        finish_supervisor(&manager).await;
+
+        assert_eq!(deployer.give_ups(), [remove_call(A, "piglet", 1)]);
+        let stopped = job(&test_store.store, 7);
+        let error = error_of(&stopped, CustomerDataDeletionService::ModuleRemoval, A);
+        assert!(
+            error.contains(&format!(
+                "Data Store {A_DATA_STORE} on a.example is used by the Sensor agent 001.piglet \
+                 on other.example."
+            )),
+            "{error}"
+        );
+        assert!(error.contains("piglet 1"), "{error}");
+        assert_eq!(
+            review_of(&stopped).status,
+            CustomerDataDeletionStatus::Failed
+        );
+        assert!(!in_progress(&stopped));
+        assert_eq!(nodes_of(&test_store, 7), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_give_up_that_leaves_the_row_stops_the_deletion() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        stop_in_stage_2_on_a(&test_store).await;
+        let deployer = Arc::new(
+            RecordingDeployer::new(&test_store.store)
+                .give_up_answer(remove_call(A, "piglet", 1), [GiveUpAnswer::KeepRow]),
+        );
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        give_up_with(&test_store, &[A], &[], &agent, deployer.clone(), &manager)
+            .await
+            .unwrap();
+        finish_supervisor(&manager).await;
+
+        assert_eq!(deployer.give_ups(), [remove_call(A, "piglet", 1)]);
+        let stopped = job(&test_store.store, 7);
+        assert_eq!(
+            error_of(&stopped, CustomerDataDeletionService::ModuleRemoval, A),
+            "giving up piglet 1 on a.example: the row is still recorded"
+        );
+        assert_eq!(
+            review_of(&stopped).status,
+            CustomerDataDeletionStatus::Failed
+        );
+        assert!(!in_progress(&stopped));
+        assert_eq!(nodes_of(&test_store, 7), 2);
     }
 }

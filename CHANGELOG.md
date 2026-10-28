@@ -33,6 +33,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     removed from the records only and keeps running.
   - A Data Store uninstalled with the customer leaves its data directory on
     the host.
+- `deleteCustomerData` takes `abandonHosts` and `abandonDataStores`, for
+  retrying a stopped deletion that gives up hosts and Data Stores that are
+  gone. Nothing is sent to them again, the modules on a given-up host are
+  given up without reaching it, and their work is recorded `SUCCEEDED` with
+  an "abandoned: …" error text naming what is left. The Central Manager never
+  decides on its own that a host is gone. What stays:
+  - The modules on a given-up host keep running and writing until their
+    current certificates expire, and bootroot no longer renews them.
+  - The customer's data in a given-up Data Store stays in it.
+- `PackageDeployer::give_up_removal` drops a module's row, deregisters its
+  identity and frees its instance number without reaching its host. Its
+  default fails with "Not supported", which stops a give-up on that host.
 - `CustomerDataDeletionTaskManager::begin_shutdown` blocks new deletion
   requests and tells the running deletion to stop without waiting for it, so
   that the embedding application can stop its own work before

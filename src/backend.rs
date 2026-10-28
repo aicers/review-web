@@ -1166,6 +1166,29 @@ pub trait PackageDeployer: Send + Sync {
         instance: Option<u32>,
     ) -> Result<OperationId, DeployError>;
 
+    /// Gives up the placement `(host, target, instance)` of customer
+    /// `customer_id`'s deletion, without reaching the host.
+    ///
+    /// It drops the row, deregisters the module's identity and frees the
+    /// instance number. A customer deletion calls it for a host a System
+    /// Administrator gave up, which may never return. A repeated call only
+    /// finishes the work an earlier one began.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeployError::UnderMaintenance`] if `REview`'s maintenance
+    /// gate is closed, and [`DeployError::Other`] for any other failure. The
+    /// default implementation always returns [`DeployError::Other`].
+    async fn give_up_removal(
+        &self,
+        _customer_id: u32,
+        _host: &str,
+        _target: &str,
+        _instance: u32,
+    ) -> Result<(), DeployError> {
+        Err(DeployError::Other(anyhow!("Not supported")))
+    }
+
     /// Recommends an address for each listener `target` binds on `host`.
     ///
     /// It takes no `instance` — the instance being recommended for does not

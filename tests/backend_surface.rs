@@ -583,6 +583,18 @@ async fn the_system_log_collector_methods_default_to_an_error() {
     assert!(matches!(error, DeployError::Other(_)));
 }
 
+/// `OutsideDeployer` does not implement `give_up_removal`, so a customer
+/// deletion giving up one of its hosts is refused with "Not supported".
+#[tokio::test]
+async fn give_up_removal_defaults_to_not_supported() {
+    let error = deployer(None)
+        .give_up_removal(7, "host1", "piglet", 1)
+        .await
+        .expect_err("the default body refuses");
+    assert!(matches!(&error, DeployError::Other(_)));
+    assert_eq!(error.to_string(), "Not supported");
+}
+
 /// review builds a system log collector's state from its row, its connection
 /// and its newest attempt, field by field.
 #[test]

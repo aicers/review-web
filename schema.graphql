@@ -6286,8 +6286,26 @@ type Mutation {
 	customer's data was already deleted and it holds nodes, sampling
 	policies, models or training definitions created since. Once they are
 	removed, the request is answered `ALREADY_COMPLETED`.
+	
+	`abandonHosts` and `abandonDataStores` give up, on a retry of a
+	stopped deletion, hosts and Data Stores that are gone for good. The
+	Central Manager never decides on its own that one is gone. Each host
+	is a host of the deletion; each Data Store is the server name of a
+	`DATA_STORE` result that is `FAILED`. Nothing is sent to them again,
+	and their work is recorded `SUCCEEDED` with an error text starting
+	"abandoned: " that names what is left on the host. The modules
+	installed on a given-up host are given up without reaching it. Left
+	out or empty, the lists change nothing, and duplicates are dropped.
+	
+	A request naming either is refused before anything is written, with
+	no `extensions.code`: while the deletion runs, with "the deletion is
+	still running; give up hosts or Data Stores only once it has stopped";
+	and when there is no stopped deletion to retry, or a host or a Data
+	Store is outside it, with "abandonHosts and abandonDataStores apply
+	only to retrying a failed deletion, and only to its hosts and failed
+	Data Stores".
 	"""
-	deleteCustomerData(customerId: ID!): CustomerDataDeletionRequestStatus!
+	deleteCustomerData(customerId: ID!, abandonHosts: [String!], abandonDataStores: [String!]): CustomerDataDeletionRequestStatus!
 	backup(numOfBackupsToKeep: Int!): Boolean!
 	restoreFromLatestBackup: Boolean!
 	"""
