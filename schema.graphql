@@ -3680,6 +3680,8 @@ enum CustomerDataDeletionService {
 	REVIEW
 	SENSOR
 	SEMI_SUPERVISED
+	DATA_STORE
+	MODULE_REMOVAL
 }
 
 type CustomerDataDeletionServiceResult {

@@ -4,6 +4,51 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Deleting a customer's data also deletes, in every Data Store the Central
+  Manager lists, the customer's events and the periodic time series of its
+  sampling policies. The Central Manager release that dispatches the requests
+  carries this out, through two new `AgentManager` methods; an embedding
+  application that does not implement them records each Data Store `FAILED`
+  with "Not supported". `customerDataDeletionResult` reports each Data
+  Store as a `DATA_STORE` result naming its server name,
+  `<instance:03>.giganto.<hostname>`. `CustomerDataDeletionService` also has
+  `MODULE_REMOVAL`, which no deletion records yet. What stays:
+  - A sampling policy ID reused before `review-database` 0.57.0 made the IDs
+    unique names the time series of every policy that held it, and deleting
+    the customer of its last holder deletes all of them.
+  - A host name used earlier by another customer's node names that
+    customer's older events too. Nothing in the Data Store tells them apart,
+    and deleting by the name deletes them.
+  - A Data Store without an instance number, registered by hand, is not
+    listed, so it is never asked, and the customer's data in it stays.
+
+### Changed
+
+- **Breaking change:** `recover_customer_data_deletion_on_startup` only scans
+  the stored deletions. It returns `RecoveredDeletions`, which holds the
+  remote targets to dispatch when their agents connect, and whose `start`
+  spawns the supervisor that resumes the unfinished jobs: it waits for the
+  Data Stores already asked, asks the others, and runs the Review stage.
+- A customer with no node left but with sampling policies, Unsupervised
+  Engine models or training definitions is deleted too, where 0.50.0 answered
+  `NO_TARGET`. The events of its removed nodes cannot be found and stay.
+- A deletion that stops is recorded `FAILED`, and no longer blocks every
+  other deletion. When a Sensor, Semi-supervised or Data Store deletion
+  fails, the Review result and each Data Store result not yet asked are
+  recorded `FAILED` with "stopped before this part: " and the first failure's
+  error, where 0.50.0 left them `IN_PROGRESS` and answered
+  `BLOCKED_BY_ANOTHER_DELETION` to every other customer until a restart.
+- The hosts' own operational logs, which Clumit Security keeps about itself,
+  are not deleted with a customer.
+- Bumped `review-database` dependency to 0.59.0. Its store format moves to
+  0.59.0, so a store written by 0.58 must be migrated through
+  `review-database` before this version serves it; the migration rewrites
+  every stored customer deletion job with no periodic time series IDs.
+
 ## [0.50.0] - 2026-10-28
 
 ### Added
@@ -2649,6 +2694,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.50.0...main
 [0.50.0]: https://github.com/aicers/review-web/compare/0.49.0...0.50.0
 [0.49.0]: https://github.com/aicers/review-web/compare/0.48.1...0.49.0
 [0.48.1]: https://github.com/aicers/review-web/compare/0.48.0...0.48.1

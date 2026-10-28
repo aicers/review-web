@@ -24,7 +24,7 @@ use async_graphql::{
 use bincode::Options;
 #[allow(clippy::module_name_repetitions)]
 pub use crud::agent_lookup_keys_by_customer_id;
-pub(super) use data_store_endpoint::listed_rows;
+pub(crate) use data_store_endpoint::listed_rows;
 use database::{Indexable, event::Direction};
 use input::NodeInput;
 use review_database as database;

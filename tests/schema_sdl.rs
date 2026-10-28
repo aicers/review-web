@@ -554,7 +554,13 @@ fn customer_data_deletion_result_contract() {
         ),
         (
             "enum CustomerDataDeletionService {",
-            vec!["REVIEW", "SENSOR", "SEMI_SUPERVISED"],
+            vec![
+                "REVIEW",
+                "SENSOR",
+                "SEMI_SUPERVISED",
+                "DATA_STORE",
+                "MODULE_REMOVAL",
+            ],
         ),
         (
             "enum CustomerDataDeletionStatus {",
