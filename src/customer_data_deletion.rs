@@ -3822,6 +3822,8 @@ mod tests {
     enum GiveUpAnswer {
         /// Drops the row, as review does.
         Succeed,
+        /// Answers `Ok` but leaves the row.
+        KeepRow,
         UnderMaintenance,
         /// Never returns.
         Hang,
@@ -3857,7 +3859,7 @@ mod tests {
         shut_down_on_remove: Option<Arc<CustomerDataDeletionTaskManager>>,
         /// Ends a `Hang` call's apply.
         release: Arc<tokio::sync::Notify>,
-        /// Runs when the first call is made.
+        /// Runs when the first `remove` or `give_up_removal` call is made.
         on_remove: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
         applies: std::sync::Mutex<Vec<JoinHandle<()>>>,
         next_key: AtomicUsize,
@@ -4142,6 +4144,10 @@ mod tests {
                 .unwrap()
                 .push(format!("give up {target} {instance} on {host}"));
             self.give_up_started.notify_one();
+            let on_remove = self.on_remove.lock().unwrap().take();
+            if let Some(on_remove) = on_remove {
+                on_remove();
+            }
             let answer = self
                 .give_up_answers
                 .lock()
@@ -4154,6 +4160,7 @@ mod tests {
                     drop_row(&self.store, host, target, instance);
                     Ok(())
                 }
+                GiveUpAnswer::KeepRow => Ok(()),
                 GiveUpAnswer::UnderMaintenance => Err(DeployError::UnderMaintenance),
                 GiveUpAnswer::Hang => std::future::pending().await,
             }
@@ -11199,6 +11206,95 @@ server_name = "{server_name}"
         );
         assert!(!in_progress(&stopped));
         assert_eq!(removes_on(&deployer, A), 1);
+        assert_eq!(nodes_of(&test_store, 7), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_user_added_during_a_give_up_stops_it_before_the_data_store() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        stop_in_stage_2_on_a(&test_store).await;
+        let mut deployer = RecordingDeployer::new(&test_store.store);
+        let user_store = Arc::clone(&test_store.store);
+        deployer.on_remove = std::sync::Mutex::new(Some(Box::new(move || {
+            read_store(&user_store)
+                .unwrap()
+                .node_map()
+                .put(&Node {
+                    id: 0,
+                    name: "other.example".to_string(),
+                    name_draft: None,
+                    profile: Some(NodeProfile {
+                        customer_id: 2,
+                        description: String::new(),
+                        hostname: "other.example".to_string(),
+                    }),
+                    profile_draft: None,
+                    agents: vec![agent_naming(
+                        "001.piglet",
+                        AgentKind::Sensor,
+                        Some(giganto_name(A_DATA_STORE)),
+                        None,
+                    )],
+                    external_services: Vec::new(),
+                    creation_time: Utc::now(),
+                })
+                .unwrap();
+        })));
+        let deployer = Arc::new(deployer);
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        give_up_with(&test_store, &[A], &[], &agent, deployer.clone(), &manager)
+            .await
+            .unwrap();
+        finish_supervisor(&manager).await;
+
+        assert_eq!(deployer.give_ups(), [remove_call(A, "piglet", 1)]);
+        let stopped = job(&test_store.store, 7);
+        let error = error_of(&stopped, CustomerDataDeletionService::ModuleRemoval, A);
+        assert!(
+            error.contains(&format!(
+                "Data Store {A_DATA_STORE} on a.example is used by the Sensor agent 001.piglet \
+                 on other.example."
+            )),
+            "{error}"
+        );
+        assert!(error.contains("piglet 1"), "{error}");
+        assert_eq!(
+            review_of(&stopped).status,
+            CustomerDataDeletionStatus::Failed
+        );
+        assert!(!in_progress(&stopped));
+        assert_eq!(nodes_of(&test_store, 7), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_give_up_that_leaves_the_row_stops_the_deletion() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        stop_in_stage_2_on_a(&test_store).await;
+        let deployer = Arc::new(
+            RecordingDeployer::new(&test_store.store)
+                .give_up_answer(remove_call(A, "piglet", 1), [GiveUpAnswer::KeepRow]),
+        );
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        give_up_with(&test_store, &[A], &[], &agent, deployer.clone(), &manager)
+            .await
+            .unwrap();
+        finish_supervisor(&manager).await;
+
+        assert_eq!(deployer.give_ups(), [remove_call(A, "piglet", 1)]);
+        let stopped = job(&test_store.store, 7);
+        assert_eq!(
+            error_of(&stopped, CustomerDataDeletionService::ModuleRemoval, A),
+            "giving up piglet 1 on a.example: the row is still recorded"
+        );
+        assert_eq!(
+            review_of(&stopped).status,
+            CustomerDataDeletionStatus::Failed
+        );
+        assert!(!in_progress(&stopped));
         assert_eq!(nodes_of(&test_store, 7), 2);
     }
 }
