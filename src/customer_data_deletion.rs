@@ -9701,15 +9701,11 @@ server_name = "{server_name}"
         let test_store = TestStore::new();
         let _clock = ClockGuard::install(&test_store);
         let (deployer, agent, manager) = delete_sensor_leaving_its_row(&test_store).await;
+        let removed = tokio::time::Instant::now();
         tokio::time::sleep(Duration::from_mins(1)).await;
         let waiting = job(&test_store.store, 7);
         assert!(in_progress(&waiting));
-        tokio::time::sleep(
-            ROW_FINALIZE_LIMIT
-                .checked_sub(Duration::from_mins(2))
-                .unwrap(),
-        )
-        .await;
+        tokio::time::sleep(Duration::from_mins(58)).await;
         assert_eq!(job(&test_store.store, 7), waiting);
         assert_eq!(deployer.removes(), [remove_call(A, "piglet", 1)]);
         assert_eq!(
@@ -9729,6 +9725,7 @@ server_name = "{server_name}"
         );
 
         finish_supervisor(&manager).await;
+        assert!(removed.elapsed() <= Duration::from_hours(1) + STAGE_POLL_INTERVAL);
         let stopped = job(&test_store.store, 7);
         assert_eq!(
             status_of(&stopped, CustomerDataDeletionService::ModuleRemoval, A),
@@ -11514,19 +11511,16 @@ server_name = "{server_name}"
         let deployer = Arc::new(RecordingDeployer::new(&test_store.store));
         let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
         let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let retried = tokio::time::Instant::now();
         give_up_with(&test_store, &[A], &[], &agent, deployer.clone(), &manager)
             .await
             .unwrap();
-        tokio::time::sleep(
-            ROW_FINALIZE_LIMIT
-                .checked_sub(Duration::from_mins(1))
-                .unwrap(),
-        )
-        .await;
+        tokio::time::sleep(Duration::from_mins(59)).await;
         assert!(in_progress(&job(&test_store.store, 7)));
         assert_eq!(deployer.give_ups(), Vec::<RemoveCall>::new());
 
         finish_supervisor(&manager).await;
+        assert!(retried.elapsed() <= Duration::from_hours(1) + STAGE_POLL_INTERVAL);
         assert_eq!(deployer.give_ups(), Vec::<RemoveCall>::new());
         let stopped = job(&test_store.store, 7);
         assert_eq!(
