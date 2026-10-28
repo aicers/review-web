@@ -178,13 +178,14 @@ impl TrainingMutation {
     ) -> Result<String> {
         let node_id = parse_node_id(&node_id)?;
         let users_customers = users_customers(ctx)?;
-        // Access and the deletion lock answer before the definition is
-        // validated; both are checked again under the engine configuration
-        // lock.
+        // Access and the deletion lock answer before the instance's
+        // eligibility and the definition are validated; both are checked
+        // again under the engine configuration lock.
         {
             let store = super::get_store(ctx)?;
-            let target = resolve_instance(&store, users_customers.as_deref(), node_id, &agent_key)?;
-            check_customers(&store, [target.customer_id])?;
+            let customer_id =
+                instance_customer(&store, users_customers.as_deref(), node_id, &agent_key)?;
+            check_customers(&store, [customer_id])?;
         }
         let document = TrainingDocument::parse_and_validate(&definition)?;
         let addrs = data_store_addrs(ctx, &document.data_store.server_name).await;
@@ -192,8 +193,10 @@ impl TrainingMutation {
         let _lock = lock_engine_config(ctx).await?;
         let system_admin = is_system_admin(ctx);
         let store = super::get_store(ctx)?;
+        let customer_id =
+            instance_customer(&store, users_customers.as_deref(), node_id, &agent_key)?;
+        check_customers(&store, [customer_id])?;
         let target = resolve_instance(&store, users_customers.as_deref(), node_id, &agent_key)?;
-        check_customers(&store, [target.customer_id])?;
         document.check_stored(
             &store,
             target.customer_id,
@@ -500,15 +503,17 @@ impl TrainingMutation {
         suspicious_tokens: MaybeUndefined<String>,
     ) -> Result<ID> {
         let node_id = parse_node_id(&node_id)?;
-        // Access and the deletion lock answer before the Data Store is
-        // validated; both are checked again under the engine configuration
-        // lock.
+        // Access and the deletion lock answer before the instance's
+        // eligibility and the Data Store are validated; both are checked
+        // again under the engine configuration lock.
         {
             let model = load_accessible_model_by_name(ctx, "source", &source)?;
             let users_customers = users_customers(ctx)?;
             let store = super::get_store(ctx)?;
-            let target = resolve_instance(&store, users_customers.as_deref(), node_id, &agent_key)?;
-            check_customers(&store, [model.customer_id, target.customer_id])?;
+            check_customers(&store, [model.customer_id])?;
+            let customer_id =
+                instance_customer(&store, users_customers.as_deref(), node_id, &agent_key)?;
+            check_customers(&store, [customer_id])?;
         }
         let address = data_store.address.parse::<SocketAddr>().map_err(|e| {
             refusal(
@@ -530,8 +535,11 @@ impl TrainingMutation {
             let users_customers = users_customers(ctx)?;
             let system_admin = is_system_admin(ctx);
             let store = super::get_store(ctx)?;
+            check_customers(&store, [model.customer_id])?;
+            let customer_id =
+                instance_customer(&store, users_customers.as_deref(), node_id, &agent_key)?;
+            check_customers(&store, [customer_id])?;
             let target = resolve_instance(&store, users_customers.as_deref(), node_id, &agent_key)?;
-            check_customers(&store, [model.customer_id, target.customer_id])?;
             let cross_customer = target.customer_id != model.customer_id;
             if cross_customer && !system_admin {
                 return Err(refusal(
@@ -664,8 +672,11 @@ impl TrainingMutation {
         let model = load_accessible_model_by_name(ctx, "name", &name)?;
         let users_customers = users_customers(ctx)?;
         let store = super::get_store(ctx)?;
+        check_customers(&store, [model.customer_id])?;
+        let customer_id =
+            instance_customer(&store, users_customers.as_deref(), node_id, &agent_key)?;
+        check_customers(&store, [customer_id])?;
         let target = resolve_instance(&store, users_customers.as_deref(), node_id, &agent_key)?;
-        check_customers(&store, [model.customer_id, target.customer_id])?;
         store
             .assign_model(&name, &target.instance)
             .map_err(|e| store_refusal(e, StoreWrite::AssignModel, None))?;
@@ -833,6 +844,74 @@ pub(super) fn resolve_generator(
     )
 }
 
+/// Returns the customer of the agent `agent_key` of node `node_id`, which is
+/// the customer of the node's applied profile, and checks whether the
+/// requester can access it.
+///
+/// This is what [`resolve_instance`] reads before it judges the agent's
+/// eligibility, so that a write of a customer whose data is being deleted is
+/// refused for that first. A node that does not exist or has no applied
+/// profile names no customer and is refused with `INSTANCE_NOT_ELIGIBLE`.
+fn instance_customer(
+    store: &Store,
+    users_customers: Option<&[u32]>,
+    node_id: u32,
+    agent_key: &str,
+) -> Result<u32> {
+    accessible_node(store, users_customers, node_id, agent_key)
+        .map(|(_, profile)| profile.customer_id)
+}
+
+/// Reads node `node_id` with its applied profile, which the agent
+/// `agent_key` a request names is resolved on, and checks whether the
+/// requester can access the profile's customer.
+fn accessible_node(
+    store: &Store,
+    users_customers: Option<&[u32]>,
+    node_id: u32,
+    agent_key: &str,
+) -> Result<(database::Node, database::NodeProfile)> {
+    let Some((mut node, _, _)) = store.node_map().get_by_id(node_id)? else {
+        return Err(not_eligible(
+            node_id,
+            agent_key,
+            "does not exist",
+            "nodeId",
+            node_id.to_string(),
+        ));
+    };
+    let Some(profile) = node.profile.take() else {
+        return Err(not_eligible(
+            node_id,
+            agent_key,
+            "is on a node with no applied profile",
+            "nodeId",
+            node_id.to_string(),
+        ));
+    };
+    if !is_member(users_customers, profile.customer_id) {
+        return Err("Forbidden".into());
+    }
+    Ok((node, profile))
+}
+
+/// Returns the `INSTANCE_NOT_ELIGIBLE` refusal of the agent `agent_key` of
+/// node `node_id`, which `reason` completes.
+fn not_eligible(
+    node_id: u32,
+    agent_key: &str,
+    reason: &str,
+    field: &str,
+    value: String,
+) -> async_graphql::Error {
+    refusal(
+        RefusalCode::InstanceNotEligible,
+        format!("agent {agent_key:?} of node {node_id} {reason}"),
+        field,
+        value,
+    )
+}
+
 /// Resolves the agent `agent_key` of node `node_id`, which `eligible` must
 /// accept, and checks whether the requester can access its customer.
 ///
@@ -845,33 +924,11 @@ fn resolve_agent(
     eligible: impl Fn(&database::Agent) -> bool,
     not_agent: &str,
 ) -> Result<TargetInstance> {
-    let not_eligible = |reason: &str, field: &str, value: String| {
-        refusal(
-            RefusalCode::InstanceNotEligible,
-            format!("agent {agent_key:?} of node {node_id} {reason}"),
-            field,
-            value,
-        )
-    };
-    let Some((node, _, _)) = store.node_map().get_by_id(node_id)? else {
-        return Err(not_eligible(
-            "does not exist",
-            "nodeId",
-            node_id.to_string(),
-        ));
-    };
-    let Some(profile) = node.profile.as_ref() else {
-        return Err(not_eligible(
-            "is on a node with no applied profile",
-            "nodeId",
-            node_id.to_string(),
-        ));
-    };
-    if !is_member(users_customers, profile.customer_id) {
-        return Err("Forbidden".into());
-    }
+    let (node, profile) = accessible_node(store, users_customers, node_id, agent_key)?;
     if profile.hostname.is_empty() {
         return Err(not_eligible(
+            node_id,
+            agent_key,
             "is on a node with no applied hostname",
             "nodeId",
             node_id.to_string(),
@@ -882,7 +939,13 @@ fn resolve_agent(
         .iter()
         .any(|agent| agent.key == agent_key && eligible(agent))
     {
-        return Err(not_eligible(not_agent, "agentKey", agent_key.to_string()));
+        return Err(not_eligible(
+            node_id,
+            agent_key,
+            not_agent,
+            "agentKey",
+            agent_key.to_string(),
+        ));
     }
     Ok(TargetInstance {
         instance: database::ModelInstance {
@@ -890,7 +953,7 @@ fn resolve_agent(
             agent_key: agent_key.to_string(),
         },
         customer_id: profile.customer_id,
-        hostname: profile.hostname.clone(),
+        hostname: profile.hostname,
     })
 }
 

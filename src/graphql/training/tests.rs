@@ -2605,11 +2605,22 @@ async fn a_customer_being_deleted_keeps_its_definitions_runs_and_models() {
     f.define(&f.engine_a, "def-a", &text_a).await;
     f.define(&f.engine_b, "def-b", &text_b).await;
     f.define(&f.engine_b, "spare-b", &text_b).await;
+    // An agent of customer A's node that is no engine instance, and a node
+    // that does not exist.
+    let not_engine = ModelInstance {
+        node_id: f.engine_a.node_id,
+        agent_key: "not-an-engine".to_string(),
+    };
+    let no_node = ModelInstance {
+        node_id: 999,
+        agent_key: f.engine_a.agent_key.clone(),
+    };
     f.train_to_completion("def-a", &f.engine_a).await;
     f.train_to_completion("def-b", &f.engine_b).await;
     let run_a = f.train("def-a").await;
     model_on(&f.store(), "free-a", A, &f.engine_a2);
     model_on(&f.store(), "free-b", B, &f.engine_b);
+    model_on(&f.store(), "kept-b", B, &f.engine_b);
     put_running_job(&f.store(), A, &["engine-a.example.com"]);
 
     assert_locked(&f.sys(&insert(&f.engine_a, "new-a", &text_a)).await);
@@ -2663,6 +2674,21 @@ async fn a_customer_being_deleted_keeps_its_definitions_runs_and_models() {
             "",
         );
         assert_locked(&f.sys(&invalid_address).await);
+
+        // ... and before the instance's eligibility: an agent of the
+        // customer's node that is no engine instance, or, where the model
+        // already names the customer, a node that does not exist.
+        assert_locked(&f.sys(&insert(&not_engine, "new-a", &text_a)).await);
+        assert_locked(&f.sys(&assign("free-a", &not_engine)).await);
+        assert_locked(&f.sys(&assign("kept-b", &not_engine)).await);
+        assert_locked(&f.sys(&assign("free-a", &no_node)).await);
+        for (source, instance) in [
+            ("def-a", &not_engine),
+            ("def-b", &not_engine),
+            ("def-a", &no_node),
+        ] {
+            assert_locked(&f.sys(&to(source, instance)).await);
+        }
     }
 
     put_completed_job(&f.store(), A, &["engine-a.example.com"]);
