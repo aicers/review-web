@@ -847,7 +847,9 @@ async fn run_supervisor(
 ///
 /// A deletion that stops leaves no Review or Data Store result it did not
 /// dispatch `InProgress`: each is set `Failed` with "stopped before this
-/// part: <the reason>".
+/// part: <the reason>". A Data Store sent to before a restart is still
+/// waited for when a Sensor or Semi-supervised result has failed, since
+/// nothing else reads its result.
 async fn continue_deletion(
     store: &Arc<RwLock<Store>>,
     agent_manager: &SharedAgentManager,
@@ -862,7 +864,15 @@ async fn continue_deletion(
             DataStoreStepOutcome::ShutDown => return,
             DataStoreStepOutcome::Stopped { reason, dispatched } => Some((reason, dispatched)),
         },
-        Ok(Some(reason)) => Some((reason, Vec::new())),
+        Ok(Some(reason)) => {
+            match settle_sent_data_stores(store, agent_manager, shutdown, customer_id, &reason)
+                .await
+            {
+                DataStoreStepOutcome::Completed => Some((reason, Vec::new())),
+                DataStoreStepOutcome::ShutDown => return,
+                DataStoreStepOutcome::Stopped { dispatched, .. } => Some((reason, dispatched)),
+            }
+        }
         Err(read_error) => Some((format!("{read_error:#}"), Vec::new())),
     };
     if let Some((reason, dispatched)) = stop {
@@ -1005,7 +1015,36 @@ async fn data_store_step(
     shutdown: &mut watch::Receiver<bool>,
     customer_id: u32,
 ) -> DataStoreStepOutcome {
-    let starts = match data_store_starts(store, customer_id) {
+    drive_data_stores(store, agent_manager, shutdown, customer_id, None).await
+}
+
+/// Waits until the result of every Data Store already sent to is terminal,
+/// for a deletion stopping with `reason`, and sends to none.
+///
+/// Only an `InProgress` result is waited for. One whose Data Store answers
+/// it has no job was never sent, and is set `Failed` with "stopped before
+/// this part: `reason`"; one no longer listed is recorded `Succeeded` as in
+/// [`data_store_step`].
+async fn settle_sent_data_stores(
+    store: &RwLock<Store>,
+    agent_manager: &SharedAgentManager,
+    shutdown: &mut watch::Receiver<bool>,
+    customer_id: u32,
+    reason: &str,
+) -> DataStoreStepOutcome {
+    drive_data_stores(store, agent_manager, shutdown, customer_id, Some(reason)).await
+}
+
+/// Runs [`data_store_step`], or [`settle_sent_data_stores`] when
+/// `stop_reason` is given.
+async fn drive_data_stores(
+    store: &RwLock<Store>,
+    agent_manager: &SharedAgentManager,
+    shutdown: &mut watch::Receiver<bool>,
+    customer_id: u32,
+    stop_reason: Option<&str>,
+) -> DataStoreStepOutcome {
+    let starts = match data_store_starts(store, customer_id, stop_reason.is_none()) {
         Ok(starts) => starts,
         Err(error) => {
             return DataStoreStepOutcome::Stopped {
@@ -1024,7 +1063,7 @@ async fn data_store_step(
     let drive = join_all(
         starts
             .iter()
-            .map(|start| drive_data_store(store, agent_manager, start)),
+            .map(|start| drive_data_store(store, agent_manager, start, stop_reason)),
     );
     // Dropping `drive` on shutdown drops each Data Store's work at an await,
     // a sleep or an agent manager call, never inside a store write. Its
@@ -1060,9 +1099,13 @@ struct DataStoreStart {
 
 /// Computes the Data Store targets and settles the results of Data Stores no
 /// longer listed.
+///
+/// Unless `sending`, only the Data Stores with an `InProgress` result are
+/// considered.
 fn data_store_starts(
     store: &RwLock<Store>,
     customer_id: u32,
+    sending: bool,
 ) -> anyhow::Result<Vec<DataStoreStart>> {
     let job = read_job(store, customer_id)?;
     let review_hosts = job
@@ -1089,6 +1132,7 @@ fn data_store_starts(
             continue;
         };
         if result.status == CustomerDataDeletionStatus::Succeeded
+            || (!sending && result.status == CustomerDataDeletionStatus::Failed)
             || rows.iter().any(|row| row.server_name() == *server_name)
         {
             continue;
@@ -1121,10 +1165,13 @@ fn data_store_starts(
             .iter()
             .find(|result| result.host_fqdns.first() == Some(&target.server_name));
         let (requested_at, new, next) = match stored {
-            None => (now, true, DataStoreNext::Send),
+            None if sending => (now, true, DataStoreNext::Send),
+            None => continue,
             Some(result) => match result.status {
-                CustomerDataDeletionStatus::Succeeded => continue,
-                CustomerDataDeletionStatus::Failed => (now, false, DataStoreNext::Send),
+                CustomerDataDeletionStatus::Failed if sending => (now, false, DataStoreNext::Send),
+                CustomerDataDeletionStatus::Succeeded | CustomerDataDeletionStatus::Failed => {
+                    continue;
+                }
                 CustomerDataDeletionStatus::InProgress => (
                     result.requested_at,
                     false,
@@ -1174,6 +1221,7 @@ async fn drive_data_store(
     store: &RwLock<Store>,
     agent_manager: &SharedAgentManager,
     start: &DataStoreStart,
+    stop_reason: Option<&str>,
 ) -> Result<(), String> {
     let target = &start.target;
     let customer_id = target.customer_id;
@@ -1181,7 +1229,7 @@ async fn drive_data_store(
         record_data_store_request(store, customer_id, start)
             .map_err(|error| format!("{error:#}"))?;
     }
-    let (status, error) = wait_for_data_store(agent_manager, start)
+    let (status, error) = wait_for_data_store(agent_manager, start, stop_reason)
         .await
         .map_err(|error| format!("{error:#}"))?;
     persist_terminal(
@@ -1230,35 +1278,54 @@ fn record_data_store_request(
 
 /// Sends to and reads one Data Store until it is done, and returns the
 /// terminal status and error to record.
+///
+/// The deadlines bound the agent manager's calls too: a send that has not
+/// returned by the 24-hour deadline ends there, and a read that has not
+/// returned counts as a transport error from when it was made. With
+/// `stop_reason`, a Data Store with no job is not sent to; its result is
+/// set `Failed` with "stopped before this part: `stop_reason`".
+#[allow(clippy::too_many_lines)]
 async fn wait_for_data_store(
     agent_manager: &SharedAgentManager,
     start: &DataStoreStart,
+    stop_reason: Option<&str>,
 ) -> anyhow::Result<(CustomerDataDeletionStatus, Option<String>)> {
     let target = &start.target;
     let deadline = start
         .requested_at
         .saturating_add(DATA_STORE_RESULT_DEADLINE_NANOS);
+    let no_result = || {
+        (
+            CustomerDataDeletionStatus::Failed,
+            Some(format!(
+                "no result from {} within 24 hours",
+                target.server_name
+            )),
+        )
+    };
     let mut next = start.next;
     let mut failing_since: Option<tokio::time::Instant> = None;
     loop {
         if let DataStoreNext::Read { delayed: true } = next {
             tokio::time::sleep(DATA_STORE_POLL_INTERVAL).await;
         }
-        if timestamp_nanos()? >= deadline {
-            return Ok((
-                CustomerDataDeletionStatus::Failed,
-                Some(format!(
-                    "no result from {} within 24 hours",
-                    target.server_name
-                )),
-            ));
+        let now = timestamp_nanos()?;
+        if now >= deadline {
+            return Ok(no_result());
         }
+        let until_deadline =
+            Duration::from_nanos(u64::try_from(deadline.saturating_sub(now)).unwrap_or_default());
         next = match next {
             DataStoreNext::Send => {
-                match agent_manager
-                    .request_data_store_customer_deletion(target)
-                    .await
-                {
+                let Ok(answer) = tokio::time::timeout(
+                    until_deadline,
+                    agent_manager.request_data_store_customer_deletion(target),
+                )
+                .await
+                else {
+                    return Ok(no_result());
+                };
+                match answer {
                     Ok(DataStoreRequestAnswer::Accepted | DataStoreRequestAnswer::InProgress) => {
                         DataStoreNext::Read { delayed: true }
                     }
@@ -1279,10 +1346,28 @@ async fn wait_for_data_store(
                 }
             }
             DataStoreNext::Read { .. } => {
-                match agent_manager
-                    .data_store_customer_deletion_result(target)
-                    .await
-                {
+                let read_at = tokio::time::Instant::now();
+                let since = failing_since.unwrap_or(read_at);
+                let until_error_limit =
+                    (since + DATA_STORE_TRANSPORT_ERROR_LIMIT).saturating_duration_since(read_at);
+                let Ok(read) = tokio::time::timeout(
+                    until_deadline.min(until_error_limit),
+                    agent_manager.data_store_customer_deletion_result(target),
+                )
+                .await
+                else {
+                    if until_deadline <= until_error_limit {
+                        return Ok(no_result());
+                    }
+                    return Ok((
+                        CustomerDataDeletionStatus::Failed,
+                        Some(format!(
+                            "no answer from {} for 10 minutes: the result query did not return",
+                            target.server_name
+                        )),
+                    ));
+                };
+                match read {
                     Ok(Some(CustomerDataDeletionStatus::Succeeded)) => {
                         return Ok((CustomerDataDeletionStatus::Succeeded, None));
                     }
@@ -1300,13 +1385,22 @@ async fn wait_for_data_store(
                         DataStoreNext::Read { delayed: true }
                     }
                     // The request was recorded but never reached the Data
-                    // Store, so it is sent again.
-                    Ok(None) => {
-                        failing_since = None;
-                        DataStoreNext::Send
-                    }
+                    // Store: it is sent again, unless the deletion is
+                    // stopping.
+                    Ok(None) => match stop_reason {
+                        None => {
+                            failing_since = None;
+                            DataStoreNext::Send
+                        }
+                        Some(reason) => {
+                            return Ok((
+                                CustomerDataDeletionStatus::Failed,
+                                Some(format!("stopped before this part: {reason}")),
+                            ));
+                        }
+                    },
                     Err(error) => {
-                        let since = *failing_since.get_or_insert_with(tokio::time::Instant::now);
+                        failing_since = Some(since);
                         if since.elapsed() >= DATA_STORE_TRANSPORT_ERROR_LIMIT {
                             return Ok((
                                 CustomerDataDeletionStatus::Failed,
@@ -1830,6 +1924,12 @@ mod tests {
 
     type DataStoreRead = Result<Option<CustomerDataDeletionStatus>, String>;
 
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum DataStoreCall {
+        Send,
+        Read,
+    }
+
     #[derive(Default)]
     struct RecordingAgentManager {
         targets: std::sync::Mutex<Vec<CustomerDataDeletionTarget>>,
@@ -1850,6 +1950,9 @@ mod tests {
         /// `default_read`, or `Succeeded`.
         reads: std::sync::Mutex<VecDeque<DataStoreRead>>,
         default_read: Option<DataStoreRead>,
+        /// The Data Store call that never returns once `answers` or `reads`
+        /// run out.
+        hang: Option<DataStoreCall>,
         /// Every Data Store request, when it was made, and the job then.
         sent: std::sync::Mutex<Vec<(DataStoreDeletionTarget, tokio::time::Instant)>>,
         jobs_at_send: std::sync::Mutex<Vec<CustomerDataDeletionJob>>,
@@ -1951,6 +2054,7 @@ mod tests {
             let answer = self.answers.lock().unwrap().pop_front();
             match answer {
                 Some(answer) => answer.map_err(|error| anyhow!(error)),
+                None if self.hang == Some(DataStoreCall::Send) => std::future::pending().await,
                 None => Ok(self
                     .default_answer
                     .unwrap_or(DataStoreRequestAnswer::Accepted)),
@@ -1966,6 +2070,9 @@ mod tests {
                 tokio::time::Instant::now(),
             ));
             let read = self.reads.lock().unwrap().pop_front();
+            if read.is_none() && self.hang == Some(DataStoreCall::Read) {
+                return std::future::pending().await;
+            }
             read.or_else(|| self.default_read.clone())
                 .unwrap_or(Ok(Some(CustomerDataDeletionStatus::Succeeded)))
                 .map_err(|error| anyhow!(error))
@@ -4882,6 +4989,8 @@ mod tests {
     }
 
     const DATA_STORE: &str = "001.giganto.ds.example";
+    /// A Data Store no longer listed.
+    const GONE: &str = "001.giganto.gone.example";
 
     fn sensor_agent() -> Agent {
         Agent::new(
@@ -5448,6 +5557,92 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn a_send_that_never_returns_fails_at_the_24_hour_deadline() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        let agent = Arc::new(RecordingAgentManager {
+            hang: Some(DataStoreCall::Send),
+            ..RecordingAgentManager::with_store(&test_store.store)
+        });
+        let done = delete_with_one_data_store(&test_store, &agent).await;
+        assert_eq!(agent.sent.lock().unwrap().len(), 1);
+        let result = data_store_result(&done, DATA_STORE);
+        assert_eq!(result.status, CustomerDataDeletionStatus::Failed);
+        let error = format!("no result from {DATA_STORE} within 24 hours");
+        assert_eq!(result.error.as_deref(), Some(error.as_str()));
+        assert_eq!(
+            result.completed_at,
+            Some(CLOCK_START + DATA_STORE_RESULT_DEADLINE_NANOS)
+        );
+        assert_eq!(
+            done.service_results.first().unwrap().error,
+            Some(format!("stopped before this part: {error}"))
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_read_that_never_returns_counts_as_a_transport_error() {
+        const SECOND: i64 = 1_000_000_000;
+        let hung =
+            format!("no answer from {DATA_STORE} for 10 minutes: the result query did not return");
+        // Reads at 30 s, then 60 s and 90 s after the errors; the error
+        // window opens with the first read that did not answer.
+        for (errors, reads, failed_at) in [(0, 1, 630), (2, 3, 630)] {
+            let test_store = TestStore::new();
+            let _clock = ClockGuard::install(&test_store);
+            let agent = Arc::new(
+                RecordingAgentManager {
+                    hang: Some(DataStoreCall::Read),
+                    ..RecordingAgentManager::with_store(&test_store.store)
+                }
+                .reads((0..errors).map(|_| Err("connection refused".to_string()))),
+            );
+            let done = delete_with_one_data_store(&test_store, &agent).await;
+            assert_eq!(agent.read_at.lock().unwrap().len(), reads);
+            let result = data_store_result(&done, DATA_STORE);
+            assert_eq!(result.status, CustomerDataDeletionStatus::Failed);
+            assert_eq!(result.error.as_deref(), Some(hung.as_str()));
+            assert_eq!(result.completed_at, Some(CLOCK_START + failed_at * SECOND));
+        }
+
+        // A read hanging past the 24-hour deadline ends at the deadline.
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        put_customer_node(&test_store, 7, "a.example", Vec::new());
+        put_data_store(&test_store, "ds.example", 1);
+        put_job(
+            &test_store.store,
+            7,
+            vec![
+                pending_result(CustomerDataDeletionService::Review, &["a.example"]),
+                CustomerDataDeletionServiceResult {
+                    requested_at: CLOCK_START - DATA_STORE_RESULT_DEADLINE_NANOS + 60 * SECOND,
+                    ..pending_result(CustomerDataDeletionService::DataStore, &[DATA_STORE])
+                },
+            ],
+        );
+        let agent = Arc::new(RecordingAgentManager {
+            hang: Some(DataStoreCall::Read),
+            ..RecordingAgentManager::with_store(&test_store.store)
+        });
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        recover_customer_data_deletion_on_startup(Arc::clone(&test_store.store))
+            .unwrap()
+            .start(agent.clone(), Arc::clone(&manager))
+            .await
+            .unwrap();
+        finish_supervisor(&manager).await;
+        assert_eq!(agent.read_at.lock().unwrap().len(), 1);
+        let result = data_store_result(&job(&test_store.store, 7), DATA_STORE);
+        assert_eq!(result.status, CustomerDataDeletionStatus::Failed);
+        assert_eq!(
+            result.error,
+            Some(format!("no result from {DATA_STORE} within 24 hours"))
+        );
+        assert_eq!(result.completed_at, Some(CLOCK_START + 60 * SECOND));
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn a_failed_send_or_a_reported_failure_fails_the_data_store() {
         for (send_error, expected) in [
             (true, "refused".to_string()),
@@ -5589,9 +5784,8 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_data_store_no_longer_listed_is_recorded_succeeded() {
-        const GONE: &str = "001.giganto.gone.example";
         let test_store = TestStore::new();
-        let _clock = ClockGuard::install(&test_store);
+        let clock = ClockGuard::install(&test_store);
         put_job(
             &test_store.store,
             7,
@@ -5626,6 +5820,38 @@ mod tests {
                 .await
                 .unwrap(),
             CustomerDataDeletionRequestStatus::AlreadyCompleted
+        );
+
+        // A result sent before a restart is settled the same way on resume.
+        drop(clock);
+        drop(test_store);
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        put_job(
+            &test_store.store,
+            7,
+            vec![
+                pending_result(CustomerDataDeletionService::Review, &["a.example"]),
+                pending_result(CustomerDataDeletionService::DataStore, &[GONE]),
+            ],
+        );
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        recover_customer_data_deletion_on_startup(Arc::clone(&test_store.store))
+            .unwrap()
+            .start(agent.clone(), Arc::clone(&manager))
+            .await
+            .unwrap();
+        finish_supervisor(&manager).await;
+        assert!(agent.sent.lock().unwrap().is_empty());
+        assert!(agent.read_at.lock().unwrap().is_empty());
+        let done = job(&test_store.store, 7);
+        let result = data_store_result(&done, GONE);
+        assert_eq!(result.status, CustomerDataDeletionStatus::Succeeded);
+        assert_eq!(result.error.as_deref(), Some(DATA_STORE_NOT_REGISTERED));
+        assert_eq!(
+            done.service_results.first().unwrap().status,
+            CustomerDataDeletionStatus::Succeeded
         );
     }
 
@@ -5743,6 +5969,120 @@ mod tests {
         assert_eq!(
             done.service_results.first().unwrap().status,
             CustomerDataDeletionStatus::Succeeded
+        );
+    }
+
+    /// Stores customer 7's job as a restart finds it after its Sensor
+    /// reported a failure while `DATA_STORE` and the unlisted `GONE` were
+    /// still being waited for, with a second Data Store listed and never
+    /// sent to, and resumes it through `agent`.
+    async fn resume_after_a_failed_sensor(
+        test_store: &TestStore,
+        agent: &Arc<RecordingAgentManager>,
+    ) -> CustomerDataDeletionJob {
+        put_customer_node(test_store, 7, "a.example", Vec::new());
+        put_data_store(test_store, "ds.example", 1);
+        put_data_store(test_store, "unsent.example", 1);
+        let sensor = CustomerDataDeletionServiceResult {
+            error: Some("sensor failed".to_string()),
+            ..terminal_result(
+                CustomerDataDeletionService::Sensor,
+                "a.example",
+                CustomerDataDeletionStatus::Failed,
+            )
+        };
+        let sent = |server_name| CustomerDataDeletionServiceResult {
+            requested_at: CLOCK_START,
+            ..pending_result(CustomerDataDeletionService::DataStore, &[server_name])
+        };
+        put_job(
+            &test_store.store,
+            7,
+            vec![
+                pending_result(CustomerDataDeletionService::Review, &["a.example"]),
+                sensor,
+                sent(DATA_STORE),
+                sent(GONE),
+            ],
+        );
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        let recovered =
+            recover_customer_data_deletion_on_startup(Arc::clone(&test_store.store)).unwrap();
+        assert_eq!(recovered.remote_targets(), []);
+        assert_eq!(recovered.resumed_customer_ids(), [7]);
+        recovered
+            .start(agent.clone(), Arc::clone(&manager))
+            .await
+            .unwrap();
+        finish_supervisor(&manager).await;
+        job(&test_store.store, 7)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_restart_after_a_failed_sensor_still_waits_for_sent_data_stores() {
+        const STOPPED: &str = "stopped before this part: sensor failed";
+        let test_store = TestStore::new();
+        let clock = ClockGuard::install(&test_store);
+        let agent = Arc::new(
+            RecordingAgentManager::with_store(&test_store.store)
+                .reads([Ok(Some(CustomerDataDeletionStatus::InProgress))]),
+        );
+        let done = resume_after_a_failed_sensor(&test_store, &agent).await;
+        assert!(agent.sent.lock().unwrap().is_empty());
+        let read: Vec<_> = agent
+            .read_at
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(server_name, _)| server_name.clone())
+            .collect();
+        assert_eq!(read, [DATA_STORE, DATA_STORE]);
+        assert_eq!(
+            data_store_result(&done, DATA_STORE).status,
+            CustomerDataDeletionStatus::Succeeded
+        );
+        let gone = data_store_result(&done, GONE);
+        assert_eq!(gone.status, CustomerDataDeletionStatus::Succeeded);
+        assert_eq!(gone.error.as_deref(), Some(DATA_STORE_NOT_REGISTERED));
+        assert!(
+            service_of(
+                &done,
+                CustomerDataDeletionService::DataStore,
+                "001.giganto.unsent.example"
+            )
+            .is_none()
+        );
+        let review = done.service_results.first().unwrap();
+        assert_eq!(review.status, CustomerDataDeletionStatus::Failed);
+        assert_eq!(review.error.as_deref(), Some(STOPPED));
+        assert!(
+            done.service_results
+                .iter()
+                .all(|result| result.status != CustomerDataDeletionStatus::InProgress)
+        );
+        assert!(
+            read_store(&test_store.store)
+                .unwrap()
+                .node_map()
+                .iter(Direction::Forward, None)
+                .any(|node| node.unwrap().name == "a.example")
+        );
+
+        // A recorded request that never reached its Data Store is not sent.
+        drop(clock);
+        drop(test_store);
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        let agent =
+            Arc::new(RecordingAgentManager::with_store(&test_store.store).reads([Ok(None)]));
+        let done = resume_after_a_failed_sensor(&test_store, &agent).await;
+        assert!(agent.sent.lock().unwrap().is_empty());
+        let unsent = data_store_result(&done, DATA_STORE);
+        assert_eq!(unsent.status, CustomerDataDeletionStatus::Failed);
+        assert_eq!(unsent.error.as_deref(), Some(STOPPED));
+        assert_eq!(
+            done.service_results.first().unwrap().error.as_deref(),
+            Some(STOPPED)
         );
     }
 
