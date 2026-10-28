@@ -44,6 +44,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `BLOCKED_BY_ANOTHER_DELETION` to every other customer until a restart.
 - The hosts' own operational logs, which Clumit Security keeps about itself,
   are not deleted with a customer.
+- From the start of a customer's data deletion until it is complete, also
+  while it is stopped, its nodes, services, sampling policies, models and
+  training definitions cannot be changed; such a change is refused with
+  `CUSTOMER_DELETION_IN_PROGRESS`. While a deletion is stopped, the node host
+  names saved in its job cannot be taken by another node either.
+- Deleting a customer is refused with `DATA_STORE_IN_USE` while another
+  customer, or the platform's system log collector, uses a Data Store on the
+  customer's nodes. With a single Data Store, the system log collectors use
+  it, so its node's customer can be deleted only after another Data Store is
+  installed and the collectors are repointed.
 - Bumped `review-database` dependency to 0.59.0. Its store format moves to
   0.59.0, so a store written by 0.58 must be migrated through
   `review-database` before this version serves it; the migration rewrites

@@ -14,6 +14,7 @@ mod customer_data_deletion {
 }
 pub mod customer;
 pub mod customer_access;
+mod customer_deletion_guard;
 mod customer_network;
 mod db_management;
 mod engine_config;
@@ -93,6 +94,7 @@ use vinum::signal;
 
 pub use self::cert::ParsedCertificate;
 pub use self::customer::{NetworksTargetAgentLookupKeysPair, get_customer_networks};
+pub(crate) use self::customer_deletion_guard::{data_store_in_use_message, data_stores_in_use};
 pub use self::network_list::{get_allow_networks, get_block_networks};
 pub(crate) use self::node::listed_rows;
 pub use self::node::{

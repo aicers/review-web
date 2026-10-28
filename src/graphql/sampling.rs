@@ -18,6 +18,7 @@ use tracing::{error, warn};
 
 use super::{IpAddress, Role, RoleGuard, SharedAgentManager};
 use crate::graphql::customer_access::{customer_sensor_names, is_member, users_customers};
+use crate::graphql::customer_deletion_guard;
 use crate::graphql::engine_config::lock_engine_config;
 use crate::graphql::query_with_constraints;
 use crate::graphql::training::resolve_generator;
@@ -29,7 +30,8 @@ mod policy_source;
 use self::delivery::{SamplingPolicyDelivery, policy_delivery};
 pub(super) use self::delivery::{SourceDelivery, source_deliveries};
 pub(super) use self::node_apply::{
-    check_data_store_changes, generator_data_store, generators_of_node, refresh_data_stores,
+    check_data_store_changes, generator_data_store, generators_of_node, giganto_name,
+    refresh_data_stores,
 };
 pub(super) use self::policy_source::{
     ShapeReference, check_policy_sources, policy_id, trained_shape,
@@ -787,6 +789,9 @@ impl SamplingPolicyMutation {
     /// be a sensor name of one of the customer's nodes, such as
     /// `piglet.sensor.example.com`. A draft cannot be assigned; fix it with
     /// `fixSamplingPolicy`, or with `assignSamplingPolicy(fix: true)`.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// `customerId` is unfinished, also while it is stopped.
     #[allow(clippy::too_many_arguments)]
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
@@ -812,6 +817,7 @@ impl SamplingPolicyMutation {
             return Err("Forbidden".into());
         }
         let store = crate::graphql::get_store(ctx)?;
+        customer_deletion_guard::check_customers(&store, [customer_id])?;
         check_sensor_name(&store, node.as_deref(), customer_id)?;
         let id = store
             .sampling_policy_map()
@@ -844,6 +850,10 @@ impl SamplingPolicyMutation {
     /// spans them. So a storage failure after the first removal returns an
     /// error with the policies before it already removed, and a retry with
     /// the IDs that remain removes the rest.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the customer of any requested policy is unfinished, also while it is
+    /// stopped.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn remove_sampling_policies(
@@ -862,9 +872,17 @@ impl SamplingPolicyMutation {
             let _config = lock_engine_config(ctx).await?;
             let _policies = lock_sampling_policies(ctx).await?;
             let store = crate::graphql::get_store(ctx)?;
+            let policies = ids
+                .iter()
+                .map(|&i| accessible_policy(&store, users_cids.as_deref(), i))
+                .collect::<Result<Vec<_>>>()?;
+            customer_deletion_guard::check_customers(
+                &store,
+                policies.iter().filter_map(|policy| policy.customer_id),
+            )?;
             let mut checked = Vec::with_capacity(ids.len());
-            for &i in &ids {
-                let policy = accessible_policy(&store, users_cids.as_deref(), i)?;
+            for policy in policies {
+                let i = policy.id;
                 let uses = store.sampling_policy_uses(i)?;
                 if !uses.is_empty() {
                     return Err(format!(
@@ -914,6 +932,9 @@ impl SamplingPolicyMutation {
     /// sensor name of one of its customer's nodes. Only the name of a fixed
     /// policy can change. A caller scoped to customers may update only a
     /// policy of a customer in scope.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the policy's customer is unfinished, also while it is stopped.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn update_sampling_policy(
@@ -927,6 +948,7 @@ impl SamplingPolicyMutation {
         let users_cids = users_customers(ctx)?;
         let store = crate::graphql::get_store(ctx)?;
         let stored = accessible_policy(&store, users_cids.as_deref(), i)?;
+        customer_deletion_guard::check_customers(&store, stored.customer_id)?;
         if stored.state == PolicyState::Draft {
             let Some(customer_id) = stored.customer_id else {
                 return Err("the sampling policy has no customer".into());
@@ -945,13 +967,17 @@ impl SamplingPolicyMutation {
     ///
     /// A fixed policy's definition cannot change, and nothing makes it a
     /// draft again. Fixing a fixed policy succeeds and changes nothing.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the policy's customer is unfinished, also while it is stopped.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn fix_sampling_policy(&self, ctx: &Context<'_>, id: ID) -> Result<ID> {
         let i = parse_id(&id)?;
         let users_cids = users_customers(ctx)?;
         let store = crate::graphql::get_store(ctx)?;
-        accessible_policy(&store, users_cids.as_deref(), i)?;
+        let policy = accessible_policy(&store, users_cids.as_deref(), i)?;
+        customer_deletion_guard::check_customers(&store, policy.customer_id)?;
         store
             .sampling_policy_map()
             .fix(i)
@@ -971,6 +997,9 @@ impl SamplingPolicyMutation {
     /// nothing. `fix` cannot be given to unassign. While the policy is in use
     /// it cannot be unassigned, and can be assigned only to a generator with
     /// its Data Store; the refusal lists its uses.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the policy's customer is unfinished, also while it is stopped.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn assign_sampling_policy(
@@ -983,30 +1012,32 @@ impl SamplingPolicyMutation {
     ) -> Result<ID> {
         let i = parse_id(&id)?;
         let fix = fix.unwrap_or(false);
-        let assignee = match (node_id, agent_key) {
-            (Some(node_id), Some(agent_key)) => {
-                let node_id = node_id
-                    .as_str()
-                    .parse::<u32>()
-                    .map_err(|_| "invalid node ID")?;
-                Some((node_id, agent_key))
-            }
-            (None, None) => None,
-            _ => {
-                return Err(
-                    "nodeId and agentKey are given together, or are both null to unassign".into(),
-                );
-            }
-        };
-        if fix && assignee.is_none() {
-            return Err("a policy is fixed only by assigning it; fix cannot unassign".into());
-        }
 
         let users_cids = users_customers(ctx)?;
         let (previous, target) = {
             let _lock = lock_engine_config(ctx).await?;
             let store = crate::graphql::get_store(ctx)?;
             let policy = accessible_policy(&store, users_cids.as_deref(), i)?;
+            customer_deletion_guard::check_customers(&store, policy.customer_id)?;
+            let assignee = match (node_id, agent_key) {
+                (Some(node_id), Some(agent_key)) => {
+                    let node_id = node_id
+                        .as_str()
+                        .parse::<u32>()
+                        .map_err(|_| "invalid node ID")?;
+                    Some((node_id, agent_key))
+                }
+                (None, None) => None,
+                _ => {
+                    return Err(
+                        "nodeId and agentKey are given together, or are both null to unassign"
+                            .into(),
+                    );
+                }
+            };
+            if fix && assignee.is_none() {
+                return Err("a policy is fixed only by assigning it; fix cannot unassign".into());
+            }
             let target = assignee
                 .map(|(node_id, agent_key)| {
                     resolve_generator(&store, users_cids.as_deref(), node_id, &agent_key)
@@ -1220,6 +1251,65 @@ mod tests {
             .await;
         assert_ok(&res);
         res.data.into_json().unwrap()["samplingPolicy"].clone()
+    }
+
+    #[tokio::test]
+    async fn the_policies_of_a_customer_being_deleted_cannot_change() {
+        use crate::graphql::customer_deletion_guard::test_support::{
+            assert_locked, put_completed_job, put_running_job, put_stopped_job,
+        };
+
+        let (schema, _) = recording_schema().await;
+        let two = setup_two_customers(&schema);
+        let mutations = |policy: u32, generator: &ModelInstance, customer_id: u32| {
+            [
+                insert_mutation(customer_id, "new-a", Some(&sensor_name(HOST_A))),
+                rename_mutation(policy, "old", "renamed", &sensor_name(HOST_A)),
+                fix_mutation(policy),
+                assign_mutation(policy, Some(generator), Some(true)),
+                remove_mutation(&[policy]),
+            ]
+        };
+        for put_job in [put_running_job, put_stopped_job] {
+            put_job(&schema.store(), 1, &[HOST_A]);
+            for mutation in mutations(two.policy_a, &two.generator_a, 1) {
+                assert_locked(&schema.execute_as_system_admin(&mutation).await);
+            }
+            // The lock answers before the arguments are checked.
+            let res = schema
+                .execute_as_system_admin(&assign_mutation(two.policy_a, None, Some(true)))
+                .await;
+            assert_locked(&res);
+            // Removing policies of both customers is refused as a whole.
+            let res = schema
+                .execute_as_system_admin(&remove_mutation(&[two.policy_b, two.policy_a]))
+                .await;
+            assert_locked(&res);
+        }
+
+        // Customer 2's policy changes while customer 1 is locked.
+        let res = schema
+            .execute_as_system_admin(&insert_mutation(2, "new-b", Some(&sensor_name(HOST_B))))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        let res = schema
+            .execute_as_system_admin(&assign_mutation(
+                two.policy_b,
+                Some(&two.generator_b),
+                Some(true),
+            ))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+
+        put_completed_job(&schema.store(), 1, &[HOST_A]);
+        let res = schema
+            .execute_as_system_admin(&insert_mutation(1, "new-a", Some(&sensor_name(HOST_A))))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        let res = schema
+            .execute_as_system_admin(&remove_mutation(&[two.policy_a]))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
     }
 
     #[tokio::test]

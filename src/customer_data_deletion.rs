@@ -23,7 +23,9 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use anyhow::{Context as _, anyhow, bail};
-use async_graphql::{Context, Enum, ID, Object, Result as GraphqlResult, SimpleObject};
+use async_graphql::{
+    Context, Enum, ErrorExtensions, ID, Object, Result as GraphqlResult, SimpleObject,
+};
 use chrono::Utc;
 use futures::future::join_all;
 use jiff::Timestamp;
@@ -41,7 +43,10 @@ use tracing::{error, warn};
 
 use crate::{
     backend::SharedAgentManager,
-    graphql::{RoleGuard, SamplingPoliciesLock, agent_lookup_key_service_token, listed_rows},
+    graphql::{
+        RoleGuard, SamplingPoliciesLock, agent_lookup_key_service_token, data_store_in_use_message,
+        data_stores_in_use, listed_rows,
+    },
 };
 
 const TERMINAL_STATUS_UPDATE_ATTEMPTS: usize = 2;
@@ -61,6 +66,17 @@ const DATA_STORE_NOT_REGISTERED: &str =
     "the Data Store is no longer registered with the Central Manager; nothing was deleted in it";
 /// The fewest non-empty labels the Data Store accepts in a service FQDN.
 const MIN_SERVICE_FQDN_LABELS: usize = 3;
+/// The `extensions.code` of a deletion refused while a Data Store on the
+/// customer's nodes is used by others.
+const DATA_STORE_IN_USE: &str = "DATA_STORE_IN_USE";
+
+/// A deletion refused, before anything is written, because a Data Store on
+/// the customer's nodes is used by another customer or by a system log
+/// collector. The message names each such Data Store, its users, and how to
+/// free it.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct DataStoreInUseError(String);
 
 /// A remote service that must delete data belonging to a customer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -362,6 +378,14 @@ pub struct CustomerDataDeletionMutation;
 
 #[Object]
 impl CustomerDataDeletionMutation {
+    /// Requests the deletion of a customer's data, or a retry of its stopped
+    /// deletion.
+    ///
+    /// Refused before anything is written, with `extensions.code`
+    /// `DATA_STORE_IN_USE`, while a Data Store on one of the customer's
+    /// nodes is named by an agent on another node, a training definition of
+    /// another customer, or a system log collector. The message names each
+    /// such Data Store, its users, and how to free it.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn delete_customer_data(
         &self,
@@ -377,7 +401,11 @@ impl CustomerDataDeletionMutation {
         let agent_manager = ctx.data::<SharedAgentManager>()?;
         request_deletion(customer_id, store, agent_manager, task_manager)
             .await
-            .map_err(|error| async_graphql::Error::new(format!("{error:#}")))
+            .map_err(|error| match error.downcast_ref::<DataStoreInUseError>() {
+                Some(DataStoreInUseError(message)) => async_graphql::Error::new(message)
+                    .extend_with(|_, extensions| extensions.set("code", DATA_STORE_IN_USE)),
+                None => async_graphql::Error::new(format!("{error:#}")),
+            })
     }
 }
 
@@ -442,6 +470,8 @@ async fn request_deletion(
         {
             return Ok(CustomerDataDeletionRequestStatus::DeletionInProgress);
         }
+        // A job exists, so the customer's nodes can no longer leave it.
+        check_data_stores_in_use(store, customer_id, false)?;
         let requested_at = timestamp_nanos()?;
         let plan = retry_plan(store, &job)?;
         let mut updated_job = job.clone();
@@ -463,6 +493,7 @@ async fn request_deletion(
         let Some(plan) = collect_initial_plan(store, customer_id)? else {
             return Ok(CustomerDataDeletionRequestStatus::NoTarget);
         };
+        check_data_stores_in_use(store, customer_id, true)?;
         let job = initial_job(&plan, timestamp_nanos()?);
         persist_request(store, &job)?;
         plan
@@ -479,6 +510,24 @@ async fn request_deletion(
     // task-manager mutex decides the ordering against shutdown.
     state.active = Some((customer_id, supervisor));
     Ok(CustomerDataDeletionRequestStatus::Accepted)
+}
+
+/// Refuses the deletion of customer `customer_id` with a
+/// [`DataStoreInUseError`] while a Data Store on its nodes is used by others.
+///
+/// `node_may_move` is whether no job of the customer exists yet, so that the
+/// node holding the Data Store may still move to another customer.
+fn check_data_stores_in_use(
+    store: &RwLock<Store>,
+    customer_id: u32,
+    node_may_move: bool,
+) -> anyhow::Result<()> {
+    let in_use = data_stores_in_use(&*read_store(store)?, customer_id)
+        .with_context(|| format!("checking the Data Stores of customer {customer_id}"))?;
+    if in_use.is_empty() {
+        return Ok(());
+    }
+    Err(DataStoreInUseError(data_store_in_use_message(&in_use, node_may_move)).into())
 }
 
 fn persist_request(store: &RwLock<Store>, job: &CustomerDataDeletionJob) -> anyhow::Result<()> {
@@ -531,7 +580,7 @@ fn service_fqdn(service: &str, host_fqdn: &str) -> String {
     format!("{service}.{host_fqdn}")
 }
 
-fn data_store_server_name(instance: u32, hostname: &str) -> String {
+pub(crate) fn data_store_server_name(instance: u32, hostname: &str) -> String {
     format!("{instance:03}.giganto.{hostname}")
 }
 
@@ -5034,6 +5083,18 @@ mod tests {
     /// Stores a listed Data Store, installed, `RUNNING` and numbered
     /// `instance`, on a node of the platform's customer 0 on `hostname`.
     fn put_data_store(test_store: &TestStore, hostname: &str, instance: u32) {
+        put_customer_data_store(test_store, 0, hostname, instance, Vec::new());
+    }
+
+    /// Stores a listed Data Store, installed, `RUNNING` and numbered
+    /// `instance`, on a node of `customer_id` on `hostname` running `agents`.
+    fn put_customer_data_store(
+        test_store: &TestStore,
+        customer_id: u32,
+        hostname: &str,
+        instance: u32,
+        agents: Vec<Agent>,
+    ) {
         let service = ExternalService {
             node_id: u32::MAX,
             key: format!("{instance:03}.giganto"),
@@ -5054,12 +5115,12 @@ mod tests {
                 name: hostname.to_string(),
                 name_draft: None,
                 profile: Some(NodeProfile {
-                    customer_id: 0,
+                    customer_id,
                     description: String::new(),
                     hostname: hostname.to_string(),
                 }),
                 profile_draft: None,
-                agents: Vec::new(),
+                agents,
                 external_services: vec![service],
                 creation_time: Utc::now(),
             })
@@ -6106,5 +6167,276 @@ mod tests {
         assert_eq!(results[1]["service"], "DATA_STORE");
         assert_eq!(results[1]["hostFqdns"], serde_json::json!([DATA_STORE]));
         assert_eq!(results[1]["status"], "IN_PROGRESS");
+    }
+
+    /// The server name of the Data Store customer 1's node holds in the
+    /// in-use tests.
+    const OWN_DATA_STORE: &str = "001.giganto.store.example";
+
+    fn agent_naming(
+        key: &str,
+        kind: AgentKind,
+        config: Option<String>,
+        draft: Option<String>,
+    ) -> Agent {
+        Agent::new(
+            0,
+            key.to_string(),
+            kind,
+            AgentStatus::Enabled,
+            config,
+            draft,
+        )
+        .unwrap()
+    }
+
+    fn giganto_name(server_name: &str) -> String {
+        format!("giganto_name = \"{server_name}\"\n")
+    }
+
+    fn engine_document(server_name: &str) -> String {
+        format!(
+            r#"[[detectors]]
+id = 1
+enabled = true
+model = "m"
+sources = ["piglet.other.example"]
+period = "1m"
+start = "2026-10-14T00:00:00Z"
+batch_size = 100
+[detectors.data_store]
+address = "10.0.0.5:38371"
+server_name = "{server_name}"
+"#
+        )
+    }
+
+    /// Requests the deletion of customer 1 and returns the response.
+    async fn request_customer_1(
+        test_store: &TestStore,
+        manager: &Arc<CustomerDataDeletionTaskManager>,
+    ) -> async_graphql::Response {
+        test_schema(
+            test_store,
+            Arc::new(RecordingAgentManager::with_store(&test_store.store)),
+            Arc::clone(manager),
+        )
+        .execute(admin_request(
+            r#"mutation { deleteCustomerData(customerId: "1") }"#,
+        ))
+        .await
+    }
+
+    /// Returns the code and message of the single error of `response`.
+    fn refusal(response: &async_graphql::Response) -> (String, String) {
+        assert_eq!(response.errors.len(), 1, "{response:?}");
+        let error = &response.errors[0];
+        let code = error
+            .extensions
+            .as_ref()
+            .and_then(|extensions| extensions.get("code"))
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        (code, error.message.clone())
+    }
+
+    #[tokio::test]
+    async fn a_data_store_others_use_refuses_the_request_before_anything_is_written() {
+        let other_user = [
+            (
+                "applied",
+                agent_naming(
+                    "001.piglet",
+                    AgentKind::Sensor,
+                    Some(giganto_name(OWN_DATA_STORE)),
+                    None,
+                ),
+                "the Sensor agent 001.piglet on other.example",
+            ),
+            (
+                "draft",
+                agent_naming(
+                    "001.piglet",
+                    AgentKind::Sensor,
+                    None,
+                    Some(giganto_name(OWN_DATA_STORE)),
+                ),
+                "the Sensor agent 001.piglet on other.example",
+            ),
+            (
+                "engine",
+                agent_naming(
+                    "001.reconverge",
+                    AgentKind::Unsupervised,
+                    Some(engine_document(OWN_DATA_STORE)),
+                    None,
+                ),
+                "the Unsupervised Engine agent 001.reconverge on other.example",
+            ),
+        ];
+        for (case, agent, user) in other_user {
+            let test_store = TestStore::new();
+            put_customer_data_store(&test_store, 1, "store.example", 1, vec![sensor_agent()]);
+            put_data_store(&test_store, "second.example", 1);
+            put_customer_node(&test_store, 2, "other.example", vec![agent]);
+            let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+
+            let response = request_customer_1(&test_store, &manager).await;
+            let (code, message) = refusal(&response);
+            assert_eq!(code, "\"DATA_STORE_IN_USE\"", "{case}");
+            assert_eq!(
+                message,
+                format!(
+                    "Data Store {OWN_DATA_STORE} on store.example is used by {user}. Point them \
+                     at another Data Store — another customer's agents in their own settings, \
+                     the platform's system log collector with \
+                     `setSystemLogCollectorDataStore` — then retry. Nothing has been deleted \
+                     yet, so you may also move the node that holds the Data Store to another \
+                     customer first."
+                ),
+                "{case}"
+            );
+            assert!(job_of(&test_store, 1).is_none(), "{case}");
+            assert!(manager.state.lock().await.active.is_none(), "{case}");
+        }
+    }
+
+    fn job_of(test_store: &TestStore, customer_id: u32) -> Option<CustomerDataDeletionJob> {
+        read_store(&test_store.store)
+            .unwrap()
+            .customer_data_deletion_map()
+            .get(customer_id)
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_only_data_store_used_by_a_system_log_collector_needs_another_first() {
+        let test_store = TestStore::new();
+        put_customer_data_store(&test_store, 1, "store.example", 1, vec![sensor_agent()]);
+        {
+            let store = read_store(&test_store.store).unwrap();
+            let collectors = store.system_log_collector_map();
+            collectors
+                .append_install_key("c.example", "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b", None)
+                .unwrap();
+            collectors
+                .set_data_store("c.example", Some(OWN_DATA_STORE.to_string()))
+                .unwrap();
+        }
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+
+        let response = request_customer_1(&test_store, &manager).await;
+        let (code, message) = refusal(&response);
+        assert_eq!(code, "\"DATA_STORE_IN_USE\"");
+        assert!(
+            message.starts_with(&format!(
+                "Data Store {OWN_DATA_STORE} on store.example is used by the system log \
+                 collector on c.example. "
+            )),
+            "{message}"
+        );
+        assert!(message.contains("move the node"), "{message}");
+        assert!(
+            message.ends_with(
+                "It is the only Data Store installed, and each host's system log collector \
+                 takes the first Data Store installed, so this customer can be deleted only \
+                 after another Data Store is installed and the system log collectors are \
+                 repointed to it with `setSystemLogCollectorDataStore`."
+            ),
+            "{message}"
+        );
+        assert!(job_of(&test_store, 1).is_none());
+    }
+
+    #[tokio::test]
+    async fn the_customers_own_users_do_not_hold_its_data_store() {
+        let test_store = TestStore::new();
+        put_customer_data_store(
+            &test_store,
+            1,
+            "store.example",
+            1,
+            vec![agent_naming(
+                "001.piglet",
+                AgentKind::Sensor,
+                Some(giganto_name(OWN_DATA_STORE)),
+                None,
+            )],
+        );
+        put_customer_node(
+            &test_store,
+            1,
+            "sensor.example",
+            vec![agent_naming(
+                "001.piglet",
+                AgentKind::Sensor,
+                Some(giganto_name(OWN_DATA_STORE)),
+                Some(giganto_name(OWN_DATA_STORE)),
+            )],
+        );
+        // Another customer's agent naming a Data Store not on the customer's
+        // nodes holds nothing either.
+        put_data_store(&test_store, "second.example", 1);
+        put_customer_node(
+            &test_store,
+            2,
+            "other.example",
+            vec![agent_naming(
+                "001.piglet",
+                AgentKind::Sensor,
+                Some(giganto_name("001.giganto.second.example")),
+                None,
+            )],
+        );
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+
+        let response = request_customer_1(&test_store, &manager).await;
+        assert!(response.errors.is_empty(), "{response:?}");
+        assert_eq!(response.data.to_string(), "{deleteCustomerData: ACCEPTED}");
+        manager.shutdown_and_wait().await;
+    }
+
+    #[tokio::test]
+    async fn a_retry_is_refused_too_without_the_advice_to_move_the_node() {
+        let test_store = TestStore::new();
+        put_customer_data_store(&test_store, 1, "store.example", 1, vec![sensor_agent()]);
+        put_data_store(&test_store, "second.example", 1);
+        put_customer_node(
+            &test_store,
+            2,
+            "other.example",
+            vec![agent_naming(
+                "001.piglet",
+                AgentKind::Sensor,
+                Some(giganto_name(OWN_DATA_STORE)),
+                None,
+            )],
+        );
+        put_job(
+            &test_store.store,
+            1,
+            vec![
+                terminal_result(
+                    CustomerDataDeletionService::Review,
+                    "store.example",
+                    CustomerDataDeletionStatus::Failed,
+                ),
+                terminal_result(
+                    CustomerDataDeletionService::Sensor,
+                    "store.example",
+                    CustomerDataDeletionStatus::Failed,
+                ),
+            ],
+        );
+        let before = job_of(&test_store, 1);
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+
+        let response = request_customer_1(&test_store, &manager).await;
+        let (code, message) = refusal(&response);
+        assert_eq!(code, "\"DATA_STORE_IN_USE\"");
+        assert!(message.ends_with("then retry."), "{message}");
+        assert!(!message.contains("move the node"), "{message}");
+        assert_eq!(job_of(&test_store, 1), before);
+        assert!(manager.state.lock().await.active.is_none());
     }
 }

@@ -3,6 +3,8 @@ mod control;
 mod crud;
 mod customer_sensor_list;
 mod data_store_endpoint;
+#[cfg(test)]
+mod deletion_lock_tests;
 mod engine_write;
 // `pub(super)` so `graphql::operation_attempt` reaches `bind_package_class`:
 // the class binding has one comparison site for the whole crate.
@@ -618,6 +620,36 @@ impl NodeProfile {
 }
 
 struct NodeTotalCount;
+
+/// Refuses a write of node `current` that gives it `profile` as its new
+/// profile or draft while a customer data deletion holds the customer of
+/// `current`'s applied profile, the customer `profile` gives it, or
+/// `profile`'s hostname.
+fn check_node_write(
+    ctx: &Context<'_>,
+    current: &database::Node,
+    profile: Option<&input::NodeProfileInput>,
+) -> Result<()> {
+    let new_customer = profile
+        .map(|profile| {
+            profile
+                .customer_id
+                .as_str()
+                .parse::<u32>()
+                .map_err(|_| "invalid customer ID")
+        })
+        .transpose()?;
+    super::customer_deletion_guard::check_node_write(
+        &*super::get_store(ctx)?,
+        current
+            .profile
+            .as_ref()
+            .map(|profile| profile.customer_id)
+            .into_iter()
+            .chain(new_customer),
+        profile.map(|profile| profile.hostname.as_str()),
+    )
+}
 
 fn scoped_node_count(ctx: &Context<'_>) -> Result<usize> {
     let users_customers = super::customer_access::users_customers(ctx)?;

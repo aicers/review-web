@@ -6272,6 +6272,16 @@ type Mutation {
 	model of none of the caller's customers with `Forbidden`.
 	"""
 	updateCluster(model: ID!, id: ID!, category: ID, qualifier: ID, status: ID): ID!
+	"""
+	Requests the deletion of a customer's data, or a retry of its stopped
+	deletion.
+	
+	Refused before anything is written, with `extensions.code`
+	`DATA_STORE_IN_USE`, while a Data Store on one of the customer's
+	nodes is named by an agent on another node, a training definition of
+	another customer, or a system log collector. The message names each
+	such Data Store, its users, and how to free it.
+	"""
 	deleteCustomerData(customerId: ID!): CustomerDataDeletionRequestStatus!
 	backup(numOfBackupsToKeep: Int!): Boolean!
 	restoreFromLatestBackup: Boolean!
@@ -6438,6 +6448,9 @@ type Mutation {
 	
 	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
 	model of none of the caller's customers with `Forbidden`.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the model's customer is unfinished, also while it is stopped.
 	"""
 	addCsvColumnExtra(model: ID!, columnAlias: [String!], columnDisplay: [Boolean!], columnTopN: [Boolean!], column1: [Boolean!], columnN: [Boolean!]): ID!
 	"""
@@ -6447,6 +6460,9 @@ type Mutation {
 	does not exist, the update is refused with `extensions.code`
 	`NOT_FOUND` on `id`; a model of none of the caller's customers is
 	refused with `Forbidden`.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the model's customer is unfinished, also while it is stopped.
 	"""
 	updateCsvColumnExtra(id: ID!, columnAlias: [String!], columnDisplay: [Boolean!], columnTopN: [Boolean!], column1: [Boolean!], columnN: [Boolean!]): ID!
 	"""
@@ -6506,6 +6522,11 @@ type Mutation {
 	the apply do the generator's policies record the new Data Store. When the apply changes the
 	node's applied customer or hostname, every Time Series Generator holding a sampling policy
 	whose sensor or assignee is on the node is told that its policies changed.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of the node's applied
+	customer, or of the customer the new profile gives it, is unfinished, also while it is
+	stopped; and, while any customer's deletion is unfinished, when the new hostname is one
+	that deletion saved.
 	"""
 	applyNode(id: ID!, node: NodeInput!): ID!
 	"""
@@ -6545,6 +6566,11 @@ type Mutation {
 	the apply do the generator's policies record the new Data Store. When the apply changes the
 	node's applied customer or hostname, every Time Series Generator holding a sampling policy
 	whose sensor or assignee is on the node is told that its policies changed.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of the node's applied
+	customer, or of the customer the new profile gives it, is unfinished, also while it is
+	stopped; and, while any customer's deletion is unfinished, when the new hostname is one
+	that deletion saved.
 	"""
 	applyNodeDraft(id: ID!, node: NodeInput!): Node!
 	"""
@@ -6570,6 +6596,9 @@ type Mutation {
 	`piglet.` or `reproduce.` name an engine document or training definition of another
 	customer lists (RFC 0006 §5.11), which names that detector or definition only to a System
 	Administrator. An Unsupervised Engine agent key listed more than once is refused.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of `customerId` is
+	unfinished, also while it is stopped, and while any unfinished deletion saved `hostname`.
 	"""
 	insertNode(name: String!, customerId: ID!, description: String!, hostname: String!, agents: [AgentDraftInput!]!, externalServices: [ExternalServiceInput!]!): ID!
 	"""
@@ -6578,6 +6607,9 @@ type Mutation {
 	Validates all requested nodes before deleting any of them. Refuses the whole request when
 	any requested node holds an installed instance, which only `removeService` removes, or
 	lists a row that cannot be found.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of the applied customer
+	of any requested node is unfinished, also while it is stopped.
 	"""
 	removeNodes(ids: [ID!]!): [String!]!
 	"""
@@ -6596,6 +6628,11 @@ type Mutation {
 	§5.11 refuse, which names another customer's detector or definition only to a System
 	Administrator. An `old` Unsupervised Engine draft that is not the stored one is refused with
 	"the node changed since it was read; reload and retry".
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of the node's applied
+	customer, or of the customer the new profile gives it, is unfinished, also while it is
+	stopped; and, while any customer's deletion is unfinished, when the new hostname is one
+	that deletion saved.
 	"""
 	updateNodeDraft(id: ID!, old: NodeInput!, new: NodeDraftInput!): ID!
 	"""
@@ -6622,6 +6659,9 @@ type Mutation {
 	be a sensor name of one of the customer's nodes, such as
 	`piglet.sensor.example.com`. A draft cannot be assigned; fix it with
 	`fixSamplingPolicy`, or with `assignSamplingPolicy(fix: true)`.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	`customerId` is unfinished, also while it is stopped.
 	"""
 	insertSamplingPolicy(customerId: ID!, name: String!, kind: Kind!, interval: Interval!, period: Period!, offset: Int!, srcIp: IpAddress, dstIp: IpAddress, node: String, column: Int): ID!
 	"""
@@ -6638,6 +6678,10 @@ type Mutation {
 	spans them. So a storage failure after the first removal returns an
 	error with the policies before it already removed, and a retry with
 	the IDs that remain removes the rest.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the customer of any requested policy is unfinished, also while it is
+	stopped.
 	"""
 	removeSamplingPolicies(ids: [ID!]!): [String!]!
 	"""
@@ -6647,6 +6691,9 @@ type Mutation {
 	sensor name of one of its customer's nodes. Only the name of a fixed
 	policy can change. A caller scoped to customers may update only a
 	policy of a customer in scope.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the policy's customer is unfinished, also while it is stopped.
 	"""
 	updateSamplingPolicy(id: ID!, old: SamplingPolicyInput!, new: SamplingPolicyInput!): ID!
 	"""
@@ -6654,6 +6701,9 @@ type Mutation {
 	
 	A fixed policy's definition cannot change, and nothing makes it a
 	draft again. Fixing a fixed policy succeeds and changes nothing.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the policy's customer is unfinished, also while it is stopped.
 	"""
 	fixSamplingPolicy(id: ID!): ID!
 	"""
@@ -6669,6 +6719,9 @@ type Mutation {
 	nothing. `fix` cannot be given to unassign. While the policy is in use
 	it cannot be unassigned, and can be assigned only to a generator with
 	its Data Store; the refusal lists its uses.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the policy's customer is unfinished, also while it is stopped.
 	"""
 	assignSamplingPolicy(id: ID!, nodeId: ID, agentKey: String, fix: Boolean): ID!
 	"""
@@ -6751,6 +6804,9 @@ type Mutation {
 	IDs of sampling policies of the customer that are assigned, of one
 	kind, column, interval, period and offset, and kept in the Data Store
 	`[data_store]` names, which their generators still write to.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the instance's customer is unfinished, also while it is stopped.
 	"""
 	insertTrainingDefinition(nodeId: ID!, agentKey: String!, name: String!, definition: String!): String!
 	"""
@@ -6770,6 +6826,9 @@ type Mutation {
 	must have the shape of the policies the model was trained on, which
 	the model's detectors read; otherwise they are refused with
 	`SOURCES_INCOMPATIBLE`.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the definition's customer is unfinished, also while it is stopped.
 	"""
 	updateTrainingDefinition(name: String!, definition: String!): String!
 	"""
@@ -6780,6 +6839,9 @@ type Mutation {
 	`extensions.code`: `NOT_FOUND`; `MODEL_IN_USE` while a model of the
 	name exists, with `definition`; `RUN_IN_PROGRESS` while a run of the
 	definition is active.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the definition's customer is unfinished, also while it is stopped.
 	"""
 	removeTrainingDefinition(name: String!): String!
 	"""
@@ -6799,6 +6861,9 @@ type Mutation {
 	`INSTANCE_STOPPED` and `RUN_IN_PROGRESS`; and, once the run is
 	stored, `ENGINE_REFUSED` with the engine's reason in `value` or
 	`INSTANCE_UNREACHABLE`, either leaving the run failed.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the definition's customer is unfinished, also while it is stopped.
 	"""
 	trainModel(name: String!): ID!
 	"""
@@ -6813,6 +6878,9 @@ type Mutation {
 	finished run; `ENGINE_REFUSED` with the engine's reason in `value` or
 	`INSTANCE_UNREACHABLE`, either leaving the run failed (a clone run is
 	removed with its target definition).
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the run's customer is unfinished, also while it is stopped.
 	"""
 	cancelModelRun(runId: ID!): ID!
 	"""
@@ -6843,6 +6911,10 @@ type Mutation {
 	`ENGINE_REFUSED` with the engine's reason in `value` or
 	`INSTANCE_UNREACHABLE`, either removing the run with its target
 	definition.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the source's customer or the target instance's is unfinished, also while
+	it is stopped.
 	"""
 	cloneModel(source: String!, targetName: String!, nodeId: ID!, agentKey: String!, dataStore: DataStoreInput!, sources: [String!]!, suspiciousTokens: String): ID!
 	"""
@@ -6855,6 +6927,9 @@ type Mutation {
 	(with the run id in `value`), or one of its indicators is named by a
 	detector or another definition (with the indicator in `value`, and
 	`detectorId`, `nodeId` and `agentKey`, or `definition`).
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the model's customer is unfinished, also while it is stopped.
 	"""
 	removeModel(name: String!): String!
 	"""
@@ -6866,6 +6941,10 @@ type Mutation {
 	`NOT_FOUND`; `ASSIGN_REFUSED` for a model that has an instance or an
 	instance of another customer than the model's;
 	`INSTANCE_NOT_ELIGIBLE`.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the model's customer or the instance's is unfinished, also while it is
+	stopped.
 	"""
 	assignModel(name: String!, nodeId: ID!, agentKey: String!): String!
 	"""
@@ -6907,6 +6986,10 @@ type Mutation {
 	`configTemplate` names the first-install configuration template from
 	`configTemplates(target)`. Absent means none; review decides whether
 	the target requires one and whether the id exists.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the customer of the node whose applied hostname is `host` is unfinished,
+	also while it is stopped.
 	"""
 	installService(host: String!, target: String!, buildSelector: BuildSelectorInput!, onFailure: FailurePolicy! = ROLLBACK, bindAddrs: [BindAddrInput!], configTemplate: String, requestKey: String!): InstallServiceResult!
 	"""
@@ -6918,12 +7001,20 @@ type Mutation {
 	never typed by an operator; whether it names an instance that exists is
 	review's answer, and this resolver performs no existence check of its
 	own.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the customer of the node whose applied hostname is `host` is unfinished,
+	also while it is stopped.
 	"""
 	updateService(host: String!, target: String!, instance: StringNumber!, buildSelector: BuildSelectorInput!, onFailure: FailurePolicy! = ROLLBACK): UpdateServiceResult!
 	"""
 	Removes an existing instance and returns the operation to poll.
 	
 	Confirming the removal with the operator is a UI concern.
+	
+	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+	the customer of the node whose applied hostname is `host` is unfinished,
+	also while it is stopped.
 	"""
 	removeService(host: String!, target: String!, instance: StringNumber!): RemoveServiceResult!
 	"""

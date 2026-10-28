@@ -295,6 +295,46 @@ async fn add_csv_column_extra_is_limited_to_the_model_customer() {
 }
 
 #[tokio::test]
+async fn csv_column_extras_of_a_customer_being_deleted_cannot_change() {
+    use crate::graphql::customer_deletion_guard::test_support::{
+        assert_locked, put_completed_job, put_stopped_job,
+    };
+
+    let (schema, model_a, model_b) = fixture().await;
+    let extra_a = schema
+        .store()
+        .csv_column_extra_map()
+        .insert(model_a, None, None, None, None, None)
+        .unwrap();
+    let add = |model: u32| {
+        format!(r#"mutation {{ addCsvColumnExtra(model: {model}, columnAlias: ["a"]) }}"#)
+    };
+    let update =
+        |id: u32| format!(r#"mutation {{ updateCsvColumnExtra(id: "{id}", columnAlias: ["b"]) }}"#);
+    put_stopped_job(&schema.store(), CUSTOMER_A, &[]);
+
+    assert_locked(&schema.execute_as_system_admin(&add(model_a)).await);
+    assert_locked(&schema.execute_as_system_admin(&update(extra_a)).await);
+    let res = schema.execute_as_system_admin(&add(model_b)).await;
+    assert_ok(&res, "add B");
+    let extra_b = res.data.into_json().unwrap()["addCsvColumnExtra"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_ok(
+        &schema.execute_as_system_admin(&update(extra_b)).await,
+        "update B",
+    );
+
+    put_completed_job(&schema.store(), CUSTOMER_A, &[]);
+    assert_ok(
+        &schema.execute_as_system_admin(&update(extra_a)).await,
+        "update A",
+    );
+}
+
+#[tokio::test]
 async fn update_csv_column_extra_follows_the_model_of_the_stored_extra() {
     let (schema, model_a, model_b) = fixture().await;
     let (extra_a, extra_b, orphan) = {

@@ -11,7 +11,7 @@ use super::{
     DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, MAX_TRENDI_ORDER, PositiveCutoffRate, Role,
     RoleGuard,
     cluster::TimeCount,
-    customer_access, fill_vacant_time_slots, get_trend,
+    customer_access, customer_deletion_guard, fill_vacant_time_slots, get_trend,
     refusal::{RefusalCode, refusal},
     training::{self, ModelDetectorUse, ModelRun, TrainingDefinition, TrainingDefinitionState},
     training_result, zero_filled_length,
@@ -374,6 +374,9 @@ impl ModelMutation {
     ///
     /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
     /// model of none of the caller's customers with `Forbidden`.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the model's customer is unfinished, also while it is stopped.
     #[allow(clippy::too_many_arguments)]
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
@@ -391,8 +394,9 @@ impl ModelMutation {
             .as_str()
             .parse::<u32>()
             .map_err(|_| "invalid model id")?;
-        customer_access::load_accessible_model(ctx, "model", model_id)?;
+        let digest = customer_access::load_accessible_model(ctx, "model", model_id)?;
         let db = crate::graphql::get_store(ctx)?;
+        customer_deletion_guard::check_customers(&db, [digest.customer_id])?;
         let map = db.csv_column_extra_map();
         Ok(ID(map
             .insert(
@@ -412,6 +416,9 @@ impl ModelMutation {
     /// does not exist, the update is refused with `extensions.code`
     /// `NOT_FOUND` on `id`; a model of none of the caller's customers is
     /// refused with `Forbidden`.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the model's customer is unfinished, also while it is stopped.
     #[allow(clippy::too_many_arguments)]
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
@@ -444,6 +451,7 @@ impl ModelMutation {
         if !customer_access::can_access_model(users_customers.as_deref(), &model) {
             return Err("Forbidden".into());
         }
+        customer_deletion_guard::check_customers(&db, [model.customer_id])?;
         map.update(
             extra_id,
             column_alias.as_deref(),
