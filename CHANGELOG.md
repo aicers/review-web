@@ -11,16 +11,20 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Deleting a customer's data also deletes, in every Data Store the Central
   Manager lists, the customer's events and the periodic time series of its
   sampling policies. The Central Manager release that dispatches the requests
-  carries this out, through two new `AgentManager` methods; an embedding
-  application that does not implement them records each Data Store `FAILED`
-  with "Not supported". `customerDataDeletionResult` reports each Data
-  Store as a `DATA_STORE` result naming its server name,
+  carries this out, through two new `AgentManager` methods,
+  `request_data_store_customer_deletion` and
+  `data_store_customer_deletion_result`; an embedding application that does
+  not implement them records each Data Store `FAILED` with "Not supported",
+  which stops the deletion before its Data Stores are uninstalled and its
+  nodes removed. `customerDataDeletionResult` reports each Data Store as a
+  `DATA_STORE` result naming its server name,
   `<instance:03>.giganto.<hostname>`. Deleting a customer has its Sensors and
   Semi-supervised Engines delete their files, then uninstalls every module
   the Central Manager installed on its nodes, then deletes its data in the
   Data Store, then uninstalls the Data Stores on its nodes, and only then
   removes its nodes. Each host's uninstall is reported as a `MODULE_REMOVAL`
-  result. What stays:
+  result. A failure stops the deletion at that stage, and the results it did
+  not reach are recorded `FAILED` saying where it stopped. What stays:
   - A sampling policy ID reused before `review-database` 0.57.0 made the IDs
     unique names the time series of every policy that held it, and deleting
     the customer of its last holder deletes all of them.
@@ -33,6 +37,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     removed from the records only and keeps running.
   - A Data Store uninstalled with the customer leaves its data directory on
     the host.
+  - The hosts' own operational logs, which Clumit Security keeps about
+    itself, are not deleted.
+  - The events of a host whose node was removed before the deletion stay;
+    no Data Store is asked about a host name the customer's nodes no longer
+    hold.
 - `deleteCustomerData` takes `abandonHosts` and `abandonDataStores`, for
   retrying a stopped deletion that gives up hosts and Data Stores that are
   gone. Nothing is sent to them again, the modules on a given-up host are
@@ -52,14 +61,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
-- **Breaking change:** `recover_customer_data_deletion_on_startup` only scans
-  the stored deletions. It returns `RecoveredDeletions`, which holds the
-  remote targets to dispatch when their agents connect, and whose `start`
-  spawns the supervisor that resumes the unfinished jobs. `start` takes the
-  package deployer, and runs every stage of each job from where it stopped:
-  it waits for the Sensor and Semi-supervised results, uninstalls the
-  customer's modules, waits for the Data Stores already asked and asks the
-  others, uninstalls the customer's Data Stores, and runs the Review stage.
+- **Breaking change:** `recover_customer_data_deletion_on_startup` is no
+  longer `async`, takes only the store, and only scans the stored deletions.
+  It returns `RecoveredDeletions`, which holds the remote targets to dispatch
+  when their agents connect, and whose async `start` spawns the supervisor
+  that resumes the unfinished jobs. `start` takes the package deployer, the
+  agent manager and the task manager. It runs each job's stages from where
+  the restart left them: it waits for the Sensor and Semi-supervised
+  results, uninstalls the customer's modules, waits for the Data Stores
+  already asked and asks the others, uninstalls the customer's Data Stores,
+  and runs the Review stage. A deletion that had stopped is only waited on
+  for its Sensor and Semi-supervised results.
 - **Breaking change:** `serve` takes the package deployer as
   `SharedPackageDeployer` (`Arc<dyn PackageDeployer>`), so the embedding
   application can pass the same deployer to customer deletion recovery.
@@ -72,20 +84,21 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   retry answers `ALREADY_COMPLETED`.
 - A customer with no node left but with sampling policies, Unsupervised
   Engine models or training definitions is deleted too, where 0.50.0 answered
-  `NO_TARGET`. The events of its removed nodes cannot be found and stay.
-- A deletion that stops is recorded `FAILED`, and no longer blocks every
-  other deletion. When a Sensor, Semi-supervised or Data Store deletion
-  fails, the Review result and each Data Store result not yet asked are
-  recorded `FAILED` with "stopped before this part: " and the first failure's
-  error, where 0.50.0 left them `IN_PROGRESS` and answered
-  `BLOCKED_BY_ANOTHER_DELETION` to every other customer until a restart.
-- The hosts' own operational logs, which Clumit Security keeps about itself,
-  are not deleted with a customer.
+  `NO_TARGET`.
+- A deletion waits for every Sensor and Semi-supervised result before it
+  goes on, and a result not reported within an hour is recorded `FAILED`.
+  When one fails, the deletion stops: the Review result is recorded `FAILED`
+  with "stopped before this part: " and the first failure's error, and the
+  customer's records stay until a retry, where 0.50.0 removed them whatever
+  the Sensors and Semi-supervised Engines reported. A stopped deletion no
+  longer blocks other customers' deletions; in 0.50.0 a result never
+  reported stayed `IN_PROGRESS`, and every other customer was answered
+  `BLOCKED_BY_ANOTHER_DELETION`.
 - From the start of a customer's data deletion until it is complete, also
   while it is stopped, its nodes, services, sampling policies, models and
-  training definitions cannot be changed; such a change is refused with
-  `CUSTOMER_DELETION_IN_PROGRESS`. While a deletion is stopped, the node host
-  names saved in its job cannot be taken by another node either.
+  training definitions cannot be changed, and no other node can take a host
+  name saved in its job; such a change is refused with
+  `CUSTOMER_DELETION_IN_PROGRESS`.
 - Deleting a customer is refused with `DATA_STORE_IN_USE` while another
   customer, or the platform's system log collector, uses a Data Store on the
   customer's nodes. With a single Data Store, the system log collectors use
