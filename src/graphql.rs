@@ -94,6 +94,7 @@ use vinum::signal;
 pub use self::cert::ParsedCertificate;
 pub use self::customer::{NetworksTargetAgentLookupKeysPair, get_customer_networks};
 pub use self::network_list::{get_allow_networks, get_block_networks};
+pub(crate) use self::node::listed_rows;
 pub use self::node::{
     agent_lookup_key_service_token, agent_lookup_keys_by_customer_id, gen_agent_lookup_key,
 };

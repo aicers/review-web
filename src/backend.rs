@@ -17,12 +17,15 @@ use ipnet::IpNet;
 // two distinct types with the same name, so nothing here glob-imports either
 // module and neither `Lifecycle` is brought into scope.
 use review_database::{
-    BuildSelector, ListenerBinding, ListenerTransport, ModelInstance, PortOwner, RunId,
+    BuildSelector, CustomerDataDeletionStatus, ListenerBinding, ListenerTransport, ModelInstance,
+    PortOwner, RunId,
 };
 pub use review_protocol::types::ResourceUsage;
 use review_protocol::types::node::{BootstrapMaterial, DeliveryMode, FailurePolicy, PackageState};
 
-use crate::customer_data_deletion::CustomerDataDeletionTarget;
+use crate::customer_data_deletion::{
+    CustomerDataDeletionTarget, DataStoreDeletionTarget, DataStoreRequestAnswer,
+};
 use crate::graphql::customer::NetworksTargetAgentLookupKeysPair;
 pub use crate::graphql::{ParsedCertificate, SamplingPolicy};
 
@@ -32,6 +35,47 @@ pub trait AgentManager: Send + Sync {
         &self,
         targets: &[CustomerDataDeletionTarget],
     ) -> Result<(), anyhow::Error>;
+
+    /// Asks one Data Store to delete a customer's events and periodic time
+    /// series, and returns its answer.
+    ///
+    /// The deletion supervisor records the Data Store's result as
+    /// `InProgress` before it calls this, and polls
+    /// [`data_store_customer_deletion_result`] after an answer that leaves
+    /// the deletion running, so an implementor sends one request and returns;
+    /// it runs no task of its own. A request for a customer whose deletion
+    /// the Data Store already runs or has finished is answered as such, so a
+    /// request sent again after a restart is harmless.
+    ///
+    /// [`data_store_customer_deletion_result`]: Self::data_store_customer_deletion_result
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request cannot be sent or the Data Store
+    /// refuses it; the supervisor then records the result `Failed` with the
+    /// error. The default implementation always returns an error.
+    async fn request_data_store_customer_deletion(
+        &self,
+        _target: &DataStoreDeletionTarget,
+    ) -> Result<DataStoreRequestAnswer, anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
+
+    /// Returns the state of the customer deletion a Data Store runs, or
+    /// `None` if it has no deletion job for the customer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Data Store cannot be reached or does not
+    /// answer; the supervisor asks again, and records the result `Failed`
+    /// after ten minutes of errors. The default implementation always
+    /// returns an error.
+    async fn data_store_customer_deletion_result(
+        &self,
+        _target: &DataStoreDeletionTarget,
+    ) -> Result<Option<CustomerDataDeletionStatus>, anyhow::Error> {
+        Err(anyhow!("Not supported"))
+    }
 
     async fn broadcast_trusted_domains(&self) -> Result<(), anyhow::Error> {
         Err(anyhow!("Not supported"))

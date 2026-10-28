@@ -695,4 +695,31 @@ mod tests {
 
         assert_eq!(reads.count(), 0);
     }
+
+    /// An agent manager that does not implement the Data Store customer
+    /// deletion methods refuses both through their defaults.
+    #[tokio::test]
+    async fn data_store_customer_deletion_defaults_are_not_supported() {
+        let (stub, reads) = EndpointStub::boxed(&[]);
+        let target = crate::customer_data_deletion::DataStoreDeletionTarget::new(
+            1,
+            "host1.example.com".to_string(),
+            1,
+            vec!["piglet.host1.example.com".to_string()],
+            vec!["7".to_string()],
+        );
+
+        let request = stub
+            .request_data_store_customer_deletion(&target)
+            .await
+            .unwrap_err();
+        assert_eq!(request.to_string(), "Not supported");
+        let result = stub
+            .data_store_customer_deletion_result(&target)
+            .await
+            .unwrap_err();
+        assert_eq!(result.to_string(), "Not supported");
+
+        assert_eq!(reads.count(), 0);
+    }
 }
