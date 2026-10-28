@@ -2579,8 +2579,9 @@ async fn drive_data_stores(
     customer_id: u32,
     stop_reason: Option<&str>,
 ) -> DataStoreStepOutcome {
-    let starts = match data_store_starts(store, customer_id, stop_reason.is_none()) {
-        Ok(starts) => starts,
+    let starts = match data_store_starts(store, shutdown, customer_id, stop_reason.is_none()) {
+        Ok(Some(starts)) => starts,
+        Ok(None) => return DataStoreStepOutcome::ShutDown,
         Err(error) => {
             return DataStoreStepOutcome::Stopped {
                 reason: format!("{error:#}"),
@@ -2636,16 +2637,18 @@ struct DataStoreStart {
 /// longer listed.
 ///
 /// Unless `sending`, only the Data Stores with an `InProgress` result are
-/// considered.
+/// considered. Returns `None`, before recording a given-up Data Store, once
+/// shutdown has started.
 fn data_store_starts(
     store: &RwLock<Store>,
+    shutdown: &watch::Receiver<bool>,
     customer_id: u32,
     sending: bool,
-) -> anyhow::Result<Vec<DataStoreStart>> {
+) -> anyhow::Result<Option<Vec<DataStoreStart>>> {
     let job = read_job(store, customer_id)?;
     let service_fqdns = data_store_service_fqdns(review_hosts(&job));
     if service_fqdns.is_empty() && job.periodic_time_series_ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Some(Vec::new()));
     }
     let mut rows = listed_rows(&*read_store(store)?)
         .map_err(|error| anyhow!("listing the Data Stores: {}", error.message))?;
@@ -2701,6 +2704,9 @@ fn data_store_starts(
                 result.status = CustomerDataDeletionStatus::Succeeded;
                 result.completed_at = Some(now);
                 result.error = Some(abandoned_host_data_store(&row.hostname, &server_name));
+                if *shutdown.borrow() {
+                    return Ok(None);
+                }
                 read_store(store)?
                     .customer_data_deletion_map()
                     .add_service(customer_id, &result)
@@ -2740,7 +2746,7 @@ fn data_store_starts(
             next,
         });
     }
-    Ok(starts)
+    Ok(Some(starts))
 }
 
 /// Returns the sorted service FQDNs of `hosts` the Data Store accepts.
@@ -10532,6 +10538,44 @@ server_name = "{server_name}"
         );
         assert!(all_succeeded(&done), "{done:?}");
         assert_eq!(nodes_of(&test_store, 7), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_records_no_result_for_a_data_store_on_a_given_up_host() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        put_give_up_fixture(&test_store);
+        let mut stored = CustomerDataDeletionJob::new(
+            7,
+            vec![pending_result(CustomerDataDeletionService::Review, &[A, C])],
+        );
+        stored.abandoned_hosts = vec![A.to_string()];
+        read_store(&test_store.store)
+            .unwrap()
+            .customer_data_deletion_map()
+            .put(&stored)
+            .unwrap();
+        let before = job(&test_store.store, 7);
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let shared: SharedAgentManager = agent.clone();
+
+        let (_stopping, mut shutdown) = watch::channel(true);
+        assert_eq!(
+            data_store_step(&test_store.store, &shared, &mut shutdown, 7).await,
+            DataStoreStepOutcome::ShutDown
+        );
+        assert_eq!(job(&test_store.store, 7), before);
+        assert!(agent.sent.lock().unwrap().is_empty());
+
+        // Without shutdown, the same step records it.
+        let (_running, mut shutdown) = watch::channel(false);
+        assert_eq!(
+            data_store_step(&test_store.store, &shared, &mut shutdown, 7).await,
+            DataStoreStepOutcome::Completed
+        );
+        let result = data_store_result(&job(&test_store.store, 7), A_DATA_STORE);
+        assert_eq!(result.status, CustomerDataDeletionStatus::Succeeded);
+        assert!(agent.sent.lock().unwrap().is_empty());
     }
 
     #[tokio::test(start_paused = true)]
