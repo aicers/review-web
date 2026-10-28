@@ -100,25 +100,25 @@ pub(crate) use self::node::listed_rows;
 pub use self::node::{
     agent_lookup_key_service_token, agent_lookup_keys_by_customer_id, gen_agent_lookup_key,
 };
+pub(crate) use self::operation_attempt::operator_installs;
 pub(crate) use self::sampling::SamplingPoliciesLock;
 pub use self::sampling::{
     Interval as SamplingInterval, Kind as SamplingKind, Period as SamplingPeriod,
     Policy as SamplingPolicy, sampling_policies_for_generator,
 };
-pub(crate) use crate::backend::SharedAgentManager;
-use crate::backend::{AgentManager, CertManager, HostOnboarder, PackageDeployer};
+use crate::backend::{AgentManager, CertManager, HostOnboarder};
 #[cfg(test)]
 use crate::backend::{
     BindAddrInput, BuildId, DeployError, DeployOutcome, HostOnboardingTicket, JoinToken,
-    OperationId, RunningRoxydBuild,
+    OperationId, PackageDeployer, RunningRoxydBuild,
 };
+pub(crate) use crate::backend::{SharedAgentManager, SharedPackageDeployer};
 use crate::customer_data_deletion::CustomerDataDeletionTaskManager;
 use crate::maintenance::{MaintenanceExtension, MaintenanceGate};
 
 /// GraphQL schema type.
 pub type Schema = async_graphql::Schema<Query, Mutation, Subscription>;
 
-type BoxedPackageDeployer = Box<dyn PackageDeployer>;
 type BoxedHostOnboarder = Box<dyn HostOnboarder>;
 
 /// Builds a GraphQL schema with the given database store as its context.
@@ -129,10 +129,10 @@ type BoxedHostOnboarder = Box<dyn HostOnboarder>;
 // `serve`; grouping them into a struct would only restate `serve`'s own
 // parameters and `ServerConfig`.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn schema<B, D, O>(
+pub(super) fn schema<B, O>(
     store: Arc<RwLock<Store>>,
     agent_manager: B,
-    package_deployer: D,
+    package_deployer: SharedPackageDeployer,
     host_onboarder: O,
     ip_locator: Option<Arc<ip2location::DB>>,
     cert_manager: Arc<dyn CertManager>,
@@ -142,11 +142,9 @@ pub(super) fn schema<B, D, O>(
 ) -> Schema
 where
     B: AgentManager + 'static,
-    D: PackageDeployer + 'static,
     O: HostOnboarder + 'static,
 {
     let agent_manager: SharedAgentManager = Arc::new(agent_manager);
-    let package_deployer: BoxedPackageDeployer = Box::new(package_deployer);
     let host_onboarder: BoxedHostOnboarder = Box::new(host_onboarder);
     let mut builder = Schema::build(
         Query::default(),
@@ -1450,7 +1448,7 @@ impl TestSchema {
     /// The install-state read path drives `latest_build` through the deployer,
     /// so a test that exercises it substitutes a stub here rather than taking
     /// the default one's answers.
-    async fn new_with_package_deployer(package_deployer: BoxedPackageDeployer) -> Self {
+    async fn new_with_package_deployer(package_deployer: SharedPackageDeployer) -> Self {
         let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
         Self::new_with_all(agent_manager, package_deployer, None, "testuser", None).await
     }
@@ -1463,7 +1461,7 @@ impl TestSchema {
     ) -> Self {
         Self::new_with_all(
             agent_manager,
-            Box::new(MockPackageDeployer::default()),
+            Arc::new(MockPackageDeployer::default()),
             test_addr,
             username,
             event_country_locator,
@@ -1473,7 +1471,7 @@ impl TestSchema {
 
     async fn new_with_all(
         agent_manager: SharedAgentManager,
-        package_deployer: BoxedPackageDeployer,
+        package_deployer: SharedPackageDeployer,
         test_addr: Option<SocketAddr>,
         username: &str,
         event_country_locator: Option<Arc<ip2location::DB>>,
@@ -2110,12 +2108,14 @@ mod tests {
     /// [`super::Query`]: this issue adds no GraphQL field, and a test-only one
     /// on the real schema would show up in the committed SDL.
     mod context {
+        use std::sync::Arc;
+
         use async_graphql::{Context, EmptyMutation, EmptySubscription, Object, Result, Schema};
 
         use crate::{
             backend::BuildId,
             graphql::{
-                BoxedHostOnboarder, BoxedPackageDeployer, MockHostOnboarder, MockPackageDeployer,
+                BoxedHostOnboarder, MockHostOnboarder, MockPackageDeployer, SharedPackageDeployer,
             },
         };
 
@@ -2127,7 +2127,7 @@ mod tests {
             /// Returns the operation id `install` reported, read through the
             /// deployer in the context.
             async fn installed_operation_id(&self, ctx: &Context<'_>) -> Result<String> {
-                let deployer = ctx.data::<BoxedPackageDeployer>()?;
+                let deployer = ctx.data::<SharedPackageDeployer>()?;
                 let (_outcome, operation_id) = deployer
                     .install(
                         "host1",
@@ -2159,7 +2159,7 @@ mod tests {
 
         pub(super) fn schema() -> Schema<DeployQuery, EmptyMutation, EmptySubscription> {
             Schema::build(DeployQuery, EmptyMutation, EmptySubscription)
-                .data(Box::new(MockPackageDeployer::default()) as BoxedPackageDeployer)
+                .data(Arc::new(MockPackageDeployer::default()) as SharedPackageDeployer)
                 .data(Box::new(MockHostOnboarder {}) as BoxedHostOnboarder)
                 .finish()
         }
@@ -2299,10 +2299,11 @@ mod tests {
                     | DeployError::ConfigTemplateNotApplicable { .. }
                     | DeployError::UnknownConfigTemplate { .. }
                     | DeployError::ManifestFormatUnsupported { .. }
-                    | DeployError::SystemInstance { .. } => {
+                    | DeployError::SystemInstance { .. }
+                    | DeployError::UnderMaintenance => {
                         panic!(
-                            "this mock does not script configuration template, manifest-format \
-                             or system-instance refusals"
+                            "this mock does not script configuration template, manifest-format, \
+                             system-instance or maintenance refusals"
                         )
                     }
                 };

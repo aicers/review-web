@@ -470,6 +470,9 @@ pub struct TimeSyncStatus {
 /// An agent manager that can be owned by background tasks.
 pub type SharedAgentManager = Arc<dyn AgentManager>;
 
+/// A package deployer that can be owned by background tasks.
+pub type SharedPackageDeployer = Arc<dyn PackageDeployer>;
+
 pub trait CertManager: Send + Sync {
     /// Returns the certificate path.
     ///
@@ -678,10 +681,7 @@ impl OperationId {
         Self(key)
     }
 
-    /// Borrows the key for rendering.
-    // Only the tests read the key back, here and in `graphql`'s test module;
-    // resolvers take it by value through `into_inner`.
-    #[allow(dead_code)]
+    /// Borrows the key, for rendering or for reading the attempt it names.
     #[must_use]
     pub(crate) fn as_str(&self) -> &str {
         &self.0
@@ -872,7 +872,7 @@ pub struct SystemLogCollectorState {
 
 /// Why a deployment operation could not be carried out.
 ///
-/// The eleven named variants are exactly the failures a resolver renders as a
+/// The twelve named variants are exactly the failures a resolver renders as a
 /// state of the form the operator is looking at, so a resolver decides the
 /// result-payload union member by matching on the kind rather than on a
 /// message string — an upstream wording change would otherwise silently
@@ -1009,6 +1009,10 @@ pub enum DeployError {
         /// The host the refused placement is on.
         host: String,
     },
+    /// `REview`'s maintenance gate is closed, so nothing was sent to the
+    /// host. The same call may be made again once the gate opens.
+    #[error("REview is under maintenance; nothing was sent")]
+    UnderMaintenance,
     /// Any other failure, rendered as an ordinary GraphQL error.
     ///
     /// [`review_database::PortAllocationError::Database`] arrives here: it is
@@ -1095,8 +1099,9 @@ pub trait PackageDeployer: Send + Sync {
     /// the target takes no template, [`DeployError::UnknownConfigTemplate`]
     /// if the id is absent from the target's catalog,
     /// [`DeployError::ManifestFormatUnsupported`] if the target host's Host
-    /// Agent cannot read the package's manifest format, and
-    /// [`DeployError::Other`] for any other failure.
+    /// Agent cannot read the package's manifest format,
+    /// [`DeployError::UnderMaintenance`] if `REview`'s maintenance gate is
+    /// closed, and [`DeployError::Other`] for any other failure.
     // The public install contract keeps these independent arguments, as the
     // GraphQL mutation does; grouping them would change the implementer API.
     #[allow(clippy::too_many_arguments)]
@@ -1128,7 +1133,8 @@ pub trait PackageDeployer: Send + Sync {
     /// format, [`DeployError::SystemInstance`] if `(host, target, instance)`
     /// is the host's system log collector, which is updated through
     /// [`update_system_log_collector`](PackageDeployer::update_system_log_collector)
-    /// instead, and [`DeployError::Other`] for any other failure. It
+    /// instead, [`DeployError::UnderMaintenance`] if `REview`'s maintenance
+    /// gate is closed, and [`DeployError::Other`] for any other failure. It
     /// allocates nothing, so it produces no bind-address or request-key
     /// variant.
     async fn update(
@@ -1150,8 +1156,9 @@ pub trait PackageDeployer: Send + Sync {
     /// Returns [`DeployError::CleanupPending`] if a teardown is already owed
     /// on the target, [`DeployError::SystemInstance`] if
     /// `(host, target, instance)` is the host's system log collector, which a
-    /// node operation never removes, and [`DeployError::Other`] for any other
-    /// failure.
+    /// node operation never removes, [`DeployError::UnderMaintenance`] if
+    /// `REview`'s maintenance gate is closed, and [`DeployError::Other`] for
+    /// any other failure.
     async fn remove(
         &self,
         host: &str,
@@ -1340,7 +1347,8 @@ pub trait PackageDeployer: Send + Sync {
     /// the target, [`DeployError::BuildNotServable`] if the store will not
     /// serve the selected build, [`DeployError::ManifestFormatUnsupported`]
     /// if the host's Host Agent cannot read the package's manifest format,
-    /// and [`DeployError::Other`] for any other failure, including a host
+    /// [`DeployError::UnderMaintenance`] if `REview`'s maintenance gate is
+    /// closed, and [`DeployError::Other`] for any other failure, including a host
     /// with no system log collector or one whose collector has no instance.
     /// It never returns [`DeployError::SystemInstance`]. The default
     /// implementation always returns [`DeployError::Other`].

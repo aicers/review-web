@@ -19,7 +19,7 @@ use review_database as database;
 use tracing::info;
 
 use super::{
-    BoxedPackageDeployer, Role, RoleGuard, install_state,
+    Role, RoleGuard, SharedPackageDeployer, install_state,
     node::deploy::{
         BuildNotServable, BuildSelectorInput, CleanupPending, DeployDisposition, FailurePolicy,
         ManifestFormatUnsupported, RollbackUnsupported, build_selector, check_rollback_support,
@@ -30,6 +30,7 @@ use super::{
 use crate::{
     backend::{DeployError, SystemLogCollectorState},
     info_with_username,
+    maintenance::maintenance_refusal,
 };
 
 #[derive(Default)]
@@ -157,7 +158,7 @@ impl SystemLogCollectorQuery {
         ctx: &Context<'_>,
     ) -> Result<Vec<SystemLogCollector>> {
         info_with_username!(ctx, "System log collector list requested");
-        let deployer = ctx.data::<BoxedPackageDeployer>()?;
+        let deployer = ctx.data::<SharedPackageDeployer>()?;
         let collectors = deployer.system_log_collectors().await?;
         Ok(collectors.into_iter().map(Into::into).collect())
     }
@@ -182,7 +183,7 @@ impl SystemLogCollectorMutation {
         host: String,
         server_name: String,
     ) -> Result<bool> {
-        let deployer = ctx.data::<BoxedPackageDeployer>()?;
+        let deployer = ctx.data::<SharedPackageDeployer>()?;
         info_with_username!(
             ctx,
             "Data Store {server_name} requested for the system log collector on {host}"
@@ -219,7 +220,7 @@ impl SystemLogCollectorMutation {
             return Ok(UpdateSystemLogCollectorResult::RollbackUnsupported(refusal));
         }
 
-        let deployer = ctx.data::<BoxedPackageDeployer>()?;
+        let deployer = ctx.data::<SharedPackageDeployer>()?;
         // Logged before the call, as the deploy mutations log theirs, so a
         // refusal is in the log too.
         info_with_username!(
@@ -260,6 +261,7 @@ impl SystemLogCollectorMutation {
                     max,
                 },
             )),
+            Err(DeployError::UnderMaintenance) => Err(maintenance_refusal()),
             Err(e) => Err(e.into()),
         }
     }
@@ -296,7 +298,8 @@ mod tests {
         },
         customer_data_deletion::CustomerDataDeletionTarget,
         graphql::{
-            BoxedPackageDeployer, NetworksTargetAgentLookupKeysPair, SharedAgentManager, TestSchema,
+            NetworksTargetAgentLookupKeysPair, SharedAgentManager, SharedPackageDeployer,
+            TestSchema,
         },
     };
 
@@ -447,28 +450,28 @@ mod tests {
 
         fn listing(
             answer: Result<Vec<SystemLogCollectorState>, anyhow::Error>,
-        ) -> (BoxedPackageDeployer, Arc<Calls>) {
+        ) -> (SharedPackageDeployer, Arc<Calls>) {
             let (deployer, calls) = Self::boxed();
             *deployer.list.lock().unwrap() = Some(answer);
-            (Box::new(deployer), calls)
+            (Arc::new(deployer), calls)
         }
 
-        fn storing(answer: Result<(), anyhow::Error>) -> (BoxedPackageDeployer, Arc<Calls>) {
+        fn storing(answer: Result<(), anyhow::Error>) -> (SharedPackageDeployer, Arc<Calls>) {
             let (deployer, calls) = Self::boxed();
             *deployer.data_store.lock().unwrap() = Some(answer);
-            (Box::new(deployer), calls)
+            (Arc::new(deployer), calls)
         }
 
         fn updating(
             answer: Result<(DeployOutcome, OperationId), DeployError>,
-        ) -> (BoxedPackageDeployer, Arc<Calls>) {
+        ) -> (SharedPackageDeployer, Arc<Calls>) {
             let (deployer, calls) = Self::boxed();
             *deployer.update.lock().unwrap() = Some(answer);
-            (Box::new(deployer), calls)
+            (Arc::new(deployer), calls)
         }
 
         /// A stub whose update succeeds with `Applied`.
-        fn applying() -> (BoxedPackageDeployer, Arc<Calls>) {
+        fn applying() -> (SharedPackageDeployer, Arc<Calls>) {
             Self::updating(Ok((
                 DeployOutcome::Applied,
                 OperationId::new(OPERATION_ID.to_string()),
@@ -722,7 +725,7 @@ mod tests {
     /// A schema whose deployer is `deployer` and whose every host advertises
     /// `advertised`, returned with the capability reads it records.
     async fn collector_schema(
-        deployer: BoxedPackageDeployer,
+        deployer: SharedPackageDeployer,
         advertised: &'static [&'static str],
     ) -> (TestSchema, Arc<Mutex<Vec<String>>>) {
         let (agents, reads) = CapabilityStub::advertising(advertised);
@@ -743,7 +746,7 @@ mod tests {
             for role in LOWER_ROLES {
                 let (deployer, calls) = CollectorDeployer::boxed();
                 let (schema, reads) =
-                    collector_schema(Box::new(deployer), &[ROLLBACK_SUPERVISOR]).await;
+                    collector_schema(Arc::new(deployer), &[ROLLBACK_SUPERVISOR]).await;
 
                 let res = schema
                     .execute_as_scoped_user(query, role, Some(vec![0]))

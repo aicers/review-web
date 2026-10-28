@@ -12,7 +12,7 @@ use std::sync::{
 };
 
 use async_graphql::{
-    ErrorExtensionValues, Response, ServerError, ServerResult, Variables,
+    ErrorExtensionValues, ErrorExtensions, Response, ServerError, ServerResult, Variables,
     extensions::{Extension, ExtensionContext, ExtensionFactory, NextExecute, NextParseQuery},
     parser::types::{ExecutableDocument, OperationType},
 };
@@ -22,7 +22,7 @@ use tokio::sync::RwLock;
 /// gate is closed.
 pub const MAINTENANCE_ERROR_CODE: &str = "MAINTENANCE";
 
-const MAINTENANCE_ERROR_MESSAGE: &str =
+pub(crate) const MAINTENANCE_ERROR_MESSAGE: &str =
     "REview is under maintenance; retry the request after the update completes";
 
 /// A handle on the gate that admits GraphQL mutations.
@@ -110,6 +110,14 @@ pub(crate) fn is_refusal(error: &ServerError) -> bool {
         .as_ref()
         .and_then(|extensions| extensions.get("code"))
         .is_some_and(|code| *code == async_graphql::Value::from(MAINTENANCE_ERROR_CODE))
+}
+
+/// Returns the error a deployment mutation answers with when the deployer
+/// reports that `REview`'s maintenance gate is closed: the gate's own message
+/// and `extensions.code`, as if the gate had refused the mutation itself.
+pub(crate) fn maintenance_refusal() -> async_graphql::Error {
+    async_graphql::Error::new(MAINTENANCE_ERROR_MESSAGE)
+        .extend_with(|_, extensions| extensions.set("code", MAINTENANCE_ERROR_CODE))
 }
 
 fn refusal() -> ServerError {
