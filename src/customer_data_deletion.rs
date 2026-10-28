@@ -114,6 +114,8 @@ const REMOVE_REFUSAL_LIMIT: Duration = Duration::from_hours(1);
 /// How long `give_up_removal` may keep answering, for one row, that `REview`
 /// is under maintenance.
 const GIVE_UP_MAINTENANCE_LIMIT: Duration = Duration::from_hours(1);
+/// How long a row may stay recorded after its `Remove` succeeded.
+const ROW_FINALIZE_LIMIT: Duration = Duration::from_hours(1);
 /// The refusal of a give-up while the customer's deletion runs.
 const GIVE_UP_STILL_RUNNING: &str =
     "the deletion is still running; give up hosts or Data Stores only once it has stopped";
@@ -2241,9 +2243,26 @@ impl Supervisor {
             .contains(row))
     }
 
-    /// Waits until review's finalizer has dropped `row`.
+    /// Waits until review's finalizer has dropped `row`, re-reading it every
+    /// poll interval, and stops the deletion on its host if it is still
+    /// recorded 1 hour after the call started.
+    ///
+    /// review leaves the row when it cannot write the removal to the node
+    /// record, and nothing drops it later; a restart starts a new hour.
     async fn wait_until_gone(&self, customer_id: u32, row: &NumberedRow) -> Result<(), Halt> {
+        let since = tokio::time::Instant::now();
         while self.row_present(customer_id, row)? {
+            if since.elapsed() >= ROW_FINALIZE_LIMIT {
+                return Err(Stop::on_host(
+                    &row.host,
+                    format!(
+                        "removing {}: the removal succeeded but the row is still recorded after \
+                         1 hour; REview logged why it cannot drop the row",
+                        row.on_host()
+                    ),
+                )
+                .into());
+            }
             self.pause().await?;
         }
         Ok(())
@@ -3810,6 +3829,10 @@ mod tests {
         /// Records a `Remove` attempt `Succeeded` and drops the row, as
         /// review's finalizer does.
         Succeed,
+        /// Records a `Remove` attempt `Succeeded` but leaves the row, as
+        /// review's finalizer does when it cannot write the removal to the
+        /// node record.
+        SucceedKeepRow,
         /// Records a live `Remove` attempt and returns its id; the test ends
         /// it.
         Live,
@@ -4095,6 +4118,17 @@ mod tests {
                         ),
                     );
                     drop_row(&self.store, host, target, instance);
+                    Ok(operation_id)
+                }
+                RemoveAnswer::SucceedKeepRow => {
+                    write_attempt(
+                        &self.store,
+                        &ended(
+                            attempt,
+                            OperationOutcome::Succeeded,
+                            OperationFailureKind::Other,
+                        ),
+                    );
                     Ok(operation_id)
                 }
                 RemoveAnswer::Live => {
@@ -9636,6 +9670,128 @@ server_name = "{server_name}"
         assert_eq!(nodes_of(&test_store, 7), 1);
     }
 
+    /// The stop of a row whose removal succeeded and that stayed recorded.
+    const ROW_LEFT_RECORDED: &str = "removing piglet 1 on a.example: the removal succeeded but \
+         the row is still recorded after 1 hour; REview logged why it cannot drop the row";
+
+    /// Requests customer 7's deletion of a Sensor on `a.example`, whose
+    /// removal succeeds but leaves the row, and returns once `remove` is
+    /// called.
+    async fn delete_sensor_leaving_its_row(
+        test_store: &TestStore,
+    ) -> (
+        Arc<RecordingDeployer>,
+        Arc<RecordingAgentManager>,
+        Arc<CustomerDataDeletionTaskManager>,
+    ) {
+        put_customer_node(test_store, 7, A, vec![numbered_agent(AgentKind::Sensor, 1)]);
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let deployer = Arc::new(
+            RecordingDeployer::new(&test_store.store)
+                .answer(remove_call(A, "piglet", 1), [RemoveAnswer::SucceedKeepRow]),
+        );
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        request_with(test_store, 7, &agent, &deployer, &manager).await;
+        deployer.remove_started.notified().await;
+        (deployer, agent, manager)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_removed_row_left_recorded_stops_the_deletion_after_an_hour() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        let (deployer, agent, manager) = delete_sensor_leaving_its_row(&test_store).await;
+        tokio::time::sleep(Duration::from_mins(1)).await;
+        let waiting = job(&test_store.store, 7);
+        assert!(in_progress(&waiting));
+        tokio::time::sleep(
+            ROW_FINALIZE_LIMIT
+                .checked_sub(Duration::from_mins(2))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(job(&test_store.store, 7), waiting);
+        assert_eq!(deployer.removes(), [remove_call(A, "piglet", 1)]);
+        assert_eq!(
+            request_with(&test_store, 9, &agent, &deployer, &manager).await,
+            CustomerDataDeletionRequestStatus::BlockedByAnotherDeletion
+        );
+        assert_eq!(
+            request_with(
+                &test_store,
+                9,
+                &agent,
+                &deployer,
+                &Arc::new(CustomerDataDeletionTaskManager::default()),
+            )
+            .await,
+            CustomerDataDeletionRequestStatus::BlockedByAnotherDeletion
+        );
+
+        finish_supervisor(&manager).await;
+        let stopped = job(&test_store.store, 7);
+        assert_eq!(
+            status_of(&stopped, CustomerDataDeletionService::ModuleRemoval, A),
+            CustomerDataDeletionStatus::Failed
+        );
+        assert_eq!(
+            error_of(&stopped, CustomerDataDeletionService::ModuleRemoval, A),
+            ROW_LEFT_RECORDED
+        );
+        assert_eq!(
+            review_of(&stopped).status,
+            CustomerDataDeletionStatus::Failed
+        );
+        assert!(!in_progress(&stopped));
+        assert_eq!(deployer.removes(), [remove_call(A, "piglet", 1)]);
+        assert_eq!(nodes_of(&test_store, 7), 1);
+        another_customer_is_accepted(&test_store).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_removed_row_dropped_during_the_wait_ends_it_on_the_next_poll() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        let (deployer, _agent, manager) = delete_sensor_leaving_its_row(&test_store).await;
+        tokio::time::sleep(Duration::from_mins(30)).await;
+        assert_eq!(
+            status_of(
+                &job(&test_store.store, 7),
+                CustomerDataDeletionService::ModuleRemoval,
+                A
+            ),
+            CustomerDataDeletionStatus::InProgress
+        );
+        drop_row(&test_store.store, A, "piglet", 1);
+        tokio::time::sleep(STAGE_POLL_INTERVAL + Duration::from_secs(1)).await;
+        assert_eq!(
+            status_of(
+                &job(&test_store.store, 7),
+                CustomerDataDeletionService::ModuleRemoval,
+                A
+            ),
+            CustomerDataDeletionStatus::Succeeded
+        );
+        finish_supervisor(&manager).await;
+        assert!(all_succeeded(&job(&test_store.store, 7)));
+        assert_eq!(deployer.removes(), [remove_call(A, "piglet", 1)]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_ends_the_wait_for_a_removed_row() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        let (_deployer, _agent, manager) = delete_sensor_leaving_its_row(&test_store).await;
+        tokio::time::sleep(Duration::from_mins(10)).await;
+        let before = job(&test_store.store, 7);
+        tokio::time::timeout(Duration::from_secs(15), manager.shutdown_and_wait())
+            .await
+            .unwrap();
+        assert_eq!(job(&test_store.store, 7), before);
+        assert!(in_progress(&before));
+        assert_eq!(nodes_of(&test_store, 7), 1);
+    }
+
     /// Adds `agent` to the node on `host`, as an install that succeeded does.
     fn push_agent(store: &RwLock<Store>, host: &str, agent: Agent) {
         let store = read_store(store).unwrap();
@@ -11340,5 +11496,52 @@ server_name = "{server_name}"
         );
         assert!(!in_progress(&stopped));
         assert_eq!(nodes_of(&test_store, 7), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_give_up_of_a_removed_row_left_recorded_stops_after_an_hour() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        stop_in_stage_2_on_a(&test_store).await;
+        write_attempt(
+            &test_store.store,
+            &ended(
+                live_attempt("remove-left", OperationAction::Remove, A, "piglet", Some(1)),
+                OperationOutcome::Succeeded,
+                OperationFailureKind::Other,
+            ),
+        );
+        let deployer = Arc::new(RecordingDeployer::new(&test_store.store));
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        give_up_with(&test_store, &[A], &[], &agent, deployer.clone(), &manager)
+            .await
+            .unwrap();
+        tokio::time::sleep(
+            ROW_FINALIZE_LIMIT
+                .checked_sub(Duration::from_mins(1))
+                .unwrap(),
+        )
+        .await;
+        assert!(in_progress(&job(&test_store.store, 7)));
+        assert_eq!(deployer.give_ups(), Vec::<RemoveCall>::new());
+
+        finish_supervisor(&manager).await;
+        assert_eq!(deployer.give_ups(), Vec::<RemoveCall>::new());
+        let stopped = job(&test_store.store, 7);
+        assert_eq!(
+            status_of(&stopped, CustomerDataDeletionService::ModuleRemoval, A),
+            CustomerDataDeletionStatus::Failed
+        );
+        assert_eq!(
+            error_of(&stopped, CustomerDataDeletionService::ModuleRemoval, A),
+            ROW_LEFT_RECORDED
+        );
+        assert_eq!(
+            review_of(&stopped).status,
+            CustomerDataDeletionStatus::Failed
+        );
+        assert!(!in_progress(&stopped));
+        assert_eq!(stopped.abandoned_hosts, [A]);
     }
 }
