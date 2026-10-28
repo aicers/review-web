@@ -1361,6 +1361,10 @@ impl Supervisor {
     /// Records the stop of the deletion, after waiting for the Data Stores
     /// sent to before a restart, since nothing else reads their results.
     async fn persist_stop(&self, customer_id: u32, stop: Stop) {
+        // Settling the sent Data Stores may record results too.
+        if self.shutting_down() {
+            return;
+        }
         let dispatched = if let Some(dispatched) = &stop.dispatched {
             dispatched.clone()
         } else {

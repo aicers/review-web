@@ -1388,14 +1388,14 @@ mod tests {
     }
 
     impl RecordingDeployer {
-        fn boxed(answer: Answer) -> (Arc<dyn PackageDeployer>, Arc<Calls>) {
+        fn boxed(answer: Answer) -> (SharedPackageDeployer, Arc<Calls>) {
             Self::with_store_builds(answer, StoreBuildsAnswer::List(Vec::new()))
         }
 
         fn with_store_builds(
             answer: Answer,
             store_builds: StoreBuildsAnswer,
-        ) -> (Arc<dyn PackageDeployer>, Arc<Calls>) {
+        ) -> (SharedPackageDeployer, Arc<Calls>) {
             let calls = Arc::<Calls>::default();
             let deployer = Self {
                 calls: Arc::clone(&calls),
@@ -1411,7 +1411,7 @@ mod tests {
 
         fn with_templates(
             config_templates: ConfigTemplatesAnswer,
-        ) -> (Arc<dyn PackageDeployer>, Arc<Calls>) {
+        ) -> (SharedPackageDeployer, Arc<Calls>) {
             let calls = Arc::<Calls>::default();
             let deployer = Self {
                 calls: Arc::clone(&calls),
@@ -1423,14 +1423,14 @@ mod tests {
         }
 
         /// A stub whose `servable_builds` answers with `store_builds`.
-        fn serving(store_builds: StoreBuildsAnswer) -> (Arc<dyn PackageDeployer>, Arc<Calls>) {
+        fn serving(store_builds: StoreBuildsAnswer) -> (SharedPackageDeployer, Arc<Calls>) {
             Self::with_store_builds(Answer::Succeed(DeployOutcome::Applied), store_builds)
         }
 
         /// A stub that succeeds with `Applied`, for every test whose
         /// assertion is about what reached the backend — the recorded call,
         /// or the absence of one.
-        fn applying() -> (Arc<dyn PackageDeployer>, Arc<Calls>) {
+        fn applying() -> (SharedPackageDeployer, Arc<Calls>) {
             Self::boxed(Answer::Succeed(DeployOutcome::Applied))
         }
 
