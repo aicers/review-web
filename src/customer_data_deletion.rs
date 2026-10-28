@@ -1501,8 +1501,11 @@ impl Supervisor {
     ///
     /// Live attempts of the customer's modules on its hosts are waited for
     /// before the stage starts and again before it ends, since an install
-    /// that has not yet succeeded has no row. A host left with no row with an
-    /// instance number has its `ModuleRemoval` result recorded `Succeeded`.
+    /// that has not yet succeeded has no row. The stage ends only on a pass
+    /// that finds neither a live attempt nor a sender row, so an install that
+    /// ended while another row was being removed has its row removed too. A
+    /// host left with no row with an instance number has its `ModuleRemoval`
+    /// result recorded `Succeeded`.
     async fn remove_senders(&self, customer_id: u32) -> Result<(), Halt> {
         let job = read_job(&self.store, customer_id).map_err(|error| Halt::stop(&error))?;
         let review_hosts: Vec<String> = job
@@ -1517,15 +1520,15 @@ impl Supervisor {
             let mut closing = false;
             loop {
                 let found = self.wait_for_module_attempts(&review_hosts).await?;
-                if closing && !found {
-                    return Ok(());
-                }
-                closing = true;
-                let rows = numbered_rows(&self.store, customer_id)
+                let rows: Vec<_> = numbered_rows(&self.store, customer_id)
                     .map_err(|error| Halt::stop(&error))?
                     .into_iter()
                     .filter(|row| !row.data_store)
                     .collect();
+                if closing && !found && rows.is_empty() {
+                    return Ok(());
+                }
+                closing = true;
                 self.remove_rows(customer_id, rows, &hosts, &progress, false)
                     .await?;
             }
@@ -1750,20 +1753,17 @@ impl Supervisor {
                     under_maintenance_since = None;
                     continue;
                 }
-                Err(DeployError::CleanupPending { .. }) => {
-                    under_maintenance_since = None;
-                    (
-                        "a teardown was still owed after 1 hour",
-                        *cleanup_pending_since.get_or_insert_with(tokio::time::Instant::now),
-                    )
-                }
-                Err(DeployError::UnderMaintenance) => {
-                    cleanup_pending_since = None;
-                    (
-                        "REview stayed under maintenance for 1 hour",
-                        *under_maintenance_since.get_or_insert_with(tokio::time::Instant::now),
-                    )
-                }
+                // Each refusal's hour runs from its first answer, and the
+                // other refusal does not restart it, so answers alternating
+                // between them still end within two hours.
+                Err(DeployError::CleanupPending { .. }) => (
+                    "a teardown was still owed after 1 hour",
+                    *cleanup_pending_since.get_or_insert_with(tokio::time::Instant::now),
+                ),
+                Err(DeployError::UnderMaintenance) => (
+                    "REview stayed under maintenance for 1 hour",
+                    *under_maintenance_since.get_or_insert_with(tokio::time::Instant::now),
+                ),
                 Err(DeployError::SystemInstance { .. }) => {
                     return Err(Stop::on_host(
                         &row.host,
@@ -8947,6 +8947,32 @@ server_name = "{server_name}"
     }
 
     #[tokio::test(start_paused = true)]
+    async fn alternating_refusals_still_stop_the_deletion() {
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        let deployer = RecordingDeployer::new(&test_store.store).answer(
+            remove_call(A, "piglet", 1),
+            [RemoveAnswer::CleanupPending, RemoveAnswer::UnderMaintenance]
+                .into_iter()
+                .cycle()
+                .take(1_000),
+        );
+        let (stopped, deployer) = delete_sensor_with(&test_store, deployer).await;
+        // The teardown's hour, from the first answer, is not restarted by the
+        // maintenance answers in between.
+        assert_eq!(
+            error_of(&stopped, CustomerDataDeletionService::ModuleRemoval, A),
+            "removing piglet 1 on a.example: a teardown was still owed after 1 hour"
+        );
+        assert_eq!(deployer.removes().len(), 361);
+        assert_eq!(
+            review_of(&stopped).status,
+            CustomerDataDeletionStatus::Failed
+        );
+        assert!(!in_progress(&stopped));
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn a_row_review_calls_a_system_instance_stops_the_deletion() {
         let test_store = TestStore::new();
         let _clock = ClockGuard::install(&test_store);
@@ -8960,6 +8986,21 @@ server_name = "{server_name}"
         );
         assert!(!in_progress(&stopped));
         assert_eq!(nodes_of(&test_store, 7), 1);
+    }
+
+    /// Adds `agent` to the node on `host`, as an install that succeeded does.
+    fn push_agent(store: &RwLock<Store>, host: &str, agent: Agent) {
+        let store = read_store(store).unwrap();
+        let node = store
+            .node_map()
+            .iter(Direction::Forward, None)
+            .map(Result::unwrap)
+            .find(|node| node.name == host)
+            .unwrap_or_else(|| panic!("no node on {host}"));
+        let old = review_database::NodeUpdate::from(node.clone());
+        let mut new = review_database::NodeUpdate::from(node.clone());
+        new.agents.push(agent);
+        store.node_map().update(node.id, &old, &new).unwrap();
     }
 
     #[tokio::test(start_paused = true)]
@@ -9006,20 +9047,11 @@ server_name = "{server_name}"
             CustomerDataDeletionStatus::InProgress
         );
         // The install succeeds and adds its row.
-        {
-            let store = read_store(&test_store.store).unwrap();
-            let node = store
-                .node_map()
-                .iter(Direction::Forward, None)
-                .map(Result::unwrap)
-                .find(|node| node.name == A)
-                .unwrap();
-            let old = review_database::NodeUpdate::from(node.clone());
-            let mut new = review_database::NodeUpdate::from(node.clone());
-            new.agents
-                .push(numbered_agent(AgentKind::TimeSeriesGenerator, 1));
-            store.node_map().update(node.id, &old, &new).unwrap();
-        }
+        push_agent(
+            &test_store.store,
+            A,
+            numbered_agent(AgentKind::TimeSeriesGenerator, 1),
+        );
         write_attempt(
             &test_store.store,
             &ended(
@@ -9034,6 +9066,65 @@ server_name = "{server_name}"
         // The system log collector's install, still live, was not waited for.
         assert!(live_on(&test_store, A, "reproduce", 1).is_some());
         assert!(!in_progress(&job(&test_store.store, 7)));
+        assert_eq!(nodes_of(&test_store, 7), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_install_ending_during_a_removal_is_removed_before_the_data_store() {
+        const INSTALL_KEY: &str = "2b3c4d5e-6f7a-4b2c-9d3e-4f5a6b7c8d9e";
+        let test_store = TestStore::new();
+        let _clock = ClockGuard::install(&test_store);
+        put_customer_node(
+            &test_store,
+            7,
+            A,
+            vec![numbered_agent(AgentKind::Sensor, 1)],
+        );
+        put_customer_data_store(&test_store, 7, B, 1, Vec::new());
+        let agent = Arc::new(RecordingAgentManager::with_store(&test_store.store));
+        let mut deployer = RecordingDeployer::new(&test_store.store).logging_with(&agent);
+        // An install admitted before the deletion starts after the opening
+        // scan and ends, adding its row, while the Sensor is being removed:
+        // the closing scan finds no live attempt of it.
+        let install_store = Arc::clone(&test_store.store);
+        deployer.on_remove = std::sync::Mutex::new(Some(Box::new(move || {
+            push_agent(
+                &install_store,
+                A,
+                numbered_agent(AgentKind::TimeSeriesGenerator, 1),
+            );
+            write_attempt(
+                &install_store,
+                &ended(
+                    live_attempt(INSTALL_KEY, OperationAction::Install, A, "crusher", Some(1)),
+                    OperationOutcome::Succeeded,
+                    OperationFailureKind::Other,
+                ),
+            );
+        })));
+        let deployer = Arc::new(deployer);
+        let manager = Arc::new(CustomerDataDeletionTaskManager::default());
+        request_with(&test_store, 7, &agent, &deployer, &manager).await;
+        finish_supervisor(&manager).await;
+
+        let log = agent.log.lock().unwrap().clone();
+        assert_eq!(
+            log[1..],
+            [
+                "remove piglet 1 on a.example".to_string(),
+                "remove crusher 1 on a.example".to_string(),
+                format!("send {B_DATA_STORE}"),
+                "remove giganto 1 on b.example".to_string(),
+            ],
+            "{log:?}"
+        );
+        let done = job(&test_store.store, 7);
+        assert!(
+            done.service_results
+                .iter()
+                .all(|result| result.status == CustomerDataDeletionStatus::Succeeded),
+            "{done:?}"
+        );
         assert_eq!(nodes_of(&test_store, 7), 0);
     }
 
