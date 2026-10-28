@@ -22,7 +22,7 @@ use tracing::info;
 
 use super::{
     super::{
-        BoxedHostOnboarder, BoxedPackageDeployer, Role, RoleGuard, SharedAgentManager,
+        BoxedHostOnboarder, Role, RoleGuard, SharedAgentManager, SharedPackageDeployer,
         customer_access, customer_deletion_guard, get_store,
     },
     DeployMutation, OnboardingQuery,
@@ -39,6 +39,7 @@ use crate::{
         MODULE_PACKAGE_IDS, OperationId, RunningRoxydBuild as BackendRunningRoxydBuild,
     },
     info_with_username,
+    maintenance::maintenance_refusal,
 };
 
 /// The byte length of a `UUIDv4` in canonical hyphenated form.
@@ -651,7 +652,7 @@ impl OnboardingQuery {
         }
 
         info_with_username!(ctx, "Store build list of {package_id} requested");
-        let deployer = ctx.data::<BoxedPackageDeployer>()?;
+        let deployer = ctx.data::<SharedPackageDeployer>()?;
         let builds = deployer.servable_builds(&package_id).await?;
         Ok(builds.into_iter().map(StoreBuild::from).collect())
     }
@@ -675,7 +676,7 @@ impl OnboardingQuery {
     ) -> Result<ConfigTemplateList> {
         bind_package_class(&target, &MODULE_PACKAGE_IDS)?;
         info_with_username!(ctx, "Configuration templates of {target} requested");
-        let deployer = ctx.data::<BoxedPackageDeployer>()?;
+        let deployer = ctx.data::<SharedPackageDeployer>()?;
         Ok(deployer.config_templates(&target).await?.into())
     }
 }
@@ -732,7 +733,7 @@ impl DeployMutation {
             return Ok(InstallServiceResult::RollbackUnsupported(refusal));
         }
 
-        let deployer = ctx.data::<BoxedPackageDeployer>()?;
+        let deployer = ctx.data::<SharedPackageDeployer>()?;
         // The request is recorded before the call rather than after it, so a
         // privileged operation a scoped operator asked for is in the log
         // whatever review answers: a refusal is exactly the case an audit
@@ -829,6 +830,7 @@ impl DeployMutation {
                     max,
                 },
             )),
+            Err(DeployError::UnderMaintenance) => Err(maintenance_refusal()),
             Err(e) => Err(e.into()),
         }
     }
@@ -864,7 +866,7 @@ impl DeployMutation {
             return Ok(UpdateServiceResult::RollbackUnsupported(refusal));
         }
 
-        let deployer = ctx.data::<BoxedPackageDeployer>()?;
+        let deployer = ctx.data::<SharedPackageDeployer>()?;
         // Logged before the call, for the same reason as in `install_service`.
         info_with_username!(ctx, "Update of {target} requested on {host}");
         match deployer
@@ -913,6 +915,7 @@ impl DeployMutation {
             Err(DeployError::SystemInstance { host }) => {
                 Ok(UpdateServiceResult::SystemInstance(SystemInstance { host }))
             }
+            Err(DeployError::UnderMaintenance) => Err(maintenance_refusal()),
             Err(e) => Err(e.into()),
         }
     }
@@ -937,7 +940,7 @@ impl DeployMutation {
         customer_deletion_guard::check_host(&*get_store(ctx)?, &host)?;
         bind_package_class(&target, &MODULE_PACKAGE_IDS)?;
 
-        let deployer = ctx.data::<BoxedPackageDeployer>()?;
+        let deployer = ctx.data::<SharedPackageDeployer>()?;
         // Logged before the call, for the same reason as in `install_service`.
         info_with_username!(ctx, "Removal of {target} requested on {host}");
         match deployer.remove(&host, &target, Some(instance.0)).await {
@@ -958,6 +961,7 @@ impl DeployMutation {
             Err(DeployError::SystemInstance { host }) => {
                 Ok(RemoveServiceResult::SystemInstance(SystemInstance { host }))
             }
+            Err(DeployError::UnderMaintenance) => Err(maintenance_refusal()),
             Err(e) => Err(e.into()),
         }
     }
@@ -982,7 +986,7 @@ impl DeployMutation {
             return Ok(UpdateCoreComponentResult::RollbackUnsupported(refusal));
         }
 
-        let deployer = ctx.data::<BoxedPackageDeployer>()?;
+        let deployer = ctx.data::<SharedPackageDeployer>()?;
         info_with_username!(ctx, "Update of {component} requested on {host}");
         match deployer
             .update(&host, &component, None, selector, on_failure.into())
@@ -1021,6 +1025,7 @@ impl DeployMutation {
                     max,
                 },
             )),
+            Err(DeployError::UnderMaintenance) => Err(maintenance_refusal()),
             Err(e) => Err(e.into()),
         }
     }
@@ -1106,8 +1111,8 @@ mod tests {
             PackageDeployer, RunningRoxydBuild as BackendRunningRoxydBuild,
         },
         graphql::{
-            BoxedHostOnboarder, BoxedPackageDeployer, Mutation, NetworksTargetAgentLookupKeysPair,
-            Query, RoleGuard, Schema, SharedAgentManager, Subscription, TestSchema,
+            BoxedHostOnboarder, Mutation, NetworksTargetAgentLookupKeysPair, Query, RoleGuard,
+            Schema, SharedAgentManager, SharedPackageDeployer, Subscription, TestSchema,
         },
     };
 
@@ -1270,6 +1275,7 @@ mod tests {
         UnknownConfigTemplate,
         ManifestFormatUnsupported,
         SystemInstance,
+        UnderMaintenance,
         Other,
     }
 
@@ -1337,6 +1343,7 @@ mod tests {
                 Self::SystemInstance => DeployError::SystemInstance {
                     host: SYSTEM_INSTANCE_HOST.to_string(),
                 },
+                Self::UnderMaintenance => DeployError::UnderMaintenance,
                 Self::Other => {
                     DeployError::Other(anyhow::anyhow!("review answered something unmodelled"))
                 }
@@ -1381,14 +1388,14 @@ mod tests {
     }
 
     impl RecordingDeployer {
-        fn boxed(answer: Answer) -> (Box<dyn PackageDeployer>, Arc<Calls>) {
+        fn boxed(answer: Answer) -> (Arc<dyn PackageDeployer>, Arc<Calls>) {
             Self::with_store_builds(answer, StoreBuildsAnswer::List(Vec::new()))
         }
 
         fn with_store_builds(
             answer: Answer,
             store_builds: StoreBuildsAnswer,
-        ) -> (Box<dyn PackageDeployer>, Arc<Calls>) {
+        ) -> (Arc<dyn PackageDeployer>, Arc<Calls>) {
             let calls = Arc::<Calls>::default();
             let deployer = Self {
                 calls: Arc::clone(&calls),
@@ -1399,12 +1406,12 @@ mod tests {
                     templates: vec![],
                 }),
             };
-            (Box::new(deployer), calls)
+            (Arc::new(deployer), calls)
         }
 
         fn with_templates(
             config_templates: ConfigTemplatesAnswer,
-        ) -> (Box<dyn PackageDeployer>, Arc<Calls>) {
+        ) -> (Arc<dyn PackageDeployer>, Arc<Calls>) {
             let calls = Arc::<Calls>::default();
             let deployer = Self {
                 calls: Arc::clone(&calls),
@@ -1412,18 +1419,18 @@ mod tests {
                 store_builds: StoreBuildsAnswer::List(vec![]),
                 config_templates,
             };
-            (Box::new(deployer), calls)
+            (Arc::new(deployer), calls)
         }
 
         /// A stub whose `servable_builds` answers with `store_builds`.
-        fn serving(store_builds: StoreBuildsAnswer) -> (Box<dyn PackageDeployer>, Arc<Calls>) {
+        fn serving(store_builds: StoreBuildsAnswer) -> (Arc<dyn PackageDeployer>, Arc<Calls>) {
             Self::with_store_builds(Answer::Succeed(DeployOutcome::Applied), store_builds)
         }
 
         /// A stub that succeeds with `Applied`, for every test whose
         /// assertion is about what reached the backend — the recorded call,
         /// or the absence of one.
-        fn applying() -> (Box<dyn PackageDeployer>, Arc<Calls>) {
+        fn applying() -> (Arc<dyn PackageDeployer>, Arc<Calls>) {
             Self::boxed(Answer::Succeed(DeployOutcome::Applied))
         }
 
@@ -1971,7 +1978,7 @@ mod tests {
     /// so that the default `ROLLBACK` is not what a test using it is
     /// measuring.
     fn schema_without_store(
-        deployer: BoxedPackageDeployer,
+        deployer: SharedPackageDeployer,
         onboarder: BoxedHostOnboarder,
     ) -> Schema {
         let (agents, _reads) = CapabilityStub::advertising(&[ROLLBACK_SUPERVISOR]);
@@ -2062,7 +2069,7 @@ mod tests {
                 .execute_with_guard_and_data(
                     &query,
                     RoleGuard::Role(role),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
             assert_eq!(response.errors.len(), 1, "{role:?}");
@@ -2091,7 +2098,7 @@ mod tests {
             let schema = TestSchema::new().await;
             let query = core_update_mutation(&core_update_args(component, "control-host"));
             let response = schema
-                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                 .await;
 
             assert!(
@@ -2110,7 +2117,7 @@ mod tests {
             let schema = TestSchema::new().await;
             let query = core_update_mutation(&core_update_args(component, "control-host"));
             let response = schema
-                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                 .await;
 
             assert_eq!(response.errors.len(), 1, "{component}");
@@ -2150,7 +2157,7 @@ mod tests {
             let response = schema
                 .execute_as_system_admin_with_data(
                     &core_update_mutation(&args),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -2176,7 +2183,7 @@ mod tests {
             let response = schema
                 .execute_as_system_admin_with_data(
                     &core_update_mutation(&args),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -2199,7 +2206,7 @@ mod tests {
             let response = schema
                 .execute_as_system_admin_with_data(
                     &core_update_mutation(&args),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -2220,7 +2227,7 @@ mod tests {
         let response = schema
             .execute_as_system_admin_with_data(
                 &core_update_mutation(&args),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -2237,7 +2244,7 @@ mod tests {
             let (deployer, calls) = RecordingDeployer::boxed(Answer::Fail(Failure::Other));
             let (onboarder, _) =
                 RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::List(vec![]));
-            let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+            let schema = schema_without_store(deployer as SharedPackageDeployer, onboarder);
             let query = core_update_mutation(&core_update_args(component, host));
             let response = execute_without_store(&schema, &query).await;
 
@@ -2264,7 +2271,7 @@ mod tests {
             let response = schema
                 .execute_as_system_admin_with_data(
                     &core_update_mutation(&core_update_args("review", "control-host")),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -2292,7 +2299,7 @@ mod tests {
         let response = schema
             .execute_as_system_admin_with_data(
                 &core_update_mutation(&core_update_args("review", "control-host")),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -2325,7 +2332,7 @@ mod tests {
             let response = schema
                 .execute_as_system_admin_with_data(
                     &core_update_mutation(&core_update_args("review", "control-host")),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
             assert_eq!(response.errors.len(), 1);
@@ -2337,7 +2344,7 @@ mod tests {
         let (deployer, _) = RecordingDeployer::applying();
         let (onboarder, calls) =
             RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::List(vec![]));
-        let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+        let schema = schema_without_store(deployer as SharedPackageDeployer, onboarder);
         let mutation = onboard_mutation("new-host", ONBOARD_VERSION, ONBOARD_COMMIT);
         let (response, logs) = capturing_logs(execute_without_store(&schema, &mutation)).await;
 
@@ -2398,7 +2405,7 @@ mod tests {
         let (deployer, _) = RecordingDeployer::applying();
         let (onboarder, calls) =
             RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::List(vec![]));
-        let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+        let schema = schema_without_store(deployer as SharedPackageDeployer, onboarder);
         let response = execute_without_store(
             &schema,
             &onboard_mutation("new-host", ONBOARD_VERSION, ONBOARD_COMMIT),
@@ -2417,7 +2424,7 @@ mod tests {
         let (deployer, _) = RecordingDeployer::applying();
         let (onboarder, calls) =
             RecordingOnboarder::boxed(OnboardAnswer::Fail, RunningAnswer::List(vec![]));
-        let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+        let schema = schema_without_store(deployer as SharedPackageDeployer, onboarder);
         let mutation = onboard_mutation("new-host", ONBOARD_VERSION, ONBOARD_COMMIT);
         let (response, logs) = capturing_logs(execute_without_store(&schema, &mutation)).await;
 
@@ -2515,7 +2522,7 @@ mod tests {
         let response = schema
             .execute_as_system_admin_with_data(
                 &config_templates_query("reconverge"),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
         assert_eq!(response.errors.len(), 1);
@@ -2547,7 +2554,7 @@ mod tests {
                     .execute_with_guard_and_data(
                         &config_templates_query(target),
                         RoleGuard::Role(role),
-                        deployer as BoxedPackageDeployer,
+                        deployer as SharedPackageDeployer,
                     )
                     .await;
                 if matches!(role, Role::SecurityManager | Role::SecurityMonitor) {
@@ -2585,7 +2592,7 @@ mod tests {
                 &config_templates_query("reconverge"),
                 Role::SecurityAdministrator,
                 Some(vec![1]),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
         assert!(response.errors.is_empty(), "{:?}", response.errors);
@@ -2614,7 +2621,7 @@ mod tests {
                 let response = schema
                     .execute_as_system_admin_with_data(
                         &install_mutation(&args),
-                        deployer as BoxedPackageDeployer,
+                        deployer as SharedPackageDeployer,
                     )
                     .await;
                 assert!(response.errors.is_empty(), "{args}: {:?}", response.errors);
@@ -2659,7 +2666,7 @@ mod tests {
             let (deployer, calls) = RecordingDeployer::applying();
             let query = install_mutation(&format!(r#"{args}, configTemplate: "  ü ""#));
             let response = schema
-                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                 .await;
             assert_eq!(response.errors.len(), 1, "{query}");
             assert_eq!(response.errors[0].message, message, "{query}");
@@ -2671,7 +2678,7 @@ mod tests {
             .execute_with_guard_and_data(
                 &query,
                 RoleGuard::Role(Role::SecurityMonitor),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
         assert_eq!(response.errors.len(), 1);
@@ -2684,7 +2691,7 @@ mod tests {
                 &query,
                 Role::SecurityAdministrator,
                 Some(vec![1]),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
         assert_eq!(response.errors.len(), 1);
@@ -2694,7 +2701,7 @@ mod tests {
         let (schema, reads) = schema_advertising(Advertised::Tags(&[])).await;
         let (deployer, calls) = RecordingDeployer::applying();
         let response = schema
-            .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+            .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
             .await;
         assert!(response.errors.is_empty(), "{:?}", response.errors);
         assert_eq!(
@@ -2730,7 +2737,7 @@ mod tests {
             let response = schema
                 .execute_as_system_admin_with_data(
                     &install_mutation(&args),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
             assert!(response.errors.is_empty(), "{:?}", response.errors);
@@ -2746,7 +2753,7 @@ mod tests {
             ] {
                 let (deployer, calls) = RecordingDeployer::boxed(Answer::Fail(failure));
                 let response = schema
-                    .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                    .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                     .await;
                 assert_eq!(response.errors.len(), 1, "{query}");
                 assert_eq!(response.errors[0].message, failure.error().to_string());
@@ -2768,7 +2775,7 @@ mod tests {
                 running_build("a.example.com", CONFIRMED_VERSION, CONFIRMED_COMMIT),
             ]),
         );
-        let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+        let schema = schema_without_store(deployer as SharedPackageDeployer, onboarder);
         let (response, logs) =
             capturing_logs(execute_without_store(&schema, RUNNING_ROXYD_BUILDS_QUERY)).await;
 
@@ -2797,7 +2804,7 @@ mod tests {
         let (deployer, _) = RecordingDeployer::applying();
         let (onboarder, calls) =
             RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::Fail);
-        let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+        let schema = schema_without_store(deployer as SharedPackageDeployer, onboarder);
         let response = execute_without_store(&schema, RUNNING_ROXYD_BUILDS_QUERY).await;
 
         assert_eq!(response.errors.len(), 1);
@@ -2890,7 +2897,7 @@ mod tests {
         let response = schema
             .execute_as_system_admin_with_data(
                 &store_build_list_query("review"),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -2910,7 +2917,7 @@ mod tests {
         let response = schema
             .execute_as_system_admin_with_data(
                 &store_build_list_query("hog"),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -2950,7 +2957,7 @@ mod tests {
                 .execute_with_guard_and_data(
                     &store_build_list_query(package_id),
                     RoleGuard::Role(role),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -2987,7 +2994,7 @@ mod tests {
             let response = schema
                 .execute_as_system_admin_with_data(
                     &store_build_list_query(package_id),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -3011,7 +3018,7 @@ mod tests {
                     .execute_with_guard_and_data(
                         &store_build_list_query(package_id),
                         RoleGuard::Role(role),
-                        deployer as BoxedPackageDeployer,
+                        deployer as SharedPackageDeployer,
                     )
                     .await;
 
@@ -3033,7 +3040,7 @@ mod tests {
         let (deployer, _) = RecordingDeployer::applying();
         let (onboarder, calls) =
             RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::List(vec![]));
-        let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+        let schema = schema_without_store(deployer as SharedPackageDeployer, onboarder);
         let mutation = onboard_mutation(CONFIRMED_HOST, CONFIRMED_VERSION, CONFIRMED_COMMIT);
         let response = execute_without_store(&schema, &mutation).await;
 
@@ -3064,7 +3071,7 @@ mod tests {
             let (deployer, _) = RecordingDeployer::applying();
             let (onboarder, calls) =
                 RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::List(vec![]));
-            let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+            let schema = schema_without_store(deployer as SharedPackageDeployer, onboarder);
             let mutation = onboard_mutation(CONFIRMED_HOST, version, commit);
             let (response, logs) = capturing_logs(execute_without_store(&schema, &mutation)).await;
 
@@ -3086,7 +3093,7 @@ mod tests {
         for answer in [OnboardAnswer::Succeed, OnboardAnswer::Fail] {
             let (deployer, _) = RecordingDeployer::applying();
             let (onboarder, calls) = RecordingOnboarder::boxed(answer, RunningAnswer::List(vec![]));
-            let schema = schema_without_store(deployer as BoxedPackageDeployer, onboarder);
+            let schema = schema_without_store(deployer as SharedPackageDeployer, onboarder);
             let mutation = onboard_mutation(CONFIRMED_HOST, CONFIRMED_VERSION, CONFIRMED_COMMIT);
             let (_response, logs) = capturing_logs(execute_without_store(&schema, &mutation)).await;
 
@@ -3117,7 +3124,7 @@ mod tests {
                 .execute_with_guard_and_data(
                     &query,
                     RoleGuard::Role(Role::SecurityMonitor),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -3143,7 +3150,7 @@ mod tests {
                     &query,
                     Role::SecurityAdministrator,
                     Some(vec![1]),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -3174,7 +3181,7 @@ mod tests {
                     &query,
                     Role::SecurityAdministrator,
                     Some(vec![1]),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -3211,14 +3218,14 @@ mod tests {
                                 &query,
                                 Role::SecurityAdministrator,
                                 Some(vec![1]),
-                                deployer as BoxedPackageDeployer,
+                                deployer as SharedPackageDeployer,
                             )
                             .await
                     } else {
                         schema
                             .execute_as_system_admin_with_data(
                                 &query,
-                                deployer as BoxedPackageDeployer,
+                                deployer as SharedPackageDeployer,
                             )
                             .await
                     };
@@ -3250,7 +3257,7 @@ mod tests {
                 put_job(&schema.store(), customer_id, &["other-host"]);
 
                 let res = schema
-                    .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                    .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                     .await;
 
                 assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
@@ -3267,7 +3274,7 @@ mod tests {
                 let schema = TestSchema::new().await;
 
                 let res = schema
-                    .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                    .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                     .await;
 
                 assert_eq!(res.errors.len(), 1, "{query}");
@@ -3300,7 +3307,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin_with_data(
                 &install_mutation(&args),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -3341,7 +3348,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin_with_data(
                 &install_mutation(&install_args("giganto")),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -3358,7 +3365,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin_with_data(
                 &install_mutation(&args),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -3379,7 +3386,7 @@ mod tests {
             let res = schema
                 .execute_as_system_admin_with_data(
                     &install_mutation(&args),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -3403,7 +3410,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin_with_data(
                 &install_mutation(&install_args("giganto")),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -3431,12 +3438,12 @@ mod tests {
         let query = install_mutation(&install_args("giganto"));
 
         let first = schema
-            .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+            .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
             .await;
         let (deployer, _second_calls) =
             RecordingDeployer::boxed(Answer::SucceedWith(OPERATION_ID, DeployOutcome::Applied));
         let second = schema
-            .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+            .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
             .await;
 
         assert!(first.errors.is_empty(), "{:?}", first.errors);
@@ -3463,7 +3470,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin_with_data(
                 &install_mutation(&install_args("giganto")),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -3551,7 +3558,7 @@ mod tests {
             let res = schema
                 .execute_as_system_admin_with_data(
                     &install_mutation(&args),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -3574,7 +3581,7 @@ mod tests {
             let res = schema
                 .execute_as_system_admin_with_data(
                     &install_mutation(&args),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -3611,7 +3618,7 @@ mod tests {
             let res = schema
                 .execute_as_system_admin_with_data(
                     &install_mutation(&args),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -3635,7 +3642,7 @@ mod tests {
                 let schema = TestSchema::new().await;
 
                 let res = schema
-                    .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                    .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                     .await;
 
                 assert_eq!(res.errors.len(), 1, "{query}");
@@ -3657,7 +3664,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin_with_data(
                 &install_mutation(&install_args("giganto")),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -3681,7 +3688,7 @@ mod tests {
             let res = schema
                 .execute_as_system_admin_with_data(
                     &install_mutation(&args),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -3696,7 +3703,7 @@ mod tests {
             let res = schema
                 .execute_as_system_admin_with_data(
                     &update_mutation(&args),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -3726,7 +3733,7 @@ mod tests {
             let schema = TestSchema::new().await;
 
             let res = schema
-                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                 .await;
 
             assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
@@ -3744,7 +3751,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin_with_data(
                 &update_mutation(&update_args("giganto")),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -3779,7 +3786,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin_with_data(
                 &remove_mutation(&remove_args("giganto")),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -3861,7 +3868,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin_with_data(
                 &update_mutation(&args),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -3911,7 +3918,7 @@ mod tests {
             let res = schema
                 .execute_as_system_admin_with_data(
                     &install_mutation(&install_args("giganto")),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -3940,7 +3947,7 @@ mod tests {
                 let schema = TestSchema::new().await;
 
                 let res = schema
-                    .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                    .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                     .await;
 
                 assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
@@ -3977,7 +3984,7 @@ mod tests {
             let schema = TestSchema::new().await;
 
             let res = schema
-                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                 .await;
 
             assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
@@ -4010,7 +4017,7 @@ mod tests {
             let schema = TestSchema::new().await;
 
             let res = schema
-                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                 .await;
 
             assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
@@ -4040,7 +4047,7 @@ mod tests {
             let schema = TestSchema::new().await;
 
             let res = schema
-                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                 .await;
 
             assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
@@ -4052,6 +4059,44 @@ mod tests {
                     "host": SYSTEM_INSTANCE_HOST,
                 })
             );
+        }
+    }
+
+    /// A deployer that finds `REview` under maintenance is answered as the
+    /// closed gate answers, with `MAINTENANCE`, after exactly one call.
+    #[tokio::test]
+    async fn under_maintenance_is_answered_with_the_gate_s_code() {
+        for query in [
+            install_mutation(&install_args("giganto")),
+            update_mutation(&update_args("giganto")),
+            remove_mutation(&remove_args("giganto")),
+            core_update_mutation(&core_update_args("review", "control-host")),
+        ] {
+            let (deployer, calls) =
+                RecordingDeployer::boxed(Answer::Fail(Failure::UnderMaintenance));
+            let schema = TestSchema::new().await;
+
+            let res = schema
+                .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
+                .await;
+
+            assert_eq!(res.errors.len(), 1, "{query}");
+            assert_eq!(
+                res.errors[0].message,
+                "REview is under maintenance; retry the request after the update completes",
+                "{query}"
+            );
+            assert_eq!(
+                res.errors[0]
+                    .extensions
+                    .as_ref()
+                    .and_then(|extensions| extensions.get("code"))
+                    .map(ToString::to_string)
+                    .as_deref(),
+                Some("\"MAINTENANCE\""),
+                "{query}"
+            );
+            assert_eq!(calls.total(), 1, "{query}");
         }
     }
 
@@ -4068,7 +4113,7 @@ mod tests {
             let schema = TestSchema::new().await;
 
             let res = schema
-                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                 .await;
 
             assert_eq!(res.errors.len(), 1, "{query}");
@@ -4099,7 +4144,7 @@ mod tests {
             let res = schema
                 .execute_as_system_admin_with_data(
                     &install_mutation(&install_args("giganto")),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -4115,7 +4160,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin_with_data(
                 &remove_mutation(&remove_args("giganto")),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
         assert_eq!(res.errors.len(), 1);
@@ -4134,7 +4179,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin_with_data(
                 &remove_mutation(&remove_args("giganto")),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
         assert_eq!(res.errors.len(), 1);
@@ -4167,7 +4212,7 @@ mod tests {
                 let schema = TestSchema::new().await;
 
                 let res = schema
-                    .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                    .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                     .await;
 
                 assert_eq!(res.errors.len(), 1, "{query}");
@@ -4261,7 +4306,10 @@ mod tests {
                     let (schema, reads) = schema_advertising(advertised).await;
 
                     let res = schema
-                        .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                        .execute_as_system_admin_with_data(
+                            &query,
+                            deployer as SharedPackageDeployer,
+                        )
                         .await;
 
                     assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
@@ -4288,7 +4336,7 @@ mod tests {
             let schema = TestSchema::new().await;
             let query = core_update_mutation(&core_update_args(component, "join-host"));
             let response = schema
-                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                 .await;
             assert!(
                 response.errors.is_empty(),
@@ -4308,7 +4356,7 @@ mod tests {
                 .execute_with_guard_and_data(
                     &query,
                     RoleGuard::Role(Role::SecurityAdministrator),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
             assert_eq!(response.errors.len(), 1, "{component}");
@@ -4325,7 +4373,7 @@ mod tests {
             let res = schema
                 .execute_as_system_admin_with_data(
                     &core_update_mutation(&args),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
             assert!(res.errors.is_empty(), "{component}: {:?}", res.errors);
@@ -4354,7 +4402,7 @@ mod tests {
         let query = core_update_mutation(&core_update_args("review", "control-host"));
 
         let res = schema
-            .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+            .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
             .await;
 
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
@@ -4382,7 +4430,7 @@ mod tests {
                 schema_advertising(Advertised::Tags(&[NODE_PACKAGE, ROLLBACK_SUPERVISOR])).await;
 
             let res = schema
-                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                 .await;
 
             assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
@@ -4408,7 +4456,7 @@ mod tests {
             let (schema, reads) = schema_advertising(Advertised::Tags(&[])).await;
 
             let res = schema
-                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                 .await;
 
             assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
@@ -4435,7 +4483,7 @@ mod tests {
         let res = schema
             .execute_as_system_admin_with_data(
                 &remove_mutation(&remove_args("giganto")),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -4466,7 +4514,7 @@ mod tests {
             Mutation::default(),
             Subscription::default(),
         )
-        .data(deployer as BoxedPackageDeployer)
+        .data(deployer as SharedPackageDeployer)
         .data(onboarder)
         .data(agents)
         .finish();
@@ -4492,7 +4540,7 @@ mod tests {
             let (schema, reads) = schema_advertising(Advertised::Unreadable).await;
 
             let res = schema
-                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                 .await;
 
             assert_eq!(res.errors.len(), 1, "{query}");
@@ -4516,7 +4564,7 @@ mod tests {
                 .execute_with_guard_and_data(
                     &query,
                     RoleGuard::Role(Role::SecurityMonitor),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -4549,7 +4597,7 @@ mod tests {
                     &query,
                     Role::SecurityAdministrator,
                     Some(vec![1]),
-                    deployer as BoxedPackageDeployer,
+                    deployer as SharedPackageDeployer,
                 )
                 .await;
 
@@ -4570,7 +4618,7 @@ mod tests {
         for _ in 0..2 {
             let (deployer, calls) = RecordingDeployer::applying();
             let res = schema
-                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                 .await;
             assert!(res.errors.is_empty(), "{:?}", res.errors);
             assert_eq!(calls.total(), 1);

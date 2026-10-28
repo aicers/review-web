@@ -6281,6 +6281,11 @@ type Mutation {
 	nodes is named by an agent on another node, a training definition of
 	another customer, or a system log collector. The message names each
 	such Data Store, its users, and how to free it.
+	
+	Refused the same way, with `CUSTOMER_DATA_ALREADY_DELETED`, when the
+	customer's data was already deleted and it holds nodes, sampling
+	policies, models or training definitions created since. Once they are
+	removed, the request is answered `ALREADY_COMPLETED`.
 	"""
 	deleteCustomerData(customerId: ID!): CustomerDataDeletionRequestStatus!
 	backup(numOfBackupsToKeep: Int!): Boolean!

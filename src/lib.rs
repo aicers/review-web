@@ -44,7 +44,8 @@ use crate::auth::MtlsAuthError;
 use crate::auth::MtlsAuthenticator;
 use crate::auth::validate_context_jwt;
 use crate::backend::{
-    AgentManager, CertManager, HostOnboarder, PackageDeployer, PackageStoreReceiver, TrustManager,
+    AgentManager, CertManager, HostOnboarder, PackageStoreReceiver, SharedPackageDeployer,
+    TrustManager,
 };
 use crate::ingress::{PackageUploadLimit, TrustGenerationLimit};
 
@@ -179,18 +180,17 @@ pub struct ServerConfig {
 ///
 /// Panics if binding to the address fails.
 #[allow(clippy::too_many_lines)]
-pub fn serve<A, D, O>(
+pub fn serve<A, O>(
     config: ServerConfig,
     store: Arc<RwLock<Store>>,
     ip_locator: Option<Arc<ip2location::DB>>,
     agent_manager: A,
-    package_deployer: D,
+    package_deployer: SharedPackageDeployer,
     host_onboarder: O,
     customer_data_deletion_manager: Arc<customer_data_deletion::CustomerDataDeletionTaskManager>,
 ) -> Arc<Notify>
 where
     A: AgentManager + 'static,
-    D: PackageDeployer + 'static,
     O: HostOnboarder + 'static,
 {
     use axum_server::{Handle, tls_rustls::RustlsConfig};

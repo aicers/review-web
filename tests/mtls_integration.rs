@@ -553,7 +553,7 @@ mod mtls_integration {
             store,
             None,
             StubAgentManager,
-            StubPackageDeployer,
+            Arc::new(StubPackageDeployer),
             StubHostOnboarder,
             Arc::new(
                 review_web::customer_data_deletion::CustomerDataDeletionTaskManager::default(),

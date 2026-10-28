@@ -620,6 +620,7 @@ mod tests {
         assert_eq!(recovered.take_remote_targets().len(), 1);
         recovered
             .start(
+                Arc::new(crate::graphql::MockPackageDeployer::default()),
                 Arc::new(MockAgentManager {}),
                 Arc::new(CustomerDataDeletionTaskManager::default()),
             )

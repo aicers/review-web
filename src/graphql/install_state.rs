@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, OnceCell};
 use tracing::warn;
 
-use super::BoxedPackageDeployer;
+use super::SharedPackageDeployer;
 use crate::backend::BuildId;
 
 /// The install and run state of a build on a host, as the host reports it.
@@ -219,7 +219,7 @@ pub(super) async fn update_state(
     let Some(package_id) = package_id else {
         return Ok(UpdateState::NOT_CHECKED);
     };
-    let deployer = ctx.data::<BoxedPackageDeployer>()?;
+    let deployer = ctx.data::<SharedPackageDeployer>()?;
     let memo = ctx.data::<LatestBuildMemo>()?;
 
     Ok(
@@ -271,7 +271,7 @@ pub(super) async fn withdrawal_state(
     let Some((package_id, (version, commit))) = package_id.zip(installed) else {
         return Ok(WithdrawalState::NOT_CHECKED);
     };
-    let deployer = ctx.data::<BoxedPackageDeployer>()?;
+    let deployer = ctx.data::<SharedPackageDeployer>()?;
     let memo = ctx.data::<WithdrawalMemo>()?;
 
     Ok(
@@ -482,8 +482,8 @@ mod tests {
     use crate::{
         backend::CertManager,
         graphql::{
-            BoxedPackageDeployer, LatestBuildStub, MockAgentManager, MockHostOnboarder,
-            MockPackageDeployer, ParsedCertificate, RoleGuard, TestSchema, WithdrawalStub,
+            LatestBuildStub, MockAgentManager, MockHostOnboarder, MockPackageDeployer,
+            ParsedCertificate, RoleGuard, SharedPackageDeployer, TestSchema, WithdrawalStub,
         },
     };
 
@@ -597,8 +597,8 @@ mod tests {
     }
 
     async fn schema_with(builds: &Arc<LatestBuildStub>) -> TestSchema {
-        let deployer: BoxedPackageDeployer =
-            Box::new(MockPackageDeployer::with_builds(builds.clone()));
+        let deployer: SharedPackageDeployer =
+            Arc::new(MockPackageDeployer::with_builds(builds.clone()));
         TestSchema::new_with_package_deployer(deployer).await
     }
 
@@ -606,7 +606,7 @@ mod tests {
         builds: &Arc<LatestBuildStub>,
         withdrawals: &Arc<WithdrawalStub>,
     ) -> TestSchema {
-        let deployer: BoxedPackageDeployer = Box::new(
+        let deployer: SharedPackageDeployer = Arc::new(
             MockPackageDeployer::with_builds(builds.clone()).with_withdrawals(withdrawals.clone()),
         );
         TestSchema::new_with_package_deployer(deployer).await
@@ -2527,7 +2527,10 @@ mod tests {
         let schema = crate::graphql::schema(
             Arc::new(RwLock::new(store)),
             MockAgentManager {},
-            MockPackageDeployer::with_builds(builds.clone()).with_withdrawals(withdrawals.clone()),
+            Arc::new(
+                MockPackageDeployer::with_builds(builds.clone())
+                    .with_withdrawals(withdrawals.clone()),
+            ),
             MockHostOnboarder {},
             None,
             Arc::new(StubCertManager),

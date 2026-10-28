@@ -522,7 +522,7 @@ fn in_flight_install_of<'a>(
 ///
 /// Returns an error if the install keys or any candidate cannot be read. A
 /// failed read is never answered as an empty list.
-fn operator_installs(
+pub(crate) fn operator_installs(
     store: &Store,
     candidates: Vec<database::OperationAttempt>,
     keep: impl Fn(&database::OperationAttempt) -> bool,

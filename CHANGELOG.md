@@ -15,8 +15,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   application that does not implement them records each Data Store `FAILED`
   with "Not supported". `customerDataDeletionResult` reports each Data
   Store as a `DATA_STORE` result naming its server name,
-  `<instance:03>.giganto.<hostname>`. `CustomerDataDeletionService` also has
-  `MODULE_REMOVAL`, which no deletion records yet. What stays:
+  `<instance:03>.giganto.<hostname>`. Deleting a customer has its Sensors and
+  Semi-supervised Engines delete their files, then uninstalls every module
+  the Central Manager installed on its nodes, then deletes its data in the
+  Data Store, then uninstalls the Data Stores on its nodes, and only then
+  removes its nodes. Each host's uninstall is reported as a `MODULE_REMOVAL`
+  result. What stays:
   - A sampling policy ID reused before `review-database` 0.57.0 made the IDs
     unique names the time series of every policy that held it, and deleting
     the customer of its last holder deletes all of them.
@@ -25,14 +29,35 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     and deleting by the name deletes them.
   - A Data Store without an instance number, registered by hand, is not
     listed, so it is never asked, and the customer's data in it stays.
+  - A module registered by hand, not installed by the Central Manager, is
+    removed from the records only and keeps running.
+  - A Data Store uninstalled with the customer leaves its data directory on
+    the host.
+- `CustomerDataDeletionTaskManager::begin_shutdown` blocks new deletion
+  requests and tells the running deletion to stop without waiting for it, so
+  that the embedding application can stop its own work before
+  `shutdown_and_wait`.
 
 ### Changed
 
 - **Breaking change:** `recover_customer_data_deletion_on_startup` only scans
   the stored deletions. It returns `RecoveredDeletions`, which holds the
   remote targets to dispatch when their agents connect, and whose `start`
-  spawns the supervisor that resumes the unfinished jobs: it waits for the
-  Data Stores already asked, asks the others, and runs the Review stage.
+  spawns the supervisor that resumes the unfinished jobs. `start` takes the
+  package deployer, and runs every stage of each job from where it stopped:
+  it waits for the Sensor and Semi-supervised results, uninstalls the
+  customer's modules, waits for the Data Stores already asked and asks the
+  others, uninstalls the customer's Data Stores, and runs the Review stage.
+- **Breaking change:** `serve` takes the package deployer as
+  `SharedPackageDeployer` (`Arc<dyn PackageDeployer>`), so the embedding
+  application can pass the same deployer to customer deletion recovery.
+- **Breaking change:** the public `DeployError` enum gains the
+  `UnderMaintenance` variant, which breaks callers that match on it
+  exhaustively; the deployment mutations answer it with `MAINTENANCE`.
+- A request for a customer whose data was already deleted, but which holds
+  nodes, sampling policies, models or training definitions created since, is
+  refused with `CUSTOMER_DATA_ALREADY_DELETED`. Once those are removed, a
+  retry answers `ALREADY_COMPLETED`.
 - A customer with no node left but with sampling policies, Unsupervised
   Engine models or training definitions is deleted too, where 0.50.0 answered
   `NO_TARGET`. The events of its removed nodes cannot be found and stay.

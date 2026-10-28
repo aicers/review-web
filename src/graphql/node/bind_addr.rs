@@ -15,7 +15,7 @@ use async_graphql::{
 use review_database::{ListenerBinding, ListenerTransport, PortOwner};
 
 use super::{
-    super::{BoxedPackageDeployer, Role, RoleGuard, customer_access},
+    super::{Role, RoleGuard, SharedPackageDeployer, customer_access},
     BindAddrQuery,
     deploy::bind_package_class,
 };
@@ -256,7 +256,7 @@ impl BindAddrQuery {
         // second one here: one target must not have two classes.
         bind_package_class(&target, &MODULE_PACKAGE_IDS)?;
 
-        let deployer = ctx.data::<BoxedPackageDeployer>()?;
+        let deployer = ctx.data::<SharedPackageDeployer>()?;
         match deployer.recommend_bind_addrs(&host, &target).await {
             Ok(bindings) => Ok(RecommendBindAddrsResult::Proposals(BindAddrProposals {
                 proposals: bindings.into_iter().map(Into::into).collect(),
@@ -296,7 +296,7 @@ mod tests {
             BindAddrInput as BackendBindAddrInput, BuildId, DeployError, DeployOutcome,
             OperationId, PackageDeployer,
         },
-        graphql::{BoxedPackageDeployer, RoleGuard, TestSchema, node::test_support},
+        graphql::{RoleGuard, SharedPackageDeployer, TestSchema, node::test_support},
     };
 
     const QUERY: &str = r#"{
@@ -329,13 +329,13 @@ mod tests {
     impl CountingDeployer {
         /// Boxes a stub answering with `answer`, paired with the counter it
         /// increments.
-        fn boxed(answer: StubAnswer) -> (Box<dyn PackageDeployer>, Arc<AtomicUsize>) {
+        fn boxed(answer: StubAnswer) -> (Arc<dyn PackageDeployer>, Arc<AtomicUsize>) {
             let calls = Arc::new(AtomicUsize::new(0));
             let deployer = Self {
                 calls: Arc::clone(&calls),
                 answer,
             };
-            (Box::new(deployer), calls)
+            (Arc::new(deployer), calls)
         }
     }
 
@@ -492,7 +492,7 @@ mod tests {
         let schema = TestSchema::new().await;
 
         let res = schema
-            .execute_as_system_admin_with_data(QUERY, deployer as BoxedPackageDeployer)
+            .execute_as_system_admin_with_data(QUERY, deployer as SharedPackageDeployer)
             .await;
 
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
@@ -521,7 +521,7 @@ mod tests {
         let schema = TestSchema::new().await;
 
         let res = schema
-            .execute_as_system_admin_with_data(QUERY, deployer as BoxedPackageDeployer)
+            .execute_as_system_admin_with_data(QUERY, deployer as SharedPackageDeployer)
             .await;
 
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
@@ -546,7 +546,7 @@ mod tests {
         let schema = TestSchema::new().await;
 
         let res = schema
-            .execute_as_system_admin_with_data(QUERY, deployer as BoxedPackageDeployer)
+            .execute_as_system_admin_with_data(QUERY, deployer as SharedPackageDeployer)
             .await;
 
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
@@ -577,7 +577,7 @@ mod tests {
             let schema = TestSchema::new().await;
 
             let res = schema
-                .execute_as_system_admin_with_data(QUERY, deployer as BoxedPackageDeployer)
+                .execute_as_system_admin_with_data(QUERY, deployer as SharedPackageDeployer)
                 .await;
 
             assert_eq!(res.errors.len(), 1);
@@ -596,7 +596,7 @@ mod tests {
                 r#"{{ recommendBindAddrs(host: "host1", target: "{target}") {{ __typename }} }}"#
             );
             let res = schema
-                .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                .execute_as_system_admin_with_data(&query, deployer as SharedPackageDeployer)
                 .await;
 
             assert_eq!(res.errors.len(), 1, "{target}");
@@ -619,7 +619,7 @@ mod tests {
                 QUERY,
                 Role::SecurityAdministrator,
                 Some(vec![1]),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -644,7 +644,7 @@ mod tests {
                 QUERY,
                 Role::SecurityAdministrator,
                 Some(vec![1]),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -674,7 +674,7 @@ mod tests {
             .execute_with_guard_and_data(
                 QUERY,
                 RoleGuard::Role(Role::SecurityMonitor),
-                deployer as BoxedPackageDeployer,
+                deployer as SharedPackageDeployer,
             )
             .await;
 
@@ -884,6 +884,7 @@ mod tests {
             | DeployError::UnknownConfigTemplate { .. }
             | DeployError::ManifestFormatUnsupported { .. }
             | DeployError::SystemInstance { .. }
+            | DeployError::UnderMaintenance
             | DeployError::Other(_) => None,
         }
     }
@@ -927,6 +928,7 @@ mod tests {
                 },
                 None,
             ),
+            (DeployError::UnderMaintenance, None),
             (
                 DeployError::PortAllocationConflict {
                     host: "host1".to_string(),
