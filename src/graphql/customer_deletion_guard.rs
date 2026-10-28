@@ -183,8 +183,9 @@ pub(crate) struct DataStoreInUse {
 pub(crate) struct DataStoresInUse {
     /// Each such Data Store, by server name.
     pub(crate) data_stores: Vec<DataStoreInUse>,
-    /// Whether the Central Manager lists exactly one Data Store, which each
-    /// host's system log collector then takes, being the first installed.
+    /// Whether the Central Manager lists exactly one Data Store and it is one
+    /// of these, which each host's system log collector then takes, being the
+    /// first installed.
     pub(crate) only_data_store: bool,
 }
 
@@ -285,11 +286,21 @@ pub(crate) fn data_stores_in_use(
             users: users.into_iter().collect(),
         })
         .collect();
+    // The advice holds only when the one listed is one of these: were it
+    // another customer's, the system log collectors would be using that one.
     let only_data_store = !data_stores.is_empty()
-        && listed_rows(store)
+        && match listed_rows(store)
             .map_err(|e| anyhow!("listing the Data Stores: {}", e.message))?
-            .len()
-            == 1;
+            .as_slice()
+        {
+            [only] => {
+                let name = only.server_name();
+                data_stores
+                    .iter()
+                    .any(|data_store| data_store.server_name == name)
+            }
+            _ => false,
+        };
     Ok(DataStoresInUse {
         data_stores,
         only_data_store,
@@ -870,8 +881,9 @@ format = [{{ data_type = "utf8", weight = 1.0 }}]
                 users: vec!["the Sensor agent 001.piglet on b.example.com".to_string()],
             }]
         );
-        // The listed one is another customer's, and the only one listed.
-        assert!(in_use.only_data_store);
+        // The only one listed is another customer's, which the system log
+        // collectors would use instead.
+        assert!(!in_use.only_data_store);
     }
 
     #[test]
