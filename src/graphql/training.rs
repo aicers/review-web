@@ -29,6 +29,7 @@ use super::{
     customer_access::{
         is_member, is_system_admin, load_accessible_model_by_name, model_by_name, users_customers,
     },
+    customer_deletion_guard::check_customers,
     engine_config::lock_engine_config,
     gen_agent_lookup_key,
     model::{ModelDigest, ModelInstance, ModelMethod, TIMESERIES_KIND},
@@ -162,6 +163,9 @@ impl TrainingMutation {
     /// IDs of sampling policies of the customer that are assigned, of one
     /// kind, column, interval, period and offset, and kept in the Data Store
     /// `[data_store]` names, which their generators still write to.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the instance's customer is unfinished, also while it is stopped.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn insert_training_definition(
@@ -181,6 +185,7 @@ impl TrainingMutation {
         let system_admin = is_system_admin(ctx);
         let store = super::get_store(ctx)?;
         let target = resolve_instance(&store, users_customers.as_deref(), node_id, &agent_key)?;
+        check_customers(&store, [target.customer_id])?;
         document.check_stored(
             &store,
             target.customer_id,
@@ -220,6 +225,9 @@ impl TrainingMutation {
     /// must have the shape of the policies the model was trained on, which
     /// the model's detectors read; otherwise they are refused with
     /// `SOURCES_INCOMPATIBLE`.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the definition's customer is unfinished, also while it is stopped.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn update_training_definition(
@@ -236,6 +244,7 @@ impl TrainingMutation {
         let system_admin = is_system_admin(ctx);
         let store = super::get_store(ctx)?;
         let stored = accessible_definition(&store, users_customers.as_deref(), &name)?;
+        check_customers(&store, [stored.customer_id])?;
         let kept = kept_pair(&stored.definition);
         let shape = retrain_shape(&store, &name)?;
         document.check_stored(
@@ -268,12 +277,16 @@ impl TrainingMutation {
     /// `extensions.code`: `NOT_FOUND`; `MODEL_IN_USE` while a model of the
     /// name exists, with `definition`; `RUN_IN_PROGRESS` while a run of the
     /// definition is active.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the definition's customer is unfinished, also while it is stopped.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn remove_training_definition(&self, ctx: &Context<'_>, name: String) -> Result<String> {
         let users_customers = users_customers(ctx)?;
         let store = super::get_store(ctx)?;
-        accessible_definition(&store, users_customers.as_deref(), &name)?;
+        let stored = accessible_definition(&store, users_customers.as_deref(), &name)?;
+        check_customers(&store, [stored.customer_id])?;
         store
             .remove_training_definition(&name)
             .map_err(|e| store_refusal(e, StoreWrite::RemoveDefinition, None))?;
@@ -296,6 +309,9 @@ impl TrainingMutation {
     /// `INSTANCE_STOPPED` and `RUN_IN_PROGRESS`; and, once the run is
     /// stored, `ENGINE_REFUSED` with the engine's reason in `value` or
     /// `INSTANCE_UNREACHABLE`, either leaving the run failed.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the definition's customer is unfinished, also while it is stopped.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn train_model(&self, ctx: &Context<'_>, name: String) -> Result<ID> {
@@ -305,6 +321,7 @@ impl TrainingMutation {
             let system_admin = is_system_admin(ctx);
             let store = super::get_store(ctx)?;
             let stored = accessible_definition(&store, users_customers.as_deref(), &name)?;
+            check_customers(&store, [stored.customer_id])?;
             let Some(instance) = stored.instance.as_ref() else {
                 return Err(no_instance("name", &name));
             };
@@ -358,6 +375,9 @@ impl TrainingMutation {
     /// finished run; `ENGINE_REFUSED` with the engine's reason in `value` or
     /// `INSTANCE_UNREACHABLE`, either leaving the run failed (a clone run is
     /// removed with its target definition).
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the run's customer is unfinished, also while it is stopped.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn cancel_model_run(&self, ctx: &Context<'_>, run_id: ID) -> Result<ID> {
@@ -382,6 +402,7 @@ impl TrainingMutation {
             if !is_member(users_customers.as_deref(), customer_id) {
                 return Err("Forbidden".into());
             }
+            check_customers(&store, [customer_id])?;
             if !run.state.is_active() {
                 return Err(refusal(
                     RefusalCode::RunNotActive,
@@ -441,9 +462,16 @@ impl TrainingMutation {
     /// `ENGINE_REFUSED` with the engine's reason in `value` or
     /// `INSTANCE_UNREACHABLE`, either removing the run with its target
     /// definition.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the source's customer or the target instance's is unfinished, also while
+    /// it is stopped.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
-    #[allow(clippy::too_many_arguments)]
+    // The arguments are the mutation's published contract, and the body is
+    // one sequence of checks under the engine configuration lock followed by
+    // the relay; splitting it would only scatter that sequence.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     async fn clone_model(
         &self,
         ctx: &Context<'_>,
@@ -477,6 +505,7 @@ impl TrainingMutation {
             let system_admin = is_system_admin(ctx);
             let store = super::get_store(ctx)?;
             let target = resolve_instance(&store, users_customers.as_deref(), node_id, &agent_key)?;
+            check_customers(&store, [model.customer_id, target.customer_id])?;
             let cross_customer = target.customer_id != model.customer_id;
             if cross_customer && !system_admin {
                 return Err(refusal(
@@ -567,12 +596,16 @@ impl TrainingMutation {
     /// (with the run id in `value`), or one of its indicators is named by a
     /// detector or another definition (with the indicator in `value`, and
     /// `detectorId`, `nodeId` and `agentKey`, or `definition`).
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the model's customer is unfinished, also while it is stopped.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn remove_model(&self, ctx: &Context<'_>, name: String) -> Result<String> {
         let _lock = lock_engine_config(ctx).await?;
-        load_accessible_model_by_name(ctx, "name", &name)?;
+        let model = load_accessible_model_by_name(ctx, "name", &name)?;
         let store = super::get_store(ctx)?;
+        check_customers(&store, [model.customer_id])?;
         store
             .delete_model(&name)
             .map_err(|e| store_refusal(e, StoreWrite::DeleteModel, None))?;
@@ -587,6 +620,10 @@ impl TrainingMutation {
     /// `NOT_FOUND`; `ASSIGN_REFUSED` for a model that has an instance or an
     /// instance of another customer than the model's;
     /// `INSTANCE_NOT_ELIGIBLE`.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the model's customer or the instance's is unfinished, also while it is
+    /// stopped.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn assign_model(
@@ -598,10 +635,11 @@ impl TrainingMutation {
     ) -> Result<String> {
         let node_id = parse_node_id(&node_id)?;
         let _lock = lock_engine_config(ctx).await?;
-        load_accessible_model_by_name(ctx, "name", &name)?;
+        let model = load_accessible_model_by_name(ctx, "name", &name)?;
         let users_customers = users_customers(ctx)?;
         let store = super::get_store(ctx)?;
         let target = resolve_instance(&store, users_customers.as_deref(), node_id, &agent_key)?;
+        check_customers(&store, [model.customer_id, target.customer_id])?;
         store
             .assign_model(&name, &target.instance)
             .map_err(|e| store_refusal(e, StoreWrite::AssignModel, None))?;

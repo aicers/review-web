@@ -23,7 +23,7 @@ use tracing::info;
 use super::{
     super::{
         BoxedHostOnboarder, BoxedPackageDeployer, Role, RoleGuard, SharedAgentManager,
-        customer_access,
+        customer_access, customer_deletion_guard, get_store,
     },
     DeployMutation, OnboardingQuery,
     bind_addr::{
@@ -699,6 +699,10 @@ impl DeployMutation {
     /// `configTemplate` names the first-install configuration template from
     /// `configTemplates(target)`. Absent means none; review decides whether
     /// the target requires one and whether the id exists.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the customer of the node whose applied hostname is `host` is unfinished,
+    /// also while it is stopped.
     // The argument list is the mutation's published contract, so it is not a
     // parameter count to reduce: folding the seven into an input object would
     // change the schema. The length is one arm per member of the install
@@ -719,6 +723,7 @@ impl DeployMutation {
         request_key: String,
     ) -> Result<InstallServiceResult> {
         customer_access::check_hostname_access(ctx, &host)?;
+        customer_deletion_guard::check_host(&*get_store(ctx)?, &host)?;
         bind_package_class(&target, &MODULE_PACKAGE_IDS)?;
         check_request_key(&request_key)?;
         let selector = self::build_selector(build_selector)?;
@@ -836,6 +841,10 @@ impl DeployMutation {
     /// never typed by an operator; whether it names an instance that exists is
     /// review's answer, and this resolver performs no existence check of its
     /// own.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the customer of the node whose applied hostname is `host` is unfinished,
+    /// also while it is stopped.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn update_service(
@@ -848,6 +857,7 @@ impl DeployMutation {
         #[graphql(default_with = "FailurePolicy::Rollback")] on_failure: FailurePolicy,
     ) -> Result<UpdateServiceResult> {
         customer_access::check_hostname_access(ctx, &host)?;
+        customer_deletion_guard::check_host(&*get_store(ctx)?, &host)?;
         bind_package_class(&target, &MODULE_PACKAGE_IDS)?;
         let selector = self::build_selector(build_selector)?;
         if let Some(refusal) = check_rollback_support(ctx, &host, on_failure).await? {
@@ -910,6 +920,10 @@ impl DeployMutation {
     /// Removes an existing instance and returns the operation to poll.
     ///
     /// Confirming the removal with the operator is a UI concern.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
+    /// the customer of the node whose applied hostname is `host` is unfinished,
+    /// also while it is stopped.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn remove_service(
@@ -920,6 +934,7 @@ impl DeployMutation {
         instance: StringNumber<u32>,
     ) -> Result<RemoveServiceResult> {
         customer_access::check_hostname_access(ctx, &host)?;
+        customer_deletion_guard::check_host(&*get_store(ctx)?, &host)?;
         bind_package_class(&target, &MODULE_PACKAGE_IDS)?;
 
         let deployer = ctx.data::<BoxedPackageDeployer>()?;
@@ -3165,6 +3180,82 @@ mod tests {
 
             assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
             assert_eq!(calls.total(), 1, "{query}");
+        }
+    }
+
+    /// The customer is derived from the host for every caller, a System
+    /// Administrator, whom the hostname access check lets through without a
+    /// lookup, included.
+    #[tokio::test]
+    async fn a_host_of_a_customer_being_deleted_is_refused_without_a_backend_call() {
+        use crate::graphql::customer_deletion_guard::test_support::{
+            assert_locked, put_completed_job, put_running_job, put_stopped_job,
+        };
+
+        for put_job in [put_running_job, put_stopped_job] {
+            for query in every_mutation("giganto") {
+                for scoped in [false, true] {
+                    let (deployer, calls) = RecordingDeployer::applying();
+                    let schema = TestSchema::new().await;
+                    super::super::test_support::insert_active_node(
+                        &schema.store(),
+                        "giganto_host",
+                        1,
+                        "host1",
+                    );
+                    put_job(&schema.store(), 1, &["host1"]);
+
+                    let res = if scoped {
+                        schema
+                            .execute_as_scoped_user_with_data(
+                                &query,
+                                Role::SecurityAdministrator,
+                                Some(vec![1]),
+                                deployer as BoxedPackageDeployer,
+                            )
+                            .await
+                    } else {
+                        schema
+                            .execute_as_system_admin_with_data(
+                                &query,
+                                deployer as BoxedPackageDeployer,
+                            )
+                            .await
+                    };
+
+                    assert_locked(&res);
+                    assert_eq!(calls.total(), 0, "{query}");
+                }
+            }
+        }
+
+        // Another customer's host, and the customer's once its deletion has
+        // completed, reach the backend.
+        for (customer_id, put_job) in [
+            (
+                2,
+                put_running_job as fn(&review_database::Store, u32, &[&str]),
+            ),
+            (1, put_completed_job),
+        ] {
+            for query in every_mutation("giganto") {
+                let (deployer, calls) = RecordingDeployer::applying();
+                let schema = TestSchema::new().await;
+                super::super::test_support::insert_active_node(
+                    &schema.store(),
+                    "giganto_host",
+                    1,
+                    "host1",
+                );
+                put_job(&schema.store(), customer_id, &["other-host"]);
+
+                let res = schema
+                    .execute_as_system_admin_with_data(&query, deployer as BoxedPackageDeployer)
+                    .await;
+
+                assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
+                assert_eq!(calls.total(), 1, "{query}");
+            }
         }
     }
 

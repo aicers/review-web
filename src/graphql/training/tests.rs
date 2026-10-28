@@ -2589,3 +2589,69 @@ async fn writers_wait_for_the_engine_config_lock() {
         assert_eq!(f.schema.engine_config_lock_users(), 0);
     }
 }
+
+// ---------------------------------------------------------------------------
+// A customer data deletion in progress
+
+#[tokio::test]
+async fn a_customer_being_deleted_keeps_its_definitions_runs_and_models() {
+    use crate::graphql::customer_deletion_guard::test_support::{
+        assert_locked, put_completed_job, put_running_job, put_stopped_job,
+    };
+
+    let f = fixture().await;
+    let text_a = f.definition(&[&f.sensor_a], OWN_ADDRESS, "");
+    let text_b = f.definition(&[&f.sensor_b], OWN_ADDRESS, "");
+    f.define(&f.engine_a, "def-a", &text_a).await;
+    f.define(&f.engine_b, "def-b", &text_b).await;
+    f.define(&f.engine_b, "spare-b", &text_b).await;
+    f.train_to_completion("def-a", &f.engine_a).await;
+    f.train_to_completion("def-b", &f.engine_b).await;
+    let run_a = f.train("def-a").await;
+    model_on(&f.store(), "free-a", A, &f.engine_a2);
+    model_on(&f.store(), "free-b", B, &f.engine_b);
+    put_running_job(&f.store(), A, &["engine-a.example.com"]);
+
+    assert_locked(&f.sys(&insert(&f.engine_a, "new-a", &text_a)).await);
+    assert_locked(&f.sec(&update("def-a", &text_a), &[A]).await);
+    assert_locked(&f.sys(&remove_definition("def-a")).await);
+    assert_locked(&f.sys(&train("def-a")).await);
+    assert_locked(&f.sys(&cancel(&run_a.to_string())).await);
+    assert_locked(&f.sys(&remove_model("free-a")).await);
+    assert_locked(&f.sys(&assign("free-a", &f.engine_a2)).await);
+    // A clone is refused when either side is the customer's.
+    let to = |source, instance| {
+        clone(
+            source,
+            "copy",
+            instance,
+            (&f.server_name, OWN_ADDRESS),
+            &[],
+            "",
+        )
+    };
+    assert_locked(&f.sys(&to("def-a", &f.engine_b)).await);
+    assert_locked(&f.sys(&to("def-b", &f.engine_a)).await);
+
+    let res = f.sys(&insert(&f.engine_b, "new-b", &text_b)).await;
+    assert_eq!(data(res), json!({ "insertTrainingDefinition": "new-b" }));
+    let res = f.sys(&update("def-b", &text_b)).await;
+    assert_eq!(data(res), json!({ "updateTrainingDefinition": "def-b" }));
+    let res = f.sys(&remove_definition("spare-b")).await;
+    assert_eq!(data(res), json!({ "removeTrainingDefinition": "spare-b" }));
+    let res = f.sys(&remove_model("free-b")).await;
+    assert_eq!(data(res), json!({ "removeModel": "free-b" }));
+    let run_b = f.train("def-b").await;
+    let res = f.sys(&cancel(&run_b.to_string())).await;
+    assert_eq!(data(res), json!({ "cancelModelRun": run_b.to_string() }));
+
+    put_stopped_job(&f.store(), A, &["engine-a.example.com"]);
+    assert_locked(&f.sys(&insert(&f.engine_a, "new-a", &text_a)).await);
+    assert_locked(&f.sys(&remove_model("free-a")).await);
+
+    put_completed_job(&f.store(), A, &["engine-a.example.com"]);
+    let res = f.sys(&insert(&f.engine_a, "new-a", &text_a)).await;
+    assert_eq!(data(res), json!({ "insertTrainingDefinition": "new-a" }));
+    let res = f.sys(&remove_model("free-a")).await;
+    assert_eq!(data(res), json!({ "removeModel": "free-a" }));
+}

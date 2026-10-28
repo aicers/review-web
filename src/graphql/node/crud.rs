@@ -12,7 +12,10 @@ use review_database::{Store, UniqueKey, event::Direction};
 use tracing::info;
 
 use super::{
-    super::{Role, RoleGuard, customer_access, engine_config::lock_engine_config},
+    super::{
+        Role, RoleGuard, customer_access, customer_deletion_guard,
+        engine_config::lock_engine_config,
+    },
     Node, NodeInput, NodeMutation, NodeQuery, NodeTotalCount, customer_sensor_list,
     customer_sensor_list::{Sensor, SensorTotalCount},
     data_store_endpoint::{self, DataStoreEndpoint},
@@ -117,6 +120,9 @@ impl NodeMutation {
     /// `piglet.` or `reproduce.` name an engine document or training definition of another
     /// customer lists (RFC 0006 §5.11), which names that detector or definition only to a System
     /// Administrator. An Unsupervised Engine agent key listed more than once is refused.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of `customerId` is
+    /// unfinished, also while it is stopped, and while any unfinished deletion saved `hostname`.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     #[allow(clippy::too_many_arguments)]
@@ -142,6 +148,11 @@ impl NodeMutation {
         if !customer_access::is_member(users_customers.as_deref(), customer_id) {
             return Err("Forbidden".into());
         }
+        customer_deletion_guard::check_node_write(
+            &*crate::graphql::get_store(ctx)?,
+            [customer_id],
+            [hostname.as_str()],
+        )?;
 
         let agents: Vec<review_database::Agent> = agents
             .into_iter()
@@ -229,6 +240,9 @@ impl NodeMutation {
     /// Validates all requested nodes before deleting any of them. Refuses the whole request when
     /// any requested node holds an installed instance, which only `removeService` removes, or
     /// lists a row that cannot be found.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of the applied customer
+    /// of any requested node is unfinished, also while it is stopped.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn remove_nodes(
@@ -255,6 +269,13 @@ impl NodeMutation {
             }
             nodes.push(entry);
         }
+        customer_deletion_guard::check_customers(
+            &store,
+            nodes
+                .iter()
+                .filter_map(|(node, _, _)| node.profile.as_ref())
+                .map(|profile| profile.customer_id),
+        )?;
         // Only `removeService` removes an installed instance, so a node that holds one, or whose
         // rows cannot all be read, is not removed.
         installed_guard::check_removal(
@@ -292,6 +313,11 @@ impl NodeMutation {
     /// §5.11 refuse, which names another customer's detector or definition only to a System
     /// Administrator. An `old` Unsupervised Engine draft that is not the stored one is refused with
     /// "the node changed since it was read; reload and retry".
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of the node's applied
+    /// customer, or of the customer the new profile gives it, is unfinished, also while it is
+    /// stopped; and, while any customer's deletion is unfinished, when the new hostname is one
+    /// that deletion saved.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn update_node_draft(
@@ -301,10 +327,11 @@ impl NodeMutation {
         old: NodeInput,
         new: NodeDraftInput,
     ) -> Result<ID> {
-        customer_access::load_accessible_node(ctx, &id)?;
+        let current = customer_access::load_accessible_node(ctx, &id)?;
         if let Some(profile_draft) = new.profile_draft.as_ref() {
             customer_access::check_customer_membership(ctx, &profile_draft.customer_id)?;
         }
+        super::check_node_write(ctx, &current, new.profile_draft.as_ref())?;
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
         let (mut new, not_toml) = super::input::create_draft_update(&old, new)?;

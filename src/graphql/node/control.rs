@@ -166,16 +166,22 @@ impl NodeControlMutation {
     /// the apply do the generator's policies record the new Data Store. When the apply changes the
     /// node's applied customer or hostname, every Time Series Generator holding a sampling policy
     /// whose sensor or assignee is on the node is told that its policies changed.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of the node's applied
+    /// customer, or of the customer the new profile gives it, is unfinished, also while it is
+    /// stopped; and, while any customer's deletion is unfinished, when the new hostname is one
+    /// that deletion saved.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_node(&self, ctx: &Context<'_>, id: ID, node: NodeInput) -> Result<ID> {
         let i = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
 
         // Check customer scoping
-        customer_access::load_accessible_node(ctx, &id)?;
+        let current = customer_access::load_accessible_node(ctx, &id)?;
         if let Some(profile_draft) = node.profile_draft.as_ref() {
             customer_access::check_customer_membership(ctx, &profile_draft.customer_id)?;
         }
+        super::check_node_write(ctx, &current, node.profile_draft.as_ref())?;
 
         if node.name_draft.is_none() {
             // Since the `name` of the node is used as the key in the database, the `name_draft`
@@ -297,6 +303,11 @@ impl NodeControlMutation {
     /// the apply do the generator's policies record the new Data Store. When the apply changes the
     /// node's applied customer or hostname, every Time Series Generator holding a sampling policy
     /// whose sensor or assignee is on the node is told that its policies changed.
+    ///
+    /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of the node's applied
+    /// customer, or of the customer the new profile gives it, is unfinished, also while it is
+    /// stopped; and, while any customer's deletion is unfinished, when the new hostname is one
+    /// that deletion saved.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_node_draft(&self, ctx: &Context<'_>, id: ID, node: NodeInput) -> Result<Node> {
@@ -306,6 +317,7 @@ impl NodeControlMutation {
         if let Some(profile_draft) = node.profile_draft.as_ref() {
             customer_access::check_customer_membership(ctx, &profile_draft.customer_id)?;
         }
+        super::check_node_write(ctx, &current_node, node.profile_draft.as_ref())?;
 
         if node.name_draft.is_none() {
             return Err("Node is not valid for apply".into());

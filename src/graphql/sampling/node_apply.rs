@@ -17,7 +17,12 @@ const GIGANTO_NAME: &str = "giganto_name";
 /// configuration; `None` if it has none or an empty one, as review-database
 /// records a policy's Data Store.
 pub(in crate::graphql) fn generator_data_store(agent: &review_database::Agent) -> Option<String> {
-    let config = agent.config.as_ref()?;
+    giganto_name(agent.config.as_ref()?)
+}
+
+/// Returns the top-level `giganto_name` of an agent's configuration text;
+/// `None` if it has none, an empty one, or does not parse.
+pub(in crate::graphql) fn giganto_name(config: &review_database::AgentConfig) -> Option<String> {
     let table = config.as_ref().parse::<toml::Table>().ok()?;
     table
         .get(GIGANTO_NAME)?
