@@ -177,11 +177,19 @@ impl TrainingMutation {
         definition: String,
     ) -> Result<String> {
         let node_id = parse_node_id(&node_id)?;
+        let users_customers = users_customers(ctx)?;
+        // Access and the deletion lock answer before the definition is
+        // validated; both are checked again under the engine configuration
+        // lock.
+        {
+            let store = super::get_store(ctx)?;
+            let target = resolve_instance(&store, users_customers.as_deref(), node_id, &agent_key)?;
+            check_customers(&store, [target.customer_id])?;
+        }
         let document = TrainingDocument::parse_and_validate(&definition)?;
         let addrs = data_store_addrs(ctx, &document.data_store.server_name).await;
 
         let _lock = lock_engine_config(ctx).await?;
-        let users_customers = users_customers(ctx)?;
         let system_admin = is_system_admin(ctx);
         let store = super::get_store(ctx)?;
         let target = resolve_instance(&store, users_customers.as_deref(), node_id, &agent_key)?;
@@ -236,11 +244,19 @@ impl TrainingMutation {
         name: String,
         definition: String,
     ) -> Result<String> {
+        let users_customers = users_customers(ctx)?;
+        // Access and the deletion lock answer before the definition is
+        // validated; both are checked again under the engine configuration
+        // lock.
+        {
+            let store = super::get_store(ctx)?;
+            let stored = accessible_definition(&store, users_customers.as_deref(), &name)?;
+            check_customers(&store, [stored.customer_id])?;
+        }
         let document = TrainingDocument::parse_and_validate(&definition)?;
         let addrs = data_store_addrs(ctx, &document.data_store.server_name).await;
 
         let _lock = lock_engine_config(ctx).await?;
-        let users_customers = users_customers(ctx)?;
         let system_admin = is_system_admin(ctx);
         let store = super::get_store(ctx)?;
         let stored = accessible_definition(&store, users_customers.as_deref(), &name)?;
@@ -484,6 +500,16 @@ impl TrainingMutation {
         suspicious_tokens: MaybeUndefined<String>,
     ) -> Result<ID> {
         let node_id = parse_node_id(&node_id)?;
+        // Access and the deletion lock answer before the Data Store is
+        // validated; both are checked again under the engine configuration
+        // lock.
+        {
+            let model = load_accessible_model_by_name(ctx, "source", &source)?;
+            let users_customers = users_customers(ctx)?;
+            let store = super::get_store(ctx)?;
+            let target = resolve_instance(&store, users_customers.as_deref(), node_id, &agent_key)?;
+            check_customers(&store, [model.customer_id, target.customer_id])?;
+        }
         let address = data_store.address.parse::<SocketAddr>().map_err(|e| {
             refusal(
                 RefusalCode::InvalidDocument,

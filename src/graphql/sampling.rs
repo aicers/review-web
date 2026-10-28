@@ -1012,24 +1012,6 @@ impl SamplingPolicyMutation {
     ) -> Result<ID> {
         let i = parse_id(&id)?;
         let fix = fix.unwrap_or(false);
-        let assignee = match (node_id, agent_key) {
-            (Some(node_id), Some(agent_key)) => {
-                let node_id = node_id
-                    .as_str()
-                    .parse::<u32>()
-                    .map_err(|_| "invalid node ID")?;
-                Some((node_id, agent_key))
-            }
-            (None, None) => None,
-            _ => {
-                return Err(
-                    "nodeId and agentKey are given together, or are both null to unassign".into(),
-                );
-            }
-        };
-        if fix && assignee.is_none() {
-            return Err("a policy is fixed only by assigning it; fix cannot unassign".into());
-        }
 
         let users_cids = users_customers(ctx)?;
         let (previous, target) = {
@@ -1037,6 +1019,25 @@ impl SamplingPolicyMutation {
             let store = crate::graphql::get_store(ctx)?;
             let policy = accessible_policy(&store, users_cids.as_deref(), i)?;
             customer_deletion_guard::check_customers(&store, policy.customer_id)?;
+            let assignee = match (node_id, agent_key) {
+                (Some(node_id), Some(agent_key)) => {
+                    let node_id = node_id
+                        .as_str()
+                        .parse::<u32>()
+                        .map_err(|_| "invalid node ID")?;
+                    Some((node_id, agent_key))
+                }
+                (None, None) => None,
+                _ => {
+                    return Err(
+                        "nodeId and agentKey are given together, or are both null to unassign"
+                            .into(),
+                    );
+                }
+            };
+            if fix && assignee.is_none() {
+                return Err("a policy is fixed only by assigning it; fix cannot unassign".into());
+            }
             let target = assignee
                 .map(|(node_id, agent_key)| {
                     resolve_generator(&store, users_cids.as_deref(), node_id, &agent_key)
@@ -1274,6 +1275,11 @@ mod tests {
             for mutation in mutations(two.policy_a, &two.generator_a, 1) {
                 assert_locked(&schema.execute_as_system_admin(&mutation).await);
             }
+            // The lock answers before the arguments are checked.
+            let res = schema
+                .execute_as_system_admin(&assign_mutation(two.policy_a, None, Some(true)))
+                .await;
+            assert_locked(&res);
             // Removing policies of both customers is refused as a whole.
             let res = schema
                 .execute_as_system_admin(&remove_mutation(&[two.policy_b, two.policy_a]))

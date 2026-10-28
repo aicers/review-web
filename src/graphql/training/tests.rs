@@ -2649,6 +2649,22 @@ async fn a_customer_being_deleted_keeps_its_definitions_runs_and_models() {
     assert_locked(&f.sys(&insert(&f.engine_a, "new-a", &text_a)).await);
     assert_locked(&f.sys(&remove_model("free-a")).await);
 
+    // The lock answers before the definition or the Data Store is validated.
+    for put_job in [put_running_job, put_stopped_job] {
+        put_job(&f.store(), A, &["engine-a.example.com"]);
+        assert_locked(&f.sys(&insert(&f.engine_a, "new-a", "not [toml")).await);
+        assert_locked(&f.sec(&update("def-a", "not [toml"), &[A]).await);
+        let invalid_address = clone(
+            "def-a",
+            "copy",
+            &f.engine_a,
+            (&f.server_name, "not an address"),
+            &[],
+            "",
+        );
+        assert_locked(&f.sys(&invalid_address).await);
+    }
+
     put_completed_job(&f.store(), A, &["engine-a.example.com"]);
     let res = f.sys(&insert(&f.engine_a, "new-a", &text_a)).await;
     assert_eq!(data(res), json!({ "insertTrainingDefinition": "new-a" }));
