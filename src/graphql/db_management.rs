@@ -703,6 +703,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_refused_restore_keeps_database_open() {
+        let schema = TestSchema::new().await;
+        set_initial_config(&schema).await;
+
+        let res = schema
+            .execute_as_system_admin(r#"mutation { restoreFromBackup(id: "1") }"#)
+            .await;
+        assert_eq!(res.errors.len(), 1, "{:?}", res.errors);
+        assert_eq!(
+            res.errors[0].message,
+            "no backup with id 1; nothing was restored"
+        );
+
+        let res = schema
+            .execute_as_system_admin(r"mutation { restoreFromLatestBackup }")
+            .await;
+        assert_eq!(res.errors.len(), 1, "{:?}", res.errors);
+        assert_eq!(
+            res.errors[0].message,
+            "no backup to restore; nothing was restored"
+        );
+
+        let res = schema.execute_as_system_admin(BACKUP_CONFIG_QUERY).await;
+        assert!(res.errors.is_empty(), "GraphQL errors: {:?}", res.errors);
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "backupConfig": {
+                    "backupDuration": 1,
+                    "backupTime": "23:59:59",
+                    "numOfBackupsToKeep": 5
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn test_set_backup_config_validation_backup_duration() {
         let schema = TestSchema::new().await;
 

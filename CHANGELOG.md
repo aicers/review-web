@@ -4,6 +4,26 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Bumped `review-database` dependency to 0.60.1. Its store format stays in the
+  0.60 series, so a store written by 0.60 is served without migration.
+
+### Fixed
+
+- The `restoreFromBackup` and `restoreFromLatestBackup` mutations return an
+  error for a backup in another store format, such as one taken before the
+  0.60.0 migration, or one whose format cannot be read, and leave the database
+  open and serving. They used to replace the database with it and fail to reopen
+  it, after which every request that used the database failed and the server
+  could not start again. Such a backup is still restored offline through
+  `review-database`, marked with the format it was taken at. A
+  `restoreFromBackup` with a backup ID that does not exist, and a
+  `restoreFromLatestBackup` when there is no backup, likewise return an error
+  and leave the database open, where they used to leave it closed.
+
 ## [0.52.0] - 2026-10-29
 
 ### Changed
@@ -2777,6 +2797,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.52.0...main
 [0.52.0]: https://github.com/aicers/review-web/compare/0.51.1...0.52.0
 [0.51.1]: https://github.com/aicers/review-web/compare/0.51.0...0.51.1
 [0.51.0]: https://github.com/aicers/review-web/compare/0.50.0...0.51.0
