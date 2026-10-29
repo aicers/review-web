@@ -4,6 +4,20 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Bumped `review-database` dependency to 0.60.0. Its store format moves to
+  0.60.0, so a store written by 0.59 must be migrated through
+  `review-database` before this version serves it; the migration deletes every
+  stored data source, which the GraphQL API has not served since 0.49.0, and
+  changes nothing else. A backup taken before the migration cannot be
+  restored with the `restoreFromBackup` or `restoreFromLatestBackup`
+  mutations, which replace the database with it before failing to open it;
+  restore it offline through `review-database`, marked with the format it was
+  taken at.
+
 ## [0.51.1] - 2026-10-29
 
 ### Fixed
@@ -2763,6 +2777,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.51.1...main
 [0.51.1]: https://github.com/aicers/review-web/compare/0.51.0...0.51.1
 [0.51.0]: https://github.com/aicers/review-web/compare/0.50.0...0.51.0
 [0.50.0]: https://github.com/aicers/review-web/compare/0.49.0...0.50.0
