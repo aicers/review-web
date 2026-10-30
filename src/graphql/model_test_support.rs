@@ -146,6 +146,9 @@ pub(crate) fn insert_engine_node(store: &Store, customer_id: u32) -> ModelInstan
         lifecycle: review_database::Lifecycle::Running,
         bound_addrs: vec![],
         instance: Some(1),
+        run_as_root: false,
+        run_as_root_draft: None,
+        privilege_profile: None,
     };
     let node = review_database::Node {
         id: u32::MAX,

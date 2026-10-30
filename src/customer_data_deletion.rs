@@ -3992,6 +3992,7 @@ mod tests {
             expires_at: attempt_deadline(),
             backup_id: None,
             pre_update_version: None,
+            privilege_profile: None,
         }
     }
 
@@ -4053,6 +4054,7 @@ mod tests {
             _bind_addrs: Option<Vec<crate::backend::BindAddrInput>>,
             _config_template: Option<String>,
             _request_key: &str,
+            _run_as_root: bool,
         ) -> Result<(crate::backend::DeployOutcome, crate::backend::OperationId), DeployError>
         {
             unimplemented!("a customer deletion only removes")
@@ -10455,6 +10457,7 @@ server_name = "{server_name}"
             bind_addrs: Option<Vec<crate::backend::BindAddrInput>>,
             config_template: Option<String>,
             request_key: &str,
+            run_as_root: bool,
         ) -> Result<(crate::backend::DeployOutcome, crate::backend::OperationId), DeployError>
         {
             self.0
@@ -10466,6 +10469,7 @@ server_name = "{server_name}"
                     bind_addrs,
                     config_template,
                     request_key,
+                    run_as_root,
                 )
                 .await
         }

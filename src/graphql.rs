@@ -1244,6 +1244,7 @@ impl PackageDeployer for MockPackageDeployer {
         _bind_addrs: Option<Vec<BindAddrInput>>,
         _config_template: Option<String>,
         _request_key: &str,
+        _run_as_root: bool,
     ) -> Result<(DeployOutcome, OperationId), DeployError> {
         self.check()?;
         Ok((DeployOutcome::Applied, Self::operation_id()))
@@ -1337,6 +1338,7 @@ impl PackageDeployer for MockPackageDeployer {
             commit: "0123456789abcdef".to_string(),
             lifecycle: ProtocolLifecycle::Running,
             bound_addrs: vec![],
+            privilege_profile: None,
         })
     }
 
@@ -2137,6 +2139,7 @@ mod tests {
                         None,
                         None,
                         "b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e",
+                        false,
                     )
                     .await?;
                 Ok(operation_id.into_inner())
@@ -2240,6 +2243,7 @@ mod tests {
                         None,
                         None,
                         "b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e",
+                        false,
                     )
                     .await
                     .map(|_| ())
@@ -2344,6 +2348,7 @@ mod tests {
                 }]),
                 None,
                 "b0a6f6aa-7f7a-4b7c-9a3f-3f9b1a2c4d5e",
+                false,
             )
             .await
             .unwrap();

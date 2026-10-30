@@ -21,7 +21,9 @@ use super::{
     data_store_endpoint::{self, DataStoreEndpoint},
     engine_write::{self, Slot},
     gen_agent_lookup_key,
-    input::{AgentDraftInput, ExternalServiceInput, NodeDraftInput, agent_draft},
+    input::{
+        AgentDraftInput, ExternalServiceInput, NodeDraftInput, agent_draft, check_run_as_root_draft,
+    },
     installed_guard,
 };
 use crate::{graphql::query_with_constraints, info_with_username};
@@ -112,6 +114,9 @@ impl NodeQuery {
 impl NodeMutation {
     /// Inserts a new node, returning the ID of the new node.
     ///
+    /// A `runAsRootDraft` that is not null on an agent whose kind is not `SENSOR` is refused, naming
+    /// the agent.
+    ///
     /// The draft of each Unsupervised Engine agent is validated as an engine document (RFC 0006
     /// §5.3). A new node has no applied profile, so a document with any detector is refused with
     /// `SOURCE_NOT_ALLOWED`. Refusals carry `extensions.code`: `INVALID_DOCUMENT`,
@@ -157,6 +162,11 @@ impl NodeMutation {
         let agents: Vec<review_database::Agent> = agents
             .into_iter()
             .map(|new_agent| {
+                check_run_as_root_draft(
+                    new_agent.kind,
+                    &new_agent.key,
+                    new_agent.run_as_root_draft,
+                )?;
                 let draft = agent_draft(new_agent.kind, &new_agent.key, new_agent.draft)?;
 
                 Ok::<_, Error>(review_database::Agent {
@@ -171,6 +181,9 @@ impl NodeMutation {
                     lifecycle: review_database::Lifecycle::NotInstalled,
                     bound_addrs: vec![],
                     instance: None,
+                    run_as_root: false,
+                    run_as_root_draft: new_agent.run_as_root_draft,
+                    privilege_profile: None,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -303,6 +316,9 @@ impl NodeMutation {
     /// Refuses an update that would delete an installed instance's row or change its kind; such an
     /// instance is removed only with `removeService`.
     ///
+    /// A `runAsRootDraft` that is not null on an agent whose kind is not `SENSOR` is refused, naming
+    /// the agent.
+    ///
     /// An Unsupervised Engine agent's draft that differs from its stored draft is validated as an
     /// engine document (RFC 0006 §5.3) for the node's applied customer; one left unchanged is not.
     /// Refusals carry `extensions.code`: `INVALID_DOCUMENT`, `UNKNOWN_FIELD`, `FIELD_NOT_ALLOWED`,
@@ -389,12 +405,16 @@ pub(super) fn merge_installation_state(
             agent.lifecycle = stored_agent.lifecycle;
             agent.bound_addrs.clone_from(&stored_agent.bound_addrs);
             agent.instance = stored_agent.instance;
+            agent
+                .privilege_profile
+                .clone_from(&stored_agent.privilege_profile);
         } else {
             agent.installed_version = None;
             agent.installed_commit = None;
             agent.lifecycle = review_database::Lifecycle::NotInstalled;
             agent.bound_addrs.clear();
             agent.instance = None;
+            agent.privilege_profile = None;
         }
     }
 
@@ -486,10 +506,10 @@ mod tests {
     use serde_json::json;
 
     use super::super::test_support::{
-        insert_active_node, installed_agent, installed_service, node_draft_input, put_node,
-        stored_node,
+        insert_active_node, installed_agent, installed_service, node_draft_input, node_input,
+        put_node, stored_node,
     };
-    use super::agent_lookup_keys_by_customer_id;
+    use super::{agent_lookup_keys_by_customer_id, merge_installation_state};
     use crate::graphql::{Role, TestSchema};
 
     #[tokio::test]
@@ -519,6 +539,9 @@ mod tests {
                     lifecycle: database::Lifecycle::NotInstalled,
                     bound_addrs: vec![],
                     instance: None,
+                    run_as_root: false,
+                    run_as_root_draft: None,
+                    privilege_profile: None,
                 },
                 database::Agent {
                     node_id: u32::MAX,
@@ -532,6 +555,9 @@ mod tests {
                     lifecycle: database::Lifecycle::NotInstalled,
                     bound_addrs: vec![],
                     instance: None,
+                    run_as_root: false,
+                    run_as_root_draft: None,
+                    privilege_profile: None,
                 },
                 database::Agent {
                     node_id: u32::MAX,
@@ -545,6 +571,9 @@ mod tests {
                     lifecycle: database::Lifecycle::NotInstalled,
                     bound_addrs: vec![],
                     instance: None,
+                    run_as_root: false,
+                    run_as_root_draft: None,
+                    privilege_profile: None,
                 },
             ],
             external_services: vec![],
@@ -3684,6 +3713,320 @@ mod tests {
         let res = update_draft(&schema, id, &stale, &node_draft_input(&stale, true, true)).await;
         assert_eq!(only_error(&res), "entry changed");
         assert_eq!(stored_node(&schema.store(), id), stored);
+    }
+
+    /// Stores a node of one Sensor holding the given switch state and a
+    /// confirmed profile.
+    fn put_switch_node(store: &review_database::Store, run_as_root: bool) -> u32 {
+        let mut sensor = installed_agent(
+            "001.piglet",
+            review_database::AgentKind::Sensor,
+            Some("a = 1"),
+            None,
+        );
+        sensor.run_as_root = run_as_root;
+        sensor.privilege_profile = Some("replay".to_string());
+        put_node(store, "switch", Some(INSTALLED_HOST), vec![sensor], vec![])
+    }
+
+    #[tokio::test]
+    async fn update_node_draft_stores_the_switch_draft_and_keeps_the_switch() {
+        let schema = TestSchema::new().await;
+        let id = put_switch_node(&schema.store(), true);
+        let stored = stored_node(&schema.store(), id);
+
+        let mut new = stored.clone();
+        new.agents[0].run_as_root_draft = Some(false);
+        let res = update_draft(&schema, id, &stored, &node_draft_input(&new, true, true)).await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+
+        let updated = stored_node(&schema.store(), id);
+        assert!(updated.agents[0].run_as_root, "the switch comes from `old`");
+        assert_eq!(updated.agents[0].run_as_root_draft, Some(false));
+        assert_eq!(
+            updated.agents[0].privilege_profile.as_deref(),
+            Some("replay")
+        );
+
+        // Every draft save carries the whole draft: leaving the field out
+        // drops the pending change.
+        let mut new = updated.clone();
+        new.agents[0].run_as_root_draft = None;
+        let res = update_draft(&schema, id, &updated, &node_draft_input(&new, true, true)).await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        let updated = stored_node(&schema.store(), id);
+        assert!(updated.agents[0].run_as_root);
+        assert_eq!(updated.agents[0].run_as_root_draft, None);
+    }
+
+    #[tokio::test]
+    async fn update_node_draft_with_a_stale_switch_is_refused_as_a_store_mismatch() {
+        let schema = TestSchema::new().await;
+        let id = put_switch_node(&schema.store(), false);
+        let stored = stored_node(&schema.store(), id);
+
+        for (run_as_root, run_as_root_draft) in [(true, None), (false, Some(false))] {
+            let mut stale = stored.clone();
+            stale.agents[0].run_as_root = run_as_root;
+            stale.agents[0].run_as_root_draft = run_as_root_draft;
+            let mut new = stale.clone();
+            new.agents[0].run_as_root_draft = Some(true);
+
+            let res = update_draft(&schema, id, &stale, &node_draft_input(&new, true, true)).await;
+
+            assert_eq!(only_error(&res), "old value mismatch");
+            assert_eq!(stored_node(&schema.store(), id), stored);
+        }
+    }
+
+    #[tokio::test]
+    async fn update_node_draft_with_a_stale_snapshot_that_changes_no_agent_writes_nothing() {
+        let schema = TestSchema::new().await;
+        let id = put_switch_node(&schema.store(), false);
+        let stored = stored_node(&schema.store(), id);
+
+        let mut stale = stored.clone();
+        stale.agents[0].run_as_root = true;
+        let res = update_draft(&schema, id, &stale, &node_draft_input(&stale, true, true)).await;
+
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(stored_node(&schema.store(), id), stored);
+    }
+
+    #[tokio::test]
+    async fn the_switch_draft_is_refused_on_an_agent_that_is_not_a_sensor() {
+        let schema = TestSchema::new().await;
+        for value in [true, false] {
+            let res = schema
+                .execute_as_system_admin(&format!(
+                    r#"mutation {{
+                        insertNode(
+                            name: "node"
+                            customerId: 0
+                            description: "description"
+                            hostname: "node.example.com"
+                            agents: [{{
+                                key: "hog", kind: SEMI_SUPERVISED, status: ENABLED,
+                                draft: "b = 1", runAsRootDraft: {value}
+                            }}]
+                            externalServices: []
+                        )
+                    }}"#
+                ))
+                .await;
+            let err = only_error(&res);
+            assert!(err.contains("hog"), "{err}");
+            assert!(err.contains("Sensor"), "{err}");
+        }
+        assert_eq!(
+            schema
+                .store()
+                .node_map()
+                .iter(review_database::event::Direction::Forward, None)
+                .count(),
+            0
+        );
+
+        let id = put_node(
+            &schema.store(),
+            "node",
+            Some(INSTALLED_HOST),
+            vec![installed_agent(
+                "hog",
+                review_database::AgentKind::SemiSupervised,
+                Some("b = 1"),
+                None,
+            )],
+            vec![],
+        );
+        let stored = stored_node(&schema.store(), id);
+        let mut new = stored.clone();
+        new.name_draft = Some("renamed".to_string());
+        new.agents[0].run_as_root_draft = Some(true);
+        let res = update_draft(&schema, id, &stored, &node_draft_input(&new, true, true)).await;
+        let err = only_error(&res);
+        assert!(err.contains("hog"), "{err}");
+        assert!(err.contains("Sensor"), "{err}");
+        assert_eq!(stored_node(&schema.store(), id), stored);
+    }
+
+    #[tokio::test]
+    async fn insert_node_stores_the_switch_draft_with_the_switch_off() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertNode(
+                        name: "node"
+                        customerId: 0
+                        description: "description"
+                        hostname: "node.example.com"
+                        agents: [{
+                            key: "001.piglet", kind: SENSOR, status: ENABLED,
+                            draft: "a = 1", runAsRootDraft: true
+                        }]
+                        externalServices: []
+                    )
+                }"#,
+            )
+            .await;
+        assert_eq!(res.data.to_string(), r#"{insertNode: "0"}"#);
+
+        let stored = stored_node(&schema.store(), 0);
+        assert!(!stored.agents[0].run_as_root);
+        assert_eq!(stored.agents[0].run_as_root_draft, Some(true));
+        assert_eq!(stored.agents[0].privilege_profile, None);
+    }
+
+    #[tokio::test]
+    async fn an_agent_added_by_a_draft_update_has_the_switch_off_and_no_profile() {
+        let schema = TestSchema::new().await;
+        let id = put_switch_node(&schema.store(), true);
+        let stored = stored_node(&schema.store(), id);
+
+        let mut new = stored.clone();
+        let mut added = new.agents[0].clone();
+        added.key = "002.piglet".to_string();
+        new.agents.push(added);
+        let res = update_draft(&schema, id, &stored, &node_draft_input(&new, true, true)).await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+
+        let updated = stored_node(&schema.store(), id);
+        let added = updated
+            .agents
+            .iter()
+            .find(|agent| agent.key == "002.piglet")
+            .expect("the agent was added");
+        assert!(!added.run_as_root);
+        assert_eq!(added.run_as_root_draft, None);
+        assert_eq!(added.privilege_profile, None);
+    }
+
+    #[tokio::test]
+    async fn the_privilege_profile_survives_draft_updates_and_applies() {
+        let schema = TestSchema::new().await;
+        let id = put_switch_node(&schema.store(), false);
+        let profile = |schema: &TestSchema| {
+            stored_node(&schema.store(), id).agents[0]
+                .privilege_profile
+                .clone()
+        };
+
+        let stored = stored_node(&schema.store(), id);
+        let mut new = stored.clone();
+        new.agents[0].run_as_root_draft = Some(true);
+        let res = update_draft(&schema, id, &stored, &node_draft_input(&new, true, true)).await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(profile(&schema).as_deref(), Some("replay"));
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                "mutation {{ applyNodeDraft(id: \"{id}\", node: {}) {{ id }} }}",
+                node_input(&stored_node(&schema.store(), id))
+            ))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(profile(&schema).as_deref(), Some("replay"));
+
+        let stored = stored_node(&schema.store(), id);
+        let mut new = stored.clone();
+        new.agents[0].run_as_root_draft = Some(false);
+        let res = update_draft(&schema, id, &stored, &node_draft_input(&new, true, true)).await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        let res = schema
+            .execute_as_system_admin(&format!(
+                "mutation {{ applyNode(id: \"{id}\", node: {}) }}",
+                node_input(&stored_node(&schema.store(), id))
+            ))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert!(!stored_node(&schema.store(), id).agents[0].run_as_root);
+        assert_eq!(profile(&schema).as_deref(), Some("replay"));
+    }
+
+    /// The profile is observed state and comes from the stored row, or is
+    /// `None` for a key with no stored row; the switch and its draft are the
+    /// operator's and stay as the snapshot has them.
+    #[tokio::test]
+    async fn merge_installation_state_takes_the_profile_and_not_the_switch() {
+        let schema = TestSchema::new().await;
+        let id = put_switch_node(&schema.store(), true);
+        let stored = stored_node(&schema.store(), id);
+
+        let mut update = review_database::NodeUpdate::from(stored.clone());
+        update.agents[0].run_as_root = false;
+        update.agents[0].run_as_root_draft = Some(true);
+        update.agents[0].privilege_profile = None;
+        let mut gone = update.agents[0].clone();
+        gone.key = "002.piglet".to_string();
+        gone.privilege_profile = Some("root".to_string());
+        update.agents.push(gone);
+
+        merge_installation_state(&stored, &mut update);
+
+        assert!(!update.agents[0].run_as_root);
+        assert_eq!(update.agents[0].run_as_root_draft, Some(true));
+        assert_eq!(
+            update.agents[0].privilege_profile.as_deref(),
+            Some("replay")
+        );
+        assert_eq!(update.agents[1].privilege_profile, None);
+    }
+
+    #[tokio::test]
+    async fn node_returns_the_switch_and_the_profile_as_stored() {
+        let schema = TestSchema::new().await;
+        let mut sensor = installed_agent(
+            "001.piglet",
+            review_database::AgentKind::Sensor,
+            Some("a = 1"),
+            None,
+        );
+        sensor.run_as_root = true;
+        sensor.run_as_root_draft = Some(false);
+        sensor.privilege_profile = Some("root".to_string());
+        let plain = installed_agent(
+            "002.piglet",
+            review_database::AgentKind::Sensor,
+            Some("a = 1"),
+            None,
+        );
+        let id = put_node(
+            &schema.store(),
+            "switch",
+            Some(INSTALLED_HOST),
+            vec![sensor, plain],
+            vec![],
+        );
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"{{node(id: "{id}") {{ agents {{ key runAsRoot runAsRootDraft privilegeProfile }} }} }}"#
+            ))
+            .await;
+
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_json_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "node": {
+                    "agents": [
+                        {
+                            "key": "001.piglet",
+                            "runAsRoot": true,
+                            "runAsRootDraft": false,
+                            "privilegeProfile": "root"
+                        },
+                        {
+                            "key": "002.piglet",
+                            "runAsRoot": false,
+                            "runAsRootDraft": null,
+                            "privilegeProfile": null
+                        }
+                    ]
+                }
+            })
+        );
     }
 
     #[tokio::test]

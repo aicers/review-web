@@ -1085,6 +1085,11 @@ pub trait PackageDeployer: Send + Sync {
     /// boundary and can only refuse what reaches it, so folding the list into
     /// a map here would turn a refusal into a silent last-wins merge.
     ///
+    /// `run_as_root` is whether the operator asked for the instance to run as
+    /// root. For a build that declares privilege profiles the implementation
+    /// sends `root` when it is set and `replay` when it is not; for a build
+    /// that declares none it refuses it set.
+    ///
     /// # Errors
     ///
     /// Returns [`DeployError::PortAllocationConflict`] or
@@ -1114,6 +1119,7 @@ pub trait PackageDeployer: Send + Sync {
         bind_addrs: Option<Vec<BindAddrInput>>,
         config_template: Option<String>,
         request_key: &str,
+        run_as_root: bool,
     ) -> Result<(DeployOutcome, OperationId), DeployError>;
 
     /// Updates the build of an existing placement, and returns how the apply

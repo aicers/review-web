@@ -350,6 +350,7 @@ mod tests {
             _bind_addrs: Option<Vec<BackendBindAddrInput>>,
             _config_template: Option<String>,
             _request_key: &str,
+            _run_as_root: bool,
         ) -> Result<(DeployOutcome, OperationId), DeployError> {
             unimplemented!("this stub answers recommend_bind_addrs only")
         }

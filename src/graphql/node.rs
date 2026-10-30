@@ -168,6 +168,16 @@ pub struct Agent {
     /// which asserts that something *could* be installed here, while null says
     /// no package deploys this kind at all.
     pub lifecycle: Option<Lifecycle>,
+
+    /// The applied "run as root" switch.
+    pub run_as_root: bool,
+
+    /// The unapplied "run as root" switch change, or null when there is none.
+    pub run_as_root_draft: Option<bool>,
+
+    /// The privilege profile the host last confirmed applying, or null for a
+    /// Sensor whose build declares no profiles or that was never confirmed.
+    pub privilege_profile: Option<String>,
 }
 
 #[ComplexObject]
@@ -333,6 +343,9 @@ impl From<&database::Agent> for Agent {
             installed_version: state.version,
             installed_commit: state.commit,
             lifecycle: state.lifecycle,
+            run_as_root: input.run_as_root,
+            run_as_root_draft: input.run_as_root_draft,
+            privilege_profile: input.privilege_profile.clone(),
         }
     }
 }

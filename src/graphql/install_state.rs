@@ -523,6 +523,9 @@ mod tests {
             lifecycle,
             bound_addrs: Vec::new(),
             instance,
+            run_as_root: false,
+            run_as_root_draft: None,
+            privilege_profile: None,
         }
     }
 

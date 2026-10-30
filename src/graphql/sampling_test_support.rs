@@ -60,6 +60,9 @@ fn agent(kind: AgentKind, key: &str, config: Option<String>) -> Agent {
         lifecycle: Lifecycle::NotInstalled,
         bound_addrs: vec![],
         instance: None,
+        run_as_root: false,
+        run_as_root_draft: None,
+        privilege_profile: None,
     }
 }
 

@@ -843,6 +843,9 @@ async fn a_detector_on_a_node_without_an_applied_profile_is_refused() {
             lifecycle: Lifecycle::NotInstalled,
             bound_addrs: vec![],
             instance: None,
+            run_as_root: false,
+            run_as_root_draft: None,
+            privilege_profile: None,
         }],
         external_services: vec![],
         creation_time: Utc::now(),
@@ -1063,6 +1066,9 @@ async fn a_change_of_kind_to_or_from_unsupervised_is_refused() {
         lifecycle: Lifecycle::NotInstalled,
         bound_addrs: vec![],
         instance: None,
+        run_as_root: false,
+        run_as_root_draft: None,
+        privilege_profile: None,
     };
     let profile = NodeProfile {
         customer_id: A,
@@ -1328,6 +1334,9 @@ fn the_store_refusals_map_to_the_resolver_codes() {
             lifecycle: Lifecycle::NotInstalled,
             bound_addrs: vec![],
             instance: None,
+            run_as_root: false,
+            run_as_root_draft: None,
+            privilege_profile: None,
         }],
     };
     let gone = store_refusal(

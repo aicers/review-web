@@ -32,6 +32,19 @@ type Agent {
 	"""
 	lifecycle: Lifecycle
 	"""
+	The applied "run as root" switch.
+	"""
+	runAsRoot: Boolean!
+	"""
+	The unapplied "run as root" switch change, or null when there is none.
+	"""
+	runAsRootDraft: Boolean
+	"""
+	The privilege profile the host last confirmed applying, or null for a
+	Sensor whose build declares no profiles or that was never confirmed.
+	"""
+	privilegeProfile: String
+	"""
 	The instance number this entry is, rendered as a decimal string.
 	
 	It is a `StringNumber` rather than an `Int` because the stored number
@@ -141,6 +154,11 @@ input AgentDraftInput {
 	key: String!
 	status: AgentStatus!
 	draft: String
+	"""
+	The unapplied "run as root" switch change, or null when there is none.
+	Refused on an agent whose kind is not `SENSOR`.
+	"""
+	runAsRootDraft: Boolean
 }
 
 input AgentInput {
@@ -156,6 +174,16 @@ input AgentInput {
 	status: AgentStatus!
 	config: String
 	draft: String
+	"""
+	The applied "run as root" switch, as read from the node. A client that
+	does not send it sends `false`.
+	"""
+	runAsRoot: Boolean! = false
+	"""
+	The unapplied "run as root" switch change, as read from the node, or
+	null when there is none.
+	"""
+	runAsRootDraft: Boolean
 }
 
 enum AgentKind {
@@ -6511,7 +6539,9 @@ type Mutation {
 	Applies the draft configuration to the node with the given ID.
 	
 	This function updates the node's `name` with `name_draft`, `profile` with `profile_draft`,
-	and `config` values of agents with their `draft` values.
+	and `config` values of agents with their `draft` values. An agent's `runAsRootDraft`, when
+	it is not null, becomes its `runAsRoot` and is cleared; that alone notifies no agent and
+	changes nothing on the running Sensor.
 	
 	Returns success as long as the database update is successful, regardless of the outcome of
 	notifying agents or broadcasting customer ID changes.
@@ -6555,10 +6585,10 @@ type Mutation {
 	"""
 	Applies the draft configuration to the node with the given ID at the database layer.
 	
-	Performs the database promotions (name, profile, agent configs, external services) in a
-	single atomic update, and broadcasts customer-specific networks when the node's
-	`customer_id` changes. Does not send agent-config notifications — use `applyAgentConfig`
-	for that.
+	Performs the database promotions (name, profile, agent configs and "run as root" switches,
+	external services) in a single atomic update, and broadcasts customer-specific networks
+	when the node's `customer_id` changes. Does not send agent-config notifications — use
+	`applyAgentConfig` for that.
 	
 	Refuses an apply that would delete an installed instance's row, change its kind, or change
 	the hostname of the node that holds one; such an instance is removed only with
@@ -6611,6 +6641,9 @@ type Mutation {
 	"""
 	Inserts a new node, returning the ID of the new node.
 	
+	A `runAsRootDraft` that is not null on an agent whose kind is not `SENSOR` is refused, naming
+	the agent.
+	
 	The draft of each Unsupervised Engine agent is validated as an engine document (RFC 0006
 	§5.3). A new node has no applied profile, so a document with any detector is refused with
 	`SOURCE_NOT_ALLOWED`. Refusals carry `extensions.code`: `INVALID_DOCUMENT`,
@@ -6640,6 +6673,9 @@ type Mutation {
 	
 	Refuses an update that would delete an installed instance's row or change its kind; such an
 	instance is removed only with `removeService`.
+	
+	A `runAsRootDraft` that is not null on an agent whose kind is not `SENSOR` is refused, naming
+	the agent.
 	
 	An Unsupervised Engine agent's draft that differs from its stored draft is validated as an
 	engine document (RFC 0006 §5.3) for the node's applied customer; one left unchanged is not.
@@ -7010,11 +7046,14 @@ type Mutation {
 	`configTemplates(target)`. Absent means none; review decides whether
 	the target requires one and whether the id exists.
 	
+	`runAsRoot` asks for the instance to run as root. Whether the build
+	accepts it is review's answer; a refusal is an ordinary GraphQL error.
+	
 	Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
 	the customer of the node whose applied hostname is `host` is unfinished,
 	also while it is stopped.
 	"""
-	installService(host: String!, target: String!, buildSelector: BuildSelectorInput!, onFailure: FailurePolicy! = ROLLBACK, bindAddrs: [BindAddrInput!], configTemplate: String, requestKey: String!): InstallServiceResult!
+	installService(host: String!, target: String!, buildSelector: BuildSelectorInput!, onFailure: FailurePolicy! = ROLLBACK, bindAddrs: [BindAddrInput!], configTemplate: String, requestKey: String!, runAsRoot: Boolean! = false): InstallServiceResult!
 	"""
 	Updates the build of an existing instance and returns the operation to
 	poll.

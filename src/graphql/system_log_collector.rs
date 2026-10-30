@@ -375,6 +375,7 @@ mod tests {
             expires_at: instant(3_600),
             backup_id: None,
             pre_update_version: None,
+            privilege_profile: None,
         }
     }
 
@@ -490,6 +491,7 @@ mod tests {
             _bind_addrs: Option<Vec<BindAddrInput>>,
             _config_template: Option<String>,
             _request_key: &str,
+            _run_as_root: bool,
         ) -> Result<(DeployOutcome, OperationId), DeployError> {
             unimplemented!("this stub answers the system log collector methods only")
         }

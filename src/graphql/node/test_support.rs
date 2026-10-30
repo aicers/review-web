@@ -141,6 +141,9 @@ pub(super) fn installed_agent(
         },
         bound_addrs: vec![],
         instance,
+        run_as_root: false,
+        run_as_root_draft: None,
+        privilege_profile: None,
     }
 }
 
@@ -210,6 +213,10 @@ fn literal(value: &str) -> String {
     serde_json::to_string(value).expect("a string serializes")
 }
 
+fn optional_bool_literal(value: Option<bool>) -> String {
+    value.map_or_else(|| "null".to_string(), |value| value.to_string())
+}
+
 fn optional_literal(value: Option<&str>) -> String {
     value.map_or_else(|| "null".to_string(), literal)
 }
@@ -264,12 +271,15 @@ pub(super) fn node_input(node: &review_database::Node) -> String {
         .iter()
         .map(|a| {
             format!(
-                "{{ key: {}, kind: {}, status: {}, config: {}, draft: {} }}",
+                "{{ key: {}, kind: {}, status: {}, config: {}, draft: {}, runAsRoot: {}, \
+                 runAsRootDraft: {} }}",
                 literal(&a.key),
                 agent_kind(a.kind),
                 status(a.status),
                 optional_literal(a.config.as_ref().map(AsRef::as_ref)),
-                optional_literal(a.draft.as_ref().map(AsRef::as_ref))
+                optional_literal(a.draft.as_ref().map(AsRef::as_ref)),
+                a.run_as_root,
+                optional_bool_literal(a.run_as_root_draft)
             )
         })
         .collect::<Vec<_>>()
@@ -308,11 +318,12 @@ pub(super) fn node_draft_input(
             .iter()
             .map(|a| {
                 format!(
-                    "{{ key: {}, kind: {}, status: {}, draft: {} }}",
+                    "{{ key: {}, kind: {}, status: {}, draft: {}, runAsRootDraft: {} }}",
                     literal(&a.key),
                     agent_kind(a.kind),
                     status(a.status),
-                    optional_literal(a.draft.as_ref().map(AsRef::as_ref))
+                    optional_literal(a.draft.as_ref().map(AsRef::as_ref)),
+                    optional_bool_literal(a.run_as_root_draft)
                 )
             })
             .collect::<Vec<_>>()
