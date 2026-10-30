@@ -16,15 +16,29 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `AgentInput` has `runAsRoot` and `runAsRootDraft`, and `AgentDraftInput` has
   `runAsRootDraft`, carried as the configuration and its draft are: a draft
   update cannot set the switch, and applying the node copies the draft into it.
-  Applying a switch change stores it; it notifies no agent and does not change
-  the privileges of a running Sensor.
+  Applying a switch change with `applyNodeDraft` stores it and notifies no
+  agent; `applyAgentConfig` then re-applies a Sensor whose privilege profile the
+  change alters, and `applyNode` refuses such a change.
 - The `installService` mutation has a `runAsRoot` argument, `false` by default,
   asking for the instance to run as root.
 - The `insertNode` and `updateNodeDraft` mutations refuse a `runAsRootDraft`
   that is not null on an agent whose kind is not `SENSOR`, naming the agent.
+- `applyAgentConfig` re-applies the installed build of a Sensor whose privilege
+  profile, derived from its stored configuration's `dpdk_args` and its "run as
+  root" switch, differs from the one its host last applied, instead of notifying
+  it.
+- `Agent.desiredPrivilegeProfile` is the privilege profile a Sensor's stored
+  configuration and "run as root" switch derive.
+- `AgentNotifyAttempt.errorCode` marks a failure that retrying the same apply
+  cannot fix: `PROFILE_CLASSIFICATION`, `PROFILE_REFUSED` or
+  `REAPPLY_ROLLED_BACK`.
 
 ### Changed
 
+- **Breaking change:** `PackageDeployer` has a required `reapply` method, and
+  `DeployError` has the variants `PrivilegeProfileNotDeclared` and
+  `ReapplyRolledBack`.
+- `applyNode` refuses an apply that would change a Sensor's privilege profile.
 - **Breaking change:** `PackageDeployer::install` takes a final
   `run_as_root: bool`, whether the operator asked for the instance to run as
   root. For a build that declares privilege profiles the implementation sends

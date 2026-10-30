@@ -1262,6 +1262,17 @@ impl PackageDeployer for MockPackageDeployer {
         Ok((DeployOutcome::Accepted, Self::operation_id()))
     }
 
+    async fn reapply(
+        &self,
+        _host: &str,
+        _target: &str,
+        _instance: Option<u32>,
+        _profile: String,
+    ) -> Result<(DeployOutcome, OperationId), DeployError> {
+        self.check()?;
+        Ok((DeployOutcome::Applied, Self::operation_id()))
+    }
+
     async fn remove(
         &self,
         _host: &str,
@@ -2304,10 +2315,12 @@ mod tests {
                     | DeployError::UnknownConfigTemplate { .. }
                     | DeployError::ManifestFormatUnsupported { .. }
                     | DeployError::SystemInstance { .. }
+                    | DeployError::PrivilegeProfileNotDeclared { .. }
+                    | DeployError::ReapplyRolledBack { .. }
                     | DeployError::UnderMaintenance => {
                         panic!(
                             "this mock does not script configuration template, manifest-format, \
-                             system-instance or maintenance refusals"
+                             system-instance, privilege-profile or maintenance refusals"
                         )
                     }
                 };

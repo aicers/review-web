@@ -192,6 +192,18 @@ mod mtls_integration {
             )))
         }
 
+        async fn reapply(
+            &self,
+            _host: &str,
+            _target: &str,
+            _instance: Option<u32>,
+            _profile: String,
+        ) -> Result<(DeployOutcome, OperationId), DeployError> {
+            Err(DeployError::Other(anyhow::anyhow!(
+                "Not supported in mTLS integration test"
+            )))
+        }
+
         async fn remove(
             &self,
             _host: &str,

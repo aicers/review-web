@@ -54,6 +54,18 @@ type Agent {
 	"""
 	instance: StringNumber
 	"""
+	The privilege profile the Sensor's stored configuration and stored "run
+	as root" switch derive, which `applyAgentConfig` would re-apply when it
+	differs from `privilegeProfile`.
+	
+	It reads `config` and `runAsRoot`, never `draft` or `runAsRootDraft`.
+	A Sensor whose value is not null and differs from `privilegeProfile` is
+	exactly one that the next `applyAgentConfig` naming it re-applies. Null
+	for any agent other than a Sensor, for a Sensor whose `privilegeProfile`
+	is null, and for a configuration that selects no single input mode.
+	"""
+	desiredPrivilegeProfile: String
+	"""
 	Whether the store's most recently accepted build for this entry's
 	package differs from the installed one.
 	
@@ -142,6 +154,28 @@ type Agent {
 	latestOperationAttempt: OperationAttempt
 }
 
+"""
+Why a Sensor's privileges did not change. Each value is terminal: retrying the same apply cannot
+succeed until the operator changes something.
+"""
+enum AgentApplyErrorCode {
+	"""
+	The Sensor's input settings select no single privilege profile. Terminal: retrying the same
+	apply cannot succeed until the operator changes something.
+	"""
+	PROFILE_CLASSIFICATION
+	"""
+	The re-apply was refused before the host changed anything. Terminal: retrying the same apply
+	cannot succeed until the operator changes something.
+	"""
+	PROFILE_REFUSED
+	"""
+	The host did not apply the new privilege profile, and the Sensor keeps its previous unit.
+	Terminal: retrying the same apply cannot succeed until the operator changes something.
+	"""
+	REAPPLY_ROLLED_BACK
+}
+
 input AgentDraftInput {
 	kind: AgentKind!
 	"""
@@ -203,12 +237,22 @@ type AgentNotifyAttempt {
 	"""
 	`true` if the manager accepted the notify request. Does not imply that the agent has
 	already applied the new config.
+	
+	For a re-applied Sensor, `true` means review accepted the re-apply and it either finished
+	or is still settling; like a notification, it does not by itself mean the Sensor already
+	runs with the new profile, which `Agent.privilegeProfile` shows once review records what the
+	host confirmed.
 	"""
 	succeeded: Boolean!
 	"""
 	Populated only when `succeeded` is `false`.
 	"""
 	error: String
+	"""
+	Set only when `succeeded` is `false` and retrying the same apply cannot succeed. Null for
+	every other failure, which stays retryable.
+	"""
+	errorCode: AgentApplyErrorCode
 }
 
 """
@@ -328,7 +372,7 @@ enum AgentStatus {
 
 type ApplyAgentConfigOutput {
 	"""
-	One entry per agent or Giganto service for which a notify was attempted.
+	One entry per agent or Giganto service for which a notify or a re-apply was attempted.
 	"""
 	attempts: [AgentNotifyAttempt!]!
 	"""
@@ -6540,8 +6584,12 @@ type Mutation {
 	
 	This function updates the node's `name` with `name_draft`, `profile` with `profile_draft`,
 	and `config` values of agents with their `draft` values. An agent's `runAsRootDraft`, when
-	it is not null, becomes its `runAsRoot` and is cleared; that alone notifies no agent and
-	changes nothing on the running Sensor.
+	it is not null, becomes its `runAsRoot` and is cleared; that alone notifies no agent.
+	
+	Refuses the whole apply, before any write or agent notification, when an agent of kind
+	`SENSOR` whose `draft` is not null has a recorded `privilegeProfile` and what the apply
+	would store derives a different profile or none. This mutation cannot re-apply a Sensor: use
+	`applyNodeDraft` followed by `applyAgentConfig`.
 	
 	Returns success as long as the database update is successful, regardless of the outcome of
 	notifying agents or broadcasting customer ID changes.
@@ -6587,8 +6635,8 @@ type Mutation {
 	
 	Performs the database promotions (name, profile, agent configs and "run as root" switches,
 	external services) in a single atomic update, and broadcasts customer-specific networks
-	when the node's `customer_id` changes. Does not send agent-config notifications — use
-	`applyAgentConfig` for that.
+	when the node's `customer_id` changes. Does not send agent-config notifications and
+	re-applies no Sensor — use `applyAgentConfig` for that.
 	
 	Refuses an apply that would delete an installed instance's row, change its kind, or change
 	the hostname of the node that holds one; such an instance is removed only with
@@ -6627,15 +6675,24 @@ type Mutation {
 	"""
 	applyNodeDraft(id: ID!, node: NodeInput!): Node!
 	"""
-	Notifies the agents and Giganto services of a node that their configuration has changed.
+	Notifies the agents and Giganto services of a node that their configuration has changed, and
+	re-applies a Sensor whose privilege profile changed.
 	
 	Reads the current DB state of the node. The target set is the node's agents followed by its
 	external services of kind `DATA_STORE` (Giganto); `TI_CONTAINER` services are never
 	targeted. An agent is notified when its current DB `config` is `Some(non-empty)`. A Giganto
 	service is notified when its `draft` is `Some`, including `Some("")`, and the manager then
-	applies that draft to the instance. Skips with reason otherwise. The resolver itself
-	performs no DB writes; the manager it notifies may update a Giganto service's row (its
-	status, and its draft when it adopts the live configuration).
+	applies that draft to the instance. Skips with reason otherwise.
+	
+	A Sensor with a recorded `privilegeProfile` whose stored configuration and "run as root"
+	switch derive a different profile (`Agent.desiredPrivilegeProfile`) is instead re-applied
+	through review with the derived profile, whatever its `config` is, and is not notified: the
+	restarted Sensor fetches the stored configuration itself. A failed re-apply is not retried,
+	and a Sensor whose configuration selects no single input mode is reported without one.
+	
+	The resolver itself performs no DB writes; the manager it notifies may update a Giganto
+	service's row (its status, and its draft when it adopts the live configuration), and review
+	records the operation of a re-apply.
 	"""
 	applyAgentConfig(nodeId: ID!, agentKeys: [String!]): ApplyAgentConfigOutput!
 	"""

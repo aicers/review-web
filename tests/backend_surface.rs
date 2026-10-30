@@ -136,6 +136,25 @@ impl PackageDeployer for OutsideDeployer {
         })
     }
 
+    async fn reapply(
+        &self,
+        _host: &str,
+        target: &str,
+        _instance: Option<u32>,
+        profile: String,
+    ) -> Result<(DeployOutcome, OperationId), DeployError> {
+        let operation_id = OperationId::new(REQUEST_KEY.to_string());
+        match profile.as_str() {
+            "undeclared" => Err(DeployError::PrivilegeProfileNotDeclared {
+                target: target.to_string(),
+                profile,
+            }),
+            "rolled-back" => Err(DeployError::ReapplyRolledBack { operation_id }),
+            "unsettled" => Ok((DeployOutcome::Accepted, operation_id)),
+            _ => Ok((DeployOutcome::Applied, operation_id)),
+        }
+    }
+
     async fn remove(
         &self,
         _host: &str,
@@ -564,6 +583,47 @@ async fn every_named_variant_is_constructible_from_another_crate() {
         error,
         DeployError::SystemInstance { ref host } if host == "host1"
     ));
+
+    let error = deployer
+        .reapply("host1", "piglet", Some(1), "undeclared".to_string())
+        .await
+        .map(|_| ())
+        .expect_err("the build does not declare the profile");
+    assert_eq!(
+        error.to_string(),
+        "the build of piglet does not declare the privilege profile undeclared"
+    );
+    assert!(matches!(
+        error,
+        DeployError::PrivilegeProfileNotDeclared { ref target, ref profile }
+            if target == "piglet" && profile == "undeclared"
+    ));
+
+    let error = deployer
+        .reapply("host1", "piglet", Some(1), "rolled-back".to_string())
+        .await
+        .map(|_| ())
+        .expect_err("the host did not apply the profile");
+    assert_eq!(
+        error.to_string(),
+        "the host did not apply the new privilege profile; the Sensor keeps its previous unit"
+    );
+    assert!(matches!(error, DeployError::ReapplyRolledBack { .. }));
+}
+
+#[tokio::test]
+async fn a_reapply_pairs_its_disposition_with_its_identity() {
+    let deployer = deployer(None);
+    for (profile, expected) in [
+        ("root", DeployOutcome::Applied),
+        ("unsettled", DeployOutcome::Accepted),
+    ] {
+        let (outcome, _operation_id) = deployer
+            .reapply("host1", "piglet", Some(1), profile.to_string())
+            .await
+            .expect("the stub answers");
+        assert_eq!(outcome, expected);
+    }
 }
 
 /// `OutsideDeployer` implements none of the system log collector methods, so

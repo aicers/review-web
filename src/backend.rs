@@ -711,7 +711,8 @@ pub enum DeployOutcome {
     Applied,
     /// An update of `REview`, roxyd or aice-web-next, answered as soon as it
     /// was sent because the response path does not survive the update, so the
-    /// true outcome is read from the operation later.
+    /// true outcome is read from the operation later; or a re-apply whose
+    /// outcome review had not settled when it answered, read the same way.
     ///
     /// A resolver must not report this as done.
     Accepted,
@@ -872,7 +873,7 @@ pub struct SystemLogCollectorState {
 
 /// Why a deployment operation could not be carried out.
 ///
-/// The twelve named variants are exactly the failures a resolver renders as a
+/// The fourteen named variants are exactly the failures a resolver renders as a
 /// state of the form the operator is looking at, so a resolver decides the
 /// result-payload union member by matching on the kind rather than on a
 /// message string — an upstream wording change would otherwise silently
@@ -1009,6 +1010,22 @@ pub enum DeployError {
         /// The host the refused placement is on.
         host: String,
     },
+    /// The build does not declare the privilege profile the request needs.
+    #[error("the build of {target} does not declare the privilege profile {profile}")]
+    PrivilegeProfileNotDeclared {
+        /// The package-id of the build.
+        target: String,
+        /// The privilege profile it does not declare.
+        profile: String,
+    },
+    /// The host did not apply the new profile: the re-apply rolled back after
+    /// its health gate, the host refused it before changing anything, or its
+    /// single send never arrived.
+    #[error("the host did not apply the new privilege profile; the Sensor keeps its previous unit")]
+    ReapplyRolledBack {
+        /// The operation that did not apply the profile.
+        operation_id: OperationId,
+    },
     /// `REview`'s maintenance gate is closed, so nothing was sent to the
     /// host. The same call may be made again once the gate opens.
     #[error("REview is under maintenance; nothing was sent")]
@@ -1105,6 +1122,9 @@ pub trait PackageDeployer: Send + Sync {
     /// if the id is absent from the target's catalog,
     /// [`DeployError::ManifestFormatUnsupported`] if the target host's Host
     /// Agent cannot read the package's manifest format,
+    /// [`DeployError::PrivilegeProfileNotDeclared`] if `run_as_root` is set on
+    /// a build that declares no profiles or the build does not declare the
+    /// profile this call selects (`root` or `replay`),
     /// [`DeployError::UnderMaintenance`] if `REview`'s maintenance gate is
     /// closed, and [`DeployError::Other`] for any other failure.
     // The public install contract keeps these independent arguments, as the
@@ -1150,6 +1170,37 @@ pub trait PackageDeployer: Send + Sync {
         instance: Option<u32>,
         selector: BuildSelector,
         on_failure: FailurePolicy,
+    ) -> Result<(DeployOutcome, OperationId), DeployError>;
+
+    /// Re-applies the build installed at `(host, target, instance)` with the
+    /// privilege profile `profile`, as an update to the same build with
+    /// `ROLLBACK` on failure, and returns as
+    /// [`update`](PackageDeployer::update) does: [`DeployOutcome::Applied`]
+    /// when the re-apply finished, [`DeployOutcome::Accepted`] when review
+    /// could not settle its outcome before answering. The outcome is then read
+    /// from the operation later, and `Agent.privilegeProfile` shows it once
+    /// review records it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeployError::BuildNotServable`] if the installed build is
+    /// withdrawn or otherwise not served,
+    /// [`DeployError::PrivilegeProfileNotDeclared`] if the build does not
+    /// declare `profile`, [`DeployError::ReapplyRolledBack`] if the host did
+    /// not apply the new profile and the Sensor keeps its previous unit,
+    /// because the re-apply rolled back after its health gate, the host
+    /// refused it before changing anything, or its single send never arrived,
+    /// [`DeployError::CleanupPending`] if a teardown is still owed on the
+    /// target, [`DeployError::ManifestFormatUnsupported`] if the target host's
+    /// Host Agent cannot read the package's manifest format,
+    /// [`DeployError::UnderMaintenance`] if `REview`'s maintenance gate is
+    /// closed, and [`DeployError::Other`] for any other failure.
+    async fn reapply(
+        &self,
+        host: &str,
+        target: &str,
+        instance: Option<u32>,
+        profile: String,
     ) -> Result<(DeployOutcome, OperationId), DeployError>;
 
     /// Removes an existing placement and returns the operation's identity.

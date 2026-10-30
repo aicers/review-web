@@ -507,6 +507,16 @@ mod tests {
             unimplemented!("this stub answers the system log collector methods only")
         }
 
+        async fn reapply(
+            &self,
+            _host: &str,
+            _target: &str,
+            _instance: Option<u32>,
+            _profile: String,
+        ) -> Result<(DeployOutcome, OperationId), DeployError> {
+            unimplemented!("this stub answers the system log collector methods only")
+        }
+
         async fn remove(
             &self,
             _host: &str,

@@ -366,6 +366,16 @@ mod tests {
             unimplemented!("this stub answers recommend_bind_addrs only")
         }
 
+        async fn reapply(
+            &self,
+            _host: &str,
+            _target: &str,
+            _instance: Option<u32>,
+            _profile: String,
+        ) -> Result<(DeployOutcome, OperationId), DeployError> {
+            unimplemented!("this stub answers recommend_bind_addrs only")
+        }
+
         async fn remove(
             &self,
             _host: &str,
@@ -885,6 +895,8 @@ mod tests {
             | DeployError::UnknownConfigTemplate { .. }
             | DeployError::ManifestFormatUnsupported { .. }
             | DeployError::SystemInstance { .. }
+            | DeployError::PrivilegeProfileNotDeclared { .. }
+            | DeployError::ReapplyRolledBack { .. }
             | DeployError::UnderMaintenance
             | DeployError::Other(_) => None,
         }

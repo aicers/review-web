@@ -1285,6 +1285,7 @@ mod tests {
         UnknownConfigTemplate,
         ManifestFormatUnsupported,
         SystemInstance,
+        PrivilegeProfileNotDeclared,
         UnderMaintenance,
         Other,
     }
@@ -1292,6 +1293,10 @@ mod tests {
     impl Failure {
         fn error(self) -> DeployError {
             match self {
+                Self::PrivilegeProfileNotDeclared => DeployError::PrivilegeProfileNotDeclared {
+                    target: "giganto".to_string(),
+                    profile: "root".to_string(),
+                },
                 Self::PortAllocationConflict => DeployError::PortAllocationConflict {
                     host: "giganto-host-7".to_string(),
                     transport: ListenerTransport::Udp,
@@ -1502,6 +1507,16 @@ mod tests {
                 on_failure,
             });
             self.answer_with(OPERATION_ID)
+        }
+
+        async fn reapply(
+            &self,
+            _host: &str,
+            _target: &str,
+            _instance: Option<u32>,
+            _profile: String,
+        ) -> Result<(DeployOutcome, OperationId), DeployError> {
+            unimplemented!("this stub answers deployment calls and catalog lookups only")
         }
 
         async fn remove(
@@ -4172,6 +4187,7 @@ mod tests {
             Failure::Other,
             Failure::MalformedRequestKey,
             Failure::RequestKeyRead,
+            Failure::PrivilegeProfileNotDeclared,
         ];
         for failure in install_only {
             let (deployer, calls) = RecordingDeployer::boxed(Answer::Fail(failure));
