@@ -172,6 +172,7 @@ mod mtls_integration {
             _bind_addrs: Option<Vec<BindAddrInput>>,
             _config_template: Option<String>,
             _request_key: &str,
+            _run_as_root: bool,
         ) -> Result<(DeployOutcome, OperationId), DeployError> {
             Err(DeployError::Other(anyhow::anyhow!(
                 "Not supported in mTLS integration test"

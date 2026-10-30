@@ -132,7 +132,9 @@ impl NodeControlMutation {
     /// Applies the draft configuration to the node with the given ID.
     ///
     /// This function updates the node's `name` with `name_draft`, `profile` with `profile_draft`,
-    /// and `config` values of agents with their `draft` values.
+    /// and `config` values of agents with their `draft` values. An agent's `runAsRootDraft`, when
+    /// it is not null, becomes its `runAsRoot` and is cleared; that alone notifies no agent and
+    /// changes nothing on the running Sensor.
     ///
     /// Returns success as long as the database update is successful, regardless of the outcome of
     /// notifying agents or broadcasting customer ID changes.
@@ -269,10 +271,10 @@ impl NodeControlMutation {
 
     /// Applies the draft configuration to the node with the given ID at the database layer.
     ///
-    /// Performs the database promotions (name, profile, agent configs, external services) in a
-    /// single atomic update, and broadcasts customer-specific networks when the node's
-    /// `customer_id` changes. Does not send agent-config notifications — use `applyAgentConfig`
-    /// for that.
+    /// Performs the database promotions (name, profile, agent configs and "run as root" switches,
+    /// external services) in a single atomic update, and broadcasts customer-specific networks
+    /// when the node's `customer_id` changes. Does not send agent-config notifications — use
+    /// `applyAgentConfig` for that.
     ///
     /// Refuses an apply that would delete an installed instance's row, change its kind, or change
     /// the hostname of the node that holds one; such an instance is removed only with
@@ -551,6 +553,12 @@ fn node_apply_scope(node: &NodeInput) -> NodeApplyScope<'_> {
     let is_name_changed = node.name_draft.as_ref() != Some(&node.name);
     let is_profile_changed = node.profile_draft != node.profile;
     let is_any_agent_changed = node.agents.iter().any(|agent| agent.draft != agent.config);
+    // Not an agent change: a notification cannot change a running Sensor's privileges, and
+    // counting it would compute `disables` and remove the agents whose draft is null.
+    let is_any_switch_changed = node
+        .agents
+        .iter()
+        .any(|agent| agent.run_as_root_draft.is_some());
     let is_any_external_service_removed = node
         .external_services
         .iter()
@@ -581,6 +589,7 @@ fn node_apply_scope(node: &NodeInput) -> NodeApplyScope<'_> {
         db: is_name_changed
             || is_profile_changed
             || is_any_agent_changed
+            || is_any_switch_changed
             || is_any_external_service_removed,
         agents: target_agents,
     }
@@ -608,6 +617,9 @@ async fn update_db(
                 None
             } else {
                 agent.config.clone_from(&agent.draft);
+                if let Some(run_as_root) = agent.run_as_root_draft.take() {
+                    agent.run_as_root = run_as_root;
+                }
                 Some(agent)
             }
         })
@@ -3815,6 +3827,9 @@ mod tests {
             lifecycle: review_database::Lifecycle::NotInstalled,
             bound_addrs: vec![],
             instance: None,
+            run_as_root: false,
+            run_as_root_draft: None,
+            privilege_profile: None,
         }
     }
 
@@ -5410,6 +5425,225 @@ mod tests {
             .lock()
             .expect("no test thread panics while holding the lock")
             .clone()
+    }
+
+    /// Stores a node of a configured Sensor and of an agent with neither a config nor a draft,
+    /// which an apply that computed `disables` would remove.
+    fn put_switch_node(store: &review_database::Store) -> u32 {
+        let mut sensor = make_agent(
+            "001.piglet",
+            review_database::AgentKind::Sensor,
+            Some("a = 1"),
+        );
+        sensor.run_as_root_draft = Some(true);
+        sensor.privilege_profile = Some("replay".to_string());
+        put_node(
+            store,
+            "switch-node",
+            Some(GIGANTO_HOST),
+            vec![
+                sensor,
+                make_agent("hog", review_database::AgentKind::SemiSupervised, None),
+            ],
+            vec![],
+        )
+    }
+
+    fn apply_mutation(mutation: &str, id: u32, node: &review_database::Node) -> String {
+        let selection = if mutation == "applyNodeDraft" {
+            " { id }"
+        } else {
+            ""
+        };
+        format!(
+            "mutation {{ {mutation}(id: \"{id}\", node: {}){selection} }}",
+            node_input(node)
+        )
+    }
+
+    #[tokio::test]
+    async fn switch_only_apply_stores_the_switch_and_notifies_no_agent() {
+        for mutation in ["applyNodeDraft", "applyNode"] {
+            let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
+            let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+            let id = put_switch_node(&schema.store());
+            let before = stored_node(&schema.store(), id);
+
+            let res = schema
+                .execute_as_system_admin(&apply_mutation(mutation, id, &before))
+                .await;
+            assert!(res.errors.is_empty(), "{mutation}: {:?}", res.errors);
+
+            let after = stored_node(&schema.store(), id);
+            assert_eq!(after.agents.len(), 2, "{mutation} removed an agent");
+            let sensor = after.agents.first().unwrap();
+            assert!(sensor.run_as_root, "{mutation}");
+            assert_eq!(sensor.run_as_root_draft, None, "{mutation}");
+            assert_eq!(sensor.privilege_profile.as_deref(), Some("replay"));
+            assert_eq!(sensor.config, before.agents[0].config, "{mutation}");
+            assert!(recorded(&calls).is_empty(), "{mutation} notified an agent");
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_with_a_stale_switch_is_refused_as_a_store_mismatch() {
+        for mutation in ["applyNodeDraft", "applyNode"] {
+            for (run_as_root, run_as_root_draft) in [(false, Some(true)), (true, Some(false))] {
+                let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
+                let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+                let id = put_node(
+                    &schema.store(),
+                    "switch-node",
+                    Some(GIGANTO_HOST),
+                    vec![make_agent(
+                        "001.piglet",
+                        review_database::AgentKind::Sensor,
+                        Some("a = 1"),
+                    )],
+                    vec![],
+                );
+                let stored = stored_node(&schema.store(), id);
+
+                let mut stale = stored.clone();
+                stale.agents[0].run_as_root = run_as_root;
+                stale.agents[0].run_as_root_draft = run_as_root_draft;
+                let res = schema
+                    .execute_as_system_admin(&apply_mutation(mutation, id, &stale))
+                    .await;
+
+                assert_eq!(only_error(&res), "old value mismatch", "{mutation}");
+                assert_eq!(stored_node(&schema.store(), id), stored, "{mutation}");
+                assert!(recorded(&calls).is_empty(), "{mutation} notified an agent");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_with_a_stale_snapshot_that_changes_no_agent_is_not_refused() {
+        let schema = TestSchema::new().await;
+        let id = put_node(
+            &schema.store(),
+            "switch-node",
+            Some(GIGANTO_HOST),
+            vec![make_agent(
+                "001.piglet",
+                review_database::AgentKind::Sensor,
+                Some("a = 1"),
+            )],
+            vec![],
+        );
+        let stored = stored_node(&schema.store(), id);
+
+        let mut stale = stored.clone();
+        stale.agents[0].run_as_root = true;
+        let res = schema
+            .execute_as_system_admin(&apply_mutation("applyNodeDraft", id, &stale))
+            .await;
+
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(stored_node(&schema.store(), id), stored);
+    }
+
+    #[tokio::test]
+    async fn a_no_op_switch_draft_is_applied_and_cleared() {
+        let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let mut sensor = make_agent(
+            "001.piglet",
+            review_database::AgentKind::Sensor,
+            Some("a = 1"),
+        );
+        sensor.run_as_root_draft = Some(false);
+        let id = put_node(
+            &schema.store(),
+            "switch-node",
+            Some(GIGANTO_HOST),
+            vec![sensor],
+            vec![],
+        );
+        let before = stored_node(&schema.store(), id);
+
+        let res = schema
+            .execute_as_system_admin(&apply_mutation("applyNode", id, &before))
+            .await;
+
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        let after = stored_node(&schema.store(), id);
+        assert!(!after.agents[0].run_as_root);
+        assert_eq!(after.agents[0].run_as_root_draft, None);
+        assert_eq!(recorded(&calls), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn an_installed_sensor_never_configured_applies_a_switch_draft() {
+        let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let mut sensor = installed_agent(
+            "001.piglet",
+            review_database::AgentKind::Sensor,
+            None,
+            Some(1),
+        );
+        sensor.draft = Some(String::new().try_into().expect("valid toml"));
+        sensor.run_as_root_draft = Some(true);
+        let id = put_node(
+            &schema.store(),
+            "switch-node",
+            Some(GIGANTO_HOST),
+            vec![sensor],
+            vec![],
+        );
+        let before = stored_node(&schema.store(), id);
+
+        let res = schema
+            .execute_as_system_admin(&apply_mutation("applyNode", id, &before))
+            .await;
+
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        let after = stored_node(&schema.store(), id);
+        assert!(after.agents[0].run_as_root);
+        assert_eq!(after.agents[0].run_as_root_draft, None);
+        assert_eq!(after.agents[0].instance, Some(1));
+        assert_eq!(recorded(&calls), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn a_switch_change_beside_a_config_change_notifies_only_the_changed_config() {
+        let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let mut sensor = make_agent(
+            "001.piglet",
+            review_database::AgentKind::Sensor,
+            Some("a = 1"),
+        );
+        sensor.draft = Some("a = 2".to_string().try_into().expect("valid toml"));
+        sensor.run_as_root_draft = Some(true);
+        let mut other = make_agent(
+            "002.piglet",
+            review_database::AgentKind::Sensor,
+            Some("b = 1"),
+        );
+        other.run_as_root_draft = Some(true);
+        let id = put_node(
+            &schema.store(),
+            "switch-node",
+            Some(GIGANTO_HOST),
+            vec![sensor, other],
+            vec![],
+        );
+        let before = stored_node(&schema.store(), id);
+
+        let res = schema
+            .execute_as_system_admin(&apply_mutation("applyNode", id, &before))
+            .await;
+
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        let after = stored_node(&schema.store(), id);
+        assert!(after.agents.iter().all(|agent| agent.run_as_root));
+        assert_eq!(
+            recorded(&calls),
+            vec![test_agent_lookup_key("001.piglet", GIGANTO_HOST)]
+        );
     }
 
     #[tokio::test]

@@ -252,6 +252,9 @@ mod tests {
             lifecycle: Lifecycle::NotInstalled,
             bound_addrs: vec![],
             instance,
+            run_as_root: false,
+            run_as_root_draft: None,
+            privilege_profile: None,
         }
     }
 

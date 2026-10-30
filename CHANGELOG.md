@@ -4,6 +4,43 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- The `Agent` GraphQL type has `runAsRoot`, the applied "run as root" switch of
+  a Sensor; `runAsRootDraft`, its unapplied change, null when there is none; and
+  `privilegeProfile`, the privilege profile the host last confirmed applying,
+  null for a Sensor whose build declares no profiles or that was never
+  confirmed.
+- `AgentInput` has `runAsRoot` and `runAsRootDraft`, and `AgentDraftInput` has
+  `runAsRootDraft`, carried as the configuration and its draft are: a draft
+  update cannot set the switch, and applying the node copies the draft into it.
+  Applying a switch change stores it; it notifies no agent and does not change
+  the privileges of a running Sensor.
+- The `installService` mutation has a `runAsRoot` argument, `false` by default,
+  asking for the instance to run as root.
+- The `insertNode` and `updateNodeDraft` mutations refuse a `runAsRootDraft`
+  that is not null on an agent whose kind is not `SENSOR`, naming the agent.
+
+### Changed
+
+- **Breaking change:** `PackageDeployer::install` takes a final
+  `run_as_root: bool`, whether the operator asked for the instance to run as
+  root. For a build that declares privilege profiles the implementation sends
+  `root` when it is set and `replay` when it is not; for a build that declares
+  none it refuses it set.
+- Bumped `review-database` dependency to 0.61.0 and `review-protocol` dependency
+  to 0.24.0. The store format moves to 0.61.0, so a store in the previous
+  `review-database` format must be migrated through `review-database` before
+  this version serves it; the migration gives every agent the switch off, with
+  no pending change and no recorded profile, and every recorded install or
+  update operation no profile, and changes nothing else that this version
+  serves. A backup taken before the migration is refused by the
+  `restoreFromBackup` and `restoreFromLatestBackup` mutations, which leave the
+  database open and serving; restore it offline through `review-database`,
+  marked with the format it was taken at.
+
 ## [0.53.0] - 2026-10-30
 
 ### Added
@@ -2817,6 +2854,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.53.0...main
 [0.53.0]: https://github.com/aicers/review-web/compare/0.52.1...0.53.0
 [0.52.1]: https://github.com/aicers/review-web/compare/0.52.0...0.52.1
 [0.52.0]: https://github.com/aicers/review-web/compare/0.51.1...0.52.0

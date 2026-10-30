@@ -702,6 +702,7 @@ mod tests {
             expires_at: instant(3_600),
             backup_id: None,
             pre_update_version: None,
+            privilege_profile: None,
         }
     }
 
@@ -781,6 +782,9 @@ mod tests {
             lifecycle: Lifecycle::Running,
             bound_addrs: Vec::new(),
             instance,
+            run_as_root: false,
+            run_as_root_draft: None,
+            privilege_profile: None,
         }
     }
 

@@ -58,6 +58,7 @@ impl PackageDeployer for OutsideDeployer {
         bind_addrs: Option<Vec<BindAddrInput>>,
         config_template: Option<String>,
         request_key: &str,
+        _run_as_root: bool,
     ) -> Result<(DeployOutcome, OperationId), DeployError> {
         // Reading `BindAddrInput`'s two public fields from another crate is the
         // point of the assertion, not the values themselves.
@@ -192,6 +193,7 @@ impl PackageDeployer for OutsideDeployer {
             commit: "0123456789abcdef".to_string(),
             lifecycle: ProtocolLifecycle::Running,
             bound_addrs: vec![],
+            privilege_profile: None,
         })
     }
 
@@ -303,6 +305,7 @@ async fn configuration_template_types_are_constructed_outside_the_crate() {
                 None,
                 Some("unknown-id".to_string()),
                 REQUEST_KEY,
+                false,
             )
             .await
             .unwrap_err();
@@ -431,6 +434,7 @@ async fn every_named_variant_is_constructible_from_another_crate() {
             None,
             None,
             REQUEST_KEY,
+            false,
         )
         .await
         .map(|_| ())
@@ -452,6 +456,7 @@ async fn every_named_variant_is_constructible_from_another_crate() {
             }]),
             None,
             REQUEST_KEY,
+            false,
         )
         .await
         .map(|_| ())
@@ -470,6 +475,7 @@ async fn every_named_variant_is_constructible_from_another_crate() {
             None,
             None,
             "reused",
+            false,
         )
         .await
         .map(|_| ())
@@ -485,6 +491,7 @@ async fn every_named_variant_is_constructible_from_another_crate() {
             None,
             None,
             REQUEST_KEY,
+            false,
         )
         .await
         .map(|_| ())
@@ -634,6 +641,7 @@ async fn an_operation_pairs_its_disposition_with_its_identity() {
             None,
             None,
             REQUEST_KEY,
+            false,
         )
         .await
         .expect("the stub accepts the install");

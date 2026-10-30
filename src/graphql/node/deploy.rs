@@ -701,11 +701,14 @@ impl DeployMutation {
     /// `configTemplates(target)`. Absent means none; review decides whether
     /// the target requires one and whether the id exists.
     ///
+    /// `runAsRoot` asks for the instance to run as root. Whether the build
+    /// accepts it is review's answer; a refusal is an ordinary GraphQL error.
+    ///
     /// Refused with `CUSTOMER_DELETION_IN_PROGRESS` while a data deletion of
     /// the customer of the node whose applied hostname is `host` is unfinished,
     /// also while it is stopped.
     // The argument list is the mutation's published contract, so it is not a
-    // parameter count to reduce: folding the seven into an input object would
+    // parameter count to reduce: folding the eight into an input object would
     // change the schema. The length is one arm per member of the install
     // union, each mapping a `DeployError` variant to its object; splitting
     // the match would scatter that one-to-one mapping.
@@ -722,6 +725,7 @@ impl DeployMutation {
         bind_addrs: Option<Vec<BindAddrInput>>,
         config_template: Option<String>,
         request_key: String,
+        #[graphql(default)] run_as_root: bool,
     ) -> Result<InstallServiceResult> {
         customer_access::check_hostname_access(ctx, &host)?;
         customer_deletion_guard::check_host(&*get_store(ctx)?, &host)?;
@@ -738,7 +742,11 @@ impl DeployMutation {
         // privileged operation a scoped operator asked for is in the log
         // whatever review answers: a refusal is exactly the case an audit
         // reads back.
-        info_with_username!(ctx, "Install of {target} requested on {host}");
+        if run_as_root {
+            info_with_username!(ctx, "Install of {target} as root requested on {host}");
+        } else {
+            info_with_username!(ctx, "Install of {target} requested on {host}");
+        }
         match deployer
             .install(
                 &host,
@@ -748,6 +756,7 @@ impl DeployMutation {
                 addrs,
                 config_template,
                 &request_key,
+                run_as_root,
             )
             .await
         {
@@ -1182,6 +1191,7 @@ mod tests {
         bind_addrs: Option<Vec<BackendBindAddrInput>>,
         config_template: Option<String>,
         request_key: String,
+        run_as_root: bool,
     }
 
     #[derive(Clone, Debug, PartialEq)]
@@ -1461,6 +1471,7 @@ mod tests {
             bind_addrs: Option<Vec<BackendBindAddrInput>>,
             config_template: Option<String>,
             request_key: &str,
+            run_as_root: bool,
         ) -> Result<(DeployOutcome, OperationId), DeployError> {
             self.calls.installs.lock().unwrap().push(InstallCall {
                 host: host.to_string(),
@@ -1470,6 +1481,7 @@ mod tests {
                 bind_addrs,
                 config_template,
                 request_key: request_key.to_string(),
+                run_as_root,
             });
             self.answer_with(request_key)
         }
@@ -3288,6 +3300,27 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn install_passes_run_as_root_to_the_backend() {
+        let schema = TestSchema::new().await;
+        for (argument, expected) in [
+            ("", false),
+            (", runAsRoot: false", false),
+            (", runAsRoot: true", true),
+        ] {
+            let (deployer, calls) = RecordingDeployer::applying();
+            let args = format!("{}{argument}", install_args("giganto"));
+            let res = schema
+                .execute_as_system_admin_with_data(
+                    &install_mutation(&args),
+                    deployer as SharedPackageDeployer,
+                )
+                .await;
+            assert!(res.errors.is_empty(), "{args}: {:?}", res.errors);
+            assert_eq!(calls.only_install().run_as_root, expected, "{args}");
+        }
+    }
+
     /// The list reaches review in its submitted order and multiplicity, with a
     /// duplicate listener key intact and every address the value its spelling
     /// parses to.
@@ -3838,6 +3871,9 @@ mod tests {
                 lifecycle: Lifecycle::Running,
                 bound_addrs: Vec::new(),
                 instance: Some(u32::MAX),
+                run_as_root: false,
+                run_as_root_draft: None,
+                privilege_profile: None,
             }],
             external_services: Vec::new(),
             creation_time: Utc::now(),
@@ -4695,7 +4731,8 @@ mod tests {
             install,
             "installService(host: String!, target: String!, buildSelector: BuildSelectorInput!, \
              onFailure: FailurePolicy! = ROLLBACK, bindAddrs: [BindAddrInput!], \
-             configTemplate: String, requestKey: String!): InstallServiceResult!"
+             configTemplate: String, requestKey: String!, runAsRoot: Boolean! = false): \
+             InstallServiceResult!"
         );
         assert!(!install.contains("instance"), "{install}");
 

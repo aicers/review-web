@@ -50,6 +50,13 @@ pub struct AgentInput {
     status: AgentStatus,
     pub(super) config: Option<String>,
     pub(super) draft: Option<String>,
+    /// The applied "run as root" switch, as read from the node. A client that
+    /// does not send it sends `false`.
+    #[graphql(default)]
+    pub(super) run_as_root: bool,
+    /// The unapplied "run as root" switch change, as read from the node, or
+    /// null when there is none.
+    pub(super) run_as_root_draft: Option<bool>,
 }
 
 impl From<AgentInput> for review_database::Agent {
@@ -69,6 +76,9 @@ impl From<AgentInput> for review_database::Agent {
             lifecycle: review_database::Lifecycle::NotInstalled,
             bound_addrs: vec![],
             instance: None,
+            run_as_root: input.run_as_root,
+            run_as_root_draft: input.run_as_root_draft,
+            privilege_profile: None,
         }
     }
 }
@@ -85,6 +95,9 @@ pub struct AgentDraftInput {
     pub(super) key: String,
     pub(super) status: AgentStatus,
     pub(super) draft: Option<String>,
+    /// The unapplied "run as root" switch change, or null when there is none.
+    /// Refused on an agent whose kind is not `SENSOR`.
+    pub(super) run_as_root_draft: Option<bool>,
 }
 
 #[derive(Clone, InputObject)]
@@ -179,6 +192,25 @@ pub(super) fn agent_draft(
     Ok(Some(draft))
 }
 
+/// Checks the "run as root" switch change of agent `key` of `kind`: the switch
+/// exists only for the Sensor.
+///
+/// # Errors
+///
+/// Returns an error for a switch change on an agent that is not a Sensor.
+pub(super) fn check_run_as_root_draft(
+    kind: AgentKind,
+    key: &str,
+    run_as_root_draft: Option<bool>,
+) -> Result<()> {
+    if run_as_root_draft.is_some() && kind != AgentKind::Sensor {
+        return Err(Error::new(format!(
+            "runAsRootDraft is only for a Sensor, not for the agent: {key}"
+        )));
+    }
+    Ok(())
+}
+
 /// Converts the draft of agent `key` of `kind` like [`agent_draft`], except
 /// that an Unsupervised Engine draft that is not TOML converts to no draft,
 /// its refusal set aside in `not_toml`.
@@ -212,6 +244,7 @@ fn deferred_agent_draft(
 ///
 /// Returns an error for an input that does not convert, other than such a
 /// draft.
+#[allow(clippy::too_many_lines)]
 pub(super) fn create_draft_update(
     old: &NodeInput,
     new: NodeDraftInput,
@@ -226,10 +259,10 @@ pub(super) fn create_draft_update(
         None
     };
 
-    let old_agent_config_map: HashMap<String, Option<String>> = old
+    let old_agents: HashMap<&str, &AgentInput> = old
         .agents
         .iter()
-        .map(|agent| (agent.key.clone(), agent.config.clone()))
+        .map(|agent| (agent.key.as_str(), agent))
         .collect();
 
     let mut not_toml = Vec::new();
@@ -239,18 +272,23 @@ pub(super) fn create_draft_update(
             new_agents
                 .into_iter()
                 .map(|new_agent| {
-                    let config = match old_agent_config_map.get(&new_agent.key) {
-                        Some(config) => match config.as_ref() {
-                            Some(c) => Some(c.clone().try_into().map_err(|_| {
-                                Error::new(format!(
-                                    "Failed to convert the config to TOML for the agent: {}",
-                                    new_agent.key
-                                ))
-                            })?),
-                            None => None,
-                        },
+                    check_run_as_root_draft(
+                        new_agent.kind,
+                        &new_agent.key,
+                        new_agent.run_as_root_draft,
+                    )?;
+
+                    let old_agent = old_agents.get(new_agent.key.as_str());
+                    let config = match old_agent.and_then(|agent| agent.config.as_ref()) {
+                        Some(c) => Some(c.clone().try_into().map_err(|_| {
+                            Error::new(format!(
+                                "Failed to convert the config to TOML for the agent: {}",
+                                new_agent.key
+                            ))
+                        })?),
                         None => None,
                     };
+                    let run_as_root = old_agent.is_some_and(|agent| agent.run_as_root);
 
                     let draft = deferred_agent_draft(
                         new_agent.kind,
@@ -271,6 +309,9 @@ pub(super) fn create_draft_update(
                         lifecycle: review_database::Lifecycle::NotInstalled,
                         bound_addrs: vec![],
                         instance: None,
+                        run_as_root,
+                        run_as_root_draft: new_agent.run_as_root_draft,
+                        privilege_profile: None,
                     })
                 })
                 .collect::<Result<Vec<_>, Error>>()
