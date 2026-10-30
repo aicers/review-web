@@ -11,6 +11,7 @@ mod engine_write;
 pub(super) mod deploy;
 mod input;
 mod installed_guard;
+mod privilege_profile;
 #[cfg(test)]
 mod sampling_tests;
 mod status;
@@ -190,6 +191,22 @@ impl Agent {
     /// number was recorded.
     async fn instance(&self) -> Option<StringNumber<u32>> {
         self.instance.map(StringNumber)
+    }
+
+    /// The privilege profile the Sensor's stored configuration and stored "run
+    /// as root" switch derive, which `applyAgentConfig` would re-apply when it
+    /// differs from `privilegeProfile`.
+    ///
+    /// It reads `config` and `runAsRoot`, never `draft` or `runAsRootDraft`.
+    /// A Sensor whose value is not null and differs from `privilegeProfile` is
+    /// exactly one that the next `applyAgentConfig` naming it re-applies. Null
+    /// for any agent other than a Sensor, for a Sensor whose `privilegeProfile`
+    /// is null, and for a configuration that selects no single input mode.
+    async fn desired_privilege_profile(&self) -> Option<&'static str> {
+        if self.kind != AgentKind::Sensor || self.privilege_profile.is_none() {
+            return None;
+        }
+        privilege_profile::derive(self.config.as_deref(), self.run_as_root).ok()
     }
 
     /// Whether the store's most recently accepted build for this entry's
@@ -1234,7 +1251,7 @@ mod tests {
     use serde_json::json;
 
     use super::hostname_matches_manager;
-    use super::test_support::{MockAgentManager, insert_active_node};
+    use super::test_support::{MockAgentManager, insert_active_node, installed_agent, put_node};
     use crate::graphql::{
         CustomerIds, Role, RoleGuard, SharedAgentManager, TestSchema,
         agent_lookup_key_service_token, gen_agent_lookup_key,
@@ -1448,5 +1465,82 @@ mod tests {
         let edges = data["nodeStatusList"]["edges"].as_array().unwrap();
         assert_eq!(edges.len(), 0);
         assert_eq!(data["nodeStatusList"]["totalCount"], json!("0"));
+    }
+
+    /// Returns `desiredPrivilegeProfile` of the only agent of a node holding `agent`.
+    async fn desired_privilege_profile(agent: review_database::Agent) -> serde_json::Value {
+        let schema = new_schema().await;
+        let id = put_node(
+            &schema.store(),
+            "sensor-node",
+            Some("sensor.example.com"),
+            vec![agent],
+            vec![],
+        );
+
+        let res = schema
+            .execute_as_system_admin(&format!(
+                r#"{{ node(id: "{id}") {{ agents {{ desiredPrivilegeProfile }} }} }}"#
+            ))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        res.data.into_json().unwrap()["node"]["agents"][0]["desiredPrivilegeProfile"].clone()
+    }
+
+    fn profiled_sensor(config: Option<&str>, profile: Option<&str>) -> review_database::Agent {
+        let mut agent = installed_agent(
+            "001.piglet",
+            review_database::AgentKind::Sensor,
+            config,
+            Some(1),
+        );
+        agent.privilege_profile = profile.map(ToString::to_string);
+        agent
+    }
+
+    const AF_PACKET_CONFIG: &str = r#"dpdk_args = "--vdev=net_af_packet0,iface=eth1""#;
+    const PCAP_CONFIG: &str = r#"dpdk_args = "--vdev=net_pcap0,rx_pcap=a.pcap""#;
+
+    #[tokio::test]
+    async fn desired_privilege_profile_derives_from_the_stored_fields() {
+        let unchanged = profiled_sensor(Some(AF_PACKET_CONFIG), Some("af-packet"));
+        assert_eq!(
+            desired_privilege_profile(unchanged).await,
+            json!("af-packet")
+        );
+
+        let changed_mode = profiled_sensor(Some(AF_PACKET_CONFIG), Some("replay"));
+        assert_eq!(
+            desired_privilege_profile(changed_mode).await,
+            json!("af-packet")
+        );
+
+        let no_config = profiled_sensor(None, Some("dpdk"));
+        assert_eq!(desired_privilege_profile(no_config).await, json!("replay"));
+
+        let mut switched_on = profiled_sensor(Some(AF_PACKET_CONFIG), Some("af-packet"));
+        switched_on.run_as_root = true;
+        assert_eq!(desired_privilege_profile(switched_on).await, json!("root"));
+    }
+
+    #[tokio::test]
+    async fn desired_privilege_profile_ignores_the_drafts() {
+        let mut agent = profiled_sensor(Some(PCAP_CONFIG), Some("replay"));
+        agent.draft = Some(AF_PACKET_CONFIG.to_string().try_into().expect("valid toml"));
+        agent.run_as_root_draft = Some(true);
+        assert_eq!(desired_privilege_profile(agent).await, json!("replay"));
+    }
+
+    #[tokio::test]
+    async fn desired_privilege_profile_is_null_when_nothing_is_derived() {
+        let unclassifiable = profiled_sensor(Some("dpdk_args = 1"), Some("replay"));
+        assert_eq!(desired_privilege_profile(unclassifiable).await, json!(null));
+
+        let unprofiled = profiled_sensor(Some(AF_PACKET_CONFIG), None);
+        assert_eq!(desired_privilege_profile(unprofiled).await, json!(null));
+
+        let mut other_kind = profiled_sensor(Some(AF_PACKET_CONFIG), Some("replay"));
+        other_kind.kind = review_database::AgentKind::SemiSupervised;
+        assert_eq!(desired_privilege_profile(other_kind).await, json!(null));
     }
 }

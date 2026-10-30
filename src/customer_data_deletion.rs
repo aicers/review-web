@@ -4072,6 +4072,17 @@ mod tests {
             unimplemented!("a customer deletion only removes")
         }
 
+        async fn reapply(
+            &self,
+            _host: &str,
+            _target: &str,
+            _instance: Option<u32>,
+            _profile: String,
+        ) -> Result<(crate::backend::DeployOutcome, crate::backend::OperationId), DeployError>
+        {
+            unimplemented!("a customer deletion only removes")
+        }
+
         async fn remove(
             &self,
             host: &str,
@@ -10486,6 +10497,17 @@ server_name = "{server_name}"
             self.0
                 .update(host, target, instance, selector, on_failure)
                 .await
+        }
+
+        async fn reapply(
+            &self,
+            host: &str,
+            target: &str,
+            instance: Option<u32>,
+            profile: String,
+        ) -> Result<(crate::backend::DeployOutcome, crate::backend::OperationId), DeployError>
+        {
+            self.0.reapply(host, target, instance, profile).await
         }
 
         async fn remove(

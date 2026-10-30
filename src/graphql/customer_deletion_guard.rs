@@ -68,6 +68,15 @@ fn in_progress(message: String) -> async_graphql::Error {
         .extend_with(|_, extensions| extensions.set("code", CUSTOMER_DELETION_IN_PROGRESS))
 }
 
+/// Returns whether `error` is a refusal for a customer's unfinished deletion.
+pub(super) fn is_in_progress(error: &async_graphql::Error) -> bool {
+    error
+        .extensions
+        .as_ref()
+        .and_then(|extensions| extensions.get("code"))
+        .is_some_and(|code| *code == async_graphql::Value::from(CUSTOMER_DELETION_IN_PROGRESS))
+}
+
 /// Refuses a write of the customers `customer_ids` while any of them has an
 /// unfinished deletion.
 ///

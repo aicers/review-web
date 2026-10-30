@@ -11,16 +11,19 @@ use super::{
         Role, RoleGuard, SharedAgentManager, customer_access, engine_config::lock_engine_config,
         sampling,
     },
-    Node, NodeControlMutation, SEMI_SUPERVISED_AGENT,
+    AgentKind, Node, NodeControlMutation, SEMI_SUPERVISED_AGENT,
+    deploy::{FailurePolicy, check_rollback_support},
     engine_write::{self, Slot},
-    gen_agent_lookup_key,
+    gen_agent_lookup_key, privilege_profile,
 };
+use crate::backend::{DeployError, DeployOutcome};
 use crate::graphql::{
+    SharedPackageDeployer,
     customer::{
         NetworksTargetAgentLookupKeysPair, send_agent_specific_allow_networks,
         send_agent_specific_block_networks, send_agent_specific_customer_networks,
     },
-    get_allow_networks, get_block_networks, get_customer_networks,
+    customer_deletion_guard, get_allow_networks, get_block_networks, get_customer_networks,
     network_list::lock_network_lists,
     node::input::NodeInput,
 };
@@ -33,9 +36,63 @@ pub(super) struct AgentNotifyAttempt {
     agent_key: String,
     /// `true` if the manager accepted the notify request. Does not imply that the agent has
     /// already applied the new config.
+    ///
+    /// For a re-applied Sensor, `true` means review accepted the re-apply and it either finished
+    /// or is still settling; like a notification, it does not by itself mean the Sensor already
+    /// runs with the new profile, which `Agent.privilegeProfile` shows once review records what the
+    /// host confirmed.
     succeeded: bool,
     /// Populated only when `succeeded` is `false`.
     error: Option<String>,
+    /// Set only when `succeeded` is `false` and retrying the same apply cannot succeed. Null for
+    /// every other failure, which stays retryable.
+    error_code: Option<AgentApplyErrorCode>,
+}
+
+impl AgentNotifyAttempt {
+    fn ok(agent_key: &str) -> Self {
+        Self {
+            agent_key: agent_key.to_string(),
+            succeeded: true,
+            error: None,
+            error_code: None,
+        }
+    }
+
+    /// Returns a failed attempt that may be retried as it is.
+    fn failed(agent_key: &str, error: String) -> Self {
+        Self {
+            agent_key: agent_key.to_string(),
+            succeeded: false,
+            error: Some(error),
+            error_code: None,
+        }
+    }
+
+    /// Returns a failed attempt that retrying cannot turn into a success.
+    fn terminal(agent_key: &str, error_code: AgentApplyErrorCode, error: String) -> Self {
+        Self {
+            agent_key: agent_key.to_string(),
+            succeeded: false,
+            error: Some(error),
+            error_code: Some(error_code),
+        }
+    }
+}
+
+/// Why a Sensor's privileges did not change. Each value is terminal: retrying the same apply cannot
+/// succeed until the operator changes something.
+#[derive(Clone, Copy, Enum, Eq, PartialEq)]
+pub(super) enum AgentApplyErrorCode {
+    /// The Sensor's input settings select no single privilege profile. Terminal: retrying the same
+    /// apply cannot succeed until the operator changes something.
+    ProfileClassification,
+    /// The re-apply was refused before the host changed anything. Terminal: retrying the same apply
+    /// cannot succeed until the operator changes something.
+    ProfileRefused,
+    /// The host did not apply the new privilege profile, and the Sensor keeps its previous unit.
+    /// Terminal: retrying the same apply cannot succeed until the operator changes something.
+    ReapplyRolledBack,
 }
 
 #[derive(Clone, Copy, Enum, Eq, PartialEq)]
@@ -57,7 +114,7 @@ pub(super) struct SkippedAgent {
 
 #[derive(SimpleObject)]
 pub(super) struct ApplyAgentConfigOutput {
-    /// One entry per agent or Giganto service for which a notify was attempted.
+    /// One entry per agent or Giganto service for which a notify or a re-apply was attempted.
     attempts: Vec<AgentNotifyAttempt>,
     /// One entry per agent or Giganto service in the target set that was not notified, with the
     /// reason.
@@ -133,8 +190,12 @@ impl NodeControlMutation {
     ///
     /// This function updates the node's `name` with `name_draft`, `profile` with `profile_draft`,
     /// and `config` values of agents with their `draft` values. An agent's `runAsRootDraft`, when
-    /// it is not null, becomes its `runAsRoot` and is cleared; that alone notifies no agent and
-    /// changes nothing on the running Sensor.
+    /// it is not null, becomes its `runAsRoot` and is cleared; that alone notifies no agent.
+    ///
+    /// Refuses the whole apply, before any write or agent notification, when an agent of kind
+    /// `SENSOR` whose `draft` is not null has a recorded `privilegeProfile` and what the apply
+    /// would store derives a different profile or none. This mutation cannot re-apply a Sensor: use
+    /// `applyNodeDraft` followed by `applyAgentConfig`.
     ///
     /// Returns success as long as the database update is successful, regardless of the outcome of
     /// notifying agents or broadcasting customer ID changes.
@@ -190,6 +251,8 @@ impl NodeControlMutation {
             // must be present to apply the node.
             return Err("Node is not valid for apply".into());
         }
+
+        check_privilege_profiles(&current, &node)?;
 
         let apply_scope = node_apply_scope(&node);
 
@@ -273,8 +336,8 @@ impl NodeControlMutation {
     ///
     /// Performs the database promotions (name, profile, agent configs and "run as root" switches,
     /// external services) in a single atomic update, and broadcasts customer-specific networks
-    /// when the node's `customer_id` changes. Does not send agent-config notifications — use
-    /// `applyAgentConfig` for that.
+    /// when the node's `customer_id` changes. Does not send agent-config notifications and
+    /// re-applies no Sensor — use `applyAgentConfig` for that.
     ///
     /// Refuses an apply that would delete an installed instance's row, change its kind, or change
     /// the hostname of the node that holds one; such an instance is removed only with
@@ -366,15 +429,24 @@ impl NodeControlMutation {
         }
     }
 
-    /// Notifies the agents and Giganto services of a node that their configuration has changed.
+    /// Notifies the agents and Giganto services of a node that their configuration has changed, and
+    /// re-applies a Sensor whose privilege profile changed.
     ///
     /// Reads the current DB state of the node. The target set is the node's agents followed by its
     /// external services of kind `DATA_STORE` (Giganto); `TI_CONTAINER` services are never
     /// targeted. An agent is notified when its current DB `config` is `Some(non-empty)`. A Giganto
     /// service is notified when its `draft` is `Some`, including `Some("")`, and the manager then
-    /// applies that draft to the instance. Skips with reason otherwise. The resolver itself
-    /// performs no DB writes; the manager it notifies may update a Giganto service's row (its
-    /// status, and its draft when it adopts the live configuration).
+    /// applies that draft to the instance. Skips with reason otherwise.
+    ///
+    /// A Sensor with a recorded `privilegeProfile` whose stored configuration and "run as root"
+    /// switch derive a different profile (`Agent.desiredPrivilegeProfile`) is instead re-applied
+    /// through review with the derived profile, whatever its `config` is, and is not notified: the
+    /// restarted Sensor fetches the stored configuration itself. A failed re-apply is not retried,
+    /// and a Sensor whose configuration selects no single input mode is reported without one.
+    ///
+    /// The resolver itself performs no DB writes; the manager it notifies may update a Giganto
+    /// service's row (its status, and its draft when it adopts the live configuration), and review
+    /// records the operation of a re-apply.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))")]
     async fn apply_agent_config(
@@ -443,6 +515,10 @@ impl NodeControlMutation {
         let mut skipped = Vec::new();
 
         for target in targets {
+            if let Some(attempt) = reapply_if_profile_changed(ctx, hostname, target).await {
+                attempts.push(attempt);
+                continue;
+            }
             match target.config {
                 None => skipped.push(SkippedAgent {
                     agent_key: target.key.to_string(),
@@ -455,16 +531,10 @@ impl NodeControlMutation {
                 Some(_) => {
                     let agent_lookup_key = gen_agent_lookup_key(target.key, hostname);
                     match agent_manager.update_config(agent_lookup_key.as_str()).await {
-                        Ok(()) => attempts.push(AgentNotifyAttempt {
-                            agent_key: target.key.to_string(),
-                            succeeded: true,
-                            error: None,
-                        }),
-                        Err(e) => attempts.push(AgentNotifyAttempt {
-                            agent_key: target.key.to_string(),
-                            succeeded: false,
-                            error: Some(format!("{e:#}")),
-                        }),
+                        Ok(()) => attempts.push(AgentNotifyAttempt::ok(target.key)),
+                        Err(e) => {
+                            attempts.push(AgentNotifyAttempt::failed(target.key, format!("{e:#}")));
+                        }
                     }
                 }
             }
@@ -484,6 +554,8 @@ struct ApplyTarget<'a> {
     /// a Giganto service an empty draft is an installed but not yet configured instance, which the
     /// manager adopts the live configuration into.
     empty_is_direct_setup: bool,
+    /// The stored row of an agent, `None` for a Giganto service.
+    agent: Option<&'a review_database::Agent>,
 }
 
 impl<'a> ApplyTarget<'a> {
@@ -492,6 +564,7 @@ impl<'a> ApplyTarget<'a> {
             key: &agent.key,
             config: agent.config.as_ref().map(AsRef::as_ref),
             empty_is_direct_setup: true,
+            agent: Some(agent),
         }
     }
 
@@ -500,8 +573,193 @@ impl<'a> ApplyTarget<'a> {
             key: &service.key,
             config: service.draft.as_ref().map(AsRef::as_ref),
             empty_is_direct_setup: false,
+            agent: None,
         }
     }
+}
+
+/// Returns the profile recorded for `agent` if it is a profiled Sensor: one of kind `SENSOR` whose
+/// host confirmed a profile. Nothing about privilege profiles applies to any other agent.
+fn recorded_profile(agent: &review_database::Agent) -> Option<&str> {
+    if agent.kind == review_database::AgentKind::Sensor {
+        agent.privilege_profile.as_deref()
+    } else {
+        None
+    }
+}
+
+/// Re-applies `target` if it is a profiled Sensor whose derived privilege profile differs from its
+/// recorded one, and returns the attempt. `None` means it is to be handled as any other target.
+async fn reapply_if_profile_changed(
+    ctx: &Context<'_>,
+    hostname: &str,
+    target: &ApplyTarget<'_>,
+) -> Option<AgentNotifyAttempt> {
+    let agent = target.agent?;
+    let recorded = recorded_profile(agent)?;
+    match privilege_profile::derive(target.config, agent.run_as_root) {
+        Ok(derived) if derived == recorded => None,
+        Ok(derived) => Some(reapply_sensor(ctx, hostname, agent, recorded, derived).await),
+        Err(e) => Some(AgentNotifyAttempt::terminal(
+            &agent.key,
+            AgentApplyErrorCode::ProfileClassification,
+            format!(
+                "Cannot derive the privilege profile of Sensor {}: {e}. Fix its input settings \
+                 and apply again.",
+                agent.key
+            ),
+        )),
+    }
+}
+
+/// Re-applies the installed build of the Sensor `agent` with the profile `derived`, after the
+/// guards `updateService` runs. Customer access is already enforced by the caller's read of the
+/// node, and the package class is fixed.
+async fn reapply_sensor(
+    ctx: &Context<'_>,
+    hostname: &str,
+    agent: &review_database::Agent,
+    recorded: &str,
+    derived: &'static str,
+) -> AgentNotifyAttempt {
+    let key = agent.key.as_str();
+    let Some(instance) = agent.instance else {
+        return AgentNotifyAttempt::terminal(
+            key,
+            AgentApplyErrorCode::ProfileRefused,
+            format!("Sensor {key} has no instance number, so its privileges cannot change."),
+        );
+    };
+    let checked_host = crate::graphql::get_store(ctx)
+        .and_then(|store| customer_deletion_guard::check_host(&store, hostname));
+    if let Err(e) = checked_host {
+        return host_check_failure(key, e);
+    }
+    match check_rollback_support(ctx, hostname, FailurePolicy::Rollback).await {
+        Ok(None) => {}
+        Ok(Some(_)) => {
+            return AgentNotifyAttempt::terminal(
+                key,
+                AgentApplyErrorCode::ProfileRefused,
+                format!(
+                    "Host {hostname} does not advertise the rollback supervisor a re-apply of \
+                     Sensor {key} needs."
+                ),
+            );
+        }
+        Err(e) => return AgentNotifyAttempt::failed(key, e.message),
+    }
+    let deployer = match ctx.data::<SharedPackageDeployer>() {
+        Ok(deployer) => deployer,
+        Err(e) => return AgentNotifyAttempt::failed(key, e.message),
+    };
+    let target = review_database::AgentKind::Sensor
+        .package_id()
+        .expect("the Sensor kind always maps to a package-id");
+
+    // Logged before the call, as the deploy mutations log theirs, so a change to or from `root` is
+    // in the log whatever review answers.
+    info_with_username!(
+        ctx,
+        "Re-apply of {target} instance {instance} on {hostname} as {derived} (was {recorded}) requested"
+    );
+    match deployer
+        .reapply(hostname, target, Some(instance), derived.to_string())
+        .await
+    {
+        Ok((DeployOutcome::Applied, _)) => AgentNotifyAttempt::ok(key),
+        Ok((DeployOutcome::Accepted, _)) => {
+            info_with_username!(
+                ctx,
+                "Re-apply of {target} instance {instance} on {hostname} as {derived} dispatched; its outcome is pending"
+            );
+            AgentNotifyAttempt::ok(key)
+        }
+        Err(e) => reapply_failure(key, derived, &e),
+    }
+}
+
+/// Renders a failed `customer_deletion_guard::check_host` for the Sensor `key`.
+fn host_check_failure(key: &str, e: async_graphql::Error) -> AgentNotifyAttempt {
+    if customer_deletion_guard::is_in_progress(&e) {
+        AgentNotifyAttempt::terminal(key, AgentApplyErrorCode::ProfileRefused, e.message)
+    } else {
+        AgentNotifyAttempt::failed(key, e.message)
+    }
+}
+
+/// Renders an error `PackageDeployer::reapply` returned for the Sensor `key`.
+fn reapply_failure(key: &str, profile: &str, e: &DeployError) -> AgentNotifyAttempt {
+    match e {
+        DeployError::BuildNotServable { .. } => AgentNotifyAttempt::terminal(
+            key,
+            AgentApplyErrorCode::ProfileRefused,
+            format!(
+                "The installed build of Sensor {key} is no longer served, so its privileges \
+                 cannot change. Update the Sensor to a served build, then apply again."
+            ),
+        ),
+        DeployError::PrivilegeProfileNotDeclared { .. }
+        | DeployError::ManifestFormatUnsupported { .. } => {
+            AgentNotifyAttempt::terminal(key, AgentApplyErrorCode::ProfileRefused, e.to_string())
+        }
+        DeployError::ReapplyRolledBack { .. } => AgentNotifyAttempt::terminal(
+            key,
+            AgentApplyErrorCode::ReapplyRolledBack,
+            format!(
+                "The configuration of Sensor {key} is stored, but its privileges could not be \
+                 changed to {profile} on its host, and it runs with its previous ones. The \
+                 Central Manager log and the Sensor's log name the cause; fix it, then apply \
+                 again."
+            ),
+        ),
+        _ => AgentNotifyAttempt::failed(key, format!("{e:#}")),
+    }
+}
+
+/// Refuses an `applyNode` of `input` that would change the privilege profile of a profiled Sensor
+/// of the stored node `stored`, or leave it with none: `applyNode` notifies agents directly and
+/// cannot re-apply one.
+///
+/// It derives from what the apply is about to store, so it also refuses an apply that keeps a
+/// Sensor still owed a re-apply.
+fn check_privilege_profiles(stored: &review_database::Node, input: &NodeInput) -> Result<()> {
+    const REMEDY: &str =
+        "apply it with applyNodeDraft followed by applyAgentConfig, which re-applies the Sensor";
+
+    for agent in input.agents.iter().filter(|a| a.kind == AgentKind::Sensor) {
+        let Some(draft) = agent.draft.as_deref() else {
+            continue;
+        };
+        let Some(recorded) = stored
+            .agents
+            .iter()
+            .find(|row| row.key == agent.key)
+            .and_then(recorded_profile)
+        else {
+            continue;
+        };
+        let run_as_root = agent.run_as_root_draft.unwrap_or(agent.run_as_root);
+        let key = &agent.key;
+        match privilege_profile::derive(Some(draft), run_as_root) {
+            Ok(derived) if derived == recorded => {}
+            Ok(derived) => {
+                return Err(format!(
+                    "This apply would change the privilege profile of Sensor {key} from \
+                     {recorded} to {derived}; {REMEDY}."
+                )
+                .into());
+            }
+            Err(e) => {
+                return Err(format!(
+                    "Cannot derive the privilege profile of Sensor {key}, recorded as \
+                     {recorded}: {e}; {REMEDY}."
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn notify_agents(
@@ -5293,10 +5551,12 @@ mod tests {
     }
 
     /// An `AgentManager` that records every `update_config` key, and fails the keys in `failing`
-    /// the way `REview` reports a Giganto apply failure.
+    /// the way `REview` reports a Giganto apply failure. `capabilities` is the set the host
+    /// advertises, and `None` is a host whose set cannot be read.
     struct RecordingAgentManager {
         calls: Arc<Mutex<Vec<String>>>,
         failing: Vec<String>,
+        capabilities: Option<std::collections::BTreeSet<String>>,
     }
 
     impl RecordingAgentManager {
@@ -5305,6 +5565,17 @@ mod tests {
             let manager = Self {
                 calls: Arc::clone(&calls),
                 failing,
+                capabilities: None,
+            };
+            (Arc::new(manager), calls)
+        }
+
+        fn advertising(tags: &[&str]) -> (SharedAgentManager, Arc<Mutex<Vec<String>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let manager = Self {
+                calls: Arc::clone(&calls),
+                failing: vec![],
+                capabilities: Some(tags.iter().map(ToString::to_string).collect()),
             };
             (Arc::new(manager), calls)
         }
@@ -5352,7 +5623,10 @@ mod tests {
             &self,
             hostname: &str,
         ) -> Result<std::collections::BTreeSet<String>, anyhow::Error> {
-            anyhow::bail!("{hostname} is unreachable")
+            match &self.capabilities {
+                Some(capabilities) => Ok(capabilities.clone()),
+                None => anyhow::bail!("{hostname} is unreachable"),
+            }
         }
 
         async fn get_resource_usage(
@@ -5463,26 +5737,49 @@ mod tests {
 
     #[tokio::test]
     async fn switch_only_apply_stores_the_switch_and_notifies_no_agent() {
-        for mutation in ["applyNodeDraft", "applyNode"] {
-            let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
-            let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
-            let id = put_switch_node(&schema.store());
-            let before = stored_node(&schema.store(), id);
+        let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_switch_node(&schema.store());
+        let before = stored_node(&schema.store(), id);
 
-            let res = schema
-                .execute_as_system_admin(&apply_mutation(mutation, id, &before))
-                .await;
-            assert!(res.errors.is_empty(), "{mutation}: {:?}", res.errors);
+        let res = schema
+            .execute_as_system_admin(&apply_mutation("applyNodeDraft", id, &before))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
 
-            let after = stored_node(&schema.store(), id);
-            assert_eq!(after.agents.len(), 2, "{mutation} removed an agent");
-            let sensor = after.agents.first().unwrap();
-            assert!(sensor.run_as_root, "{mutation}");
-            assert_eq!(sensor.run_as_root_draft, None, "{mutation}");
-            assert_eq!(sensor.privilege_profile.as_deref(), Some("replay"));
-            assert_eq!(sensor.config, before.agents[0].config, "{mutation}");
-            assert!(recorded(&calls).is_empty(), "{mutation} notified an agent");
+        let after = stored_node(&schema.store(), id);
+        assert_eq!(after.agents.len(), 2, "applyNodeDraft removed an agent");
+        let sensor = after.agents.first().unwrap();
+        assert!(sensor.run_as_root);
+        assert_eq!(sensor.run_as_root_draft, None);
+        assert_eq!(sensor.privilege_profile.as_deref(), Some("replay"));
+        assert_eq!(sensor.config, before.agents[0].config);
+        assert!(recorded(&calls).is_empty(), "applyNodeDraft notified");
+    }
+
+    #[tokio::test]
+    async fn apply_node_refuses_a_switch_change_that_changes_the_profile() {
+        let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
+        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let id = put_switch_node(&schema.store());
+        let before = stored_node(&schema.store(), id);
+
+        let res = schema
+            .execute_as_system_admin(&apply_mutation("applyNode", id, &before))
+            .await;
+
+        let message = only_error(&res);
+        for expected in [
+            "001.piglet",
+            "replay",
+            "root",
+            "applyNodeDraft",
+            "applyAgentConfig",
+        ] {
+            assert!(message.contains(expected), "{message}");
         }
+        assert_eq!(stored_node(&schema.store(), id), before);
+        assert!(recorded(&calls).is_empty(), "applyNode notified an agent");
     }
 
     #[tokio::test]
@@ -6354,5 +6651,903 @@ mod tests {
         let after = stored_node(&schema.store(), id);
         assert_eq!(after.name, "renamed");
         assert_eq!(after.agents, stored.agents);
+    }
+
+    /// Tests of how `applyAgentConfig` and `applyNode` treat a Sensor's privilege profile.
+    mod privilege_profile {
+        use std::collections::VecDeque;
+
+        use review_database::{BuildSelector, ListenerBinding};
+        use review_protocol::types::{
+            capability::ROLLBACK_SUPERVISOR,
+            node::{BootstrapMaterial, DeliveryMode, FailurePolicy, PackageState},
+        };
+
+        use super::*;
+        use crate::{
+            backend::{
+                BindAddrInput, BuildId, ConfigTemplateCatalog, DeployError, DeployOutcome,
+                OperationId, PackageDeployer,
+            },
+            graphql::customer_deletion_guard::test_support::put_running_job,
+        };
+
+        const HOST: &str = "sensor.example.com";
+        const PCAP_CONFIG: &str = r#"dpdk_args = "--vdev=net_pcap0,rx_pcap=../input.pcap""#;
+        const AF_PACKET_CONFIG: &str = r#"dpdk_args = "--vdev=net_af_packet0,iface=eth1""#;
+        const UNCLASSIFIABLE_CONFIG: &str = r#"dpdk_args = "--vdev=net_null0""#;
+
+        type Answer = Box<dyn FnOnce() -> Result<(DeployOutcome, OperationId), DeployError> + Send>;
+        type ReapplyCall = (String, String, Option<u32>, String);
+
+        fn operation_id() -> OperationId {
+            OperationId::new("operation".to_string())
+        }
+
+        fn answering(outcome: DeployOutcome) -> Answer {
+            Box::new(move || Ok((outcome, operation_id())))
+        }
+
+        fn failing(error: fn() -> DeployError) -> Answer {
+            Box::new(move || Err(error()))
+        }
+
+        /// A deployer that records each `reapply` and answers it with the next scripted answer.
+        struct ScriptedDeployer {
+            calls: Arc<Mutex<Vec<ReapplyCall>>>,
+            answers: Mutex<VecDeque<Answer>>,
+        }
+
+        fn unsupported() -> anyhow::Error {
+            anyhow::anyhow!("this stub answers reapply only")
+        }
+
+        #[async_trait]
+        impl PackageDeployer for ScriptedDeployer {
+            async fn install(
+                &self,
+                _host: &str,
+                _target: &str,
+                _selector: BuildSelector,
+                _on_failure: FailurePolicy,
+                _bind_addrs: Option<Vec<BindAddrInput>>,
+                _config_template: Option<String>,
+                _request_key: &str,
+                _run_as_root: bool,
+            ) -> Result<(DeployOutcome, OperationId), DeployError> {
+                Err(DeployError::Other(unsupported()))
+            }
+
+            async fn update(
+                &self,
+                _host: &str,
+                _target: &str,
+                _instance: Option<u32>,
+                _selector: BuildSelector,
+                _on_failure: FailurePolicy,
+            ) -> Result<(DeployOutcome, OperationId), DeployError> {
+                Err(DeployError::Other(unsupported()))
+            }
+
+            async fn reapply(
+                &self,
+                host: &str,
+                target: &str,
+                instance: Option<u32>,
+                profile: String,
+            ) -> Result<(DeployOutcome, OperationId), DeployError> {
+                self.calls.lock().unwrap().push((
+                    host.to_string(),
+                    target.to_string(),
+                    instance,
+                    profile,
+                ));
+                let answer = self
+                    .answers
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("the test scripts every reapply it expects");
+                answer()
+            }
+
+            async fn remove(
+                &self,
+                _host: &str,
+                _target: &str,
+                _instance: Option<u32>,
+            ) -> Result<OperationId, DeployError> {
+                Err(DeployError::Other(unsupported()))
+            }
+
+            async fn recommend_bind_addrs(
+                &self,
+                _host: &str,
+                _target: &str,
+            ) -> Result<Vec<ListenerBinding>, DeployError> {
+                Err(DeployError::Other(unsupported()))
+            }
+
+            async fn latest_build(&self, _target: &str) -> Result<Option<BuildId>, anyhow::Error> {
+                Err(unsupported())
+            }
+
+            async fn config_templates(
+                &self,
+                _target: &str,
+            ) -> Result<ConfigTemplateCatalog, anyhow::Error> {
+                Err(unsupported())
+            }
+
+            async fn servable_builds(&self, _target: &str) -> Result<Vec<BuildId>, anyhow::Error> {
+                Err(unsupported())
+            }
+
+            async fn is_build_withdrawn(
+                &self,
+                _target: &str,
+                _build: &BuildId,
+            ) -> Result<bool, anyhow::Error> {
+                Err(unsupported())
+            }
+
+            async fn package_status(
+                &self,
+                _host: &str,
+                _target: &str,
+                _instance: Option<u32>,
+            ) -> Result<PackageState, anyhow::Error> {
+                Err(unsupported())
+            }
+
+            async fn read_version(
+                &self,
+                _host: &str,
+                _target: &str,
+                _instance: Option<u32>,
+            ) -> Result<Option<BuildId>, anyhow::Error> {
+                Err(unsupported())
+            }
+
+            async fn register(
+                &self,
+                _service_name: &str,
+                _host: &str,
+                _instance: Option<u32>,
+                _mode: DeliveryMode,
+            ) -> Result<BootstrapMaterial, anyhow::Error> {
+                Err(unsupported())
+            }
+
+            async fn deregister(
+                &self,
+                _service_name: &str,
+                _host: &str,
+                _instance: Option<u32>,
+            ) -> Result<(), anyhow::Error> {
+                Err(unsupported())
+            }
+        }
+
+        struct Harness {
+            schema: TestSchema,
+            notified: Arc<Mutex<Vec<String>>>,
+            reapplies: Arc<Mutex<Vec<ReapplyCall>>>,
+        }
+
+        impl Harness {
+            /// A schema over a host that advertises the rollback supervisor.
+            async fn new(answers: Vec<Answer>) -> Self {
+                let (manager, notified) =
+                    RecordingAgentManager::advertising(&[ROLLBACK_SUPERVISOR]);
+                Self::with_manager(manager, notified, answers).await
+            }
+
+            async fn with_manager(
+                manager: SharedAgentManager,
+                notified: Arc<Mutex<Vec<String>>>,
+                answers: Vec<Answer>,
+            ) -> Self {
+                let reapplies = Arc::new(Mutex::new(Vec::new()));
+                let deployer = ScriptedDeployer {
+                    calls: Arc::clone(&reapplies),
+                    answers: Mutex::new(answers.into()),
+                };
+                let schema =
+                    TestSchema::new_with_all(manager, Arc::new(deployer), None, "testuser", None)
+                        .await;
+                Self {
+                    schema,
+                    notified,
+                    reapplies,
+                }
+            }
+
+            fn put(&self, agents: Vec<review_database::Agent>) -> u32 {
+                put_node(
+                    &self.schema.store(),
+                    "sensor-node",
+                    Some(HOST),
+                    agents,
+                    vec![],
+                )
+            }
+
+            /// Runs `applyAgentConfig` and returns its output.
+            async fn apply_agent_config(&self, id: u32) -> serde_json::Value {
+                let res = self
+                    .schema
+                    .execute_as_system_admin(&format!(
+                        r#"mutation {{
+                            applyAgentConfig(nodeId: "{id}") {{
+                                attempts {{ agentKey succeeded errorCode error }}
+                                skipped {{ agentKey reason }}
+                            }}
+                        }}"#
+                    ))
+                    .await;
+                assert!(res.errors.is_empty(), "{:?}", res.errors);
+                res.data.into_json().unwrap()["applyAgentConfig"].clone()
+            }
+
+            fn reapplies(&self) -> Vec<ReapplyCall> {
+                self.reapplies.lock().unwrap().clone()
+            }
+
+            fn notified(&self) -> Vec<String> {
+                recorded(&self.notified)
+            }
+        }
+
+        fn sensor(
+            key: &str,
+            config: Option<&str>,
+            profile: &str,
+            instance: u32,
+        ) -> review_database::Agent {
+            let mut agent = installed_agent(
+                key,
+                review_database::AgentKind::Sensor,
+                config,
+                Some(instance),
+            );
+            agent.privilege_profile = Some(profile.to_string());
+            agent
+        }
+
+        fn reapply_call(instance: u32, profile: &str) -> ReapplyCall {
+            (
+                HOST.to_string(),
+                "piglet".to_string(),
+                Some(instance),
+                profile.to_string(),
+            )
+        }
+
+        fn only_attempt(output: &serde_json::Value) -> &serde_json::Value {
+            let attempts = output["attempts"].as_array().unwrap();
+            assert_eq!(attempts.len(), 1, "{output}");
+            &attempts[0]
+        }
+
+        fn assert_success(output: &serde_json::Value) {
+            assert_json_eq!(
+                only_attempt(output),
+                json!({
+                    "agentKey": "001.piglet",
+                    "succeeded": true,
+                    "errorCode": null,
+                    "error": null,
+                })
+            );
+        }
+
+        #[tokio::test]
+        async fn an_unchanged_profile_notifies_and_does_not_reapply() {
+            let harness = Harness::new(vec![]).await;
+            let id = harness.put(vec![sensor(
+                "001.piglet",
+                Some(AF_PACKET_CONFIG),
+                "af-packet",
+                1,
+            )]);
+
+            assert_success(&harness.apply_agent_config(id).await);
+
+            assert_eq!(
+                harness.notified(),
+                vec![test_agent_lookup_key("001.piglet", HOST)]
+            );
+            assert_eq!(harness.reapplies(), Vec::<ReapplyCall>::new());
+        }
+
+        #[tokio::test]
+        async fn a_changed_profile_reapplies_and_does_not_notify() {
+            for outcome in [DeployOutcome::Applied, DeployOutcome::Accepted] {
+                let harness = Harness::new(vec![answering(outcome)]).await;
+                let id = harness.put(vec![sensor(
+                    "001.piglet",
+                    Some(AF_PACKET_CONFIG),
+                    "replay",
+                    7,
+                )]);
+
+                assert_success(&harness.apply_agent_config(id).await);
+
+                assert_eq!(harness.reapplies(), vec![reapply_call(7, "af-packet")]);
+                assert_eq!(harness.notified(), Vec::<String>::new());
+            }
+        }
+
+        #[tokio::test]
+        async fn a_switch_turned_on_reapplies_a_sensor_with_no_config_as_root() {
+            let harness = Harness::new(vec![answering(DeployOutcome::Applied)]).await;
+            let mut agent = sensor("001.piglet", None, "replay", 1);
+            agent.run_as_root = true;
+            let id = harness.put(vec![agent]);
+
+            assert_success(&harness.apply_agent_config(id).await);
+
+            assert_eq!(harness.reapplies(), vec![reapply_call(1, "root")]);
+            assert_eq!(harness.notified(), Vec::<String>::new());
+        }
+
+        #[tokio::test]
+        async fn a_config_and_switch_change_together_reapply_once() {
+            let harness = Harness::new(vec![answering(DeployOutcome::Applied)]).await;
+            let mut agent = sensor("001.piglet", Some(AF_PACKET_CONFIG), "replay", 1);
+            agent.run_as_root = true;
+            let id = harness.put(vec![agent]);
+
+            assert_success(&harness.apply_agent_config(id).await);
+
+            assert_eq!(harness.reapplies(), vec![reapply_call(1, "root")]);
+            assert_eq!(harness.notified(), Vec::<String>::new());
+        }
+
+        #[tokio::test]
+        async fn an_unchanged_profile_keeps_todays_skip_reasons() {
+            let harness = Harness::new(vec![]).await;
+            let id = harness.put(vec![
+                sensor("001.piglet", None, "replay", 1),
+                sensor("002.piglet", Some(""), "replay", 2),
+            ]);
+
+            let output = harness.apply_agent_config(id).await;
+
+            assert_json_eq!(
+                output,
+                json!({
+                    "attempts": [],
+                    "skipped": [
+                        { "agentKey": "001.piglet", "reason": "NOT_CONFIGURED" },
+                        { "agentKey": "002.piglet", "reason": "DIRECT_SETUP" },
+                    ],
+                })
+            );
+            assert_eq!(harness.reapplies(), Vec::<ReapplyCall>::new());
+            assert_eq!(harness.notified(), Vec::<String>::new());
+        }
+
+        #[tokio::test]
+        async fn direct_setup_is_profiled_like_any_other() {
+            let harness = Harness::new(vec![answering(DeployOutcome::Applied)]).await;
+            let id = harness.put(vec![sensor("001.piglet", Some(""), "dpdk", 1)]);
+
+            assert_success(&harness.apply_agent_config(id).await);
+
+            assert_eq!(harness.reapplies(), vec![reapply_call(1, "replay")]);
+        }
+
+        #[tokio::test]
+        async fn an_unprofiled_sensor_and_other_kinds_are_only_notified() {
+            let harness = Harness::new(vec![]).await;
+            let mut other_kind = installed_agent(
+                "001.hog",
+                review_database::AgentKind::SemiSupervised,
+                Some(AF_PACKET_CONFIG),
+                Some(1),
+            );
+            other_kind.privilege_profile = Some("replay".to_string());
+            let id = harness.put(vec![
+                installed_agent(
+                    "001.piglet",
+                    review_database::AgentKind::Sensor,
+                    Some(UNCLASSIFIABLE_CONFIG),
+                    Some(1),
+                ),
+                other_kind,
+            ]);
+
+            let output = harness.apply_agent_config(id).await;
+
+            assert_eq!(output["attempts"].as_array().unwrap().len(), 2, "{output}");
+            assert_eq!(
+                harness.notified(),
+                vec![
+                    test_agent_lookup_key("001.piglet", HOST),
+                    test_agent_lookup_key("001.hog", HOST),
+                ]
+            );
+            assert_eq!(harness.reapplies(), Vec::<ReapplyCall>::new());
+        }
+
+        #[tokio::test]
+        async fn a_classification_error_is_terminal_and_makes_no_call() {
+            let harness = Harness::new(vec![]).await;
+            let id = harness.put(vec![sensor(
+                "001.piglet",
+                Some(UNCLASSIFIABLE_CONFIG),
+                "replay",
+                1,
+            )]);
+
+            let output = harness.apply_agent_config(id).await;
+
+            assert_json_eq!(
+                only_attempt(&output),
+                json!({
+                    "agentKey": "001.piglet",
+                    "succeeded": false,
+                    "errorCode": "PROFILE_CLASSIFICATION",
+                    "error": "Cannot derive the privilege profile of Sensor 001.piglet: \
+                              dpdk_args names an unsupported virtual device --vdev=net_null0. \
+                              Fix its input settings and apply again.",
+                })
+            );
+            assert_eq!(harness.reapplies(), Vec::<ReapplyCall>::new());
+            assert_eq!(harness.notified(), Vec::<String>::new());
+        }
+
+        #[tokio::test]
+        async fn a_row_with_no_instance_is_refused_naming_the_key() {
+            let harness = Harness::new(vec![]).await;
+            let mut agent = sensor("001.piglet", Some(AF_PACKET_CONFIG), "replay", 1);
+            agent.instance = None;
+            let id = harness.put(vec![agent]);
+
+            let output = harness.apply_agent_config(id).await;
+
+            let attempt = only_attempt(&output);
+            assert_eq!(attempt["succeeded"], false);
+            assert_eq!(attempt["errorCode"], "PROFILE_REFUSED");
+            assert!(attempt["error"].as_str().unwrap().contains("001.piglet"));
+            assert_eq!(harness.reapplies(), Vec::<ReapplyCall>::new());
+        }
+
+        #[tokio::test]
+        async fn an_unfinished_customer_deletion_refuses_the_reapply() {
+            let harness = Harness::new(vec![]).await;
+            let id = harness.put(vec![sensor(
+                "001.piglet",
+                Some(AF_PACKET_CONFIG),
+                "replay",
+                1,
+            )]);
+            put_running_job(&harness.schema.store(), 0, &[HOST]);
+
+            let output = harness.apply_agent_config(id).await;
+
+            let attempt = only_attempt(&output);
+            assert_eq!(attempt["succeeded"], false);
+            assert_eq!(attempt["errorCode"], "PROFILE_REFUSED");
+            assert!(
+                attempt["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("is being deleted"),
+                "{attempt}"
+            );
+            assert_eq!(harness.reapplies(), Vec::<ReapplyCall>::new());
+        }
+
+        #[test]
+        fn a_host_check_that_failed_otherwise_stays_retryable() {
+            let attempt = super::super::host_check_failure(
+                "001.piglet",
+                async_graphql::Error::new("cannot read"),
+            );
+            assert!(!attempt.succeeded);
+            assert!(attempt.error_code.is_none());
+            assert_eq!(attempt.error.as_deref(), Some("cannot read"));
+        }
+
+        #[tokio::test]
+        async fn a_host_without_the_rollback_supervisor_refuses_the_reapply() {
+            let (manager, notified) = RecordingAgentManager::advertising(&[]);
+            let harness = Harness::with_manager(manager, notified, vec![]).await;
+            let id = harness.put(vec![sensor(
+                "001.piglet",
+                Some(AF_PACKET_CONFIG),
+                "replay",
+                1,
+            )]);
+
+            let output = harness.apply_agent_config(id).await;
+
+            let attempt = only_attempt(&output);
+            assert_eq!(attempt["succeeded"], false);
+            assert_eq!(attempt["errorCode"], "PROFILE_REFUSED");
+            assert!(
+                attempt["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("rollback supervisor"),
+                "{attempt}"
+            );
+            assert_eq!(harness.reapplies(), Vec::<ReapplyCall>::new());
+        }
+
+        #[tokio::test]
+        async fn capabilities_that_cannot_be_read_stay_retryable() {
+            let (manager, notified) = RecordingAgentManager::boxed(vec![]);
+            let harness = Harness::with_manager(manager, notified, vec![]).await;
+            let id = harness.put(vec![sensor(
+                "001.piglet",
+                Some(AF_PACKET_CONFIG),
+                "replay",
+                1,
+            )]);
+
+            let output = harness.apply_agent_config(id).await;
+
+            assert_json_eq!(
+                only_attempt(&output),
+                json!({
+                    "agentKey": "001.piglet",
+                    "succeeded": false,
+                    "errorCode": null,
+                    "error": format!("{HOST} is unreachable"),
+                })
+            );
+            assert_eq!(harness.reapplies(), Vec::<ReapplyCall>::new());
+        }
+
+        /// Asserts how one error `reapply` returns is reported.
+        async fn assert_reapply_error(
+            error: fn() -> DeployError,
+            error_code: Option<&str>,
+            message: &str,
+        ) {
+            let harness = Harness::new(vec![failing(error)]).await;
+            let id = harness.put(vec![sensor(
+                "001.piglet",
+                Some(AF_PACKET_CONFIG),
+                "replay",
+                1,
+            )]);
+
+            let output = harness.apply_agent_config(id).await;
+
+            assert_json_eq!(
+                only_attempt(&output),
+                json!({
+                    "agentKey": "001.piglet",
+                    "succeeded": false,
+                    "errorCode": error_code,
+                    "error": message,
+                })
+            );
+            assert_eq!(harness.reapplies().len(), 1);
+            assert_eq!(harness.notified(), Vec::<String>::new());
+        }
+
+        #[tokio::test]
+        async fn terminal_reapply_errors_carry_their_code() {
+            assert_reapply_error(
+                || DeployError::BuildNotServable {
+                    target: "piglet".to_string(),
+                },
+                Some("PROFILE_REFUSED"),
+                "The installed build of Sensor 001.piglet is no longer served, so its privileges \
+                 cannot change. Update the Sensor to a served build, then apply again.",
+            )
+            .await;
+            assert_reapply_error(
+                || DeployError::PrivilegeProfileNotDeclared {
+                    target: "piglet".to_string(),
+                    profile: "af-packet".to_string(),
+                },
+                Some("PROFILE_REFUSED"),
+                "the build of piglet does not declare the privilege profile af-packet",
+            )
+            .await;
+            assert_reapply_error(
+                || DeployError::ManifestFormatUnsupported {
+                    host: HOST.to_string(),
+                    format_version: 9,
+                    min: 3,
+                    max: 8,
+                },
+                Some("PROFILE_REFUSED"),
+                "the Host Agent on sensor.example.com reads manifest formats 3 through 8, not 9",
+            )
+            .await;
+            assert_reapply_error(
+                || DeployError::ReapplyRolledBack {
+                    operation_id: operation_id(),
+                },
+                Some("REAPPLY_ROLLED_BACK"),
+                "The configuration of Sensor 001.piglet is stored, but its privileges could not \
+                 be changed to af-packet on its host, and it runs with its previous ones. The \
+                 Central Manager log and the Sensor's log name the cause; fix it, then apply \
+                 again.",
+            )
+            .await;
+        }
+
+        #[tokio::test]
+        async fn other_reapply_errors_stay_retryable() {
+            assert_reapply_error(
+                || DeployError::CleanupPending {
+                    host: HOST.to_string(),
+                    target: "piglet".to_string(),
+                    instance: Some(1),
+                    operation_id: operation_id(),
+                },
+                None,
+                "a teardown is still owed on this target",
+            )
+            .await;
+            assert_reapply_error(
+                || DeployError::UnderMaintenance,
+                None,
+                "REview is under maintenance; nothing was sent",
+            )
+            .await;
+            assert_reapply_error(
+                || DeployError::Other(anyhow::anyhow!("in flight").context("re-applying")),
+                None,
+                "re-applying: in flight",
+            )
+            .await;
+            assert_reapply_error(
+                || DeployError::SystemInstance {
+                    host: HOST.to_string(),
+                },
+                None,
+                "this is the host's operational log collector; update it from Operational log \
+                 collectors",
+            )
+            .await;
+        }
+
+        #[tokio::test]
+        async fn one_sensors_failure_does_not_stop_the_others() {
+            let harness = Harness::new(vec![
+                failing(|| DeployError::ReapplyRolledBack {
+                    operation_id: operation_id(),
+                }),
+                answering(DeployOutcome::Accepted),
+            ])
+            .await;
+            let id = harness.put(vec![
+                sensor("001.piglet", Some(AF_PACKET_CONFIG), "replay", 1),
+                sensor("002.piglet", Some(UNCLASSIFIABLE_CONFIG), "replay", 2),
+                sensor("003.piglet", Some(PCAP_CONFIG), "dpdk", 3),
+                sensor("004.piglet", Some(PCAP_CONFIG), "replay", 4),
+                make_agent(
+                    "001.hog",
+                    review_database::AgentKind::SemiSupervised,
+                    Some("a = 1"),
+                ),
+            ]);
+
+            let output = harness.apply_agent_config(id).await;
+
+            let summary: Vec<_> = output["attempts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|attempt| {
+                    (
+                        attempt["agentKey"].as_str().unwrap(),
+                        attempt["succeeded"].as_bool().unwrap(),
+                        attempt["errorCode"].as_str(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                summary,
+                vec![
+                    ("001.piglet", false, Some("REAPPLY_ROLLED_BACK")),
+                    ("002.piglet", false, Some("PROFILE_CLASSIFICATION")),
+                    ("003.piglet", true, None),
+                    ("004.piglet", true, None),
+                    ("001.hog", true, None),
+                ]
+            );
+            assert_eq!(
+                harness.reapplies(),
+                vec![reapply_call(1, "af-packet"), reapply_call(3, "replay")]
+            );
+            assert_eq!(
+                harness.notified(),
+                vec![
+                    test_agent_lookup_key("004.piglet", HOST),
+                    test_agent_lookup_key("001.hog", HOST),
+                ]
+            );
+        }
+
+        #[tokio::test]
+        async fn a_failed_reapply_leaves_the_sensor_to_reapply_next_time() {
+            let harness = Harness::new(vec![
+                failing(|| DeployError::ReapplyRolledBack {
+                    operation_id: operation_id(),
+                }),
+                answering(DeployOutcome::Applied),
+            ])
+            .await;
+            let id = harness.put(vec![sensor(
+                "001.piglet",
+                Some(AF_PACKET_CONFIG),
+                "replay",
+                1,
+            )]);
+            let stored = stored_node(&harness.schema.store(), id);
+
+            let output = harness.apply_agent_config(id).await;
+            assert_eq!(only_attempt(&output)["errorCode"], "REAPPLY_ROLLED_BACK");
+            assert_eq!(stored_node(&harness.schema.store(), id), stored);
+
+            assert_success(&harness.apply_agent_config(id).await);
+            assert_eq!(
+                harness.reapplies(),
+                vec![reapply_call(1, "af-packet"), reapply_call(1, "af-packet")]
+            );
+        }
+
+        #[tokio::test]
+        async fn a_switch_stored_by_apply_node_draft_is_reapplied_by_apply_agent_config() {
+            let harness = Harness::new(vec![answering(DeployOutcome::Applied)]).await;
+            let mut agent = sensor("001.piglet", Some(PCAP_CONFIG), "replay", 1);
+            agent.run_as_root_draft = Some(true);
+            let id = harness.put(vec![agent]);
+            let before = stored_node(&harness.schema.store(), id);
+
+            let res = harness
+                .schema
+                .execute_as_system_admin(&apply_mutation("applyNodeDraft", id, &before))
+                .await;
+            assert!(res.errors.is_empty(), "{:?}", res.errors);
+            assert_eq!(harness.reapplies(), Vec::<ReapplyCall>::new());
+
+            assert_success(&harness.apply_agent_config(id).await);
+            assert_eq!(harness.reapplies(), vec![reapply_call(1, "root")]);
+            assert_eq!(harness.notified(), Vec::<String>::new());
+        }
+
+        /// Stores a Sensor recorded as `replay`, with `draft` staged, and runs `applyNode`.
+        async fn apply_node_with_draft(
+            harness: &Harness,
+            draft: &str,
+        ) -> (u32, review_database::Node, async_graphql::Response) {
+            let mut agent = sensor("001.piglet", Some(PCAP_CONFIG), "replay", 1);
+            agent.draft = Some(draft.to_string().try_into().expect("valid toml"));
+            let id = harness.put(vec![agent]);
+            let before = stored_node(&harness.schema.store(), id);
+            let res = harness
+                .schema
+                .execute_as_system_admin(&apply_mutation("applyNode", id, &before))
+                .await;
+            (id, before, res)
+        }
+
+        #[tokio::test]
+        async fn apply_node_refuses_a_profile_change() {
+            let harness = Harness::new(vec![]).await;
+
+            let (id, before, res) = apply_node_with_draft(&harness, AF_PACKET_CONFIG).await;
+
+            let message = only_error(&res);
+            for expected in [
+                "001.piglet",
+                "replay",
+                "af-packet",
+                "applyNodeDraft",
+                "applyAgentConfig",
+            ] {
+                assert!(message.contains(expected), "{message}");
+            }
+            assert_eq!(stored_node(&harness.schema.store(), id), before);
+            assert_eq!(harness.notified(), Vec::<String>::new());
+            assert_eq!(harness.reapplies(), Vec::<ReapplyCall>::new());
+        }
+
+        #[tokio::test]
+        async fn apply_node_refuses_a_classification_error() {
+            let harness = Harness::new(vec![]).await;
+
+            let (id, before, res) = apply_node_with_draft(&harness, UNCLASSIFIABLE_CONFIG).await;
+
+            let message = only_error(&res);
+            for expected in [
+                "001.piglet",
+                "--vdev=net_null0",
+                "applyNodeDraft",
+                "applyAgentConfig",
+            ] {
+                assert!(message.contains(expected), "{message}");
+            }
+            assert_eq!(stored_node(&harness.schema.store(), id), before);
+            assert_eq!(harness.notified(), Vec::<String>::new());
+        }
+
+        #[tokio::test]
+        async fn apply_node_applies_and_notifies_an_unchanged_profile() {
+            let harness = Harness::new(vec![]).await;
+            let draft = r#"dpdk_args = "--vdev=net_pcap0,rx_pcap=../other.pcap""#;
+
+            let (id, _, res) = apply_node_with_draft(&harness, draft).await;
+
+            assert!(res.errors.is_empty(), "{:?}", res.errors);
+            let after = stored_node(&harness.schema.store(), id);
+            assert_eq!(
+                after.agents[0].config.as_ref().map(AsRef::<str>::as_ref),
+                Some(draft)
+            );
+            assert_eq!(
+                harness.notified(),
+                vec![test_agent_lookup_key("001.piglet", HOST)]
+            );
+            assert_eq!(harness.reapplies(), Vec::<ReapplyCall>::new());
+        }
+
+        #[tokio::test]
+        async fn apply_node_refuses_while_a_sensor_is_owed_a_reapply() {
+            let harness = Harness::new(vec![]).await;
+            let id = harness.put(vec![sensor(
+                "001.piglet",
+                Some(AF_PACKET_CONFIG),
+                "replay",
+                1,
+            )]);
+            let before = stored_node(&harness.schema.store(), id);
+
+            let res = harness
+                .schema
+                .execute_as_system_admin(&apply_mutation("applyNode", id, &before))
+                .await;
+
+            assert!(only_error(&res).contains("001.piglet"));
+            assert_eq!(stored_node(&harness.schema.store(), id), before);
+        }
+
+        #[tokio::test]
+        async fn apply_node_ignores_a_sensor_it_does_not_profile() {
+            let harness = Harness::new(vec![]).await;
+            let mut removed = make_agent(
+                "001.piglet",
+                review_database::AgentKind::Sensor,
+                Some(AF_PACKET_CONFIG),
+            );
+            removed.draft = None;
+            removed.privilege_profile = Some("replay".to_string());
+            let mut unprofiled = make_agent(
+                "002.piglet",
+                review_database::AgentKind::Sensor,
+                Some(PCAP_CONFIG),
+            );
+            unprofiled.draft = Some(UNCLASSIFIABLE_CONFIG.to_string().try_into().expect("valid"));
+            let mut other_kind = make_agent(
+                "001.hog",
+                review_database::AgentKind::SemiSupervised,
+                Some(PCAP_CONFIG),
+            );
+            other_kind.draft = Some(UNCLASSIFIABLE_CONFIG.to_string().try_into().expect("valid"));
+            other_kind.privilege_profile = Some("replay".to_string());
+            let id = harness.put(vec![removed, unprofiled, other_kind]);
+            let before = stored_node(&harness.schema.store(), id);
+
+            let res = harness
+                .schema
+                .execute_as_system_admin(&apply_mutation("applyNode", id, &before))
+                .await;
+
+            assert!(res.errors.is_empty(), "{:?}", res.errors);
+            let after = stored_node(&harness.schema.store(), id);
+            assert_eq!(after.agents.len(), 2, "the draftless Sensor is removed");
+        }
     }
 }
