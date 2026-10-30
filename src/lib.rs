@@ -33,12 +33,13 @@ use graphql::RoleGuard;
 use review_database::Store;
 use rustls::{
     RootCertStore,
+    crypto::CryptoProvider,
     pki_types::{CertificateDer, PrivateKeyDer},
 };
 use serde_json::json;
 use tokio::{sync::Notify, task::JoinHandle};
 use tower::Service;
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::auth::MtlsAuthError;
 use crate::auth::MtlsAuthenticator;
@@ -129,6 +130,15 @@ pub struct ServerConfig {
     pub cert_manager: Arc<dyn CertManager>,
     pub tls_reload_handle: Arc<Notify>,
     pub ca_certs: Vec<PathBuf>,
+    /// The rustls crypto provider every TLS configuration of the HTTPS server
+    /// is built from: the first one and each one built after a certificate
+    /// reload, client-certificate verifier included.
+    ///
+    /// The server sets no TLS policy of its own and does not read the
+    /// process-default provider. Its key-exchange groups and cipher suites are
+    /// this provider's, and so are its protocol versions: a provider holding
+    /// only TLS 1.3 cipher suites makes the server TLS 1.3 only.
+    pub crypto_provider: Arc<CryptoProvider>,
     pub authenticator: Arc<dyn MtlsAuthenticator>,
     /// Takes a signed package streamed to the package-upload route into the
     /// build store.
@@ -193,7 +203,7 @@ where
     A: AgentManager + 'static,
     O: HostOnboarder + 'static,
 {
-    use axum_server::{Handle, tls_rustls::RustlsConfig};
+    use axum_server::Handle;
     use tracing::info;
 
     let schema = graphql::schema(
@@ -230,18 +240,11 @@ where
             let handle = Handle::new();
             let notify_shutdown = Arc::new(Notify::new());
             let shutdown_completed = Arc::new(Notify::new());
-            let (cert_path, key_path) = (
-                config.cert_manager.cert_path()?,
-                config.cert_manager.key_path()?,
-            );
-            let tls_config = {
-                let server_config = build_mtls_server_config(
-                    cert_path.as_path(),
-                    key_path.as_path(),
-                    &config.ca_certs,
-                )?;
-                RustlsConfig::from_config(Arc::new(server_config))
-            };
+            let tls_config = build_tls_config(
+                config.cert_manager.as_ref(),
+                &config.ca_certs,
+                &config.crypto_provider,
+            )?;
 
             let wait_shutdown = notify_shutdown.clone();
             let completed = shutdown_completed.clone();
@@ -366,11 +369,17 @@ where
         let config = self.config.clone();
         let timeout = self.handshake_timeout;
         Box::pin(async move {
+            let peer_addr = stream.peer_addr();
             let server_config = config.get_inner();
             let acceptor = tokio_rustls::TlsAcceptor::from(server_config);
-            let tls = tokio::time::timeout(timeout, acceptor.accept(stream))
-                .await
-                .map_err(|e| io::Error::new(io::ErrorKind::TimedOut, e))??;
+            let tls = match tokio::time::timeout(timeout, acceptor.accept(stream)).await {
+                Ok(Ok(tls)) => tls,
+                Ok(Err(e)) => return Err(log_failed_handshake(peer_addr.ok(), e)),
+                Err(e) => {
+                    let e = io::Error::new(io::ErrorKind::TimedOut, e);
+                    return Err(log_failed_handshake(peer_addr.ok(), e));
+                }
+            };
 
             let peer = tls.get_ref().1.peer_certificates().map(|certs| {
                 let certs = certs
@@ -385,6 +394,14 @@ where
             Ok((tls, service))
         })
     }
+}
+
+/// Logs a TLS handshake that failed or timed out, and returns its error
+/// unchanged.
+fn log_failed_handshake(peer: Option<SocketAddr>, e: io::Error) -> io::Error {
+    let peer = peer.map_or_else(|| "an unknown address".to_string(), |peer| peer.to_string());
+    warn!("TLS handshake from {peer} failed: {e}");
+    e
 }
 
 async fn graceful_shutdown(handle: axum_server::Handle<SocketAddr>, notify: Arc<Notify>) {
@@ -632,10 +649,31 @@ fn read_private_key_from_path<P: AsRef<Path>>(
     )
 }
 
+/// Builds the TLS configuration of the HTTPS server from the certificate and
+/// key `cert_manager` currently points at, with `provider` as its only source
+/// of cryptography.
+fn build_tls_config(
+    cert_manager: &dyn CertManager,
+    ca_certs: &[PathBuf],
+    provider: &Arc<CryptoProvider>,
+) -> anyhow::Result<axum_server::tls_rustls::RustlsConfig> {
+    let (cert_path, key_path) = (cert_manager.cert_path()?, cert_manager.key_path()?);
+    let server_config = build_mtls_server_config(
+        cert_path.as_path(),
+        key_path.as_path(),
+        ca_certs,
+        Arc::clone(provider),
+    )?;
+    Ok(axum_server::tls_rustls::RustlsConfig::from_config(
+        Arc::new(server_config),
+    ))
+}
+
 fn build_mtls_server_config(
     cert_path: &Path,
     key_path: &Path,
     ca_certs: &[PathBuf],
+    provider: Arc<CryptoProvider>,
 ) -> Result<rustls::ServerConfig, anyhow::Error> {
     let cert_chain = read_certificate_from_path(cert_path)?;
     let key = read_private_key_from_path(key_path)?;
@@ -648,11 +686,15 @@ fn build_mtls_server_config(
         }
     }
 
-    let client_verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(root_store))
-        .build()
-        .map_err(|e| anyhow::anyhow!("Invalid client auth config: {e:?}"))?;
+    let client_verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
+        Arc::new(root_store),
+        Arc::clone(&provider),
+    )
+    .build()
+    .map_err(|e| anyhow::anyhow!("Invalid client auth config: {e:?}"))?;
 
-    let mut config = rustls::ServerConfig::builder()
+    let mut config = rustls::ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()?
         .with_client_cert_verifier(client_verifier)
         .with_single_cert(cert_chain, key)?;
     config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
@@ -706,10 +748,444 @@ macro_rules! warn_with_username {
 
 #[cfg(test)]
 mod tests {
+    use std::{io::Write, sync::Mutex, time::Duration};
+
     use async_graphql::{ErrorExtensionValues, ServerError};
+    use axum_server::{accept::Accept, tls_rustls::RustlsConfig};
     use http::StatusCode;
+    use rcgen::{
+        BasicConstraints, CertificateParams, DnType, IsCa, Issuer, KeyPair, PKCS_ECDSA_P256_SHA256,
+        SanType,
+    };
+    use rustls::{
+        NamedGroup, PeerIncompatible, ProtocolVersion,
+        client::WebPkiServerVerifier,
+        crypto::aws_lc_rs,
+        pki_types::{PrivatePkcs8KeyDer, ServerName},
+    };
+    use tempfile::TempDir;
+    use tokio::net::{TcpListener, TcpStream};
+    use tracing_subscriber::fmt::MakeWriter;
 
     use super::*;
+
+    const LOCALHOST: &str = "127.0.0.1";
+
+    #[derive(Clone, Default)]
+    struct LogCapture(Arc<Mutex<Vec<u8>>>);
+
+    impl LogCapture {
+        /// Returns every captured WARN line.
+        fn warnings(&self) -> Vec<String> {
+            let buffer = self.0.lock().expect("the log mutex");
+            String::from_utf8_lossy(&buffer)
+                .lines()
+                .filter(|line| line.trim_start().starts_with("WARN"))
+                .map(ToString::to_string)
+                .collect()
+        }
+    }
+
+    impl Write for LogCapture {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().expect("the log mutex").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl MakeWriter<'_> for LogCapture {
+        type Writer = Self;
+
+        fn make_writer(&self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// Installs a subscriber capturing every event on the current thread for
+    /// as long as the returned guard lives.
+    fn capture_logs() -> (LogCapture, tracing::subscriber::DefaultGuard) {
+        let logs = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+        (logs, guard)
+    }
+
+    /// A provider whose only key-exchange group is X25519MLKEM768 and whose
+    /// only cipher suites are TLS 1.3's.
+    fn hybrid_only() -> Arc<CryptoProvider> {
+        let base = aws_lc_rs::default_provider();
+        Arc::new(CryptoProvider {
+            cipher_suites: base
+                .cipher_suites
+                .iter()
+                .copied()
+                .filter(|suite| suite.tls13().is_some())
+                .collect(),
+            kx_groups: vec![aws_lc_rs::kx_group::X25519MLKEM768],
+            ..base
+        })
+    }
+
+    fn x25519_only() -> Arc<CryptoProvider> {
+        Arc::new(CryptoProvider {
+            kx_groups: vec![aws_lc_rs::kx_group::X25519],
+            ..aws_lc_rs::default_provider()
+        })
+    }
+
+    /// A CA, the certificate a client presents, and a directory holding the
+    /// CA certificate and the server's certificate and key.
+    struct Pki {
+        issuer: Issuer<'static, KeyPair>,
+        ca_der: CertificateDer<'static>,
+        client_cert: CertificateDer<'static>,
+        client_key: PrivateKeyDer<'static>,
+        dir: TempDir,
+    }
+
+    impl Pki {
+        fn new() -> Self {
+            let mut params = CertificateParams::default();
+            params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+            params
+                .distinguished_name
+                .push(DnType::CommonName, "review-web-test-ca");
+            let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+            let ca = params.self_signed(&key).unwrap();
+            let issuer = Issuer::new(params, key);
+
+            let client_params = CertificateParams::new(vec!["client.example.com".to_string()])
+                .expect("the client name is a valid DNS name");
+            let client_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+            let client_cert = client_params.signed_by(&client_key, &issuer).unwrap();
+
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join("ca.pem"), ca.pem()).unwrap();
+            let pki = Self {
+                issuer,
+                ca_der: ca.der().clone(),
+                client_cert: client_cert.der().clone(),
+                client_key: PrivatePkcs8KeyDer::from(client_key.serialize_der()).into(),
+                dir,
+            };
+            pki.renew_server_cert();
+            pki
+        }
+
+        /// Writes a new server certificate for `127.0.0.1` over the current
+        /// one, and returns it.
+        fn renew_server_cert(&self) -> CertificateDer<'static> {
+            let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
+            params
+                .subject_alt_names
+                .push(SanType::IpAddress(LOCALHOST.parse().unwrap()));
+            let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+            let cert = params.signed_by(&key, &self.issuer).unwrap();
+            std::fs::write(self.dir.path().join("server.pem"), cert.pem()).unwrap();
+            std::fs::write(self.dir.path().join("server.key"), key.serialize_pem()).unwrap();
+            cert.der().clone()
+        }
+
+        fn ca_certs(&self) -> Vec<PathBuf> {
+            vec![self.dir.path().join("ca.pem")]
+        }
+
+        fn cert_manager(&self) -> StubCertManager {
+            StubCertManager {
+                cert_path: self.dir.path().join("server.pem"),
+                key_path: self.dir.path().join("server.key"),
+            }
+        }
+
+        fn client(&self, provider: Arc<CryptoProvider>) -> rustls::ClientConfig {
+            self.client_with_versions(provider, rustls::DEFAULT_VERSIONS)
+        }
+
+        fn client_with_versions(
+            &self,
+            provider: Arc<CryptoProvider>,
+            versions: &[&'static rustls::SupportedProtocolVersion],
+        ) -> rustls::ClientConfig {
+            let mut roots = RootCertStore::empty();
+            roots.add(self.ca_der.clone()).unwrap();
+            let verifier =
+                WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider.clone())
+                    .build()
+                    .unwrap();
+            rustls::ClientConfig::builder_with_provider(provider)
+                .with_protocol_versions(versions)
+                .unwrap()
+                .with_webpki_verifier(verifier)
+                .with_client_auth_cert(vec![self.client_cert.clone()], self.client_key.clone_key())
+                .unwrap()
+        }
+
+        fn client_without_identity(&self, provider: Arc<CryptoProvider>) -> rustls::ClientConfig {
+            let mut roots = RootCertStore::empty();
+            roots.add(self.ca_der.clone()).unwrap();
+            rustls::ClientConfig::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()
+                .unwrap()
+                .with_root_certificates(roots)
+                .with_no_client_auth()
+        }
+    }
+
+    struct StubCertManager {
+        cert_path: PathBuf,
+        key_path: PathBuf,
+    }
+
+    impl CertManager for StubCertManager {
+        fn cert_path(&self) -> Result<PathBuf, anyhow::Error> {
+            Ok(self.cert_path.clone())
+        }
+
+        fn key_path(&self) -> Result<PathBuf, anyhow::Error> {
+            Ok(self.key_path.clone())
+        }
+
+        fn update_certificate(
+            &self,
+            _cert: String,
+            _key: String,
+        ) -> Result<Vec<crate::graphql::ParsedCertificate>, anyhow::Error> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct Handshake {
+        client: io::Result<tokio_rustls::client::TlsStream<TcpStream>>,
+        server: io::Result<()>,
+        client_port: u16,
+    }
+
+    /// Runs one handshake between `client` and `TlsPeerAcceptor` over
+    /// `server`.
+    async fn handshake(server: RustlsConfig, client: rustls::ClientConfig) -> Handshake {
+        let listener = TcpListener::bind((LOCALHOST, 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let acceptor = TlsPeerAcceptor::new(server);
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(client));
+        let tcp = TcpStream::connect(addr).await.unwrap();
+        let client_port = tcp.local_addr().unwrap().port();
+        let (accepted, _) = listener.accept().await.unwrap();
+        let server_name = ServerName::try_from(LOCALHOST).unwrap();
+        let (client, server) = tokio::join!(
+            connector.connect(server_name, tcp),
+            Accept::<TcpStream, ()>::accept(&acceptor, accepted, ()),
+        );
+        Handshake {
+            client,
+            server: server.map(|_| ()),
+            client_port,
+        }
+    }
+
+    fn rustls_error(e: &io::Error) -> &rustls::Error {
+        e.get_ref()
+            .and_then(|inner| inner.downcast_ref::<rustls::Error>())
+            .unwrap_or_else(|| panic!("not a rustls error: {e:?}"))
+    }
+
+    fn served_leaf(tls: &tokio_rustls::client::TlsStream<TcpStream>) -> CertificateDer<'static> {
+        tls.get_ref()
+            .1
+            .peer_certificates()
+            .and_then(|certs| certs.first())
+            .expect("the server presented a certificate")
+            .clone()
+            .into_owned()
+    }
+
+    fn hybrid_server(pki: &Pki) -> RustlsConfig {
+        build_tls_config(&pki.cert_manager(), &pki.ca_certs(), &hybrid_only()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_x25519_only_client_is_refused_and_logged() {
+        let pki = Pki::new();
+        let (logs, _guard) = capture_logs();
+        let outcome = handshake(hybrid_server(&pki), pki.client(x25519_only())).await;
+
+        assert!(outcome.client.is_err());
+        let e = outcome
+            .server
+            .expect_err("the server refuses the handshake");
+        assert!(matches!(
+            rustls_error(&e),
+            rustls::Error::PeerIncompatible(PeerIncompatible::NoKxGroupsInCommon)
+        ));
+        let warnings = logs.warnings();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        let expected = format!(
+            "TLS handshake from 127.0.0.1:{} failed: peer is incompatible: NoKxGroupsInCommon",
+            outcome.client_port
+        );
+        assert!(warnings[0].ends_with(&expected), "{}", warnings[0]);
+    }
+
+    #[tokio::test]
+    async fn a_tls12_only_client_is_refused() {
+        let pki = Pki::new();
+        let (logs, _guard) = capture_logs();
+        let client = pki.client_with_versions(
+            Arc::new(aws_lc_rs::default_provider()),
+            &[&rustls::version::TLS12],
+        );
+        let outcome = handshake(hybrid_server(&pki), client).await;
+
+        assert!(outcome.client.is_err());
+        let e = outcome
+            .server
+            .expect_err("the server refuses the handshake");
+        assert!(matches!(
+            rustls_error(&e),
+            rustls::Error::PeerIncompatible(PeerIncompatible::Tls12NotOfferedOrEnabled)
+        ));
+        let warnings = logs.warnings();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        let expected = format!(
+            "TLS handshake from 127.0.0.1:{} failed: peer is incompatible: \
+             Tls12NotOfferedOrEnabled",
+            outcome.client_port
+        );
+        assert!(warnings[0].ends_with(&expected), "{}", warnings[0]);
+    }
+
+    #[tokio::test]
+    async fn a_default_client_negotiates_x25519mlkem768() {
+        let pki = Pki::new();
+        let (logs, _guard) = capture_logs();
+        let client = pki.client(Arc::new(aws_lc_rs::default_provider()));
+        let outcome = handshake(hybrid_server(&pki), client).await;
+
+        outcome.server.expect("the server completes the handshake");
+        let tls = outcome.client.expect("the client completes the handshake");
+        let connection = tls.get_ref().1;
+        assert_eq!(
+            connection
+                .negotiated_key_exchange_group()
+                .map(rustls::crypto::SupportedKxGroup::name),
+            Some(NamedGroup::X25519MLKEM768)
+        );
+        assert_eq!(
+            connection.protocol_version(),
+            Some(ProtocolVersion::TLSv1_3)
+        );
+        assert!(logs.warnings().is_empty(), "{:?}", logs.warnings());
+    }
+
+    /// Asserts that `config` serves `expected`, refuses an X25519-only client
+    /// and completes a handshake with a client on the default provider.
+    async fn assert_serves(pki: &Pki, config: RustlsConfig, expected: &CertificateDer<'_>) {
+        let refused = handshake(config.clone(), pki.client(x25519_only())).await;
+        let e = refused
+            .server
+            .expect_err("the server refuses the handshake");
+        assert!(matches!(
+            rustls_error(&e),
+            rustls::Error::PeerIncompatible(PeerIncompatible::NoKxGroupsInCommon)
+        ));
+
+        let client = pki.client(Arc::new(aws_lc_rs::default_provider()));
+        let accepted = handshake(config, client).await;
+        accepted.server.expect("the server completes the handshake");
+        let tls = accepted.client.expect("the client completes the handshake");
+        assert_eq!(&served_leaf(&tls), expected);
+    }
+
+    #[tokio::test]
+    async fn a_rebuilt_configuration_keeps_the_provider() {
+        let pki = Pki::new();
+        let provider = hybrid_only();
+        let cert_manager = pki.cert_manager();
+
+        let first = pki.renew_server_cert();
+        let config = build_tls_config(&cert_manager, &pki.ca_certs(), &provider).unwrap();
+        assert_serves(&pki, config, &first).await;
+
+        let second = pki.renew_server_cert();
+        assert_ne!(first, second);
+        let config = build_tls_config(&cert_manager, &pki.ca_certs(), &provider).unwrap();
+        assert_serves(&pki, config, &second).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_handshake_timeout_is_logged() {
+        let pki = Pki::new();
+        let (logs, _guard) = capture_logs();
+        let listener = TcpListener::bind((LOCALHOST, 0)).await.unwrap();
+        let tcp = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let client_port = tcp.local_addr().unwrap().port();
+        let (accepted, _) = listener.accept().await.unwrap();
+        let acceptor = TlsPeerAcceptor::new(hybrid_server(&pki));
+
+        let started = tokio::time::Instant::now();
+        let e = Accept::<TcpStream, ()>::accept(&acceptor, accepted, ())
+            .await
+            .map(|_| ())
+            .expect_err("a silent peer times out");
+        assert_eq!(e.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() >= Duration::from_secs(10));
+        let warnings = logs.warnings();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        let expected =
+            format!("TLS handshake from 127.0.0.1:{client_port} failed: deadline has elapsed");
+        assert!(warnings[0].ends_with(&expected), "{}", warnings[0]);
+        drop(tcp);
+    }
+
+    #[tokio::test]
+    async fn a_client_without_a_certificate_is_refused_and_logged() {
+        let pki = Pki::new();
+        let (logs, _guard) = capture_logs();
+        let client = pki.client_without_identity(Arc::new(aws_lc_rs::default_provider()));
+        let outcome = handshake(hybrid_server(&pki), client).await;
+
+        let e = outcome
+            .server
+            .expect_err("the server refuses the handshake");
+        assert!(matches!(
+            rustls_error(&e),
+            rustls::Error::NoCertificatesPresented
+        ));
+        let warnings = logs.warnings();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        let expected = format!(
+            "TLS handshake from 127.0.0.1:{} failed: {e}",
+            outcome.client_port
+        );
+        assert!(warnings[0].ends_with(&expected), "{}", warnings[0]);
+    }
+
+    #[test]
+    fn an_unknown_peer_address_is_logged_as_such() {
+        let (logs, _guard) = capture_logs();
+        let e = log_failed_handshake(None, io::Error::other("tls handshake eof"));
+
+        assert_eq!(e.kind(), io::ErrorKind::Other);
+        assert_eq!(e.to_string(), "tls handshake eof");
+        let warnings = logs.warnings();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0]
+                .ends_with("TLS handshake from an unknown address failed: tls handshake eof"),
+            "{}",
+            warnings[0]
+        );
+    }
 
     async fn status_and_body(response: async_graphql::Response) -> (StatusCode, serde_json::Value) {
         let response = graphql_http_response(response);
