@@ -4,6 +4,26 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- A TLS handshake that fails or times out on the HTTPS server is logged at
+  WARN as `TLS handshake from <peer address> failed: <error>`, for example
+  `peer is incompatible: NoKxGroupsInCommon` for a client that offers none of
+  the server's key-exchange groups. Such failures were not logged before.
+
+### Changed
+
+- **Breaking change:** `ServerConfig` has a required
+  `crypto_provider: Arc<rustls::crypto::CryptoProvider>`. The HTTPS server
+  builds every TLS configuration from it, the first one and each one after a
+  certificate reload, client-certificate verifier included, and no longer reads
+  the process-default provider. Its key-exchange groups, cipher suites and
+  protocol versions are the provider's: a provider with only TLS 1.3 cipher
+  suites and X25519MLKEM768 as its only group makes the server accept only
+  X25519MLKEM768 over TLS 1.3.
+
 ## [0.52.1] - 2026-10-29
 
 ### Changed
@@ -2797,6 +2817,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.52.1...main
 [0.52.1]: https://github.com/aicers/review-web/compare/0.52.0...0.52.1
 [0.52.0]: https://github.com/aicers/review-web/compare/0.51.1...0.52.0
 [0.51.1]: https://github.com/aicers/review-web/compare/0.51.0...0.51.1

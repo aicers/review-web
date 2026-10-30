@@ -540,6 +540,7 @@ mod mtls_integration {
             }),
             tls_reload_handle: Arc::new(tokio::sync::Notify::new()),
             ca_certs: vec![ca_path],
+            crypto_provider: hybrid_only(),
             authenticator: Arc::new(StubAuthenticator),
             package_store: Arc::new(StubPackageStore),
             package_upload_max_bytes: PACKAGE_UPLOAD_MAX_BYTES,
@@ -572,6 +573,59 @@ mod mtls_integration {
             _store_dir: store_dir,
             _backup_dir: backup_dir,
         })
+    }
+
+    /// A provider whose only key-exchange group is X25519MLKEM768 and whose
+    /// only cipher suites are TLS 1.3's.
+    fn hybrid_only() -> Arc<rustls::crypto::CryptoProvider> {
+        let base = rustls::crypto::aws_lc_rs::default_provider();
+        Arc::new(rustls::crypto::CryptoProvider {
+            cipher_suites: base
+                .cipher_suites
+                .iter()
+                .copied()
+                .filter(|suite| suite.tls13().is_some())
+                .collect(),
+            kx_groups: vec![rustls::crypto::aws_lc_rs::kx_group::X25519MLKEM768],
+            ..base
+        })
+    }
+
+    /// Builds a client like `build_client_with_identity`'s whose only
+    /// key-exchange group is X25519.
+    fn build_x25519_only_client(
+        issuer: &Issuer<'_, KeyPair>,
+        ca_cert: &Certificate,
+        dns_san: &str,
+    ) -> anyhow::Result<reqwest::Client> {
+        let provider = Arc::new(rustls::crypto::CryptoProvider {
+            kx_groups: vec![rustls::crypto::aws_lc_rs::kx_group::X25519],
+            ..rustls::crypto::aws_lc_rs::default_provider()
+        });
+        let (client_cert, client_key) = build_client_cert(issuer, dns_san)?;
+        let mut roots = rustls::RootCertStore::empty();
+        roots
+            .add(ca_cert.der().clone())
+            .context("add CA certificate")?;
+        let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
+            Arc::new(roots),
+            Arc::clone(&provider),
+        )
+        .build()
+        .context("build server certificate verifier")?;
+        let tls = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .context("select protocol versions")?
+            .with_webpki_verifier(verifier)
+            .with_client_auth_cert(
+                vec![client_cert.der().clone()],
+                rustls::pki_types::PrivatePkcs8KeyDer::from(client_key.serialize_der()).into(),
+            )
+            .context("set client certificate")?;
+        reqwest::Client::builder()
+            .tls_backend_preconfigured(tls)
+            .build()
+            .context("build HTTP client")
     }
 
     fn build_client_with_identity(
@@ -677,6 +731,35 @@ mod mtls_integration {
             .and_then(|value| value.as_str())
             .context("read error")?
             .to_string())
+    }
+
+    #[tokio::test]
+    async fn mtls_x25519_only_client_is_refused() -> anyhow::Result<()> {
+        let server = start_test_server()?;
+        // A request on the default provider first, so the refusal below is
+        // the server's and not a server that has not started yet.
+        let (client, client_key) =
+            build_client_with_identity(&server.issuer, &server.ca_cert, SERVICE_DNS)?;
+        let token = sign_context_jwt(client_key.serialize_der().as_slice())?;
+        let response = send_graphql_request(&client, &server.url, Some(&token)).await?;
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+        let refused = build_x25519_only_client(&server.issuer, &server.ca_cert, SERVICE_DNS)?;
+        let request_body = serde_json::to_vec(&json!({ "query": GRAPHQL_QUERY }))
+            .context("serialize GraphQL request")?;
+        let result = refused
+            .post(&server.url)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .bearer_auth(&token)
+            .body(request_body)
+            .send()
+            .await;
+        let err = result.expect_err("an X25519-only client gets no response");
+        assert!(err.is_connect(), "{err:?}");
+
+        server.shutdown.notify_one();
+        server.shutdown.notified().await;
+        Ok(())
     }
 
     #[tokio::test]
