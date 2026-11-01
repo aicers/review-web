@@ -533,20 +533,45 @@ Where the crate handles key material or secrets:
   finds nothing, and fails after the tag has already been pushed.
 <!-- END shared:changelog -->
 
-## Quality Gates (Strict)
+## CI requirements
 
-**Every code change** must satisfy the following Quality Gates. You must
-verify these locally before proposing any code.
+- Run local checks on the host's own operating system: macOS on a Mac,
+  Linux on a Linux host. Do not use a container, a virtual machine or
+  another operating system in its place. A CI job or matrix entry for
+  another operating system or platform is left to CI.
+- A change is documentation-only when every changed path matches the
+  `docs` filter of the `changes` job in `.github/workflows/ci.yml` and
+  none matches its `code` filter. For such a change run only the
+  `Markdown` row, and build or test no code.
+- For any other change, run every row of the table below that applies to
+  the host before pushing. Run each test command as written, in full: do
+  not narrow it to the changed files or to selected test names.
 
 <!-- markdownlint-disable MD013 -->
-- **Linting (Rust)**:
-  - `cargo clippy --all-targets -- -D warnings`
-- **Formatting**:
-  - `cargo fmt -- --check --config group_imports=StdExternalCrate`
-- **Testing**:
-  - `cargo test`
-  - Note: the mTLS integration test binds a local port and may require network
-    permissions.
-- **Linting (Docs/Misc)**:
-  - `markdownlint-cli2 "**/*.md" "#target"`
+| CI job | Local command |
+| --- | --- |
+| `check` | `cargo fmt -- --check --config group_imports=StdExternalCrate`, `cargo clippy --all-targets -- -D warnings`, `cargo check --examples` |
+| `test` | `cargo build --examples`, `cargo test` |
+| `Markdown` | `markdownlint-cli2 "**/*.md" "#target"` |
 <!-- markdownlint-enable MD013 -->
+
+- `test` runs on both `ubuntu-latest` and `macOS-latest`; locally, run it
+  on the host. CI adds `--verbose` to `cargo build` and `cargo test`,
+  which changes only the output. The mTLS integration test binds a port
+  on `127.0.0.1` and may require network permissions.
+- The macOS leg of `test` sets `PQ_LIB_DIR` to Homebrew's `libpq`.
+  Nothing in the dependency tree links `libpq`, so a local run needs
+  neither the library nor the variable.
+- Left to CI: `coverage`, which runs `cargo llvm-cov` and uploads the
+  report to Codecov with a repository secret; the tests it measures are
+  the `test` row above. The `Documentation` workflow builds and
+  publishes `cargo doc`, and runs only on a push to `main` or by hand.
+  The shared instruction-block drift check runs in `Markdown`; the
+  generated regions of this file are never edited here.
+- `CI Gate` and `Markdown` are the required status checks. A
+  documentation-only change skips `check`, `test` and `coverage` but
+  still runs `Markdown`.
+- When a CI job fails, rerun that job's command locally; for a test job,
+  rerun the failing tests by name rather than the whole suite.
+- Before requesting review, ensure every CI job passes on the pushed
+  branch.
