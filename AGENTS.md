@@ -533,7 +533,7 @@ Where the crate handles key material or secrets:
   finds nothing, and fails after the tag has already been pushed.
 <!-- END shared:changelog -->
 
-## CI requirements
+## Validation
 
 - Run local checks on the host's own operating system: macOS on a Mac,
   Linux on a Linux host. Do not use a container, a virtual machine or
