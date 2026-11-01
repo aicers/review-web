@@ -78,6 +78,11 @@ jobs:
 
       # On `pull_request` the action reads the file list from the API and
       # ignores `base`; on `push` it diffs against the sha resolved above.
+      #
+      # `docs` is the documentation allowlist that AGENTS.md points agents
+      # at: a change is docs-only when every changed path is on it. `code`
+      # names every path a build or a test reads. `all` matches every path,
+      # and exists only for its count.
       - name: Filter Paths
         id: filter
         if: github.event_name == 'pull_request' || steps.base.outputs.sha != ''
@@ -90,24 +95,40 @@ jobs:
               - "**/*.md"
               - "LICENSE"
               - ".markdownlint*"
+              # The shared-instructions pin is inert to the build; only the
+              # drift check reads it, and that runs in the ungated `markdown`.
+              - ".agent-instructions.toml"
             code:
               - "src/**"
               - "tests/**"
               - "examples/**"
               - "Cargo.toml"
               - ".clippy.toml"
+              # `tests/schema_sdl.rs` compares the generated SDL with this
+              # committed copy through `include_str!`.
+              - "schema.graphql"
               - ".github/workflows/**"
+            all:
+              - "**"
 
-      # Docs-only requires a POSITIVE result on both halves: documentation
-      # touched, code untouched. A path in neither list leaves `docs` false and
-      # falls through here to the full suite, so a directory nobody thought to
-      # enumerate defaults to running everything rather than to running
-      # nothing. This is an allowlist of the inert, not a denylist.
+      # Docs-only requires a POSITIVE result: documentation touched, code
+      # untouched, and nothing else touched either. A filter output is true
+      # when ANY changed path matches it, so `docs` alone is true for a change
+      # that edits README.md and also some file nobody listed. The count
+      # comparison closes that: every changed path has to be on the docs
+      # allowlist, so a path in neither list falls through to the full suite.
+      # This is an allowlist of the inert, not a denylist.
       - name: Decide Docs-Only
         id: decide
+        env:
+          DOCS: ${{ steps.filter.outputs.docs }}
+          CODE: ${{ steps.filter.outputs.code }}
+          DOCS_COUNT: ${{ steps.filter.outputs.docs_count }}
+          ALL_COUNT: ${{ steps.filter.outputs.all_count }}
         run: |
-          if [ "${{ steps.filter.outputs.docs }}" = "true" ] \
-            && [ "${{ steps.filter.outputs.code }}" != "true" ]; then
+          if [ "${DOCS}" = "true" ] \
+            && [ "${CODE}" != "true" ] \
+            && [ "${DOCS_COUNT}" = "${ALL_COUNT}" ]; then
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
           else
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
