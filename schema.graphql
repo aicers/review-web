@@ -8412,7 +8412,7 @@ type Query {
 	"""
 	topTimeSeriesOfCluster(		model: ID!,		clusterId: ID!,
 		"""
-		The dimensionless cutoff rate, strictly greater than 0 with no upper limit. Omitted or null values use 0.1.
+		The dimensionless cutoff rate, greater than 0 and less than or equal to 1. Omitted or null values use 0.1.
 		"""
 		cutoffRate: Float,
 		"""
@@ -8624,7 +8624,7 @@ type Query {
 		"""
 		trendiOrder: Int,
 		"""
-		The dimensionless cutoff rate, strictly greater than 0 with no upper limit. Omitted or null values use 0.1.
+		The dimensionless cutoff rate, greater than 0 and less than or equal to 1. Omitted or null values use 0.1.
 		"""
 		cutoffRate: Float,		trendCategory: String,		start: DateTime,		end: DateTime
 	): [TopTrendsByColumn!]!

@@ -783,6 +783,7 @@ mod tests {
             .await;
         assert!(res.errors.is_empty(), "{:?}", res.errors);
         assert_eq!(calls.lists(), 1);
+        drop(schema);
 
         let (deployer, calls) = CollectorDeployer::storing(Ok(()));
         let (schema, _reads) = collector_schema(deployer, &[]).await;
@@ -795,6 +796,7 @@ mod tests {
             .await;
         assert!(res.errors.is_empty(), "{:?}", res.errors);
         assert_eq!(calls.data_stores().len(), 1);
+        drop(schema);
 
         let (deployer, calls) = CollectorDeployer::applying();
         let (schema, _reads) = collector_schema(deployer, &[]).await;

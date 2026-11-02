@@ -4222,6 +4222,7 @@ mod tests {
         );
         assert!(res.data.into_json().unwrap().is_null());
         assert_eq!(calls.total(), 1);
+        drop(schema);
 
         // A removal sends no package, so `ManifestFormatUnsupported` is
         // outside its union though it is inside the install and update ones.
@@ -4241,6 +4242,7 @@ mod tests {
         );
         assert!(res.data.into_json().unwrap().is_null());
         assert_eq!(calls.total(), 1);
+        drop(schema);
 
         // An update and a removal allocate nothing, so every variant but
         // `CleanupPending` and, for an update, `BuildNotServable` and

@@ -4,6 +4,13 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `topTimeSeries` and `topTimeSeriesOfCluster` reject `cutoffRate` values
+  above 1 during argument validation.
+
 ## [0.54.0] - 2026-10-30
 
 ### Added
@@ -2868,6 +2875,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.54.0...main
 [0.54.0]: https://github.com/aicers/review-web/compare/0.53.0...0.54.0
 [0.53.0]: https://github.com/aicers/review-web/compare/0.52.1...0.53.0
 [0.52.1]: https://github.com/aicers/review-web/compare/0.52.0...0.52.1

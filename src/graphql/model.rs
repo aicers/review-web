@@ -8,8 +8,7 @@ use num_traits::ToPrimitive;
 use review_database::{self as database, UniqueKey, event::Direction};
 
 use super::{
-    DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, MAX_TRENDI_ORDER, PositiveCutoffRate, Role,
-    RoleGuard,
+    CutoffRate, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, MAX_TRENDI_ORDER, Role, RoleGuard,
     cluster::TimeCount,
     customer_access, customer_deletion_guard, fill_vacant_time_slots, get_trend,
     refusal::{RefusalCode, refusal},
@@ -159,8 +158,8 @@ impl ModelQuery {
         )]
         trendi_order: Option<i32>,
         #[graphql(
-            desc = "The dimensionless cutoff rate, strictly greater than 0 with no upper limit. Omitted or null values use 0.1.",
-            validator(custom = "PositiveCutoffRate")
+            desc = "The dimensionless cutoff rate, greater than 0 and less than or equal to 1. Omitted or null values use 0.1.",
+            validator(custom = "CutoffRate")
         )]
         cutoff_rate: Option<f64>,
         trend_category: Option<String>,
@@ -1963,6 +1962,8 @@ mod tests {
                 ("trendiOrder: 21", "must be less than or equal to 20"),
                 ("cutoffRate: 0", "must be greater than 0"),
                 ("cutoffRate: -0.1", "must be greater than 0"),
+                ("cutoffRate: 1.0001", "must be less than or equal to 1"),
+                ("cutoffRate: 10000", "must be less than or equal to 1"),
             ] {
                 let query = format!("{{ {resolver}, {argument}) {{ {selection} }} }}");
                 let response = schema.execute_as_system_admin(&query).await;
@@ -1982,6 +1983,7 @@ mod tests {
                 "trendiOrder: 1",
                 "trendiOrder: 20",
                 "cutoffRate: 0.01",
+                "cutoffRate: 1",
             ] {
                 let query = format!("{{ {resolver}, {argument}) {{ {selection} }} }}");
                 let response = schema.execute_as_system_admin(&query).await;
@@ -2083,30 +2085,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn trends_support_large_cutoff_rates() {
+    async fn trends_reject_large_cutoff_rates() {
         let schema = schema_with_constant_time_series(100).await;
         for (order, cutoff_rate) in [(3, 10_000), (8, 40)] {
-            let arguments = format!("trendiOrder: {order}, cutoffRate: {cutoff_rate}");
-            let query = format!(
-                "{{ topTimeSeries(model: 1, {arguments}) {{ countIndex trends {{ trend }} }} }}"
-            );
-            let response = schema.execute_as_system_admin(&query).await;
-            assert!(response.errors.is_empty(), "{response:?}");
-
-            let query = format!(
-                "{{ topTimeSeriesOfCluster(model: 1, clusterId: 1, {arguments}) {{
-                    series {{ seriesTrend {{ count }} }}
-                }} }}"
-            );
-            let response = schema.execute_as_system_admin(&query).await;
-            assert!(response.errors.is_empty(), "{response:?}");
-            let data = response.data.into_json().unwrap();
-            let trend = data
-                .pointer("/topTimeSeriesOfCluster/series/0/seriesTrend")
-                .unwrap()
-                .as_array()
-                .unwrap();
-            assert_eq!(trend.len(), 100, "{data}");
+            for (resolver, selection) in [
+                ("topTimeSeries(model: 1", "countIndex trends { trend }"),
+                (
+                    "topTimeSeriesOfCluster(model: 1, clusterId: 1",
+                    "series { seriesTrend { count } }",
+                ),
+            ] {
+                let query = format!(
+                    "{{ {resolver}, trendiOrder: {order}, cutoffRate: {cutoff_rate}) {{ {selection} }} }}"
+                );
+                let response = schema.execute_as_system_admin(&query).await;
+                assert_eq!(response.errors.len(), 1, "{response:?}");
+                assert!(
+                    response
+                        .errors
+                        .first()
+                        .unwrap()
+                        .message
+                        .contains("must be less than or equal to 1"),
+                    "{response:?}"
+                );
+            }
         }
     }
 

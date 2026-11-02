@@ -13,8 +13,7 @@ use num_traits::ToPrimitive;
 use review_database as database;
 
 use super::{
-    DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, MAX_TRENDI_ORDER, PositiveCutoffRate, Role,
-    RoleGuard,
+    CutoffRate, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, MAX_TRENDI_ORDER, Role, RoleGuard,
     category::Category,
     customer_access, get_trend,
     model::{ModelDigest, TopElementCountsByColumn},
@@ -148,8 +147,8 @@ impl ClusterQuery {
         model: ID,
         cluster_id: ID,
         #[graphql(
-            desc = "The dimensionless cutoff rate, strictly greater than 0 with no upper limit. Omitted or null values use 0.1.",
-            validator(custom = "PositiveCutoffRate")
+            desc = "The dimensionless cutoff rate, greater than 0 and less than or equal to 1. Omitted or null values use 0.1.",
+            validator(custom = "CutoffRate")
         )]
         cutoff_rate: Option<f64>,
         #[graphql(
