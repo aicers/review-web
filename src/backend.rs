@@ -1116,7 +1116,7 @@ pub struct LocalizedText {
 ///   as a short commit) takes as `L` the highest version among the release
 ///   builds of the package that the store holds and accepted before it; with
 ///   none, it sorts below every build that has an `L`.
-/// - `kind` orders a release build before a test build of the same `L`.
+/// - `kind` places a release build below a test build of the same `L`.
 /// - `acceptance` is the store's acceptance order, earlier below later.
 ///
 /// So, for one package: release `L` < test builds labelled `L`, in
@@ -1370,8 +1370,8 @@ pub trait PackageDeployer: Send + Sync {
     /// withdrawn or changed since verification is absent. It is ordered by
     /// position `(L, kind, acceptance)`, highest first: a build's `L` is its
     /// `MAJOR.MINOR.PATCH` version, or for a test build labelled otherwise the
-    /// highest release version accepted before it; a release build sits
-    /// above a test build of the same `L`; and a later acceptance sits above
+    /// highest release version accepted before it; a test build sits above
+    /// a release build of the same `L`; and a later acceptance sits above
     /// an earlier one. Each `(version, commit)` pair is its own entry: two
     /// commits of one version are two entries.
     ///

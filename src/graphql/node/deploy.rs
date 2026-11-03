@@ -635,7 +635,7 @@ impl OnboardingQuery {
     /// The list is newest first in the release order: by version
     /// (`MAJOR.MINOR.PATCH`, compared numerically; a test build labelled
     /// otherwise takes the highest release version accepted before it), then
-    /// a release build above a test build of the same version, then later
+    /// a test build above a release build of the same version, then later
     /// acceptance above earlier. So the test builds labelled with a version
     /// come, newest first, after the next release build and before that
     /// version's own release build. The first entry with `release` set is the
