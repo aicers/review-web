@@ -66,13 +66,15 @@ type Agent {
 	"""
 	desiredPrivilegeProfile: String
 	"""
-	Whether the store's most recently accepted build for this entry's
-	package differs from the installed one.
+	Whether the store holds a build newer than the one installed for this
+	entry that counts as an update of it.
 	
-	It is inequality of build identity, not an ordering comparison, so a
-	hotfix carrying the same version and a different commit is `true`. An
-	entry with nothing installed, one whose kind maps to no package-id and
-	one whose package has no accepted build are all `false`.
+	With a release build installed, only a newer release build counts (a
+	test build of the same version does not); with a test build
+	installed, or a build the store does not serve, any newer build
+	counts, release or test. An older build never does. It is `false`
+	for an entry with nothing installed and for one whose kind maps to
+	no package-id.
 	
 	A `false` here is only "up to date" when `updateCheckFailed` is
 	`false`; the two must be read together.
@@ -85,8 +87,8 @@ type Agent {
 	"""
 	updateAvailable: Boolean!
 	"""
-	Whether this response's lookup of the most recently accepted build for
-	this entry's package failed.
+	Whether this response's lookup of an update for the build installed for
+	this entry failed.
 	
 	When it is `true`, `updateAvailable` is `false` because nothing was
 	answered to compare against, and a client must not render that pair as
@@ -302,8 +304,18 @@ type AgentSnapshot {
 	"""
 	instance: StringNumber
 	"""
-	Whether the store's most recently accepted build for this entry's
-	package differs from the installed one.
+	Whether the store holds a build newer than the one installed for this
+	entry that counts as an update of it.
+	
+	With a release build installed, only a newer release build counts (a
+	test build of the same version does not); with a test build
+	installed, or a build the store does not serve, any newer build
+	counts, release or test. An older build never does. It is `false`
+	for an entry with nothing installed and for one whose kind maps to
+	no package-id.
+	
+	A `false` here is only "up to date" when `updateCheckFailed` is
+	`false`; the two must be read together.
 	
 	# Errors
 	
@@ -313,8 +325,8 @@ type AgentSnapshot {
 	"""
 	updateAvailable: Boolean!
 	"""
-	Whether this response's lookup of the most recently accepted build for
-	this entry's package failed.
+	Whether this response's lookup of an update for the build installed for
+	this entry failed.
 	
 	When it is `true`, `updateAvailable` is `false`, and a client must not
 	render that pair as "up to date".
@@ -3197,11 +3209,14 @@ fields and a submission setting both or neither is refused.
 """
 input BuildSelectorInput {
 	"""
-	A version, which review turns into a build.
+	A version, which resolves to the release build of that version (the
+	more recently accepted one if the store holds two), never to a test
+	build. A version with no servable release build is refused.
 	"""
 	version: String
 	"""
-	An exact commit.
+	An exact commit, naming one build, release or test. It is the only way
+	to select a test build.
 	"""
 	commit: String
 }
@@ -3481,14 +3496,14 @@ type CoreComponent {
 	"""
 	installerManaged: Boolean!
 	"""
-	Whether the store's most recently accepted build for this row's
-	component differs from the installed one.
+	Whether the store holds a build newer than the one installed for this
+	row that counts as an update of it.
 	
-	It is inequality of build identity against `latest_build(component)`,
-	not an ordering comparison, so a hotfix carrying the same version and a
-	different commit is `true`. A row with nothing installed, one whose
-	component has no accepted build, and an `installerManaged` row are all
-	`false`.
+	With a release build installed, only a newer release build counts (a
+	test build of the same version does not); with a test build
+	installed, or a build the store does not serve, any newer build
+	counts, release or test. An older build never does. It is `false`
+	for a row with nothing installed and for an `installerManaged` row.
 	
 	A `false` here is only "up to date" when `updateCheckFailed` is
 	`false`; the two must be read together.
@@ -3501,7 +3516,7 @@ type CoreComponent {
 	"""
 	updateAvailable: Boolean!
 	"""
-	Whether this response's lookup of the most recently accepted build for
+	Whether this response's lookup of an update for the build installed for
 	this row's component failed.
 	
 	When it is `true`, `updateAvailable` is `false` because nothing was
@@ -4590,13 +4605,15 @@ type ExternalService {
 	"""
 	instance: StringNumber
 	"""
-	Whether the store's most recently accepted build for this entry's
-	package differs from the installed one.
+	Whether the store holds a build newer than the one installed for this
+	entry that counts as an update of it.
 	
-	It is inequality of build identity, not an ordering comparison, so a
-	hotfix carrying the same version and a different commit is `true`. An
-	entry with nothing installed, one whose kind maps to no package-id and
-	one whose package has no accepted build are all `false`.
+	With a release build installed, only a newer release build counts (a
+	test build of the same version does not); with a test build
+	installed, or a build the store does not serve, any newer build
+	counts, release or test. An older build never does. It is `false`
+	for an entry with nothing installed and for one whose kind maps to
+	no package-id.
 	
 	A `false` here is only "up to date" when `updateCheckFailed` is
 	`false`; the two must be read together.
@@ -4609,8 +4626,8 @@ type ExternalService {
 	"""
 	updateAvailable: Boolean!
 	"""
-	Whether this response's lookup of the most recently accepted build for
-	this entry's package failed.
+	Whether this response's lookup of an update for the build installed for
+	this entry failed.
 	
 	When it is `true`, `updateAvailable` is `false` because nothing was
 	answered to compare against, and a client must not render that pair as
@@ -4737,8 +4754,18 @@ type ExternalServiceSnapshot {
 	"""
 	instance: StringNumber
 	"""
-	Whether the store's most recently accepted build for this entry's
-	package differs from the installed one.
+	Whether the store holds a build newer than the one installed for this
+	entry that counts as an update of it.
+	
+	With a release build installed, only a newer release build counts (a
+	test build of the same version does not); with a test build
+	installed, or a build the store does not serve, any newer build
+	counts, release or test. An older build never does. It is `false`
+	for an entry with nothing installed and for one whose kind maps to
+	no package-id.
+	
+	A `false` here is only "up to date" when `updateCheckFailed` is
+	`false`; the two must be read together.
 	
 	# Errors
 	
@@ -4748,8 +4775,8 @@ type ExternalServiceSnapshot {
 	"""
 	updateAvailable: Boolean!
 	"""
-	Whether this response's lookup of the most recently accepted build for
-	this entry's package failed.
+	Whether this response's lookup of an update for the build installed for
+	this entry failed.
 	
 	When it is `true`, `updateAvailable` is `false`, and a client must not
 	render that pair as "up to date".
@@ -8948,8 +8975,17 @@ type Query {
 	"""
 	runningRoxydBuilds: [RunningRoxydBuild!]!
 	"""
-	Returns the builds the store serves for `packageId`, newest-accepted
-	first, offered as the choices a build selector may name.
+	Returns the builds the store serves for `packageId`, release and test
+	alike, offered as the choices a build selector may name.
+	
+	The list is newest first in the release order: by version
+	(`MAJOR.MINOR.PATCH`, compared numerically; a test build labelled
+	otherwise takes the highest release version accepted before it), then
+	a test build above a release build of the same version, then later
+	acceptance above earlier. So the test builds labelled with a version
+	come, newest first, after the next release build and before that
+	version's own release build. The first entry with `release` set is the
+	latest build; test builds are never latest.
 	
 	Only a module or core-component package-id is accepted. A core
 	package-id additionally requires a System Administrator, as updating
@@ -9791,6 +9827,12 @@ type StoreBuild {
 	The commit the build was made from.
 	"""
 	commit: String!
+	"""
+	Whether this is a release build, one made from the commit its
+	`MAJOR.MINOR.PATCH` version tag points at, as its signed package
+	records. Every other build is a test build.
+	"""
+	release: Boolean!
 }
 
 type StringEventCounter {

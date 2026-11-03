@@ -29,8 +29,8 @@ use review_web::backend::{
     AcceptedPackage, BindAddrInput, BuildId, ConfigTemplateCatalog, ConfigTemplateSummary,
     DeployError, DeployOutcome, EngineRefused, HostOnboarder, HostOnboardingTicket, IngressStream,
     IngressStreamError, JoinToken, LocalizedText, OperationId, PackageDeployer, PackageIngestError,
-    PackageStoreReceiver, RunningRoxydBuild, SystemLogCollectorState, TrustActivation,
-    TrustIngestError, TrustManager,
+    PackageStoreReceiver, RunningRoxydBuild, ServableBuild, SystemLogCollectorState,
+    TrustActivation, TrustIngestError, TrustManager,
 };
 
 const TOKEN: &str = "s3cret-join-token";
@@ -178,8 +178,19 @@ impl PackageDeployer for OutsideDeployer {
         })
     }
 
-    async fn latest_build(&self, _target: &str) -> Result<Option<BuildId>, anyhow::Error> {
-        Ok(self.installed.clone())
+    // The store serves one release build, the one this stub reports installed.
+    // It is the latest build, so it is the answer when nothing is installed;
+    // it is never an update of itself, and this stub orders it above no other
+    // build, so an installed build has no update.
+    async fn update_target(
+        &self,
+        _target: &str,
+        installed: Option<&BuildId>,
+    ) -> Result<Option<BuildId>, anyhow::Error> {
+        Ok(match installed {
+            None => self.installed.clone(),
+            Some(_) => None,
+        })
     }
 
     async fn config_templates(
@@ -189,8 +200,15 @@ impl PackageDeployer for OutsideDeployer {
         Ok(outside_catalog())
     }
 
-    async fn servable_builds(&self, _target: &str) -> Result<Vec<BuildId>, anyhow::Error> {
-        Ok(self.installed.iter().cloned().collect())
+    async fn servable_builds(&self, _target: &str) -> Result<Vec<ServableBuild>, anyhow::Error> {
+        Ok(self
+            .installed
+            .iter()
+            .map(|build| ServableBuild {
+                build: build.clone(),
+                release: true,
+            })
+            .collect())
     }
 
     async fn is_build_withdrawn(
@@ -388,6 +406,22 @@ fn both_traits_are_boxable_from_another_crate() {
     let _onboarder: Box<dyn HostOnboarder> = Box::new(OutsideOnboarder);
 }
 
+/// A servable build and the identity it carries are both built field by field
+/// from outside the crate, as an implementer of `servable_builds` builds them.
+#[test]
+fn a_servable_build_is_constructible_from_another_crate() {
+    let build = BuildId {
+        version: "0.30.1".to_string(),
+        commit: "1a2b3c4".to_string(),
+    };
+    let servable = ServableBuild {
+        build: build.clone(),
+        release: false,
+    };
+    assert_eq!(servable.build, build);
+    assert!(!servable.release);
+}
+
 #[tokio::test]
 async fn an_outside_implementation_reports_an_installed_build() {
     let installed = BuildId {
@@ -404,17 +438,27 @@ async fn an_outside_implementation_reports_an_installed_build() {
     );
     assert_eq!(
         deployer
-            .latest_build("giganto")
+            .update_target("giganto", None)
             .await
             .expect("the stub answers"),
         Some(installed.clone())
     );
     assert_eq!(
         deployer
+            .update_target("giganto", Some(&installed))
+            .await
+            .expect("the stub answers"),
+        None
+    );
+    assert_eq!(
+        deployer
             .servable_builds("giganto")
             .await
             .expect("the stub answers"),
-        vec![installed.clone()]
+        vec![ServableBuild {
+            build: installed.clone(),
+            release: true,
+        }]
     );
     assert!(
         !deployer

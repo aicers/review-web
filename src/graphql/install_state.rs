@@ -2,12 +2,17 @@
 //!
 //! The state itself is a projection of what `review-database` stores on an
 //! agent, an external service or a core-component row. Two things are not.
-//! Whether the store's most recently accepted build for the row's package
-//! differs from the installed one needs a lookup of that build, and that answer
-//! is memoized per request by [`LatestBuildMemo`] so that a package installed
-//! on fifty hosts costs one lookup rather than fifty. Whether the installed
-//! build has been withdrawn needs the active trust generation's answer for that
-//! build, memoized per request by [`WithdrawalMemo`] in the same way.
+//! Whether the store holds a build newer than the installed one that counts as
+//! an update of it needs the deployer's
+//! [`update_target`](crate::backend::PackageDeployer::update_target) answer
+//! for the row's package and installed build: with a release build installed
+//! only a newer release build counts, with a test build (or a build the store
+//! does not serve) installed any newer build does, and an older build never
+//! does. That answer is memoized per request by [`LatestBuildMemo`] so that a
+//! build installed on fifty hosts costs one lookup rather than fifty. Whether
+//! the installed build has been withdrawn needs the active trust generation's
+//! answer for that build, memoized per request by [`WithdrawalMemo`] in the
+//! same way.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -44,16 +49,21 @@ pub enum Lifecycle {
     Unknown,
 }
 
-/// Whether the store's most recently accepted build differs from the installed
-/// one for one row, and whether the check that would have said so failed.
+/// Whether the store holds an update of the installed build of one row, and
+/// whether the check that would have said so failed.
+///
+/// An update is a build newer than the installed one in the release order
+/// the deployer applies: with a release build installed only a newer release
+/// build, with a test build or a build the store does not serve installed any
+/// newer build, and never an older build.
 ///
 /// The two never disagree: `check_failed` is only ever `true` beside an
 /// `available` of `false`, because a lookup that failed answered nothing to
 /// compare against.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct UpdateState {
-    /// Whether the installed build differs from the store's newest accepted
-    /// build for the row's package.
+    /// Whether the row has an installed build and the store holds an update
+    /// of it.
     pub(super) available: bool,
     /// Whether this response's lookup for the row's package failed.
     pub(super) check_failed: bool,
@@ -61,8 +71,7 @@ pub(super) struct UpdateState {
 
 impl UpdateState {
     /// The answer for a row nothing was looked up for: a kind that maps to no
-    /// package-id, an installer-managed core component, or a package whose
-    /// store holds no accepted build.
+    /// package-id, or an installer-managed core component.
     ///
     /// Nothing was asked, so nothing failed.
     pub(super) const NOT_CHECKED: Self = Self {
@@ -168,8 +177,8 @@ pub(super) fn paired_identity(
     }
 }
 
-/// Returns the installed build identity, or `None` if there is none to compare
-/// against the store's newest build.
+/// Returns the installed build identity, or `None` if there is none to ask
+/// for an update of.
 ///
 /// The identity is `(version, commit)` together or not at all: a half-identity
 /// does not name a build, so a row carrying one half is read as carrying
@@ -193,17 +202,21 @@ pub(super) fn installed_identity<'a>(
     }
 }
 
-/// Returns whether the store's most recently accepted build differs from the
-/// installed one for one row.
+/// Returns whether the store holds an update of the installed build of one
+/// row.
 ///
 /// `package_id` is `None` for a row no package deploys and for a core
 /// component excluded from update; both answer [`UpdateState::NOT_CHECKED`]
 /// and consult no store. Everything else asks this request's
-/// [`LatestBuildMemo`], which asks the deployer at most once per package-id.
+/// [`LatestBuildMemo`], which asks the deployer's
+/// [`update_target`](crate::backend::PackageDeployer::update_target) at most
+/// once per package-id and installed build.
 ///
-/// Availability is inequality of identity, never an ordering comparison: an
-/// installed version is an opaque display label, so a hotfix that keeps the
-/// version and changes the commit is an available update.
+/// An update is available exactly when the row has an installed build and
+/// the deployer answers `Some`. This crate trusts that answer and does not
+/// re-check the order itself. A row with nothing installed still asks, with
+/// `None`, and is never `available`, so that a failed lookup still reports
+/// `check_failed`.
 ///
 /// # Errors
 ///
@@ -223,16 +236,17 @@ pub(super) async fn update_state(
     let memo = ctx.data::<LatestBuildMemo>()?;
 
     Ok(
-        match memo.latest_build(deployer.as_ref(), package_id).await {
+        match memo
+            .update_target(deployer.as_ref(), package_id, installed)
+            .await
+        {
             LatestBuild::Failed => UpdateState {
                 available: false,
                 check_failed: true,
             },
             LatestBuild::Missing => UpdateState::NOT_CHECKED,
-            LatestBuild::Found(latest) => UpdateState {
-                available: installed.is_some_and(|(version, commit)| {
-                    version != latest.version || commit != latest.commit
-                }),
+            LatestBuild::Found => UpdateState {
+                available: installed.is_some(),
                 check_failed: false,
             },
         },
@@ -254,7 +268,7 @@ pub(super) async fn update_state(
 /// for every other core row.
 ///
 /// The check is independent of [`update_state`]: it is made whatever
-/// `latest_build` answered, and neither one's failure is reported as the
+/// `update_target` answered, and neither one's failure is reported as the
 /// other's.
 ///
 /// # Errors
@@ -291,67 +305,95 @@ pub(super) async fn withdrawal_state(
     )
 }
 
-/// What this request's lookup for one package-id answered.
-#[derive(Clone)]
+/// What this request's `update_target` lookup for one package-id and
+/// installed build answered.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LatestBuild {
-    /// The store's newest accepted build for the package.
-    Found(BuildId),
-    /// The store holds no accepted build for the package.
+    /// The store holds a build an update of the installed build would offer,
+    /// or, with nothing installed, a latest build.
+    Found,
+    /// The store holds no such build.
     Missing,
     /// The lookup failed, so nothing is known about the package here.
     Failed,
 }
 
-/// The `latest_build` answers this request has already obtained.
+/// The key a [`LatestBuildMemo`] answers under: the package-id and the
+/// installed `(version, commit)`, or `None` when nothing is installed.
+type UpdateKey = (String, Option<(String, String)>);
+
+/// The `update_target` answers this request has already obtained.
 ///
 /// The memo is request-scoped, installed by [`LatestBuildMemoExtension`]. A
-/// cache outliving the request would report a stale newest build to every
-/// later query, and what it would go stale against is an upload this same
-/// server accepted.
+/// cache outliving the request would report a stale answer to every later
+/// query, and what it would go stale against is an upload this same server
+/// accepted.
 ///
-/// The map holds one cell per package-id and the map lock is released before
-/// the lookup runs. The cell is what makes two rows of one package share a
-/// single call — the second waits on the first rather than repeating it —
-/// while a package whose store is slow or unreachable delays only its own
-/// rows. Holding the map lock across the lookup instead would serialize every
-/// distinct package behind that one, which is the opposite of the promise
-/// that a failing package leaves the rows that read fine alone.
+/// The map holds one cell per package-id and installed build, and the map
+/// lock is released before the lookup runs. The cell is what makes two rows
+/// of one installed build of one package share a single call — the second
+/// waits on the first rather than repeating it — while rows of a different
+/// installed build make a call of their own, and a lookup that is slow or
+/// unreachable delays only its own rows. Holding the map lock across the
+/// lookup instead would serialize every distinct key behind that one, which
+/// is the opposite of the promise that a failing lookup leaves the rows that
+/// read fine alone.
 #[derive(Default)]
 pub(super) struct LatestBuildMemo {
-    answers: Mutex<HashMap<String, Arc<OnceCell<LatestBuild>>>>,
+    answers: Mutex<HashMap<UpdateKey, Arc<OnceCell<LatestBuild>>>>,
 }
 
 impl LatestBuildMemo {
-    /// Returns the newest accepted build of `package_id`, asking the deployer
-    /// only if this request has not asked already.
+    /// Returns whether the store holds an update of `installed` of
+    /// `package_id` (or, with nothing installed, a latest build), asking the
+    /// deployer only if this request has not asked already.
     ///
-    /// A failure is recorded like any other answer, so that a package whose
-    /// store cannot be read is reported as unchecked on every one of its rows
-    /// and is asked about once. It is logged once per package-id per request
-    /// as an operator breadcrumb; the log is not the signal, the
+    /// A failure is recorded like any other answer, so that a lookup that
+    /// cannot be made is reported as unchecked on every one of its rows and
+    /// is made once. It is logged once per package-id and installed build per
+    /// request as an operator breadcrumb; the log is not the signal, the
     /// `updateCheckFailed` field is.
-    async fn latest_build(
+    async fn update_target(
         &self,
         deployer: &dyn crate::backend::PackageDeployer,
         package_id: &str,
+        installed: Option<(&str, &str)>,
     ) -> LatestBuild {
         let answer = {
             let mut answers = self.answers.lock().await;
-            Arc::clone(answers.entry(package_id.to_string()).or_default())
+            Arc::clone(
+                answers
+                    .entry((
+                        package_id.to_string(),
+                        installed
+                            .map(|(version, commit)| (version.to_string(), commit.to_string())),
+                    ))
+                    .or_default(),
+            )
         };
-        answer
+        *answer
             .get_or_init(|| async {
-                match deployer.latest_build(package_id).await {
-                    Ok(Some(build)) => LatestBuild::Found(build),
+                let build = installed.map(|(version, commit)| BuildId {
+                    version: version.to_string(),
+                    commit: commit.to_string(),
+                });
+                match deployer.update_target(package_id, build.as_ref()).await {
+                    Ok(Some(_)) => LatestBuild::Found,
                     Ok(None) => LatestBuild::Missing,
                     Err(e) => {
-                        warn!("cannot read the latest build of package {package_id}: {e:#}");
+                        let installed = installed.map_or_else(
+                            || "nothing installed".to_string(),
+                            |(version, commit)| format!("installed build {version} ({commit})"),
+                        );
+                        warn!(
+                            "cannot read the update target of package {package_id} for \
+                             {installed}: {e:#}"
+                        );
                         LatestBuild::Failed
                     }
                 }
             })
             .await
-            .clone()
     }
 }
 
@@ -480,7 +522,7 @@ mod tests {
         installed_identity, projected_state,
     };
     use crate::{
-        backend::CertManager,
+        backend::{BuildId, CertManager, ServableBuild},
         graphql::{
             LatestBuildStub, MockAgentManager, MockHostOnboarder, MockPackageDeployer,
             ParsedCertificate, RoleGuard, SharedPackageDeployer, TestSchema, WithdrawalStub,
@@ -647,6 +689,16 @@ mod tests {
         ]
     }
 
+    fn servable(version: &str, commit: &str, release: bool) -> ServableBuild {
+        ServableBuild {
+            build: BuildId {
+                version: version.to_string(),
+                commit: commit.to_string(),
+            },
+            release,
+        }
+    }
+
     fn agents_query(id: u32) -> String {
         format!("{{ node(id: \"{id}\") {{ agents {{ {AGENT_FIELDS} }} }} }}")
     }
@@ -697,66 +749,117 @@ mod tests {
         assert_eq!(whole.lifecycle, Some(GqlLifecycle::Running));
     }
 
-    /// One package's lookup does not hold up another's.
+    /// One key's lookup does not hold up another's.
     ///
-    /// The memo makes rows of one package share a call, and the way it does
-    /// that must not turn into a queue across packages: a store that is slow
-    /// or unreachable for one package would then delay every other package in
-    /// the same response, which is the opposite of the promise that a failing
-    /// lookup leaves the rows that read fine alone. The gate holds `hog` open
-    /// until `giganto` has answered, so a memo that serialized the two would
-    /// never finish.
+    /// The memo makes rows of one installed build share a call, and the way it
+    /// does that must not turn into a queue across keys: a lookup that is slow
+    /// or unreachable for one installed build would then delay every other
+    /// row in the same response, which is the opposite of the promise that a
+    /// failing lookup leaves the rows that read fine alone. The gate holds
+    /// `hog` at `1.0.0` open until `hog` at `1.1.0` and `giganto` with nothing
+    /// installed have answered, so a memo that serialized them would never
+    /// finish.
     #[tokio::test]
-    async fn one_package_lookup_does_not_block_another() {
+    async fn one_key_lookup_does_not_block_another() {
         let gate = Arc::new(Notify::new());
         let builds = Arc::new(
             LatestBuildStub::default()
-                .with_answer("hog", "1.2.0", "abcabc")
-                .with_answer("giganto", "2.0.0", "defdef")
-                .with_gate("hog", gate.clone()),
+                .with_update("hog", Some(("1.0.0", "aaaaaa")), ("1.2.0", "abcabc"))
+                .with_update("giganto", None, ("2.0.0", "defdef"))
+                .with_gate("hog", Some(("1.0.0", "aaaaaa")), gate.clone()),
         );
         let deployer = MockPackageDeployer::with_builds(builds.clone());
         let memo = LatestBuildMemo::default();
 
         let resolved = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            tokio::join!(memo.latest_build(&deployer, "hog"), async {
-                let answer = memo.latest_build(&deployer, "giganto").await;
-                gate.notify_one();
-                answer
-            })
+            tokio::join!(
+                memo.update_target(&deployer, "hog", Some(("1.0.0", "aaaaaa"))),
+                async {
+                    let other_build = memo
+                        .update_target(&deployer, "hog", Some(("1.1.0", "bbbbbb")))
+                        .await;
+                    let other_package = memo.update_target(&deployer, "giganto", None).await;
+                    gate.notify_one();
+                    (other_build, other_package)
+                }
+            )
         })
         .await
-        .expect("a lookup of one package does not wait on another");
+        .expect("a lookup of one key does not wait on another");
 
-        assert!(matches!(resolved.0, LatestBuild::Found(build) if build.version == "1.2.0"));
-        assert!(matches!(resolved.1, LatestBuild::Found(build) if build.version == "2.0.0"));
+        assert_eq!(resolved.0, LatestBuild::Found);
+        assert_eq!(resolved.1, (LatestBuild::Missing, LatestBuild::Found));
     }
 
-    /// Two rows of one package share a single lookup even when they resolve
-    /// together, rather than both missing an answer that has not landed yet.
+    /// Two rows of one installed build share a single lookup even when they
+    /// resolve together, rather than both missing an answer that has not
+    /// landed yet.
     #[tokio::test]
-    async fn concurrent_rows_of_one_package_share_one_lookup() {
+    async fn concurrent_rows_of_one_installed_build_share_one_lookup() {
         let gate = Arc::new(Notify::new());
         let builds = Arc::new(
             LatestBuildStub::default()
-                .with_answer("hog", "1.2.0", "abcabc")
-                .with_gate("hog", gate.clone()),
+                .with_update("hog", Some(("1.0.0", "aaaaaa")), ("1.2.0", "abcabc"))
+                .with_gate("hog", Some(("1.0.0", "aaaaaa")), gate.clone()),
         );
         let deployer = MockPackageDeployer::with_builds(builds.clone());
         let memo = LatestBuildMemo::default();
 
         let resolved = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            tokio::join!(memo.latest_build(&deployer, "hog"), async {
-                gate.notify_one();
-                memo.latest_build(&deployer, "hog").await
-            })
+            tokio::join!(
+                memo.update_target(&deployer, "hog", Some(("1.0.0", "aaaaaa"))),
+                async {
+                    gate.notify_one();
+                    memo.update_target(&deployer, "hog", Some(("1.0.0", "aaaaaa")))
+                        .await
+                }
+            )
         })
         .await
         .expect("the second row waits on the first rather than deadlocking");
 
-        assert!(matches!(resolved.0, LatestBuild::Found(_)));
-        assert!(matches!(resolved.1, LatestBuild::Found(_)));
+        assert_eq!(resolved.0, LatestBuild::Found);
+        assert_eq!(resolved.1, LatestBuild::Found);
         assert_eq!(builds.calls("hog"), 1);
+    }
+
+    /// Two installed builds of one package are two keys, each asked about
+    /// once, and so is nothing installed.
+    #[tokio::test]
+    async fn each_installed_build_of_one_package_is_its_own_lookup() {
+        let builds = Arc::new(LatestBuildStub::default().with_update(
+            "hog",
+            Some(("1.0.0", "aaaaaa")),
+            ("1.2.0", "abcabc"),
+        ));
+        let deployer = MockPackageDeployer::with_builds(builds.clone());
+        let memo = LatestBuildMemo::default();
+
+        for _ in 0..2 {
+            assert_eq!(
+                memo.update_target(&deployer, "hog", Some(("1.0.0", "aaaaaa")))
+                    .await,
+                LatestBuild::Found
+            );
+            assert_eq!(
+                memo.update_target(&deployer, "hog", Some(("1.2.0", "abcabc")))
+                    .await,
+                LatestBuild::Missing
+            );
+            assert_eq!(
+                memo.update_target(&deployer, "hog", None).await,
+                LatestBuild::Missing
+            );
+        }
+
+        assert_eq!(
+            builds.installed_asked("hog"),
+            vec![
+                Some(("1.0.0".to_string(), "aaaaaa".to_string())),
+                Some(("1.2.0".to_string(), "abcabc".to_string())),
+                None,
+            ]
+        );
     }
 
     /// One build's check does not hold up another's, for the same reason one
@@ -823,11 +926,11 @@ mod tests {
 
     #[tokio::test]
     async fn install_state_comes_back_on_the_node_read_path() {
-        let builds = Arc::new(
-            LatestBuildStub::default()
-                .with_answer("hog", "1.2.0", "abcabc")
-                .with_answer("giganto", "2.0.0", "defdef"),
-        );
+        let builds = Arc::new(LatestBuildStub::default().with_update(
+            "giganto",
+            Some(("1.9.0", "cccccc")),
+            ("2.0.0", "defdef"),
+        ));
         let schema = schema_with(&builds).await;
         let id = insert_node(
             &schema.store(),
@@ -890,7 +993,11 @@ mod tests {
 
     #[tokio::test]
     async fn the_node_list_carries_the_state_and_shares_one_lookup() {
-        let builds = Arc::new(LatestBuildStub::default().with_answer("hog", "1.2.0", "abcabc"));
+        let builds = Arc::new(LatestBuildStub::default().with_update(
+            "hog",
+            Some(("1.1.0", "yyyyyy")),
+            ("1.2.0", "abcabc"),
+        ));
         let schema = schema_with(&builds).await;
         for name in ["node1", "node2"] {
             insert_node(
@@ -932,8 +1039,8 @@ mod tests {
             );
         }
         assert_eq!(
-            builds.calls("hog"),
-            1,
+            builds.installed_asked("hog"),
+            vec![Some(("1.1.0".to_string(), "yyyyyy".to_string()))],
             "the memo spans the whole request, not one node's entries"
         );
     }
@@ -1009,9 +1116,204 @@ mod tests {
         assert_eq!(agents[1]["instance"], json!(null));
     }
 
+    /// Reads the update pair of one `hog` row installed with `installed`,
+    /// against a stub whose only answer is `answer` for that build, and
+    /// returns the entry with the stub so a test can check what it was asked.
+    async fn update_pair_of(
+        installed: Option<(&str, &str)>,
+        lifecycle: Lifecycle,
+        builds: LatestBuildStub,
+    ) -> (serde_json::Value, Arc<LatestBuildStub>) {
+        let builds = Arc::new(builds);
+        let schema = schema_with(&builds).await;
+        let id = insert_node(
+            &schema.store(),
+            "node1",
+            vec![agent(
+                "001.hog",
+                AgentKind::SemiSupervised,
+                Some(1),
+                installed,
+                lifecycle,
+            )],
+            vec![],
+        );
+
+        let res = schema.execute_as_system_admin(&agents_query(id)).await;
+
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        let entry = res.data.into_json().unwrap()["node"]["agents"][0].clone();
+        (entry, builds)
+    }
+
+    /// Asserts that the row reported `available` with no failed check, and
+    /// that the stub was asked exactly once, about `installed`.
+    fn assert_answered(
+        entry: &serde_json::Value,
+        builds: &LatestBuildStub,
+        installed: (&str, &str),
+        available: bool,
+    ) {
+        assert_eq!(entry["updateAvailable"], json!(available), "{entry}");
+        assert_eq!(entry["updateCheckFailed"], json!(false), "{entry}");
+        assert_eq!(
+            builds.installed_asked("hog"),
+            vec![Some((installed.0.to_string(), installed.1.to_string()))],
+            "the row asks about exactly its own installed build"
+        );
+    }
+
+    /// With a release build installed and no newer release build, the
+    /// implementer answers `None`, even if a test build of the same version
+    /// was accepted after it, and the row reports no update.
     #[tokio::test]
-    async fn update_available_compares_build_identity() {
-        let builds = Arc::new(LatestBuildStub::default().with_answer("hog", "1.2.0", "abcabc"));
+    async fn an_installed_release_build_with_no_newer_release_has_no_update() {
+        const INSTALLED: (&str, &str) = ("1.2.0", "abcabc");
+        let (entry, builds) = update_pair_of(
+            Some(INSTALLED),
+            Lifecycle::Running,
+            LatestBuildStub::default()
+                .with_update("hog", None, INSTALLED)
+                .with_servable(
+                    "hog",
+                    vec![
+                        servable("1.2.0", "dddddd", false),
+                        servable("1.2.0", "abcabc", true),
+                    ],
+                ),
+        )
+        .await;
+
+        assert_answered(&entry, &builds, INSTALLED, false);
+    }
+
+    /// With a release build installed, a newer release build is an update.
+    #[tokio::test]
+    async fn an_installed_release_build_with_a_newer_release_has_an_update() {
+        const INSTALLED: (&str, &str) = ("1.2.0", "abcabc");
+        let (entry, builds) = update_pair_of(
+            Some(INSTALLED),
+            Lifecycle::Running,
+            LatestBuildStub::default().with_update("hog", Some(INSTALLED), ("1.3.0", "eeeeee")),
+        )
+        .await;
+
+        assert_answered(&entry, &builds, INSTALLED, true);
+    }
+
+    /// With a test build installed, a newer test build is an update.
+    #[tokio::test]
+    async fn an_installed_test_build_with_a_newer_test_build_has_an_update() {
+        const INSTALLED: (&str, &str) = ("1a2b3c4", "1a2b3c4");
+        let (entry, builds) = update_pair_of(
+            Some(INSTALLED),
+            Lifecycle::Running,
+            LatestBuildStub::default().with_update("hog", Some(INSTALLED), ("5e6f7a8", "5e6f7a8")),
+        )
+        .await;
+
+        assert_answered(&entry, &builds, INSTALLED, true);
+    }
+
+    /// With a test build installed, a newer release build is an update.
+    #[tokio::test]
+    async fn an_installed_test_build_with_a_newer_release_build_has_an_update() {
+        const INSTALLED: (&str, &str) = ("1.2.0", "dddddd");
+        let (entry, builds) = update_pair_of(
+            Some(INSTALLED),
+            Lifecycle::Running,
+            LatestBuildStub::default().with_update("hog", Some(INSTALLED), ("1.3.0", "eeeeee")),
+        )
+        .await;
+
+        assert_answered(&entry, &builds, INSTALLED, true);
+    }
+
+    /// A build for which the store holds only older builds has no update: a
+    /// downgrade is never reported as one.
+    #[tokio::test]
+    async fn an_installed_build_with_only_older_builds_has_no_update() {
+        const INSTALLED: (&str, &str) = ("2.0.0", "ffffff");
+        let (entry, builds) = update_pair_of(
+            Some(INSTALLED),
+            Lifecycle::Running,
+            LatestBuildStub::default()
+                .with_update("hog", None, ("1.2.0", "abcabc"))
+                .with_servable(
+                    "hog",
+                    vec![
+                        servable("1.2.0", "abcabc", true),
+                        servable("1.1.0", "yyyyyy", true),
+                    ],
+                ),
+        )
+        .await;
+
+        assert_answered(&entry, &builds, INSTALLED, false);
+    }
+
+    /// A row with nothing installed still asks, with `None`, and reports no
+    /// update whatever the implementer answers.
+    #[tokio::test]
+    async fn a_row_with_nothing_installed_asks_with_none() {
+        let (entry, builds) = update_pair_of(
+            None,
+            Lifecycle::NotInstalled,
+            LatestBuildStub::default().with_update("hog", None, ("1.2.0", "abcabc")),
+        )
+        .await;
+
+        assert_eq!(entry["updateAvailable"], json!(false));
+        assert_eq!(entry["updateCheckFailed"], json!(false));
+        assert_eq!(builds.installed_asked("hog"), vec![None]);
+    }
+
+    /// A row with nothing installed whose lookup fails reports the failure,
+    /// which is why it asks at all.
+    #[tokio::test]
+    async fn a_row_with_nothing_installed_reports_a_failed_lookup() {
+        let (entry, builds) = update_pair_of(
+            None,
+            Lifecycle::NotInstalled,
+            LatestBuildStub::default().with_failure("hog"),
+        )
+        .await;
+
+        assert_eq!(entry["updateAvailable"], json!(false));
+        assert_eq!(entry["updateCheckFailed"], json!(true));
+        assert_eq!(builds.installed_asked("hog"), vec![None]);
+    }
+
+    /// A row whose lifecycle is `NOT_INSTALLED` asks with `None` even when the
+    /// record still carries an identity, because that identity names no
+    /// installed build.
+    #[tokio::test]
+    async fn a_not_installed_row_asks_with_none_whatever_it_records() {
+        let (entry, builds) = update_pair_of(
+            Some(("1.0.0", "aaaaaa")),
+            Lifecycle::NotInstalled,
+            LatestBuildStub::default().with_update(
+                "hog",
+                Some(("1.0.0", "aaaaaa")),
+                ("1.2.0", "abcabc"),
+            ),
+        )
+        .await;
+
+        assert_eq!(entry["updateAvailable"], json!(false));
+        assert_eq!(entry["updateCheckFailed"], json!(false));
+        assert_eq!(builds.installed_asked("hog"), vec![None]);
+    }
+
+    /// Rows running two installed builds of one package make one lookup each
+    /// and report their own answers, while rows of one build share theirs.
+    #[tokio::test]
+    async fn rows_of_two_installed_builds_report_their_own_answers() {
+        let builds = Arc::new(LatestBuildStub::default().with_update(
+            "hog",
+            Some(("1.1.0", "yyyyyy")),
+            ("1.2.0", "abcabc"),
+        ));
         let schema = schema_with(&builds).await;
         let id = insert_node(
             &schema.store(),
@@ -1021,14 +1323,14 @@ mod tests {
                     "001.hog",
                     AgentKind::SemiSupervised,
                     Some(1),
-                    Some(("1.2.0", "abcabc")),
+                    Some(("1.1.0", "yyyyyy")),
                     Lifecycle::Running,
                 ),
                 agent(
                     "002.hog",
                     AgentKind::SemiSupervised,
                     Some(2),
-                    Some(("1.2.0", "zzzzzz")),
+                    Some(("1.2.0", "abcabc")),
                     Lifecycle::Running,
                 ),
                 agent(
@@ -1038,13 +1340,6 @@ mod tests {
                     Some(("1.1.0", "yyyyyy")),
                     Lifecycle::Running,
                 ),
-                agent(
-                    "004.hog",
-                    AgentKind::SemiSupervised,
-                    Some(4),
-                    None,
-                    Lifecycle::NotInstalled,
-                ),
             ],
             vec![],
         );
@@ -1053,14 +1348,9 @@ mod tests {
 
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
         let agents = res.data.into_json().unwrap()["node"]["agents"].clone();
-        // Identical identity.
-        assert_eq!(agents[0]["updateAvailable"], json!(false));
-        // A hotfix: the same version, a different commit.
-        assert_eq!(agents[1]["updateAvailable"], json!(true));
-        // A different version.
+        assert_eq!(agents[0]["updateAvailable"], json!(true));
+        assert_eq!(agents[1]["updateAvailable"], json!(false));
         assert_eq!(agents[2]["updateAvailable"], json!(true));
-        // Nothing installed is not an available update.
-        assert_eq!(agents[3]["updateAvailable"], json!(false));
         assert!(
             agents
                 .as_array()
@@ -1068,37 +1358,16 @@ mod tests {
                 .iter()
                 .all(|entry| entry["updateCheckFailed"] == json!(false))
         );
+        let mut asked = builds.installed_asked("hog");
+        asked.sort_unstable();
         assert_eq!(
-            builds.calls("hog"),
-            1,
-            "one package-id is looked up once however many rows carry it"
+            asked,
+            vec![
+                Some(("1.1.0".to_string(), "yyyyyy".to_string())),
+                Some(("1.2.0".to_string(), "abcabc".to_string())),
+            ],
+            "one lookup per installed build however many rows carry it"
         );
-    }
-
-    #[tokio::test]
-    async fn a_package_with_no_accepted_build_is_up_to_date() {
-        let builds = Arc::new(LatestBuildStub::default());
-        let schema = schema_with(&builds).await;
-        let id = insert_node(
-            &schema.store(),
-            "node1",
-            vec![agent(
-                "001.hog",
-                AgentKind::SemiSupervised,
-                Some(1),
-                Some(("1.0.0", "aaaaaa")),
-                Lifecycle::Running,
-            )],
-            vec![],
-        );
-
-        let res = schema.execute_as_system_admin(&agents_query(id)).await;
-
-        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
-        let agents = res.data.into_json().unwrap()["node"]["agents"].clone();
-        assert_eq!(agents[0]["updateAvailable"], json!(false));
-        assert_eq!(agents[0]["updateCheckFailed"], json!(false));
-        assert_eq!(builds.calls("hog"), 1);
     }
 
     #[tokio::test]
@@ -1129,7 +1398,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_kind_with_no_package_reports_a_null_lifecycle() {
-        let builds = Arc::new(LatestBuildStub::default().with_answer("giganto", "2.0.0", "defdef"));
+        let builds =
+            Arc::new(LatestBuildStub::default().with_update("giganto", None, ("2.0.0", "defdef")));
         let schema = schema_with(&builds).await;
         let id = insert_node(
             &schema.store(),
@@ -1256,7 +1526,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_running_row_with_no_recorded_identity_resolves_to_nulls() {
-        let builds = Arc::new(LatestBuildStub::default().with_answer("hog", "1.2.0", "abcabc"));
+        let builds =
+            Arc::new(LatestBuildStub::default().with_update("hog", None, ("1.2.0", "abcabc")));
         let schema = schema_with(&builds).await;
         let id = insert_node(
             &schema.store(),
@@ -1280,6 +1551,7 @@ mod tests {
         assert_eq!(entry["lifecycle"], json!("RUNNING"));
         assert_eq!(entry["updateAvailable"], json!(false));
         assert_eq!(entry["updateCheckFailed"], json!(false));
+        assert_eq!(builds.installed_asked("hog"), vec![None]);
     }
 
     /// A stored half-identity reads back as no identity at all.
@@ -1293,7 +1565,8 @@ mod tests {
     /// the same conflation the null-lifecycle discriminator exists to refuse.
     #[tokio::test]
     async fn a_half_identity_names_no_build_to_compare() {
-        let builds = Arc::new(LatestBuildStub::default().with_answer("hog", "1.2.0", "abcabc"));
+        let builds =
+            Arc::new(LatestBuildStub::default().with_update("hog", None, ("1.2.0", "abcabc")));
         let schema = schema_with(&builds).await;
         let mut half = agent(
             "001.hog",
@@ -1340,6 +1613,11 @@ mod tests {
                 "updateAvailable": false,
                 "updateCheckFailed": false,
             })
+        );
+        assert_eq!(
+            builds.installed_asked("hog"),
+            vec![None],
+            "both halves ask as nothing installed, and share that one lookup"
         );
     }
 
@@ -1403,11 +1681,11 @@ mod tests {
     /// apart where there is no `key`.
     #[tokio::test]
     async fn the_status_path_carries_the_state() {
-        let builds = Arc::new(
-            LatestBuildStub::default()
-                .with_answer("hog", "1.2.0", "abcabc")
-                .with_answer("giganto", "2.0.0", "defdef"),
-        );
+        let builds = Arc::new(LatestBuildStub::default().with_update(
+            "hog",
+            Some(("1.1.0", "yyyyyy")),
+            ("1.2.0", "abcabc"),
+        ));
         let schema = schema_with(&builds).await;
         insert_node(
             &schema.store(),
@@ -1488,9 +1766,10 @@ mod tests {
         );
         assert_eq!(
             builds.calls("hog"),
-            1,
-            "the status path shares the request's memo like the list path"
+            2,
+            "the status path asks once per installed build, like the list path"
         );
+        assert_eq!(builds.installed_asked("giganto"), vec![None]);
     }
 
     #[tokio::test]
@@ -1538,11 +1817,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_failed_lookup_marks_only_its_own_package() {
+    async fn a_failed_lookup_marks_only_the_rows_of_its_own_installed_build() {
         let builds = Arc::new(
             LatestBuildStub::default()
-                .with_failure("hog")
-                .with_answer("giganto", "2.0.0", "defdef"),
+                .with_failing_build("hog", Some(("1.0.0", "aaaaaa")))
+                .with_update("hog", Some(("1.1.0", "bbbbbb")), ("1.2.0", "abcabc")),
         );
         let schema = schema_with(&builds).await;
         let id = insert_node(
@@ -1561,6 +1840,13 @@ mod tests {
                     AgentKind::SemiSupervised,
                     Some(2),
                     Some(("1.0.0", "aaaaaa")),
+                    Lifecycle::Running,
+                ),
+                agent(
+                    "003.hog",
+                    AgentKind::SemiSupervised,
+                    Some(3),
+                    Some(("1.1.0", "bbbbbb")),
                     Lifecycle::Running,
                 ),
             ],
@@ -1587,16 +1873,22 @@ mod tests {
             res.errors
         );
         let node = res.data.into_json().unwrap()["node"].clone();
-        for entry in node["agents"]
+        let agents = node["agents"]
             .as_array()
-            .expect("the entries render as a list")
-        {
+            .expect("the entries render as a list");
+        for entry in &agents[..2] {
             assert_eq!(entry["updateAvailable"], json!(false));
             assert_eq!(entry["updateCheckFailed"], json!(true));
             // The rest of the entry is unaffected by the failed lookup.
             assert_eq!(entry["installedVersion"], json!("1.0.0"));
             assert_eq!(entry["lifecycle"], json!("RUNNING"));
         }
+        assert_eq!(agents[2]["updateAvailable"], json!(true));
+        assert_eq!(
+            agents[2]["updateCheckFailed"],
+            json!(false),
+            "a failure never spreads to another installed build of the package"
+        );
         let service = node["externalServices"][0].clone();
         assert_eq!(service["updateAvailable"], json!(false));
         assert_eq!(
@@ -1605,14 +1897,21 @@ mod tests {
             "a failure never spreads beyond its own package-id"
         );
         assert_eq!(
-            builds.calls("hog"),
+            builds
+                .installed_asked("hog")
+                .iter()
+                .filter(|installed| {
+                    installed.as_ref() == Some(&("1.0.0".to_string(), "aaaaaa".to_string()))
+                })
+                .count(),
             1,
-            "a failing package-id is asked about once too"
+            "a failing installed build is asked about once too"
         );
+        assert_eq!(builds.calls("hog"), 2);
     }
 
     #[tokio::test]
-    async fn a_failed_lookup_is_logged_once_per_package() {
+    async fn a_failed_lookup_is_logged_once_per_key() {
         // A package-id no other test in this binary drives, because the
         // captured lines are shared: the subscriber below is installed once
         // for the whole binary rather than per test.
@@ -1622,13 +1921,23 @@ mod tests {
         let before = logs.lines_naming(COMPONENT).len();
         let builds = Arc::new(LatestBuildStub::default().with_failure(COMPONENT));
         let schema = schema_with(&builds).await;
-        for host in ["host-a.example.com", "host-b.example.com"] {
+        for (host, installed) in [
+            ("host-a.example.com", Some(("1.0.0", "aaaaaa"))),
+            ("host-b.example.com", Some(("1.0.0", "aaaaaa"))),
+            ("host-c.example.com", Some(("1.1.0", "bbbbbb"))),
+            ("host-d.example.com", None),
+        ] {
+            let lifecycle = if installed.is_some() {
+                Lifecycle::Running
+            } else {
+                Lifecycle::NotInstalled
+            };
             insert_core_component(
                 &schema.store(),
                 COMPONENT,
                 host,
-                Some(("1.0.0", "aaaaaa")),
-                Lifecycle::Running,
+                installed,
+                lifecycle,
                 false,
             );
         }
@@ -1641,22 +1950,34 @@ mod tests {
 
         assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
         let rows = res.data.into_json().unwrap()["coreComponentList"].clone();
-        assert_eq!(rows.as_array().map(Vec::len), Some(2));
+        assert_eq!(rows.as_array().map(Vec::len), Some(4));
         for row in rows.as_array().expect("the rows render as a list") {
             assert_eq!(row["updateAvailable"], json!(false));
             assert_eq!(row["updateCheckFailed"], json!(true));
         }
         assert_eq!(
             builds.calls(COMPONENT),
-            1,
-            "a failing package-id is asked about once however many rows carry it"
+            3,
+            "a failing key is asked about once however many rows carry it"
         );
         let breadcrumbs = logs.lines_naming(COMPONENT);
+        let new = breadcrumbs.get(before..).unwrap_or_default();
         assert_eq!(
-            breadcrumbs.len() - before,
-            1,
-            "one breadcrumb per package-id per request: {breadcrumbs:?}"
+            new.len(),
+            3,
+            "one breadcrumb per package-id and installed build per request: {new:?}"
         );
+        for needle in [
+            "installed build 1.0.0 (aaaaaa)",
+            "installed build 1.1.0 (bbbbbb)",
+            "nothing installed",
+        ] {
+            assert_eq!(
+                new.iter().filter(|line| line.contains(needle)).count(),
+                1,
+                "the breadcrumb names {needle}: {new:?}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1665,7 +1986,7 @@ mod tests {
             LatestBuildStub::default()
                 .with_failure("hog")
                 .with_failure("roxyd")
-                .with_answer("giganto", "2.0.0", "defdef"),
+                .with_update("giganto", Some(("1.0.0", "aaaaaa")), ("2.0.0", "defdef")),
         );
         let schema = schema_with(&builds).await;
         let id = insert_node(
@@ -1855,7 +2176,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_core_component_is_checked_against_its_own_component_once() {
-        let builds = Arc::new(LatestBuildStub::default().with_answer("roxyd", "0.7.0", "cccccc"));
+        let builds = Arc::new(LatestBuildStub::default().with_update(
+            "roxyd",
+            Some(("0.6.0", "aaaaaa")),
+            ("0.7.0", "cccccc"),
+        ));
         let schema = schema_with(&builds).await;
         for host in [
             "host-a.example.com",
@@ -1886,16 +2211,20 @@ mod tests {
             assert_eq!(row["updateCheckFailed"], json!(false));
         }
         assert_eq!(
-            builds.calls("roxyd"),
-            1,
-            "one lookup answers every host's row"
+            builds.installed_asked("roxyd"),
+            vec![Some(("0.6.0".to_string(), "aaaaaa".to_string()))],
+            "one lookup, of the component and its installed build, answers every host's row"
         );
+        assert_eq!(builds.total_calls(), 1);
     }
 
     #[tokio::test]
     async fn an_installer_managed_row_consults_no_store() {
-        let builds =
-            Arc::new(LatestBuildStub::default().with_answer("bootroot", "9.9.9", "zzzzzz"));
+        let builds = Arc::new(
+            LatestBuildStub::default()
+                .with_update("bootroot", Some(("0.1.0", "aaaaaa")), ("9.9.9", "zzzzzz"))
+                .with_update("bootroot", None, ("9.9.9", "zzzzzz")),
+        );
         let schema = schema_with(&builds).await;
         insert_core_component(
             &schema.store(),
@@ -1918,7 +2247,7 @@ mod tests {
         assert_eq!(row["updateAvailable"], json!(false));
         assert_eq!(row["updateCheckFailed"], json!(false));
         assert_eq!(
-            builds.calls("bootroot"),
+            builds.total_calls(),
             0,
             "an excluded row is never looked up"
         );
@@ -1929,7 +2258,11 @@ mod tests {
     #[allow(clippy::too_many_lines)]
     #[tokio::test]
     async fn a_node_update_leaves_the_observed_state_alone() {
-        let builds = Arc::new(LatestBuildStub::default().with_answer("hog", "1.2.0", "abcabc"));
+        let builds = Arc::new(LatestBuildStub::default().with_update(
+            "hog",
+            Some(("1.0.0", "aaaaaa")),
+            ("1.2.0", "abcabc"),
+        ));
         let schema = schema_with(&builds).await;
         let id = insert_node(
             &schema.store(),
@@ -2368,12 +2701,12 @@ mod tests {
     }
 
     /// The withdrawal check is independent of the update check: it is made
-    /// whatever `latest_build` answered, and neither one's failure is reported
-    /// as the other's.
+    /// whatever `update_target` answered, and neither one's failure is
+    /// reported as the other's.
     #[tokio::test]
     async fn the_withdrawal_check_is_independent_of_the_update_check() {
-        // `hog`'s newest build cannot be read and its installed build is
-        // withdrawn; `giganto` has no accepted build and its check fails.
+        // `hog`'s update lookup fails and its installed build is withdrawn;
+        // `giganto` offers no update and its withdrawal check fails.
         let builds = Arc::new(LatestBuildStub::default().with_failure("hog"));
         let withdrawals = Arc::new(
             WithdrawalStub::default()
@@ -2524,7 +2857,11 @@ mod tests {
             )],
             vec![],
         );
-        let builds = Arc::new(LatestBuildStub::default().with_answer("hog", "1.2.0", "abcabc"));
+        let builds = Arc::new(LatestBuildStub::default().with_update(
+            "hog",
+            Some(("1.1.0", "yyyyyy")),
+            ("1.2.0", "abcabc"),
+        ));
         let withdrawals =
             Arc::new(WithdrawalStub::default().with_withdrawn("hog", "1.1.0", "yyyyyy"));
         let schema = crate::graphql::schema(
@@ -2594,7 +2931,7 @@ mod tests {
     impl CapturedLogs {
         /// Returns the failed-lookup breadcrumbs naming `package_id`.
         fn lines_naming(&self, package_id: &str) -> Vec<String> {
-            self.lines_with("cannot read the latest build of package", package_id)
+            self.lines_with("cannot read the update target of package", package_id)
         }
 
         /// Returns the failed-withdrawal-check breadcrumbs naming `needle`.

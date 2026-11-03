@@ -6667,7 +6667,7 @@ mod tests {
         use crate::{
             backend::{
                 BindAddrInput, BuildId, ConfigTemplateCatalog, DeployError, DeployOutcome,
-                OperationId, PackageDeployer,
+                OperationId, PackageDeployer, ServableBuild,
             },
             graphql::customer_deletion_guard::test_support::put_running_job,
         };
@@ -6768,7 +6768,11 @@ mod tests {
                 Err(DeployError::Other(unsupported()))
             }
 
-            async fn latest_build(&self, _target: &str) -> Result<Option<BuildId>, anyhow::Error> {
+            async fn update_target(
+                &self,
+                _target: &str,
+                _installed: Option<&BuildId>,
+            ) -> Result<Option<BuildId>, anyhow::Error> {
                 Err(unsupported())
             }
 
@@ -6779,7 +6783,10 @@ mod tests {
                 Err(unsupported())
             }
 
-            async fn servable_builds(&self, _target: &str) -> Result<Vec<BuildId>, anyhow::Error> {
+            async fn servable_builds(
+                &self,
+                _target: &str,
+            ) -> Result<Vec<ServableBuild>, anyhow::Error> {
                 Err(unsupported())
             }
 
