@@ -209,13 +209,15 @@ impl Agent {
         privilege_profile::derive(self.config.as_deref(), self.run_as_root).ok()
     }
 
-    /// Whether the store's most recently accepted build for this entry's
-    /// package differs from the installed one.
+    /// Whether the store holds a build newer than the one installed for this
+    /// entry that counts as an update of it.
     ///
-    /// It is inequality of build identity, not an ordering comparison, so a
-    /// hotfix carrying the same version and a different commit is `true`. An
-    /// entry with nothing installed, one whose kind maps to no package-id and
-    /// one whose package has no accepted build are all `false`.
+    /// With a release build installed, only a newer release build counts (a
+    /// test build of the same version does not); with a test build
+    /// installed, or a build the store does not serve, any newer build
+    /// counts, release or test. An older build never does. It is `false`
+    /// for an entry with nothing installed and for one whose kind maps to
+    /// no package-id.
     ///
     /// A `false` here is only "up to date" when `updateCheckFailed` is
     /// `false`; the two must be read together.
@@ -229,8 +231,8 @@ impl Agent {
         Ok(self.update_state(ctx).await?.available)
     }
 
-    /// Whether this response's lookup of the most recently accepted build for
-    /// this entry's package failed.
+    /// Whether this response's lookup of an update for the build installed for
+    /// this entry failed.
     ///
     /// When it is `true`, `updateAvailable` is `false` because nothing was
     /// answered to compare against, and a client must not render that pair as
@@ -419,13 +421,15 @@ impl ExternalService {
         self.instance.map(StringNumber)
     }
 
-    /// Whether the store's most recently accepted build for this entry's
-    /// package differs from the installed one.
+    /// Whether the store holds a build newer than the one installed for this
+    /// entry that counts as an update of it.
     ///
-    /// It is inequality of build identity, not an ordering comparison, so a
-    /// hotfix carrying the same version and a different commit is `true`. An
-    /// entry with nothing installed, one whose kind maps to no package-id and
-    /// one whose package has no accepted build are all `false`.
+    /// With a release build installed, only a newer release build counts (a
+    /// test build of the same version does not); with a test build
+    /// installed, or a build the store does not serve, any newer build
+    /// counts, release or test. An older build never does. It is `false`
+    /// for an entry with nothing installed and for one whose kind maps to
+    /// no package-id.
     ///
     /// A `false` here is only "up to date" when `updateCheckFailed` is
     /// `false`; the two must be read together.
@@ -439,8 +443,8 @@ impl ExternalService {
         Ok(self.update_state(ctx).await?.available)
     }
 
-    /// Whether this response's lookup of the most recently accepted build for
-    /// this entry's package failed.
+    /// Whether this response's lookup of an update for the build installed for
+    /// this entry failed.
     ///
     /// When it is `true`, `updateAvailable` is `false` because nothing was
     /// answered to compare against, and a client must not render that pair as
@@ -760,8 +764,18 @@ impl AgentSnapshot {
         self.instance.map(StringNumber)
     }
 
-    /// Whether the store's most recently accepted build for this entry's
-    /// package differs from the installed one.
+    /// Whether the store holds a build newer than the one installed for this
+    /// entry that counts as an update of it.
+    ///
+    /// With a release build installed, only a newer release build counts (a
+    /// test build of the same version does not); with a test build
+    /// installed, or a build the store does not serve, any newer build
+    /// counts, release or test. An older build never does. It is `false`
+    /// for an entry with nothing installed and for one whose kind maps to
+    /// no package-id.
+    ///
+    /// A `false` here is only "up to date" when `updateCheckFailed` is
+    /// `false`; the two must be read together.
     ///
     /// # Errors
     ///
@@ -772,8 +786,8 @@ impl AgentSnapshot {
         Ok(self.update_state(ctx).await?.available)
     }
 
-    /// Whether this response's lookup of the most recently accepted build for
-    /// this entry's package failed.
+    /// Whether this response's lookup of an update for the build installed for
+    /// this entry failed.
     ///
     /// When it is `true`, `updateAvailable` is `false`, and a client must not
     /// render that pair as "up to date".
@@ -906,8 +920,18 @@ impl ExternalServiceSnapshot {
         self.instance.map(StringNumber)
     }
 
-    /// Whether the store's most recently accepted build for this entry's
-    /// package differs from the installed one.
+    /// Whether the store holds a build newer than the one installed for this
+    /// entry that counts as an update of it.
+    ///
+    /// With a release build installed, only a newer release build counts (a
+    /// test build of the same version does not); with a test build
+    /// installed, or a build the store does not serve, any newer build
+    /// counts, release or test. An older build never does. It is `false`
+    /// for an entry with nothing installed and for one whose kind maps to
+    /// no package-id.
+    ///
+    /// A `false` here is only "up to date" when `updateCheckFailed` is
+    /// `false`; the two must be read together.
     ///
     /// # Errors
     ///
@@ -918,8 +942,8 @@ impl ExternalServiceSnapshot {
         Ok(self.update_state(ctx).await?.available)
     }
 
-    /// Whether this response's lookup of the most recently accepted build for
-    /// this entry's package failed.
+    /// Whether this response's lookup of an update for the build installed for
+    /// this entry failed.
     ///
     /// When it is `true`, `updateAvailable` is `false`, and a client must not
     /// render that pair as "up to date".

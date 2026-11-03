@@ -6,10 +6,28 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- `StoreBuild.release` says whether a listed build is a release build, one made
+  from the commit its version tag points at, as its signed package records;
+  every other build is a test build.
+
 ### Changed
 
 - `topTimeSeries` and `topTimeSeriesOfCluster` reject `cutoffRate` values
   above 1 during argument validation.
+- **Breaking change:** `PackageDeployer::latest_build` is replaced by
+  `update_target(target, installed)`, which answers the build an update of the
+  installed build would offer, or the latest release build when nothing is
+  installed; and `PackageDeployer::servable_builds` returns `ServableBuild`
+  entries (a `BuildId` and whether it is a release build), newest first in the
+  release order.
+- `updateAvailable` follows the release order rather than build identity: with
+  a release build installed only a newer release build is an update (a test
+  build of the same version is not), with a test build installed any newer
+  build is, and an older build never is. `storeBuildList` lists builds newest
+  first in that order, and a `buildSelector` version resolves to that version's
+  release build.
 
 ## [0.54.0] - 2026-10-30
 

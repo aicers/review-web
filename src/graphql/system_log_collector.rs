@@ -294,7 +294,7 @@ mod tests {
     use crate::{
         backend::{
             AgentManager, BindAddrInput, BuildId, ConfigTemplateCatalog, DeployError,
-            DeployOutcome, OperationId, PackageDeployer, SystemLogCollectorState,
+            DeployOutcome, OperationId, PackageDeployer, ServableBuild, SystemLogCollectorState,
         },
         customer_data_deletion::CustomerDataDeletionTarget,
         graphql::{
@@ -534,11 +534,18 @@ mod tests {
             unimplemented!("this stub answers the system log collector methods only")
         }
 
-        async fn latest_build(&self, _target: &str) -> Result<Option<BuildId>, anyhow::Error> {
+        async fn update_target(
+            &self,
+            _target: &str,
+            _installed: Option<&BuildId>,
+        ) -> Result<Option<BuildId>, anyhow::Error> {
             unimplemented!("this stub answers the system log collector methods only")
         }
 
-        async fn servable_builds(&self, _target: &str) -> Result<Vec<BuildId>, anyhow::Error> {
+        async fn servable_builds(
+            &self,
+            _target: &str,
+        ) -> Result<Vec<ServableBuild>, anyhow::Error> {
             unimplemented!("this stub answers the system log collector methods only")
         }
 

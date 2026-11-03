@@ -96,14 +96,14 @@ pub(super) struct CoreComponent {
 
 #[ComplexObject]
 impl CoreComponent {
-    /// Whether the store's most recently accepted build for this row's
-    /// component differs from the installed one.
+    /// Whether the store holds a build newer than the one installed for this
+    /// row that counts as an update of it.
     ///
-    /// It is inequality of build identity against `latest_build(component)`,
-    /// not an ordering comparison, so a hotfix carrying the same version and a
-    /// different commit is `true`. A row with nothing installed, one whose
-    /// component has no accepted build, and an `installerManaged` row are all
-    /// `false`.
+    /// With a release build installed, only a newer release build counts (a
+    /// test build of the same version does not); with a test build
+    /// installed, or a build the store does not serve, any newer build
+    /// counts, release or test. An older build never does. It is `false`
+    /// for a row with nothing installed and for an `installerManaged` row.
     ///
     /// A `false` here is only "up to date" when `updateCheckFailed` is
     /// `false`; the two must be read together.
@@ -117,7 +117,7 @@ impl CoreComponent {
         Ok(self.update_state(ctx).await?.available)
     }
 
-    /// Whether this response's lookup of the most recently accepted build for
+    /// Whether this response's lookup of an update for the build installed for
     /// this row's component failed.
     ///
     /// When it is `true`, `updateAvailable` is `false` because nothing was

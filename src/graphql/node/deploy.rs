@@ -37,6 +37,7 @@ use crate::{
         ConfigTemplateCatalog, ConfigTemplateSummary, DeployError,
         HostOnboardingTicket as BackendHostOnboardingTicket, LocalizedText as BackendLocalizedText,
         MODULE_PACKAGE_IDS, OperationId, RunningRoxydBuild as BackendRunningRoxydBuild,
+        ServableBuild,
     },
     info_with_username,
     maintenance::maintenance_refusal,
@@ -89,9 +90,12 @@ pub(crate) enum DeployDisposition {
 // representation carrying both or neither exists.
 #[derive(InputObject)]
 pub(crate) struct BuildSelectorInput {
-    /// A version, which review turns into a build.
+    /// A version, which resolves to the release build of that version (the
+    /// more recently accepted one if the store holds two), never to a test
+    /// build. A version with no servable release build is refused.
     version: Option<String>,
-    /// An exact commit.
+    /// An exact commit, naming one build, release or test. It is the only way
+    /// to select a test build.
     commit: Option<String>,
 }
 
@@ -132,13 +136,18 @@ pub(crate) struct StoreBuild {
     version: String,
     /// The commit the build was made from.
     commit: String,
+    /// Whether this is a release build, one made from the commit its
+    /// `MAJOR.MINOR.PATCH` version tag points at, as its signed package
+    /// records. Every other build is a test build.
+    release: bool,
 }
 
-impl From<BuildId> for StoreBuild {
-    fn from(build: BuildId) -> Self {
+impl From<ServableBuild> for StoreBuild {
+    fn from(servable: ServableBuild) -> Self {
         Self {
-            version: build.version,
-            commit: build.commit,
+            version: servable.build.version,
+            commit: servable.build.commit,
+            release: servable.release,
         }
     }
 }
@@ -620,8 +629,17 @@ impl OnboardingQuery {
         Ok(running.into_iter().map(RunningRoxydBuild::from).collect())
     }
 
-    /// Returns the builds the store serves for `packageId`, newest-accepted
-    /// first, offered as the choices a build selector may name.
+    /// Returns the builds the store serves for `packageId`, release and test
+    /// alike, offered as the choices a build selector may name.
+    ///
+    /// The list is newest first in the release order: by version
+    /// (`MAJOR.MINOR.PATCH`, compared numerically; a test build labelled
+    /// otherwise takes the highest release version accepted before it), then
+    /// a release build above a test build of the same version, then later
+    /// acceptance above earlier. So the test builds labelled with a version
+    /// come, newest first, after the next release build and before that
+    /// version's own release build. The first entry with `release` set is the
+    /// latest build; test builds are never latest.
     ///
     /// Only a module or core-component package-id is accepted. A core
     /// package-id additionally requires a System Administrator, as updating
@@ -1117,7 +1135,7 @@ mod tests {
             ConfigTemplateCatalog, ConfigTemplateSummary, DeployError, DeployOutcome,
             HostOnboarder, HostOnboardingTicket as BackendHostOnboardingTicket, JoinToken,
             LocalizedText as BackendLocalizedText, MODULE_PACKAGE_IDS, OperationId,
-            PackageDeployer, RunningRoxydBuild as BackendRunningRoxydBuild,
+            PackageDeployer, RunningRoxydBuild as BackendRunningRoxydBuild, ServableBuild,
         },
         graphql::{
             BoxedHostOnboarder, Mutation, NetworksTargetAgentLookupKeysPair, Query, RoleGuard,
@@ -1382,7 +1400,7 @@ mod tests {
     /// What the stub answers `servable_builds` with.
     #[derive(Clone)]
     enum StoreBuildsAnswer {
-        List(Vec<BuildId>),
+        List(Vec<ServableBuild>),
         Fail,
     }
 
@@ -1542,7 +1560,11 @@ mod tests {
             unimplemented!("this stub answers deployment calls and catalog lookups only")
         }
 
-        async fn latest_build(&self, _target: &str) -> Result<Option<BuildId>, anyhow::Error> {
+        async fn update_target(
+            &self,
+            _target: &str,
+            _installed: Option<&BuildId>,
+        ) -> Result<Option<BuildId>, anyhow::Error> {
             unimplemented!("this stub answers deployment calls and catalog lookups only")
         }
 
@@ -1571,7 +1593,7 @@ mod tests {
             }
         }
 
-        async fn servable_builds(&self, target: &str) -> Result<Vec<BuildId>, anyhow::Error> {
+        async fn servable_builds(&self, target: &str) -> Result<Vec<ServableBuild>, anyhow::Error> {
             self.calls
                 .servable_builds
                 .lock()
@@ -1983,7 +2005,9 @@ mod tests {
     const RUNNING_ROXYD_BUILDS_QUERY: &str = "query { runningRoxydBuilds { host version commit } }";
 
     fn store_build_list_query(package_id: &str) -> String {
-        format!(r#"query {{ storeBuildList(packageId: "{package_id}") {{ version commit }} }}"#)
+        format!(
+            r#"query {{ storeBuildList(packageId: "{package_id}") {{ version commit release }} }}"#
+        )
     }
 
     /// The build the existing onboarding tests submit, as the backend
@@ -2872,21 +2896,26 @@ mod tests {
         }
     }
 
-    fn store_build(version: &str, commit: &str) -> BuildId {
-        BuildId {
-            version: version.to_string(),
-            commit: commit.to_string(),
+    fn store_build(version: &str, commit: &str, release: bool) -> ServableBuild {
+        ServableBuild {
+            build: BuildId {
+                version: version.to_string(),
+                commit: commit.to_string(),
+            },
+            release,
         }
     }
 
-    /// The list is the backend's, in the backend's order: the resolver neither
-    /// sorts nor collapses it, so two commits of one version stay two entries.
+    /// The list is the backend's, in the backend's order, with each entry's
+    /// `release`: the resolver neither sorts, filters nor collapses it, so a
+    /// test build the backend placed between two release builds stays there,
+    /// and two commits of one version stay two entries.
     #[tokio::test(flavor = "current_thread")]
     async fn store_build_list_lists_the_backend_answer_in_order() {
         let (deployer, calls) = RecordingDeployer::serving(StoreBuildsAnswer::List(vec![
-            store_build("2.0.0", ONBOARD_COMMIT),
-            store_build(CONFIRMED_VERSION, CONFIRMED_COMMIT),
-            store_build(CONFIRMED_VERSION, ONBOARD_COMMIT),
+            store_build("2.0.0", ONBOARD_COMMIT, true),
+            store_build(CONFIRMED_VERSION, ONBOARD_COMMIT, false),
+            store_build(CONFIRMED_VERSION, CONFIRMED_COMMIT, true),
         ]));
         let (onboarder, _) =
             RecordingOnboarder::boxed(OnboardAnswer::Succeed, RunningAnswer::List(vec![]));
@@ -2902,9 +2931,9 @@ mod tests {
             response.data.into_json().unwrap(),
             json!({
                 "storeBuildList": [
-                    { "version": "2.0.0", "commit": ONBOARD_COMMIT },
-                    { "version": CONFIRMED_VERSION, "commit": CONFIRMED_COMMIT },
-                    { "version": CONFIRMED_VERSION, "commit": ONBOARD_COMMIT },
+                    { "version": "2.0.0", "commit": ONBOARD_COMMIT, "release": true },
+                    { "version": CONFIRMED_VERSION, "commit": ONBOARD_COMMIT, "release": false },
+                    { "version": CONFIRMED_VERSION, "commit": CONFIRMED_COMMIT, "release": true },
                 ]
             })
         );
@@ -2978,6 +3007,7 @@ mod tests {
                 RecordingDeployer::serving(StoreBuildsAnswer::List(vec![store_build(
                     CONFIRMED_VERSION,
                     CONFIRMED_COMMIT,
+                    true,
                 )]));
             let schema = TestSchema::new().await;
             let response = schema
@@ -3039,6 +3069,7 @@ mod tests {
                     RecordingDeployer::serving(StoreBuildsAnswer::List(vec![store_build(
                         CONFIRMED_VERSION,
                         CONFIRMED_COMMIT,
+                        true,
                     )]));
                 let schema = TestSchema::new().await;
                 let response = schema
@@ -4849,7 +4880,7 @@ mod tests {
         );
         assert_eq!(
             sdl_block_fields(&sdl, "type StoreBuild {"),
-            vec!["version: String!", "commit: String!"]
+            vec!["version: String!", "commit: String!", "release: Boolean!"]
         );
     }
 

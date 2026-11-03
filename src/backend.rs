@@ -653,7 +653,7 @@ pub(crate) const CORE_PACKAGE_IDS: [&str; 6] = [
 /// nothing will refuse it.
 ///
 /// It carries no package-id. Every method returning one is already keyed on a
-/// package-id the caller passed in — [`PackageDeployer::latest_build`],
+/// package-id the caller passed in — [`PackageDeployer::update_target`],
 /// [`PackageDeployer::read_version`] — where a field would repeat that
 /// argument and could contradict it. The one caller that learns a package-id
 /// instead of supplying it, [`PackageStoreReceiver::accept_package`], is
@@ -665,6 +665,26 @@ pub struct BuildId {
     pub version: String,
     /// The commit the build was made from.
     pub commit: String,
+}
+
+/// One build the store serves, with whether it is a release build.
+///
+/// A *release build* is a build made from the commit that the package's
+/// version tag points at, where the tag name equals the build's version and
+/// has the form `MAJOR.MINOR.PATCH`. The tool that builds the package decides
+/// this and records it in the package's signed manifest; a package without
+/// the record is a test build. Every build that is not a release build is a
+/// *test build*, and a build marked as a release whose version does not have
+/// the `MAJOR.MINOR.PATCH` form is read as a test build.
+///
+/// Like [`BuildId`], it carries no package-id: it is returned by
+/// [`PackageDeployer::servable_builds`], which is keyed on one.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServableBuild {
+    /// The build's identity.
+    pub build: BuildId,
+    /// Whether the build is a release build rather than a test build.
+    pub release: bool,
 }
 
 /// The identity of one operation in the attempt ledger.
@@ -1075,9 +1095,39 @@ pub struct LocalizedText {
 /// `REview`. That is why it is its own trait rather than more methods on
 /// [`AgentManager`].
 ///
-/// No method resolves a [`BuildSelector`]. Only review owns the store index
-/// that maps a version to its most-recently accepted commit and a commit to
-/// its version.
+/// No method of this crate resolves a [`BuildSelector`]: the implementer,
+/// which owns the store index, does. A [`BuildSelector::Version`] resolves to
+/// a release build of that version (see [`ServableBuild`]), never to a test
+/// build; if the store holds two release builds of one version, because the
+/// tag was moved and the package rebuilt, it resolves to the more recently
+/// accepted one, and a version with no servable release build is refused as a
+/// version the store does not serve is. A [`BuildSelector::Commit`] names one
+/// build exactly, release or test, and is the only way to select a test
+/// build.
+///
+/// # Build order
+///
+/// The builds of one package are ordered by a position `(L, kind,
+/// acceptance)`, compared in that order:
+///
+/// - `L` is the build's version when it has the form `MAJOR.MINOR.PATCH`,
+///   compared numerically field by field (so `0.30.1` is above `0.30.0` and
+///   `0.10.0` above `0.9.0`). A test build whose label has another form (such
+///   as a short commit) takes as `L` the highest version among the release
+///   builds of the package that the store holds and accepted before it; with
+///   none, it sorts below every build that has an `L`.
+/// - `kind` orders a release build before a test build of the same `L`.
+/// - `acceptance` is the store's acceptance order, earlier below later.
+///
+/// So, for one package: release `L` < test builds labelled `L`, in
+/// acceptance order < release `L+1`. A build is *newer* than another when its
+/// position is higher. The *latest* build of a package is its servable
+/// release build with the highest position; test builds are never latest, and
+/// a store serving no release build of a package has no latest build of it.
+///
+/// Deciding which builds are release builds, ordering them and answering
+/// [`update_target`](PackageDeployer::update_target) are the implementer's;
+/// this crate carries the answers and does not re-check them.
 #[async_trait]
 pub trait PackageDeployer: Send + Sync {
     /// Installs `target` on `host` as a newly allocated instance, and returns
@@ -1265,30 +1315,73 @@ pub trait PackageDeployer: Send + Sync {
         target: &str,
     ) -> Result<Vec<ListenerBinding>, DeployError>;
 
-    /// Returns the most recent build of `target`, or `None` if the store holds
-    /// no build for it.
+    /// Returns the build of `target` an update of `installed` would offer, or
+    /// the latest build of `target` when nothing is installed.
     ///
-    /// It is keyed on the package-id alone, because package identity is
-    /// host-agnostic and the store index is per component; a caller asks once
-    /// per package-id and reuses the answer across that package's rows.
+    /// With `installed` `None`, it is the latest build (the servable release
+    /// build with the highest position in the [build order]), or `None` when
+    /// the store serves no release build of `target`.
+    ///
+    /// With `installed` `Some(build)`, it is the build an update of `build`
+    /// would offer, or `None` when there is none:
+    ///
+    /// - For a release build the store serves, only a newer release build
+    ///   counts: the answer is the latest build when it is newer than
+    ///   `build`. A test build of the same version is therefore not an update
+    ///   of the release build.
+    /// - Otherwise any newer build counts, release or test: the answer is the
+    ///   newest servable build when it is newer than `build`. That covers a
+    ///   test build, and an installed build the store holds but does not
+    ///   serve (withdrawn, or failed verification), which counts as a test
+    ///   build positioned by its label — so a withdrawn release build is a
+    ///   test build here. It also covers a build the store does not index at
+    ///   all (never uploaded to this store, or pruned): it has no acceptance,
+    ///   its `L` is its label when that has the `MAJOR.MINOR.PATCH` form, and
+    ///   otherwise it has none, so every servable build is newer than it.
+    ///   Among builds of the same `L` and kind it sorts below every build the
+    ///   store indexes.
+    ///
+    /// It is never `build` itself and never an older build: a downgrade can
+    /// be selected but is never reported as an update.
+    ///
+    /// It is keyed on the package-id and the installed build only, because
+    /// package identity is host-agnostic and the store index is per
+    /// component; a caller asks once per `(target, installed)` and reuses the
+    /// answer across the rows that run that build.
     ///
     /// # Errors
     ///
-    /// Returns an error if the build store could not be read.
-    async fn latest_build(&self, target: &str) -> Result<Option<BuildId>, anyhow::Error>;
+    /// Returns an error if the build store could not be read, or if any build
+    /// of `target` is still pending verification, as for
+    /// [`servable_builds`](PackageDeployer::servable_builds).
+    ///
+    /// [build order]: PackageDeployer#build-order
+    async fn update_target(
+        &self,
+        target: &str,
+        installed: Option<&BuildId>,
+    ) -> Result<Option<BuildId>, anyhow::Error>;
 
-    /// Returns every build of `target` the store serves, newest-accepted
-    /// first.
+    /// Returns every build of `target` the store serves, release and test
+    /// alike, newest first in the [build order].
     ///
     /// The list holds every build the store would resolve for `target`
     /// through a [`BuildSelector`], and no other: what is unverified,
     /// withdrawn or changed since verification is absent. It is ordered by
-    /// the store's own acceptance recency, the order
-    /// [`latest_build`](PackageDeployer::latest_build) uses, so its first
-    /// entry is the build `latest_build` returns. Each `(version, commit)`
-    /// pair is its own entry: two commits of one version are two entries.
+    /// position `(L, kind, acceptance)`, highest first: a build's `L` is its
+    /// `MAJOR.MINOR.PATCH` version, or for a test build labelled otherwise the
+    /// highest release version accepted before it; a release build sits
+    /// above a test build of the same `L`; and a later acceptance sits above
+    /// an earlier one. Each `(version, commit)` pair is its own entry: two
+    /// commits of one version are two entries.
     ///
-    /// It is keyed on the package-id alone, as `latest_build` is.
+    /// The first entry overall is the newest build, and the first entry with
+    /// [`release`](ServableBuild::release) set is the latest build, the one
+    /// [`update_target`](PackageDeployer::update_target) returns when nothing
+    /// is installed.
+    ///
+    /// It is keyed on the package-id alone, because the store is
+    /// host-agnostic.
     ///
     /// An empty list means the store holds no servable build of `target`, and
     /// nothing else: an implementation must never answer an empty list for a
@@ -1298,7 +1391,9 @@ pub trait PackageDeployer: Send + Sync {
     ///
     /// Returns an error if the build store could not be read, or if any build
     /// of `target` is still pending verification.
-    async fn servable_builds(&self, target: &str) -> Result<Vec<BuildId>, anyhow::Error>;
+    ///
+    /// [build order]: PackageDeployer#build-order
+    async fn servable_builds(&self, target: &str) -> Result<Vec<ServableBuild>, anyhow::Error>;
 
     /// Returns the configuration-template catalog for `target`.
     ///

@@ -29,7 +29,7 @@ mod mtls_integration {
             AcceptedPackage, AgentManager, BindAddrInput, BuildId, CertManager, DeployError,
             DeployOutcome, HostOnboarder, HostOnboardingTicket, IngressStream, IngressStreamError,
             OperationId, PackageDeployer, PackageIngestError, PackageStoreReceiver,
-            RunningRoxydBuild, TrustActivation, TrustIngestError, TrustManager,
+            RunningRoxydBuild, ServableBuild, TrustActivation, TrustIngestError, TrustManager,
         },
         ingress::PACKAGE_UPLOAD_PATH,
         maintenance::{MAINTENANCE_ERROR_CODE, MaintenanceGate},
@@ -223,7 +223,11 @@ mod mtls_integration {
             Ok(Vec::new())
         }
 
-        async fn latest_build(&self, _target: &str) -> Result<Option<BuildId>, anyhow::Error> {
+        async fn update_target(
+            &self,
+            _target: &str,
+            _installed: Option<&BuildId>,
+        ) -> Result<Option<BuildId>, anyhow::Error> {
             Ok(None)
         }
 
@@ -237,7 +241,10 @@ mod mtls_integration {
             })
         }
 
-        async fn servable_builds(&self, _target: &str) -> Result<Vec<BuildId>, anyhow::Error> {
+        async fn servable_builds(
+            &self,
+            _target: &str,
+        ) -> Result<Vec<ServableBuild>, anyhow::Error> {
             Ok(Vec::new())
         }
 

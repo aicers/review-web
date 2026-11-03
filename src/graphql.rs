@@ -982,33 +982,58 @@ fn arbitrary_deploy_failure() -> Result<(), anyhow::Error> {
     ))
 }
 
-/// The `latest_build` answers a [`MockPackageDeployer`] gives, and the record
-/// of what it was asked.
+/// The installed build an `update_target` call names, as the stub keys it:
+/// `(version, commit)`, or `None` when nothing is installed.
+#[cfg(test)]
+type InstalledKey = Option<(String, String)>;
+
+/// Turns a borrowed installed build into the stub's key.
+#[cfg(test)]
+fn installed_key(installed: Option<(&str, &str)>) -> InstalledKey {
+    installed.map(|(version, commit)| (version.to_string(), commit.to_string()))
+}
+
+/// The `update_target` and `servable_builds` answers a [`MockPackageDeployer`]
+/// gives, and the record of what `update_target` was asked.
 ///
 /// A test holds an `Arc` of the same stub it hands the schema, so it can read
 /// the call log back afterwards: the read path promises one lookup per
-/// package-id per query however many rows carry that package, and only a
-/// counting stub can hold it to that.
+/// package-id and installed build per query however many rows carry that
+/// build, and only a counting stub can hold it to that.
 #[cfg(test)]
 #[derive(Default)]
 struct LatestBuildStub {
-    /// The newest accepted build of each package-id. A package-id absent from
-    /// the map and from `failing` answers `Ok(None)`.
-    answers: std::collections::HashMap<String, BuildId>,
-    /// The package-ids whose lookup fails.
+    /// The `update_target` answer for each package-id and installed build. A
+    /// pair absent from the map answers `Ok(None)` unless its package-id is in
+    /// `failing`.
+    answers: std::collections::HashMap<(String, InstalledKey), BuildId>,
+    /// The package-ids whose lookups fail, whatever build is installed.
     failing: std::collections::HashSet<String>,
-    /// Every package-id asked about, in the order it was asked.
-    calls: std::sync::Mutex<Vec<String>>,
-    /// The package-ids whose lookup parks until the test releases it, which is
-    /// how a test holds one package's lookup open while another runs.
-    gates: std::collections::HashMap<String, Arc<tokio::sync::Notify>>,
+    /// The package-id and installed build pairs whose lookup fails, while
+    /// other installed builds of the same package answer.
+    failing_builds: std::collections::HashSet<(String, InstalledKey)>,
+    /// The `servable_builds` answer for each package-id; absent is empty.
+    servable: std::collections::HashMap<String, Vec<crate::backend::ServableBuild>>,
+    /// Every `update_target` call, as the package-id and installed build it
+    /// named, in the order it was made.
+    calls: std::sync::Mutex<Vec<(String, InstalledKey)>>,
+    /// The package-id and installed build whose lookup parks until the test
+    /// releases it, which is how a test holds one lookup open while another
+    /// runs.
+    gates: std::collections::HashMap<(String, InstalledKey), Arc<tokio::sync::Notify>>,
 }
 
 #[cfg(test)]
 impl LatestBuildStub {
-    fn with_answer(mut self, package_id: &str, version: &str, commit: &str) -> Self {
+    /// Answers `update_target(package_id, installed)` with `target`.
+    fn with_update(
+        mut self,
+        package_id: &str,
+        installed: Option<(&str, &str)>,
+        (version, commit): (&str, &str),
+    ) -> Self {
         self.answers.insert(
-            package_id.to_string(),
+            (package_id.to_string(), installed_key(installed)),
             BuildId {
                 version: version.to_string(),
                 commit: commit.to_string(),
@@ -1017,39 +1042,94 @@ impl LatestBuildStub {
         self
     }
 
+    /// Fails every lookup of `package_id`, and its `servable_builds`.
     fn with_failure(mut self, package_id: &str) -> Self {
         self.failing.insert(package_id.to_string());
         self
     }
 
-    /// Parks the lookup of `package_id` until `gate` is notified.
-    fn with_gate(mut self, package_id: &str, gate: Arc<tokio::sync::Notify>) -> Self {
-        self.gates.insert(package_id.to_string(), gate);
+    /// Fails the lookup of `installed` of `package_id` alone.
+    fn with_failing_build(mut self, package_id: &str, installed: Option<(&str, &str)>) -> Self {
+        self.failing_builds
+            .insert((package_id.to_string(), installed_key(installed)));
         self
     }
 
-    async fn latest_build(&self, package_id: &str) -> Result<Option<BuildId>, anyhow::Error> {
+    /// Answers `servable_builds(package_id)` with `builds`.
+    fn with_servable(
+        mut self,
+        package_id: &str,
+        builds: Vec<crate::backend::ServableBuild>,
+    ) -> Self {
+        self.servable.insert(package_id.to_string(), builds);
+        self
+    }
+
+    /// Parks the lookup of `installed` of `package_id` until `gate` is
+    /// notified.
+    fn with_gate(
+        mut self,
+        package_id: &str,
+        installed: Option<(&str, &str)>,
+        gate: Arc<tokio::sync::Notify>,
+    ) -> Self {
+        self.gates
+            .insert((package_id.to_string(), installed_key(installed)), gate);
+        self
+    }
+
+    async fn update_target(
+        &self,
+        package_id: &str,
+        installed: Option<&BuildId>,
+    ) -> Result<Option<BuildId>, anyhow::Error> {
+        let key = (
+            package_id.to_string(),
+            installed.map(|build| (build.version.clone(), build.commit.clone())),
+        );
         self.calls
             .lock()
             .unwrap_or_else(|e| panic!("Mutex poisoned: {e}"))
-            .push(package_id.to_string());
-        if let Some(gate) = self.gates.get(package_id) {
+            .push(key.clone());
+        if let Some(gate) = self.gates.get(&key) {
             gate.notified().await;
         }
+        if self.failing.contains(package_id) || self.failing_builds.contains(&key) {
+            anyhow::bail!("the build store could not be read");
+        }
+        Ok(self.answers.get(&key).cloned())
+    }
+
+    fn servable_builds(
+        &self,
+        package_id: &str,
+    ) -> Result<Vec<crate::backend::ServableBuild>, anyhow::Error> {
         if self.failing.contains(package_id) {
             anyhow::bail!("the build store could not be read");
         }
-        Ok(self.answers.get(package_id).cloned())
+        Ok(self.servable.get(package_id).cloned().unwrap_or_default())
     }
 
-    /// Returns how many times `package_id` was asked about.
+    /// Returns how many lookups named `package_id`, whatever was installed.
     fn calls(&self, package_id: &str) -> usize {
         self.calls
             .lock()
             .unwrap_or_else(|e| panic!("Mutex poisoned: {e}"))
             .iter()
-            .filter(|asked| asked.as_str() == package_id)
+            .filter(|(asked, _)| asked.as_str() == package_id)
             .count()
+    }
+
+    /// Returns the installed builds the lookups of `package_id` named, in the
+    /// order they were made.
+    fn installed_asked(&self, package_id: &str) -> Vec<InstalledKey> {
+        self.calls
+            .lock()
+            .unwrap_or_else(|e| panic!("Mutex poisoned: {e}"))
+            .iter()
+            .filter(|(asked, _)| asked.as_str() == package_id)
+            .map(|(_, installed)| installed.clone())
+            .collect()
     }
 
     /// Returns how many lookups were made in total.
@@ -1171,7 +1251,8 @@ impl MockPackageDeployer {
         }
     }
 
-    /// Builds a deployer answering `latest_build` from the given stub.
+    /// Builds a deployer answering `update_target` and `servable_builds` from
+    /// the given stub.
     fn with_builds(builds: Arc<LatestBuildStub>) -> Self {
         Self {
             builds,
@@ -1300,10 +1381,14 @@ impl PackageDeployer for MockPackageDeployer {
         }])
     }
 
-    // Answers from the stub the deployer was built with, which holds no build
-    // at all unless a test put one there.
-    async fn latest_build(&self, target: &str) -> Result<Option<BuildId>, anyhow::Error> {
-        self.builds.latest_build(target).await
+    // Answers from the stub the deployer was built with, which offers no
+    // update at all unless a test put one there.
+    async fn update_target(
+        &self,
+        target: &str,
+        installed: Option<&BuildId>,
+    ) -> Result<Option<BuildId>, anyhow::Error> {
+        self.builds.update_target(target, installed).await
     }
 
     async fn config_templates(
@@ -1316,20 +1401,14 @@ impl PackageDeployer for MockPackageDeployer {
         })
     }
 
-    // Answers from the same stub, so that the list's first entry is the build
-    // `latest_build` returns. It leaves the stub's call log alone: that log
-    // counts `latest_build` lookups only.
-    async fn servable_builds(&self, target: &str) -> Result<Vec<BuildId>, anyhow::Error> {
-        if self.builds.failing.contains(target) {
-            anyhow::bail!("the build store could not be read");
-        }
-        Ok(self
-            .builds
-            .answers
-            .get(target)
-            .cloned()
-            .into_iter()
-            .collect())
+    // Answers from the same stub, which lists no build unless a test put some
+    // there. It leaves the stub's call log alone: that log counts
+    // `update_target` lookups only.
+    async fn servable_builds(
+        &self,
+        target: &str,
+    ) -> Result<Vec<crate::backend::ServableBuild>, anyhow::Error> {
+        self.builds.servable_builds(target)
     }
 
     // Answers from the withdrawal stub, which withdraws nothing unless a test
@@ -1462,7 +1541,7 @@ impl TestSchema {
 
     /// Builds a schema whose package deployer is the given one.
     ///
-    /// The install-state read path drives `latest_build` through the deployer,
+    /// The install-state read path drives `update_target` through the deployer,
     /// so a test that exercises it substitutes a stub here rather than taking
     /// the default one's answers.
     async fn new_with_package_deployer(package_deployer: SharedPackageDeployer) -> Self {
@@ -2345,7 +2424,85 @@ mod tests {
                 .unwrap(),
             None
         );
-        assert_eq!(deployer.latest_build("giganto").await.unwrap(), None);
+        assert_eq!(deployer.update_target("giganto", None).await.unwrap(), None);
+        assert_eq!(deployer.servable_builds("giganto").await.unwrap(), vec![]);
+    }
+
+    /// The mock answers `update_target` per package-id and installed build,
+    /// records each call with the build it named, and lists the servable
+    /// builds the stub holds; a failing package-id fails both, whatever is
+    /// installed.
+    #[tokio::test]
+    async fn the_mock_answers_per_package_and_installed_build() {
+        use std::sync::Arc;
+
+        use super::LatestBuildStub;
+        use crate::backend::{BuildId, ServableBuild};
+
+        let release = BuildId {
+            version: "1.2.0".to_string(),
+            commit: "abcabc".to_string(),
+        };
+        let test_build = BuildId {
+            version: "1.2.0".to_string(),
+            commit: "dddddd".to_string(),
+        };
+        let servable = vec![
+            ServableBuild {
+                build: test_build.clone(),
+                release: false,
+            },
+            ServableBuild {
+                build: release.clone(),
+                release: true,
+            },
+        ];
+        let builds = Arc::new(
+            LatestBuildStub::default()
+                .with_update("hog", None, ("1.2.0", "abcabc"))
+                .with_update("hog", Some(("1.1.0", "yyyyyy")), ("1.2.0", "abcabc"))
+                .with_servable("hog", servable.clone())
+                .with_failure("giganto"),
+        );
+        let deployer: Box<dyn super::PackageDeployer> =
+            Box::new(MockPackageDeployer::with_builds(builds.clone()));
+        let older = BuildId {
+            version: "1.1.0".to_string(),
+            commit: "yyyyyy".to_string(),
+        };
+
+        assert_eq!(
+            deployer.update_target("hog", None).await.unwrap(),
+            Some(release.clone())
+        );
+        assert_eq!(
+            deployer.update_target("hog", Some(&older)).await.unwrap(),
+            Some(release.clone())
+        );
+        assert_eq!(
+            deployer.update_target("hog", Some(&release)).await.unwrap(),
+            None
+        );
+        assert!(deployer.update_target("giganto", None).await.is_err());
+        assert!(
+            deployer
+                .update_target("giganto", Some(&older))
+                .await
+                .is_err()
+        );
+        assert_eq!(deployer.servable_builds("hog").await.unwrap(), servable);
+        assert!(deployer.servable_builds("giganto").await.is_err());
+
+        assert_eq!(
+            builds.installed_asked("hog"),
+            vec![
+                None,
+                Some(("1.1.0".to_string(), "yyyyyy".to_string())),
+                Some(("1.2.0".to_string(), "abcabc".to_string())),
+            ]
+        );
+        assert_eq!(builds.calls("giganto"), 2);
+        assert_eq!(builds.total_calls(), 5);
     }
 
     #[tokio::test]

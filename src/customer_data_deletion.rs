@@ -4227,9 +4227,10 @@ mod tests {
             unimplemented!("a customer deletion only removes")
         }
 
-        async fn latest_build(
+        async fn update_target(
             &self,
             _target: &str,
+            _installed: Option<&crate::backend::BuildId>,
         ) -> anyhow::Result<Option<crate::backend::BuildId>> {
             unimplemented!("a customer deletion only removes")
         }
@@ -4237,7 +4238,7 @@ mod tests {
         async fn servable_builds(
             &self,
             _target: &str,
-        ) -> anyhow::Result<Vec<crate::backend::BuildId>> {
+        ) -> anyhow::Result<Vec<crate::backend::ServableBuild>> {
             unimplemented!("a customer deletion only removes")
         }
 
@@ -10527,17 +10528,18 @@ server_name = "{server_name}"
             self.0.recommend_bind_addrs(host, target).await
         }
 
-        async fn latest_build(
+        async fn update_target(
             &self,
             target: &str,
+            installed: Option<&crate::backend::BuildId>,
         ) -> anyhow::Result<Option<crate::backend::BuildId>> {
-            self.0.latest_build(target).await
+            self.0.update_target(target, installed).await
         }
 
         async fn servable_builds(
             &self,
             target: &str,
-        ) -> anyhow::Result<Vec<crate::backend::BuildId>> {
+        ) -> anyhow::Result<Vec<crate::backend::ServableBuild>> {
             self.0.servable_builds(target).await
         }
 
