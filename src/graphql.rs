@@ -419,11 +419,15 @@ const MAX_TRENDI_ORDER: i32 = 20;
 // One day bounds streaming API update intervals and prevents period overflow.
 const MAX_STREAM_FETCH_INTERVAL_SECS: u64 = 86_400;
 
-struct PositiveCutoffRate;
+struct CutoffRate;
 
-impl async_graphql::validators::CustomValidator<f64> for PositiveCutoffRate {
+impl async_graphql::validators::CustomValidator<f64> for CutoffRate {
     fn check(&self, value: &f64) -> Result<(), InputValueError<f64>> {
-        if *value > 0.0 {
+        if *value > 1.0 {
+            Err(InputValueError::custom(format!(
+                "the value is {value}, must be less than or equal to 1"
+            )))
+        } else if *value > 0.0 {
             Ok(())
         } else {
             Err(InputValueError::custom(format!(
