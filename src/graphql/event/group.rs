@@ -11,7 +11,7 @@ use super::{
     timestamp_nanos,
 };
 use crate::{
-    graphql::{Role, RoleGuard},
+    graphql::{Role, RoleGuard, filter::EventKind},
     warn_with_username,
 };
 
@@ -177,7 +177,8 @@ impl EventGroupQuery {
     }
 
     /// The number of events for each kind, with timestamp on or after `start`
-    /// and before `end`.
+    /// and before `end`. Every kind has its own bucket, and each value can be
+    /// passed back in `kinds` to select the events counted under it.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
@@ -187,8 +188,12 @@ impl EventGroupQuery {
         ctx: &Context<'_>,
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] first: i32,
-    ) -> Result<EventCounts<String>> {
+    ) -> Result<EventCounts<EventKind>> {
         let (values, counts) = count_events(ctx, &filter, Event::count_kind, first).await?;
+        let values = values
+            .into_iter()
+            .map(EventKind::try_from)
+            .collect::<anyhow::Result<Vec<_>>>()?;
         Ok(EventCounts { values, counts })
     }
 
@@ -246,8 +251,7 @@ impl EventGroupQuery {
         #[graphql(validator(minimum = 1))] period: i64,
     ) -> Result<Vec<usize>> {
         let store = crate::graphql::get_store(ctx)?;
-        let mut event_filter = from_filter_input(ctx, &store, &filter)?;
-        event_filter.moderate_kinds();
+        let event_filter = from_filter_input(ctx, &store, &filter)?;
         let start = filter
             .start
             .ok_or("eventFrequencySeries requires non-null filter.start")?;
@@ -313,6 +317,7 @@ impl EventGroupQuery {
 #[graphql(concrete(name = "StringEventCounter", params(String)))]
 #[graphql(concrete(name = "U8EventCounter", params("Option<u8>")))]
 #[graphql(concrete(name = "ThreatLevelEventCounter", params(ThreatLevel)))]
+#[graphql(concrete(name = "EventKindEventCounter", params(EventKind)))]
 struct EventCounts<T: OutputType> {
     values: Vec<T>,
     counts: Vec<usize>,
@@ -329,8 +334,7 @@ async fn count_events<T>(
     let start = filter.start;
     let end = filter.end;
     let store = crate::graphql::get_store(ctx)?;
-    let mut filter = from_filter_input(ctx, &store, filter)?;
-    filter.moderate_kinds();
+    let filter = from_filter_input(ctx, &store, filter)?;
     if empty_time_range(start, end)? {
         return Ok((Vec::new(), Vec::new()));
     }
@@ -375,8 +379,7 @@ async fn count_events_by_network(
     let start = filter.start;
     let end = filter.end;
     let store = crate::graphql::get_store(ctx)?;
-    let mut filter = from_filter_input(ctx, &store, filter)?;
-    filter.moderate_kinds();
+    let filter = from_filter_input(ctx, &store, filter)?;
     if empty_time_range(start, end)? {
         return Ok((Vec::new(), Vec::new()));
     }
