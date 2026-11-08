@@ -77,7 +77,7 @@ use self::{
 use super::{
     Role, RoleGuard,
     customer::HostNetworkGroupInput,
-    filter::{FlowKind, LearningMethod, TrafficDirection},
+    filter::{EventKind as EventKindInput, FlowKind, LearningMethod, TrafficDirection},
     network::Network,
     triage::{ConfidenceInput, PacketAttrInput, ResponseInput, ThreatCategory},
 };
@@ -975,7 +975,7 @@ struct EventListFilterInput {
     countries: Option<Vec<String>>,
     categories: Option<Vec<Option<u8>>>,
     levels: Option<Vec<ThreatLevel>>,
-    kinds: Option<Vec<String>>,
+    kinds: Option<Vec<EventKindInput>>,
     learning_methods: Option<Vec<LearningMethod>>,
     confidence_min: Option<f32>,
     confidence_max: Option<f32>,
@@ -1006,7 +1006,7 @@ struct EventStandardFilterInput {
     countries: Option<Vec<String>>,
     categories: Option<Vec<Option<u8>>>,
     levels: Option<Vec<ThreatLevel>>,
-    kinds: Option<Vec<String>>,
+    kinds: Option<Vec<EventKindInput>>,
     learning_methods: Option<Vec<LearningMethod>>,
     confidence_min: Option<f32>,
     confidence_max: Option<f32>,
@@ -1201,15 +1201,10 @@ fn from_filter_input(
         .as_ref()
         .map(|v| v.iter().map(|l| DatabaseThreatLevel::from(*l)).collect());
 
-    let kinds = if let Some(kinds_input) = &input.kinds {
-        let mut kinds = Vec::with_capacity(kinds_input.len());
-        for kind in kinds_input {
-            kinds.push(kind.as_str().to_lowercase());
-        }
-        Some(kinds)
-    } else {
-        None
-    };
+    let kinds = input
+        .kinds
+        .as_ref()
+        .map(|v| v.iter().map(|k| database::EventKind::from(*k)).collect());
 
     let sensors = if let Some(sensors_input) = &input.sensors {
         let scope = crate::graphql::customer_access::users_customers(ctx)
@@ -1367,10 +1362,9 @@ async fn load_event(ctx: &Context<'_>, id: &ID) -> Result<Option<Event>> {
     // (no customer_ids) sees every sensor; everyone else is restricted to
     // sensors owned by their accessible customers.
     let sensors = sensors_for_user(ctx, &store)?;
-    let mut filter = EventFilter::new(
+    let filter = EventFilter::new(
         None, None, None, None, None, None, None, None, None, sensors, None, None, None,
     );
-    filter.moderate_kinds();
 
     let db = store.events();
     let mut iter = db.iter_from(key, Direction::Forward);
@@ -1410,8 +1404,7 @@ async fn load(
 
     let start = filter.start;
     let end = filter.end;
-    let mut filter = from_filter_input(ctx, &store, filter)?;
-    filter.moderate_kinds();
+    let filter = from_filter_input(ctx, &store, filter)?;
     let db = store.events();
     let bounds = if empty_time_range(start, end)? {
         None
@@ -1692,8 +1685,7 @@ async fn load_with_triage(
     let start = filter.start;
     let end = filter.end;
     let list_filter: EventListFilterInput = filter.clone().into();
-    let mut event_filter = from_filter_input(ctx, &store, &list_filter)?;
-    event_filter.moderate_kinds();
+    let event_filter = from_filter_input(ctx, &store, &list_filter)?;
     let db = store.events();
     let bounds = if empty_time_range(start, end)? {
         None
@@ -6115,6 +6107,439 @@ mod tests {
                 sensors_matching(&schema, "OUTBOUND, INBOUND, INTERNAL").await,
                 Vec::<String>::new()
             );
+        }
+    }
+
+    /// The `kinds` filter, which matches each event's own kind exactly, and
+    /// `eventCountsByKind`, which counts one bucket per kind.
+    mod kinds_filter {
+        use std::collections::BTreeMap;
+
+        use review_database::{
+            Store,
+            event::{FtpEventFields, LdapEventFields},
+        };
+        use serde_json::{Value, json};
+
+        use super::*;
+
+        /// The window holding every event `store_kind_events` stores.
+        const START: &str = "2026-05-01T00:00:00Z";
+        const END: &str = "2026-05-02T00:00:00Z";
+
+        fn at(secs: i64) -> DateTime<Utc> {
+            NaiveDate::from_ymd_opt(2026, 5, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_local_timezone(Utc)
+                .unwrap()
+                + chrono::TimeDelta::seconds(secs)
+        }
+
+        fn conn_fields(time: DateTime<Utc>) -> BlocklistConnFields {
+            BlocklistConnFields {
+                sensor: "sensor1".to_string(),
+                orig_addr: Ipv4Addr::new(10, 0, 0, 1).into(),
+                orig_port: 1000,
+                resp_addr: Ipv4Addr::new(10, 0, 0, 2).into(),
+                resp_port: 443,
+                proto: 6,
+                conn_state: "S0".to_string(),
+                start_time: time.timestamp_nanos_opt().unwrap(),
+                duration: 0,
+                service: "tls".to_string(),
+                orig_bytes: 0,
+                resp_bytes: 0,
+                orig_pkts: 0,
+                resp_pkts: 0,
+                orig_l2_bytes: 0,
+                resp_l2_bytes: 0,
+                confidence: 0.7,
+                category: Some(EventCategory::CommandAndControl),
+            }
+        }
+
+        fn ftp_fields(time: DateTime<Utc>) -> FtpEventFields {
+            FtpEventFields {
+                sensor: "sensor1".to_string(),
+                orig_addr: Ipv4Addr::new(10, 0, 0, 3).into(),
+                orig_port: 1001,
+                resp_addr: Ipv4Addr::new(10, 0, 0, 4).into(),
+                resp_port: 21,
+                proto: 6,
+                start_time: time.timestamp_nanos_opt().unwrap(),
+                duration: 0,
+                orig_pkts: 0,
+                resp_pkts: 0,
+                orig_l2_bytes: 0,
+                resp_l2_bytes: 0,
+                user: "user".to_string(),
+                password: "password".to_string(),
+                commands: Vec::new(),
+                confidence: 0.6,
+                category: Some(EventCategory::CredentialAccess),
+            }
+        }
+
+        fn ldap_fields(time: DateTime<Utc>) -> LdapEventFields {
+            LdapEventFields {
+                sensor: "sensor1".to_string(),
+                orig_addr: Ipv4Addr::new(10, 0, 0, 5).into(),
+                orig_port: 1002,
+                resp_addr: Ipv4Addr::new(10, 0, 0, 6).into(),
+                resp_port: 389,
+                proto: 6,
+                start_time: time.timestamp_nanos_opt().unwrap(),
+                duration: 0,
+                orig_pkts: 0,
+                resp_pkts: 0,
+                orig_l2_bytes: 0,
+                resp_l2_bytes: 0,
+                message_id: 1,
+                version: 3,
+                opcode: vec!["bind".to_string()],
+                result: vec!["success".to_string()],
+                diagnostic_message: Vec::new(),
+                object: Vec::new(),
+                argument: Vec::new(),
+                confidence: 0.6,
+                category: Some(EventCategory::CredentialAccess),
+            }
+        }
+
+        fn dns_fields(time: DateTime<Utc>) -> BlocklistDnsFields {
+            BlocklistDnsFields {
+                sensor: "sensor1".to_string(),
+                orig_addr: Ipv4Addr::new(10, 0, 0, 7).into(),
+                orig_port: 50000,
+                resp_addr: Ipv4Addr::new(10, 0, 0, 8).into(),
+                resp_port: 53,
+                proto: 17,
+                start_time: time.timestamp_nanos_opt().unwrap(),
+                duration: 0,
+                orig_pkts: 0,
+                resp_pkts: 0,
+                orig_l2_bytes: 0,
+                resp_l2_bytes: 0,
+                query: "evil.example.com".to_string(),
+                answer: Vec::new(),
+                trans_id: 1,
+                rtt: 0,
+                qclass: 1,
+                qtype: 1,
+                rcode: 0,
+                aa_flag: false,
+                tc_flag: false,
+                rd_flag: true,
+                ra_flag: true,
+                ttl: Vec::new(),
+                confidence: 0.7,
+                category: Some(EventCategory::CommandAndControl),
+            }
+        }
+
+        fn unusual_destination_fields(time: DateTime<Utc>) -> UnusualDestinationPatternFields {
+            UnusualDestinationPatternFields {
+                sensor: "sensor1".to_string(),
+                sampling_window_start_time: time.timestamp_nanos_opt().unwrap(),
+                sampling_window_end_time: time.timestamp_nanos_opt().unwrap(),
+                destination_ips: vec![Ipv4Addr::new(10, 0, 0, 9).into()],
+                count: 150,
+                expected_mean: 50.0,
+                std_deviation: 20.0,
+                z_score: 5.0,
+                confidence: 0.85,
+                category: Some(EventCategory::Reconnaissance),
+            }
+        }
+
+        fn http_threat_fields(
+            time: DateTime<Utc>,
+            attack_kind: &str,
+        ) -> review_database::event::HttpThreatFields {
+            let mut fields = http_threat_test_fields(time, 10, None);
+            fields.attack_kind = attack_kind.to_string();
+            fields
+        }
+
+        /// Stores one event of each of `TorConnection`, `TorConnectionConn`,
+        /// `FtpPlainText`, `LdapPlainText`, `BlocklistConn`, `BlocklistDns`
+        /// and `UnusualDestinationPattern`, and two `HttpThreat` events with
+        /// different attack kinds — nine events in all.
+        fn store_kind_events(store: &Store) {
+            let messages = [
+                (
+                    EventKind::TorConnection,
+                    bincode::serialize(&non_browser_test_fields(at(0))),
+                ),
+                (
+                    EventKind::TorConnectionConn,
+                    bincode::serialize(&conn_fields(at(1))),
+                ),
+                (
+                    EventKind::FtpPlainText,
+                    bincode::serialize(&ftp_fields(at(2))),
+                ),
+                (
+                    EventKind::LdapPlainText,
+                    bincode::serialize(&ldap_fields(at(3))),
+                ),
+                (
+                    EventKind::BlocklistConn,
+                    bincode::serialize(&conn_fields(at(4))),
+                ),
+                (
+                    EventKind::BlocklistDns,
+                    bincode::serialize(&dns_fields(at(5))),
+                ),
+                (
+                    EventKind::UnusualDestinationPattern,
+                    bincode::serialize(&unusual_destination_fields(at(6))),
+                ),
+                (
+                    EventKind::HttpThreat,
+                    bincode::serialize(&http_threat_fields(at(7), "SQL Injection")),
+                ),
+                (
+                    EventKind::HttpThreat,
+                    bincode::serialize(&http_threat_fields(at(8), "Cross-site Scripting")),
+                ),
+            ];
+            let db = store.events();
+            for (secs, (kind, fields)) in (0..).zip(messages) {
+                db.put(&EventMessage {
+                    time: jiff_timestamp(at(secs)),
+                    kind,
+                    fields: fields.expect("serializable"),
+                })
+                .unwrap();
+            }
+        }
+
+        async fn schema_with_kind_events() -> TestSchema {
+            let schema = TestSchema::new().await;
+            store_kind_events(&schema.store());
+            schema
+        }
+
+        /// Runs `query` and returns its `field`, failing on any error.
+        async fn query_field(schema: &TestSchema, field: &str, query: &str) -> Value {
+            let res = schema.execute_as_system_admin(query).await;
+            assert!(res.errors.is_empty(), "{query}: {:?}", res.errors);
+            res.data.into_json().expect("valid GraphQL JSON")[field].clone()
+        }
+
+        /// Returns the total count and the sorted `__typename`s that
+        /// `field` lists under `filter`.
+        async fn list_kinds(schema: &TestSchema, field: &str, filter: &str) -> (u64, Vec<String>) {
+            let query = format!(
+                "{{ {field}(filter: {{ {filter} }}) {{ \
+                    totalCount edges {{ node {{ __typename }} }} }} }}"
+            );
+            let connection = query_field(schema, field, &query).await;
+            let total = connection["totalCount"]
+                .as_str()
+                .expect("totalCount is a StringNumber")
+                .parse()
+                .expect("numeric totalCount");
+            let mut typenames: Vec<String> = connection["edges"]
+                .as_array()
+                .expect("edges")
+                .iter()
+                .map(|edge| edge["node"]["__typename"].as_str().unwrap().to_string())
+                .collect();
+            typenames.sort_unstable();
+            (total, typenames)
+        }
+
+        /// Returns the `values`→`counts` pairs of a counter query, which
+        /// come back in no fixed order among equal counts.
+        async fn counter(schema: &TestSchema, field: &str, filter: &str) -> BTreeMap<String, u64> {
+            let query =
+                format!("{{ {field}(filter: {{ {filter} }}, first: 100) {{ values counts }} }}");
+            let counter = query_field(schema, field, &query).await;
+            let values = counter["values"].as_array().expect("values");
+            let counts = counter["counts"].as_array().expect("counts");
+            assert_eq!(values.len(), counts.len());
+            values
+                .iter()
+                .zip(counts)
+                .map(|(value, count)| {
+                    (
+                        value.as_str().expect("enum value").to_string(),
+                        count.as_u64().expect("count"),
+                    )
+                })
+                .collect()
+        }
+
+        #[tokio::test]
+        async fn event_list_selects_exactly_the_listed_kinds() {
+            let schema = schema_with_kind_events().await;
+            for (kinds, expected) in [
+                ("TOR_CONNECTION", &["TorConnection"][..]),
+                ("TOR_CONNECTION_CONN", &["TorConnectionConn"]),
+                ("FTP_PLAIN_TEXT", &["FtpPlainText"]),
+                ("LDAP_PLAIN_TEXT", &["LdapPlainText"]),
+                ("BLOCKLIST_CONN", &["BlocklistConn"]),
+                ("BLOCKLIST_DNS", &["BlocklistDns"]),
+                (
+                    "UNUSUAL_DESTINATION_PATTERN",
+                    &["UnusualDestinationPattern"],
+                ),
+                ("HTTP_THREAT", &["HttpThreat", "HttpThreat"]),
+                (
+                    "TOR_CONNECTION, TOR_CONNECTION_CONN",
+                    &["TorConnection", "TorConnectionConn"],
+                ),
+                ("TOR_CONNECTION, TOR_CONNECTION", &["TorConnection"]),
+                ("LOCKY_RANSOMWARE", &[]),
+                ("", &[]),
+            ] {
+                let (total, typenames) =
+                    list_kinds(&schema, "eventList", &format!("kinds: [{kinds}]")).await;
+                assert_eq!(typenames, expected, "kinds: [{kinds}]");
+                assert_eq!(
+                    total,
+                    u64::try_from(expected.len()).unwrap(),
+                    "kinds: [{kinds}]"
+                );
+            }
+
+            // Omitting `kinds` applies no kind constraint.
+            let (total, typenames) = list_kinds(&schema, "eventList", "").await;
+            assert_eq!(total, 9);
+            assert_eq!(typenames.len(), 9);
+        }
+
+        #[tokio::test]
+        async fn event_list_with_triage_selects_exactly_the_listed_kind() {
+            let schema = schema_with_kind_events().await;
+            let (total, typenames) =
+                list_kinds(&schema, "eventListWithTriage", "kinds: [FTP_PLAIN_TEXT]").await;
+            assert_eq!(total, 1);
+            assert_eq!(typenames, ["FtpPlainText"]);
+
+            let (total, typenames) = list_kinds(&schema, "eventListWithTriage", "kinds: []").await;
+            assert_eq!(total, 0);
+            assert_eq!(typenames, Vec::<String>::new());
+        }
+
+        #[tokio::test]
+        async fn aggregations_select_exactly_the_listed_kinds() {
+            let schema = schema_with_kind_events().await;
+
+            let query = format!(
+                r#"{{ eventFrequencySeries(
+                    filter: {{ start: "{START}", end: "{END}", kinds: [TOR_CONNECTION, TOR_CONNECTION_CONN] }},
+                    period: 86400
+                ) }}"#
+            );
+            assert_eq!(
+                query_field(&schema, "eventFrequencySeries", &query).await,
+                json!([2])
+            );
+
+            let levels = counter(&schema, "eventCountsByLevel", "kinds: [BLOCKLIST_CONN]").await;
+            assert_eq!(levels.values().sum::<u64>(), 1, "{levels:?}");
+            let levels = counter(&schema, "eventCountsByLevel", "kinds: []").await;
+            assert!(levels.is_empty(), "{levels:?}");
+
+            let res = schema
+                .execute_as_system_admin(
+                    r#"mutation { insertNetwork(
+                        name: "n0",
+                        description: "",
+                        networks: { hosts: [], networks: ["10.0.0.0/8"], ranges: [] }
+                    ) }"#,
+                )
+                .await;
+            assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
+            let networks = counter(&schema, "eventCountsByNetwork", "kinds: [HTTP_THREAT]").await;
+            assert_eq!(networks, BTreeMap::from([("0".to_string(), 2)]));
+        }
+
+        #[tokio::test]
+        async fn event_counts_by_kind_counts_one_bucket_per_kind() {
+            let schema = schema_with_kind_events().await;
+            let expected = BTreeMap::from(
+                [
+                    ("TOR_CONNECTION", 1),
+                    ("TOR_CONNECTION_CONN", 1),
+                    ("FTP_PLAIN_TEXT", 1),
+                    ("LDAP_PLAIN_TEXT", 1),
+                    ("BLOCKLIST_CONN", 1),
+                    ("BLOCKLIST_DNS", 1),
+                    ("UNUSUAL_DESTINATION_PATTERN", 1),
+                    ("HTTP_THREAT", 2),
+                ]
+                .map(|(kind, count)| (kind.to_string(), count)),
+            );
+            assert_eq!(counter(&schema, "eventCountsByKind", "").await, expected);
+
+            let filtered = counter(
+                &schema,
+                "eventCountsByKind",
+                "kinds: [BLOCKLIST_CONN, HTTP_THREAT]",
+            )
+            .await;
+            assert_eq!(
+                filtered,
+                BTreeMap::from([
+                    ("BLOCKLIST_CONN".to_string(), 1),
+                    ("HTTP_THREAT".to_string(), 2)
+                ])
+            );
+
+            // Every counted value can be passed back as a `kinds` filter.
+            for kind in expected.keys() {
+                let (total, _) =
+                    list_kinds(&schema, "eventList", &format!("kinds: [{kind}]")).await;
+                assert_eq!(Some(&total), expected.get(kind), "{kind}");
+            }
+        }
+
+        #[tokio::test]
+        async fn kinds_rejects_values_outside_the_enum() {
+            let schema = schema_with_kind_events().await;
+            for literal in [
+                "UNKNOWN_KIND",
+                "TorConnection",
+                r#""TorConnection""#,
+                "tor_connection",
+            ] {
+                let query =
+                    format!("{{ eventList(filter: {{ kinds: [{literal}] }}) {{ totalCount }} }}");
+                let res = schema.execute_as_system_admin(&query).await;
+                assert!(!res.errors.is_empty(), "expected an error for {literal}");
+                assert_eq!(res.data, async_graphql::Value::Null, "{literal}");
+            }
+
+            for value in ["TorConnection", "tor_connection", "UNKNOWN_KIND"] {
+                for (field, input) in [
+                    ("eventList", "EventListFilterInput"),
+                    ("eventListWithTriage", "EventStandardFilterInput"),
+                ] {
+                    let request = async_graphql::Request::new(format!(
+                        "query($filter: {input}!) {{ {field}(filter: $filter) {{ totalCount }} }}"
+                    ))
+                    .variables(async_graphql::Variables::from_json(
+                        json!({ "filter": { "kinds": [value] } }),
+                    ));
+                    let request = schema.request_with_context(
+                        request,
+                        RoleGuard::Role(Role::SystemAdministrator),
+                        None,
+                    );
+                    let res = schema.schema.execute(request).await;
+                    assert!(
+                        !res.errors.is_empty(),
+                        "expected an error for {value} on {field}"
+                    );
+                    assert_eq!(res.data, async_graphql::Value::Null, "{value} on {field}");
+                }
+            }
         }
     }
 }

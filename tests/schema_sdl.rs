@@ -575,3 +575,88 @@ fn customer_data_deletion_result_contract() {
         assert_eq!(actual, fields, "{header}");
     }
 }
+
+/// Event filters take `kinds` as the `EventKind` enum, which mirrors every
+/// stored event kind, and `eventCountsByKind` counts into the same enum, so a
+/// counted value can be passed back as a filter.
+#[test]
+fn event_kinds_cross_as_the_event_kind_enum() {
+    let sdl = rendered_sdl();
+
+    for header in [
+        "input EventListFilterInput {",
+        "input EventStandardFilterInput {",
+    ] {
+        assert!(
+            definition(&sdl, header).contains("\n\tkinds: [EventKind!]\n"),
+            "{header}: {REGENERATE}"
+        );
+    }
+
+    let values: Vec<_> = definition(&sdl, "enum EventKind {")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    assert_eq!(
+        values,
+        [
+            "DNS_COVERT_CHANNEL",
+            "HTTP_THREAT",
+            "RDP_BRUTE_FORCE",
+            "REPEATED_HTTP_SESSIONS",
+            "EXTRA_THREAT",
+            "TOR_CONNECTION",
+            "DOMAIN_GENERATION_ALGORITHM",
+            "FTP_BRUTE_FORCE",
+            "FTP_PLAIN_TEXT",
+            "PORT_SCAN",
+            "MULTI_HOST_PORT_SCAN",
+            "NON_BROWSER",
+            "LDAP_BRUTE_FORCE",
+            "LDAP_PLAIN_TEXT",
+            "EXTERNAL_DDOS",
+            "CRYPTOCURRENCY_MINING_POOL",
+            "BLOCKLIST_CONN",
+            "BLOCKLIST_DNS",
+            "BLOCKLIST_DCE_RPC",
+            "BLOCKLIST_FTP",
+            "BLOCKLIST_HTTP",
+            "BLOCKLIST_KERBEROS",
+            "BLOCKLIST_LDAP",
+            "BLOCKLIST_MQTT",
+            "BLOCKLIST_NFS",
+            "BLOCKLIST_NTLM",
+            "BLOCKLIST_RDP",
+            "BLOCKLIST_SMB",
+            "BLOCKLIST_SMTP",
+            "BLOCKLIST_SSH",
+            "BLOCKLIST_TLS",
+            "WINDOWS_THREAT",
+            "NETWORK_THREAT",
+            "LOCKY_RANSOMWARE",
+            "SUSPICIOUS_TLS_TRAFFIC",
+            "BLOCKLIST_BOOTP",
+            "BLOCKLIST_DHCP",
+            "TOR_CONNECTION_CONN",
+            "BLOCKLIST_RADIUS",
+            "BLOCKLIST_MALFORMED_DNS",
+            "UNUSUAL_DESTINATION_PATTERN",
+        ],
+        "{REGENERATE}"
+    );
+
+    let counter = definition(&sdl, "type EventKindEventCounter {");
+    assert!(
+        counter.contains("\n\tvalues: [EventKind!]!\n"),
+        "{REGENERATE}"
+    );
+    assert!(counter.contains("\n\tcounts: [Int!]!\n"), "{REGENERATE}");
+    assert!(
+        definition(&sdl, "type Query {").contains(
+            "\n\teventCountsByKind(filter: EventListFilterInput!, first: Int!): \
+             EventKindEventCounter!\n"
+        ),
+        "{REGENERATE}"
+    );
+}

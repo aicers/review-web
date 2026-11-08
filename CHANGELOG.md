@@ -4,6 +4,30 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking change:** `kinds` on `EventListFilterInput` and
+  `EventStandardFilterInput` is a list of the new `EventKind` enum, and an event
+  matches when its own kind is one of the listed values. Strings are rejected
+  with a GraphQL error, and an empty list matches no event.
+- **Breaking change:** `eventCountsByKind` returns `EventKindEventCounter`,
+  whose `values` are `EventKind` values, one per kind. Blocklist kinds are no
+  longer merged into one "Blocklist" bucket, and HTTP threats are no longer
+  split by attack kind but counted together as `HTTP_THREAT`. Each value can be
+  passed back in `kinds` to select the events counted under it.
+- Bumped `review-database` dependency to 0.62.0. Its store format stays at
+  0.61.0, so a store written by 0.61 is served without migration.
+
+### Fixed
+
+- Filtering events by kind returns only events of the listed kinds. Words shared
+  between kind names used to pull in other kinds as well: FTP Plain Text also
+  returned LDAP Plain Text, Blocklist Conn returned both Tor kinds, and Tor
+  Connection and Tor Connection (Conn) could not be told apart. Some kinds, such
+  as Unusual Destination Pattern, matched nothing.
+
 ## [0.55.0] - 2026-11-04
 
 ### Added
@@ -2893,6 +2917,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.55.0...main
 [0.55.0]: https://github.com/aicers/review-web/compare/0.54.0...0.55.0
 [0.54.0]: https://github.com/aicers/review-web/compare/0.53.0...0.54.0
 [0.53.0]: https://github.com/aicers/review-web/compare/0.52.1...0.53.0

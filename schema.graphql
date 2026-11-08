@@ -4391,6 +4391,61 @@ type EventEdge {
 	cursor: String!
 }
 
+"""
+The kind of a detected event.
+
+A `kinds` filter matches an event exactly when its kind is one of the
+listed values.
+"""
+enum EventKind {
+	DNS_COVERT_CHANNEL
+	HTTP_THREAT
+	RDP_BRUTE_FORCE
+	REPEATED_HTTP_SESSIONS
+	EXTRA_THREAT
+	TOR_CONNECTION
+	DOMAIN_GENERATION_ALGORITHM
+	FTP_BRUTE_FORCE
+	FTP_PLAIN_TEXT
+	PORT_SCAN
+	MULTI_HOST_PORT_SCAN
+	NON_BROWSER
+	LDAP_BRUTE_FORCE
+	LDAP_PLAIN_TEXT
+	EXTERNAL_DDOS
+	CRYPTOCURRENCY_MINING_POOL
+	BLOCKLIST_CONN
+	BLOCKLIST_DNS
+	BLOCKLIST_DCE_RPC
+	BLOCKLIST_FTP
+	BLOCKLIST_HTTP
+	BLOCKLIST_KERBEROS
+	BLOCKLIST_LDAP
+	BLOCKLIST_MQTT
+	BLOCKLIST_NFS
+	BLOCKLIST_NTLM
+	BLOCKLIST_RDP
+	BLOCKLIST_SMB
+	BLOCKLIST_SMTP
+	BLOCKLIST_SSH
+	BLOCKLIST_TLS
+	WINDOWS_THREAT
+	NETWORK_THREAT
+	LOCKY_RANSOMWARE
+	SUSPICIOUS_TLS_TRAFFIC
+	BLOCKLIST_BOOTP
+	BLOCKLIST_DHCP
+	TOR_CONNECTION_CONN
+	BLOCKLIST_RADIUS
+	BLOCKLIST_MALFORMED_DNS
+	UNUSUAL_DESTINATION_PATTERN
+}
+
+type EventKindEventCounter {
+	values: [EventKind!]!
+	counts: [Int!]!
+}
+
 input EventListFilterInput {
 	start: DateTime
 	end: DateTime
@@ -4414,7 +4469,7 @@ input EventListFilterInput {
 	countries: [String!]
 	categories: [Int]
 	levels: [ThreatLevel!]
-	kinds: [String!]
+	kinds: [EventKind!]
 	learningMethods: [LearningMethod!]
 	confidenceMin: Float
 	confidenceMax: Float
@@ -4448,7 +4503,7 @@ input EventStandardFilterInput {
 	countries: [String!]
 	categories: [Int]
 	levels: [ThreatLevel!]
-	kinds: [String!]
+	kinds: [EventKind!]
 	learningMethods: [LearningMethod!]
 	confidenceMin: Float
 	confidenceMax: Float
@@ -8553,9 +8608,10 @@ type Query {
 	eventCountsByResponderIpAddress(filter: EventListFilterInput!, first: Int!): StringEventCounter!
 	"""
 	The number of events for each kind, with timestamp on or after `start`
-	and before `end`.
+	and before `end`. Every kind has its own bucket, and each value can be
+	passed back in `kinds` to select the events counted under it.
 	"""
-	eventCountsByKind(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	eventCountsByKind(filter: EventListFilterInput!, first: Int!): EventKindEventCounter!
 	"""
 	The number of events for each level, with timestamp on or after `start`
 	and before `end`.
