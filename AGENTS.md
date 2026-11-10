@@ -528,6 +528,12 @@ Where the crate handles key material or secrets:
   finds nothing, and fails after the tag has already been pushed.
 <!-- END shared:changelog -->
 
+## Language
+
+- Code comments: English.
+- Commit messages: English.
+- GitHub issue and pull request bodies, and comments on them: English.
+
 ## Validation
 
 - Run local checks on the host's own operating system: macOS on a Mac,
