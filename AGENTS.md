@@ -5,11 +5,6 @@ contributing to the `review-web` project. Read this carefully before
 generating code.
 
 <!-- BEGIN shared:workflow -->
-## Language
-
-- Code, comments, commit messages, PR descriptions, and issues are written
-  in English.
-
 ## Commit messages
 
 - Title: preferably under 50 characters, start with an imperative verb
