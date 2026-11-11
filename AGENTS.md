@@ -540,10 +540,12 @@ Where the crate handles key material or secrets:
   Linux on a Linux host. Do not use a container, a virtual machine or
   another operating system in its place. A CI job or matrix entry for
   another operating system or platform is left to CI.
-- A change is documentation-only when every changed path matches the
-  `docs` filter of the `changes` job in `.github/workflows/ci.yml` and
-  none matches its `code` filter. For such a change run only the
-  `Markdown` row, and build or test no code.
+- A change is documentation-only when the `changes` job in
+  `.github/workflows/ci.yml` counts every changed path as documentation:
+  each is on the built-in list of `aicers/agent-instructions/change-scope`
+  or on its `docs-paths` input, and none is on its `not-docs-paths` input.
+  For such a change run only the `Markdown` row, and build or test no
+  code.
 - For any other change, run every row of the table below that applies to
   the host before pushing. Run each test command as written, in full: do
   not narrow it to the changed files or to selected test names.
@@ -553,7 +555,7 @@ Where the crate handles key material or secrets:
 | --- | --- |
 | `check` | `cargo fmt -- --check --config group_imports=StdExternalCrate`, `cargo clippy --all-targets -- -D warnings`, `cargo check --examples` |
 | `test` | `cargo build --examples`, `cargo test` |
-| `Markdown` | `markdownlint-cli2 "**/*.md" "#target"` |
+| `Markdown` | `markdownlint-cli2` |
 <!-- markdownlint-enable MD013 -->
 
 - `test` runs on both `ubuntu-latest` and `macOS-latest`; locally, run it
