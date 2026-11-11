@@ -324,7 +324,7 @@ mod tests {
     async fn schema_with(stub: StubAgentManager) -> (TestSchema, Arc<StubAgentManager>) {
         let stub = Arc::new(stub);
         let agent_manager: SharedAgentManager = stub.clone();
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         (schema, stub)
     }
 

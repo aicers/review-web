@@ -325,10 +325,7 @@ mod tests {
         answers: &[(&str, u32, DataStoreReadEndpoint)],
     ) -> (TestSchema, Arc<EndpointReads>) {
         let (stub, reads) = EndpointStub::boxed(answers);
-        (
-            TestSchema::new_with_params(stub, None, "testuser").await,
-            reads,
-        )
+        (TestSchema::new_with_params(stub, None).await, reads)
     }
 
     async fn endpoints(schema: &TestSchema) -> Value {

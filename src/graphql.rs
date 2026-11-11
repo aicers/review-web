@@ -3,6 +3,9 @@
 // Remove `unused_async_trait_impl` after async-graphql issue #1832 is fixed and released.
 #![allow(clippy::unused_async, clippy::unused_async_trait_impl)]
 
+#[cfg(test)]
+mod logging_tests;
+
 mod category;
 mod cert;
 mod cluster;
@@ -728,6 +731,24 @@ where
         nodes.pop();
     }
     (nodes, has_more)
+}
+
+/// Captures owned logging fields while the request context is still available.
+pub(crate) fn logging_context(ctx: &Context<'_>) -> (String, String) {
+    let caller = ctx.data_opt::<crate::auth::MtlsIdentity>().map_or_else(
+        || "an unauthenticated caller".to_string(),
+        |identity| {
+            format!(
+                "{}.{}.{}.{}",
+                identity.instance, identity.service, identity.host, identity.domain
+            )
+        },
+    );
+    let role = ctx.data_opt::<RoleGuard>().map_or_else(
+        || "None".to_string(),
+        |RoleGuard::Role(role)| format!("{role:?}"),
+    );
+    (caller, role)
 }
 
 #[derive(Debug, PartialEq)]
@@ -1518,27 +1539,19 @@ struct TestSchema {
 impl TestSchema {
     async fn new() -> Self {
         let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
-        Self::new_with_params(agent_manager, None, "testuser").await
+        Self::new_with_params(agent_manager, None).await
     }
 
     async fn new_with_event_country_locator(locator: Arc<ip2location::DB>) -> Self {
         let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
-        Self::new_with_params_and_event_country_locator(
-            agent_manager,
-            None,
-            "testuser",
-            Some(locator),
-        )
-        .await
+        Self::new_with_params_and_event_country_locator(agent_manager, None, Some(locator)).await
     }
 
     async fn new_with_params(
         agent_manager: SharedAgentManager,
         test_addr: Option<SocketAddr>,
-        username: &str,
     ) -> Self {
-        Self::new_with_params_and_event_country_locator(agent_manager, test_addr, username, None)
-            .await
+        Self::new_with_params_and_event_country_locator(agent_manager, test_addr, None).await
     }
 
     /// Builds a schema whose package deployer is the given one.
@@ -1548,20 +1561,18 @@ impl TestSchema {
     /// the default one's answers.
     async fn new_with_package_deployer(package_deployer: SharedPackageDeployer) -> Self {
         let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {});
-        Self::new_with_all(agent_manager, package_deployer, None, "testuser", None).await
+        Self::new_with_all(agent_manager, package_deployer, None, None).await
     }
 
     async fn new_with_params_and_event_country_locator(
         agent_manager: SharedAgentManager,
         test_addr: Option<SocketAddr>,
-        username: &str,
         event_country_locator: Option<Arc<ip2location::DB>>,
     ) -> Self {
         Self::new_with_all(
             agent_manager,
             Arc::new(MockPackageDeployer::default()),
             test_addr,
-            username,
             event_country_locator,
         )
         .await
@@ -1571,7 +1582,6 @@ impl TestSchema {
         agent_manager: SharedAgentManager,
         package_deployer: SharedPackageDeployer,
         test_addr: Option<SocketAddr>,
-        username: &str,
         event_country_locator: Option<Arc<ip2location::DB>>,
     ) -> Self {
         Self::build(
@@ -1629,7 +1639,6 @@ impl TestSchema {
         .data(package_deployer)
         .data(Box::new(MockHostOnboarder {}) as Box<dyn HostOnboarder>)
         .data(store.clone())
-        .data(username.to_string())
         .data(network_lists_lock.clone())
         .data(engine_config_lock.clone())
         .data(sampling_policies_lock.clone())

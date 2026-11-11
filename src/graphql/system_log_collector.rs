@@ -748,7 +748,7 @@ mod tests {
         advertised: &'static [&'static str],
     ) -> (TestSchema, Arc<Mutex<Vec<String>>>) {
         let (agents, reads) = CapabilityStub::advertising(advertised);
-        let schema = TestSchema::new_with_all(agents, deployer, None, "testuser", None).await;
+        let schema = TestSchema::new_with_all(agents, deployer, None, None).await;
         (schema, reads)
     }
 

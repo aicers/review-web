@@ -163,18 +163,17 @@ mod tests {
     }
 
     impl TestContext {
-        fn new_without_account(username: &str, nodes: &[(&str, u32)]) -> Self {
+        fn new_without_account(nodes: &[(&str, u32)]) -> Self {
             let db_dir = tempfile::tempdir().expect("create data dir");
             let backup_dir = tempfile::tempdir().expect("create backup dir");
             let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("create store");
-            Self::with_nodes(store, db_dir, backup_dir, Some(username), nodes)
+            Self::with_nodes(store, db_dir, backup_dir, nodes)
         }
 
         fn with_nodes(
             store: Store,
             db_dir: tempfile::TempDir,
             backup_dir: tempfile::TempDir,
-            username: Option<&str>,
             nodes: &[(&str, u32)],
         ) -> Self {
             let node_map = store.node_map();
@@ -198,11 +197,7 @@ mod tests {
 
             let builder = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
                 .data(Arc::new(RwLock::new(store)));
-            let schema = if let Some(username) = username {
-                builder.data(username.to_string()).finish()
-            } else {
-                builder.finish()
-            };
+            let schema = builder.finish();
             Self {
                 _dir: db_dir,
                 _backup_dir: backup_dir,
@@ -342,7 +337,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_hostname_access_scoped_user_allowed() {
-        let test_ctx = TestContext::new_without_account("scoped_user", &[("host-a", 42)]);
+        let test_ctx = TestContext::new_without_account(&[("host-a", 42)]);
 
         let response = test_ctx
             .execute_with_guard_and_customer_ids(
@@ -361,7 +356,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_hostname_access_scoped_user_forbidden() {
-        let test_ctx = TestContext::new_without_account("scoped_user", &[("host-a", 42)]);
+        let test_ctx = TestContext::new_without_account(&[("host-a", 42)]);
 
         let response = test_ctx
             .execute_with_guard_and_customer_ids(
@@ -377,7 +372,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_hostname_access_unknown_hostname_forbidden() {
-        let test_ctx = TestContext::new_without_account("scoped_user", &[("host-a", 42)]);
+        let test_ctx = TestContext::new_without_account(&[("host-a", 42)]);
 
         let response = test_ctx
             .execute_with_guard_and_customer_ids(
@@ -393,7 +388,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_hostname_access_admin_bypasses_lookup() {
-        let test_ctx = TestContext::new_without_account("admin_user", &[]);
+        let test_ctx = TestContext::new_without_account(&[]);
 
         let response = test_ctx
             .execute_with_guard(

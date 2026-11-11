@@ -68,16 +68,13 @@ impl OutlierStream {
         let users_customers = customer_access::users_customers(ctx)?;
         let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
         let fetch_time = fetch_interval.unwrap_or(DEFAULT_RANKED_OUTLIER_FETCH_TIME);
-        let username = ctx
-            .data::<String>()
-            .cloned()
-            .unwrap_or("<unknown user>".to_string());
+        let (caller, role) = super::logging_context(ctx);
         let (tx, rx) = unbounded();
         tokio::spawn(async move {
             if let Err(e) =
                 fetch_ranked_outliers(store, users_customers, start, tx, fetch_time).await
             {
-                error_with_username!(username: username, "Fetch failed: {e:?}");
+                error_with_username!(caller: caller, role: role, "Fetch failed: {e:?}");
             }
         });
         Ok(rx)
@@ -856,6 +853,7 @@ async fn load_ranked_outliers_with_filter(
 #[cfg(test)]
 #[allow(clippy::await_holding_lock)]
 mod tests {
+
     use async_graphql::Value;
     use chrono::{DateTime, Utc};
     use futures_util::StreamExt;
@@ -864,6 +862,50 @@ mod tests {
 
     use crate::graphql::Role;
     use crate::graphql::model_test_support::{replace_model, schema_with_models_through};
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn subscription_task_logs_the_starting_connection() {
+        use crate::graphql::logging_tests::{CapturedEvents, identity};
+        use crate::graphql::{CustomerIds, RoleGuard, TestSchema};
+
+        let schema = TestSchema::new().await;
+        let time = "2025-01-01T00:00:00Z"
+            .parse::<DateTime<Utc>>()
+            .unwrap()
+            .timestamp_nanos_opt()
+            .unwrap();
+        let model = replace_model(&schema.store(), "logging model", 0);
+        schema
+            .store()
+            .outlier_map()
+            .insert(samples(model, time, 1, 1).first().unwrap())
+            .unwrap();
+        let (events, _guard) = CapturedEvents::start();
+        // The task must retain these values after the request context is dropped.
+        let request = async_graphql::Request::new(r#"subscription { rankedOutlierStream(start: "2025-01-01T00:00:00Z", fetchInterval: 1) { id } }"#)
+            .data(identity("subscription"))
+            .data(RoleGuard::Role(Role::SecurityMonitor))
+            .data(CustomerIds(None));
+        let mut stream = schema.schema.execute_stream(request);
+        let response = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(response.errors.is_empty(), "{response:?}");
+        // Drop the subscription context, then force a send to its closed receiver.
+        drop(stream);
+        schema
+            .store()
+            .outlier_map()
+            .insert(samples(model, time + 1, 2, 1).first().unwrap())
+            .unwrap();
+        events.wait_for("Fetch failed:").await;
+        events.assert_fields(
+            "Fetch failed:",
+            "subscription.web-app.node-01.customer.internal",
+            "SecurityMonitor",
+        );
+    }
 
     fn time_str(t: &DateTime<Utc>) -> String {
         t.format("%FT%T%.9f").to_string()

@@ -251,7 +251,7 @@ mod tests {
             online_apps_by_host_id,
         });
 
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         // check empty
         let res = schema
@@ -517,7 +517,7 @@ mod tests {
             online_apps_by_host_id,
         });
 
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         // Insert 5 nodes
         let res = schema
@@ -690,7 +690,7 @@ mod tests {
         let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id,
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let id0 = insert_active_node(&schema.store(), "a_customer2_status", 2, "customer2-host");
         let id1 = insert_active_node(&schema.store(), "b_customer1_status", 1, "allowed-host");
@@ -731,7 +731,7 @@ mod tests {
         let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id,
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let id0 = insert_active_node(&schema.store(), "a_forbidden_status", 2, "forbidden-host");
         let id1 = insert_active_node(&schema.store(), "b_allowed_status", 1, "allowed-host");
@@ -773,7 +773,7 @@ mod tests {
         let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id,
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let id0 = insert_active_node(&schema.store(), "a_forbidden_status", 2, "forbidden-host");
         assert_eq!(id0, 0);
@@ -822,7 +822,7 @@ mod tests {
         let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id,
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let id0 = insert_active_node(&schema.store(), "node_customer_1", 1, "host1.example.com");
         let id1 = insert_active_node(&schema.store(), "node_customer_2", 2, "host2.example.com");

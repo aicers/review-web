@@ -135,10 +135,7 @@ impl EventStream {
         } else {
             DEFAULT_EVENT_FETCH_INTERVAL_SECS
         };
-        let username = ctx
-            .data::<String>()
-            .cloned()
-            .unwrap_or("<unknown user>".to_string());
+        let (caller, role) = super::logging_context(ctx);
         let (tx, rx) = unbounded();
         tokio::spawn(async move {
             let fetch = fetch_events(
@@ -150,7 +147,7 @@ impl EventStream {
             )
             .await;
             if let Err(e) = fetch {
-                error_with_username!(username: username, "Failed to fetch events: {e:?}");
+                error_with_username!(caller: caller, role: role, "Failed to fetch events: {e:?}");
             }
         });
         Ok(rx)
@@ -1795,6 +1792,7 @@ fn iter_to_events_with_triage(
 #[cfg(test)]
 #[allow(clippy::await_holding_lock)]
 mod tests {
+
     use std::{net::Ipv4Addr, sync::Arc};
 
     use chrono::{DateTime, NaiveDate, Utc};
@@ -1812,6 +1810,45 @@ mod tests {
     };
 
     use crate::graphql::{Role, RoleGuard, TestSchema};
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn subscription_task_logs_the_starting_connection() {
+        use crate::graphql::logging_tests::{CapturedEvents, identity};
+        use crate::graphql::{CustomerIds, RoleGuard, TestSchema};
+
+        let schema = TestSchema::new().await;
+        let time = "2025-01-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        schema
+            .store()
+            .events()
+            .put(&event_message_at(time, 1, 2))
+            .unwrap();
+        let (events, _guard) = CapturedEvents::start();
+        // The task must retain these values after the request context is dropped.
+        let request = async_graphql::Request::new(r#"subscription { eventStream(start: "2025-01-01T00:00:00Z", fetchInterval: 1) { __typename } }"#)
+            .data(identity("subscription"))
+            .data(RoleGuard::Role(Role::SecurityMonitor))
+            .data(CustomerIds(None));
+        let mut stream = schema.schema.execute_stream(request);
+        let response = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(response.errors.is_empty(), "{response:?}");
+        // Drop the subscription context, then force a send to its closed receiver.
+        drop(stream);
+        schema
+            .store()
+            .events()
+            .put(&event_message_at(time + chrono::Duration::seconds(1), 3, 4))
+            .unwrap();
+        events.wait_for("Failed to fetch events:").await;
+        events.assert_fields(
+            "Failed to fetch events:",
+            "subscription.web-app.node-01.customer.internal",
+            "SecurityMonitor",
+        );
+    }
 
     /// The `Event.sensor` of events emitted by the test node whose hostname is
     /// `sensor1`.

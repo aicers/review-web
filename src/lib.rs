@@ -717,45 +717,33 @@ fn build_mtls_server_config(
 #[macro_export]
 macro_rules! error_with_username {
     ($ctx:expr, $($arg:tt)+) => {{
-        let username = $ctx
-            .data::<String>()
-            .map(String::as_str)
-            .unwrap_or("<unknown user>");
-
-        error!("user={} {}", username, format!($($arg)+));
+        let (caller, role) = $crate::graphql::logging_context($ctx);
+        $crate::error_with_username!(caller: caller, role: role, $($arg)+);
     }};
-    (username: $username:expr, $($arg:tt)+) => {{
-        error!("user={} {}", $username, format!($($arg)+));
+    (caller: $caller:expr, role: $role:expr, $($arg:tt)+) => {{
+        error!(caller = %$caller, role = %$role, $($arg)+);
     }};
 }
 
 #[macro_export]
 macro_rules! info_with_username {
     ($ctx:expr, $($arg:tt)+) => {{
-        let username = $ctx
-            .data::<String>()
-            .map(String::as_str)
-            .unwrap_or("<unknown user>");
-
-        info!("user={} {}", username, format!($($arg)+));
+        let (caller, role) = $crate::graphql::logging_context($ctx);
+        $crate::info_with_username!(caller: caller, role: role, $($arg)+);
     }};
-    (username: $username:expr, $($arg:tt)+) => {{
-        info!("user={} {}", $username, format!($($arg)+));
+    (caller: $caller:expr, role: $role:expr, $($arg:tt)+) => {{
+        info!(caller = %$caller, role = %$role, $($arg)+);
     }};
 }
 
 #[macro_export]
 macro_rules! warn_with_username {
     ($ctx:expr, $($arg:tt)+) => {{
-        let username = $ctx
-            .data::<String>()
-            .map(String::as_str)
-            .unwrap_or("<unknown user>");
-
-        warn!("user={} {}", username, format!($($arg)+));
+        let (caller, role) = $crate::graphql::logging_context($ctx);
+        $crate::warn_with_username!(caller: caller, role: role, $($arg)+);
     }};
-    (username: $username:expr, $($arg:tt)+) => {{
-        warn!("user={} {}", $username, format!($($arg)+));
+    (caller: $caller:expr, role: $role:expr, $($arg:tt)+) => {{
+        warn!(caller = %$caller, role = %$role, $($arg)+);
     }};
 }
 
