@@ -361,7 +361,7 @@ impl AgentManager for Relay {
 /// Returns a schema whose agent manager is a recording relay, and the relay.
 pub(super) async fn relay_schema() -> (TestSchema, Relay) {
     let relay = Relay::default();
-    let schema = TestSchema::new_with_params(Arc::new(relay.clone()), None, "testuser").await;
+    let schema = TestSchema::new_with_params(Arc::new(relay.clone()), None).await;
     relay
         .0
         .store

@@ -2047,9 +2047,7 @@ mod tests {
     async fn execute_without_store(schema: &Schema, query: &str) -> async_graphql::Response {
         schema
             .execute(
-                async_graphql::Request::new(query)
-                    .data(RoleGuard::Role(Role::SystemAdministrator))
-                    .data("testuser".to_string()),
+                async_graphql::Request::new(query).data(RoleGuard::Role(Role::SystemAdministrator)),
             )
             .await
     }
@@ -3145,7 +3143,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn onboard_host_logs_the_build_before_the_call() {
         let expected = format!(
-            "user=testuser Onboarding of {CONFIRMED_HOST} with roxyd {CONFIRMED_VERSION} \
+            "Onboarding of {CONFIRMED_HOST} with roxyd {CONFIRMED_VERSION} \
              ({CONFIRMED_COMMIT}) requested"
         );
         for answer in [OnboardAnswer::Succeed, OnboardAnswer::Fail] {
@@ -3165,7 +3163,7 @@ mod tests {
                 lines
                     .first()
                     .expect("the length is one")
-                    .ends_with(&expected),
+                    .contains(&expected),
                 "{logs}"
             );
             assert!(!logs.contains(JOIN_TOKEN), "{logs}");
@@ -4366,10 +4364,7 @@ mod tests {
     /// A schema whose host answers the capability read as `advertised`.
     async fn schema_advertising(advertised: Advertised) -> (TestSchema, Arc<CapabilityReads>) {
         let (agents, reads) = CapabilityStub::boxed(advertised);
-        (
-            TestSchema::new_with_params(agents, None, "testuser").await,
-            reads,
-        )
+        (TestSchema::new_with_params(agents, None).await, reads)
     }
 
     /// A host advertising nothing and a host advertising other tags but not

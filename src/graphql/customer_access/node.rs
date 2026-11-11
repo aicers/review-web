@@ -127,13 +127,12 @@ mod tests {
     }
 
     impl TestContext {
-        fn new_without_account(username: &str) -> Self {
+        fn new_without_account() -> Self {
             let db_dir = tempfile::tempdir().expect("create data dir");
             let backup_dir = tempfile::tempdir().expect("create backup dir");
             let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("create store");
             let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
                 .data(Arc::new(RwLock::new(store)))
-                .data(username.to_string())
                 .finish();
             Self {
                 _dir: db_dir,
@@ -248,7 +247,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_accessible_node_scoped_user_allowed() {
-        let test_ctx = TestContext::new_without_account("scoped_user");
+        let test_ctx = TestContext::new_without_account();
         let response = test_ctx
             .execute_load_accessible_node_with_customer_ids(7, Some(vec![7]))
             .await;
@@ -262,7 +261,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_accessible_node_scoped_user_forbidden() {
-        let test_ctx = TestContext::new_without_account("scoped_user");
+        let test_ctx = TestContext::new_without_account();
         let response = test_ctx
             .execute_load_accessible_node_with_customer_ids(7, Some(vec![1]))
             .await;
@@ -273,7 +272,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_accessible_node_admin_allowed() {
-        let test_ctx = TestContext::new_without_account("admin_user");
+        let test_ctx = TestContext::new_without_account();
         let response = test_ctx.execute_load_accessible_node_admin(7).await;
 
         assert!(
@@ -285,7 +284,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_accessible_node_missing_node() {
-        let test_ctx = TestContext::new_without_account("scoped_user");
+        let test_ctx = TestContext::new_without_account();
         let response = test_ctx
             .execute_load_missing_node_with_customer_ids("1", Some(vec![7]))
             .await;
