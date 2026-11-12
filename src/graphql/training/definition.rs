@@ -609,9 +609,7 @@ pub(crate) fn indicator_not_allowed(name: &str) -> async_graphql::Error {
 /// Returns the `sources` of a definition text, or none if it does not parse.
 #[must_use]
 pub(crate) fn sources_of(text: &str) -> Vec<String> {
-    toml::from_str::<TrainingDocument>(text)
-        .map(|document| document.sources)
-        .unwrap_or_default()
+    toml::from_str::<TrainingDocument>(text).map_or_default(|document| document.sources)
 }
 
 /// Checks that `value` is RFC 3339 with an offset.

@@ -113,8 +113,7 @@ pub fn get_allow_networks(db: &Store, customer_id: u32) -> Result<database::Host
     Ok(db
         .network_lists_map()
         .get(customer_id)?
-        .map(|set| set.merged_allowlist())
-        .unwrap_or_default())
+        .map_or_default(|set| set.merged_allowlist()))
 }
 
 /// Returns the merged blocklist of a customer, or an empty group if none is
@@ -127,8 +126,7 @@ pub fn get_block_networks(db: &Store, customer_id: u32) -> Result<database::Host
     Ok(db
         .network_lists_map()
         .get(customer_id)?
-        .map(|set| set.merged_blocklist())
-        .unwrap_or_default())
+        .map_or_default(|set| set.merged_blocklist()))
 }
 
 #[derive(Default)]
@@ -377,9 +375,8 @@ fn hog_pushes(
     previous: Option<&database::NetworkListSet>,
     current: (database::HostNetworkGroup, database::HostNetworkGroup),
 ) -> Vec<(NetworkList, NetworksTargetAgentLookupKeysPair)> {
-    let (previous_allowlist, previous_blocklist) = previous
-        .map(|set| (set.merged_allowlist(), set.merged_blocklist()))
-        .unwrap_or_default();
+    let (previous_allowlist, previous_blocklist) =
+        previous.map_or_default(|set| (set.merged_allowlist(), set.merged_blocklist()));
     let (allowlist, blocklist) = current;
     let changed: Vec<_> = [
         (NetworkList::Allowlist, allowlist, previous_allowlist),

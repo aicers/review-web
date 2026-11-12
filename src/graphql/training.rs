@@ -564,8 +564,7 @@ impl TrainingMutation {
                 cross_customer,
             )?;
             let trained_pair = TrainingDocument::parse(&model.trained_definition)
-                .map(|trained| HashSet::from([trained.data_store.pair()]))
-                .unwrap_or_default();
+                .map_or_default(|trained| HashSet::from([trained.data_store.pair()]));
             // The target keeps the source's classifier, and so its shape.
             document.check_stored(
                 &store,
@@ -727,8 +726,7 @@ fn accessible_definition(
 /// not parse.
 fn kept_pair(text: &str) -> HashSet<(String, SocketAddr)> {
     TrainingDocument::parse(text)
-        .map(|document| HashSet::from([document.data_store.pair()]))
-        .unwrap_or_default()
+        .map_or_default(|document| HashSet::from([document.data_store.pair()]))
 }
 
 /// Returns the shape the sources of the timeseries definition `name` must
@@ -1171,13 +1169,12 @@ fn store_refusal(
         ),
         TrainingError::FieldFixed { name, field } => {
             let (field, value) = match field {
-                database::FixedField::Method => (
-                    "method",
-                    document.map(|d| method_name(d.method)).unwrap_or_default(),
-                ),
+                database::FixedField::Method => {
+                    ("method", document.map_or_default(|d| method_name(d.method)))
+                }
                 database::FixedField::EventKind => (
                     "event_kind",
-                    document.map(|d| d.event_kind.clone()).unwrap_or_default(),
+                    document.map_or_default(|d| d.event_kind.clone()),
                 ),
             };
             refusal(RefusalCode::FieldFixed, message, field, value)
@@ -1193,7 +1190,7 @@ fn store_refusal(
             RefusalCode::InvalidDocument,
             message,
             "method",
-            document.map(|d| method_name(d.method)).unwrap_or_default(),
+            document.map_or_default(|d| method_name(d.method)),
         ),
         TrainingError::EventKindMismatch { expected, .. } => refusal(
             RefusalCode::InvalidDocument,
