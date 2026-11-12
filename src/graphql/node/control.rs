@@ -270,18 +270,11 @@ impl NodeControlMutation {
                 "[{}] Node ID {i} - Node's drafts are applied.\nName: {}, Name draft: {}\nProfile: {}, Profile draft: {}",
                 chrono::Utc::now(),
                 node.name,
-                node.name_draft
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_default(),
-                node.profile
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_default(),
+                node.name_draft.as_ref().map_or_default(ToString::to_string),
+                node.profile.as_ref().map_or_default(ToString::to_string),
                 node.profile_draft
                     .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_default(),
+                    .map_or_default(ToString::to_string),
             );
 
             send_customer_change_if_needed(ctx, i, &node).await;
@@ -401,21 +394,12 @@ impl NodeControlMutation {
 
             let now = chrono::Utc::now();
             let name = node.name.as_str();
-            let name_draft = node
-                .name_draft
-                .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_default();
-            let profile = node
-                .profile
-                .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_default();
+            let name_draft = node.name_draft.as_ref().map_or_default(ToString::to_string);
+            let profile = node.profile.as_ref().map_or_default(ToString::to_string);
             let profile_draft = node
                 .profile_draft
                 .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_default();
+                .map_or_default(ToString::to_string);
             info_with_username!(
                 ctx,
                 "[{now}] Node ID {i} - Node's drafts are applied.\nName: {name}, Name draft: {name_draft}\nProfile: {profile}, Profile draft: {profile_draft}",
@@ -460,8 +444,7 @@ impl NodeControlMutation {
         let hostname = node
             .profile
             .as_ref()
-            .map(|p| p.hostname.as_str())
-            .unwrap_or_default();
+            .map_or_default(|p| p.hostname.as_str());
         if hostname.is_empty() {
             return Err("Node hostname is unavailable".into());
         }

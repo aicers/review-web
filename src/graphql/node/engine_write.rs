@@ -382,8 +382,7 @@ pub(super) fn document_writes(
             let refs = changed
                 .document
                 .as_ref()
-                .map(EngineDocument::refs)
-                .unwrap_or_default();
+                .map_or_default(EngineDocument::refs);
             match slot {
                 Slot::Draft => EngineDocumentWrite {
                     agent_key: changed.agent_key.clone(),

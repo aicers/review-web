@@ -87,8 +87,7 @@ async fn load(
         let hostname = node
             .profile
             .as_ref()
-            .map(|profile| profile.hostname.as_str())
-            .unwrap_or_default();
+            .map_or_default(|profile| profile.hostname.as_str());
 
         let is_manager = matches_manager_hostname(hostname);
 
