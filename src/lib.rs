@@ -128,6 +128,18 @@ const _: () =
 pub struct ServerConfig {
     pub addr: SocketAddr,
     pub cert_manager: Arc<dyn CertManager>,
+    /// The hostname of the node for the host this server runs on, which is the
+    /// Central Manager's node: for example, in a bootler installation, the
+    /// `<label>.<domain>` of the host holding the `colocated:review` role.
+    ///
+    /// A node is the Central Manager's exactly when its applied profile
+    /// hostname is byte-for-byte equal to this name, so it must be the name the
+    /// node is registered with, not a case or trailing-dot variant of it. An
+    /// empty name matches no node. `None` means the name is not known: the node
+    /// is then found by the host's OS hostname, which matches a profile
+    /// hostname equal to it, ignoring ASCII case and a trailing dot, or, when
+    /// the OS hostname is a single label, one whose first label it is.
+    pub manager_node_hostname: Option<String>,
     pub tls_reload_handle: Arc<Notify>,
     pub ca_certs: Vec<PathBuf>,
     /// The rustls crypto provider every TLS configuration of the HTTPS server
@@ -213,6 +225,7 @@ where
         host_onboarder,
         ip_locator,
         config.cert_manager.clone(),
+        config.manager_node_hostname,
         config.tls_reload_handle.clone(),
         config.maintenance_gate.clone(),
         customer_data_deletion_manager,

@@ -558,6 +558,7 @@ mod mtls_integration {
                 cert_path: server_cert_path,
                 key_path: server_key_path,
             }),
+            manager_node_hostname: None,
             tls_reload_handle: Arc::new(tokio::sync::Notify::new()),
             ca_certs: vec![ca_path],
             crypto_provider: hybrid_only(),

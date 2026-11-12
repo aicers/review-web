@@ -1221,11 +1221,46 @@ impl Indexable for NodeStatus {
     }
 }
 
-pub fn matches_manager_hostname(hostname: &str) -> bool {
-    // Current machine's hostname is the Manager server's hostname, because this code always runs on
-    // the Manager server.
-    let manager_hostname = gethostname::gethostname().to_string_lossy().into_owned();
-    hostname_matches_manager(&manager_hostname, hostname)
+/// The hostname of the node for the host this server runs on, as the host
+/// program supplies it in [`crate::ServerConfig::manager_node_hostname`].
+///
+/// `None` means the host program does not know it, and the Central Manager's
+/// node is then found by the OS hostname.
+#[derive(Debug)]
+pub(crate) struct ManagerNodeHostname(pub(crate) Option<String>);
+
+/// Returns whether a node whose applied profile hostname is `hostname` is the
+/// Central Manager's node.
+///
+/// This code always runs on the Central Manager's host, so the node is the one
+/// named by `configured` when the host program supplied a name, and the one
+/// named by the host's OS hostname otherwise.
+pub(crate) fn matches_manager_hostname(configured: &ManagerNodeHostname, hostname: &str) -> bool {
+    names_manager(
+        configured.0.as_deref(),
+        || gethostname::gethostname().to_string_lossy().into_owned(),
+        hostname,
+    )
+}
+
+/// Returns whether a node profile's hostname, `profile`, names the Central
+/// Manager's node.
+///
+/// With a `configured` name the two are compared byte for byte, and the OS
+/// hostname is not read: review reaches a node's Host Agent only by the exact
+/// name its certificate carries, so a case or trailing-dot variant must not be
+/// taken for the Central Manager's node. An empty `configured` name matches no
+/// node. Without one, `os_hostname` is read and compared by
+/// [`hostname_matches_manager`].
+fn names_manager(
+    configured: Option<&str>,
+    os_hostname: impl FnOnce() -> String,
+    profile: &str,
+) -> bool {
+    match configured {
+        Some(name) => !name.is_empty() && name == profile,
+        None => hostname_matches_manager(&os_hostname(), profile),
+    }
 }
 
 /// Returns whether a node profile's hostname names the Manager host, whose OS
@@ -1274,8 +1309,8 @@ mod tests {
 
     use serde_json::json;
 
-    use super::hostname_matches_manager;
     use super::test_support::{MockAgentManager, insert_active_node, installed_agent, put_node};
+    use super::{hostname_matches_manager, names_manager};
     use crate::graphql::{
         CustomerIds, Role, RoleGuard, SharedAgentManager, TestSchema,
         agent_lookup_key_service_token, gen_agent_lookup_key,
@@ -1362,6 +1397,77 @@ mod tests {
     fn short_os_hostname_matches_every_domain() {
         assert!(hostname_matches_manager("manager", "manager.a.example"));
         assert!(hostname_matches_manager("manager", "manager.b.example"));
+    }
+
+    const CONFIGURED: &str = "analysis.customer.test";
+
+    /// Applies the configured-name rule with an OS hostname that must not be
+    /// read.
+    fn configured_names(configured: &str, profile: &str) -> bool {
+        names_manager(
+            Some(configured),
+            || panic!("the OS hostname is read with a configured name"),
+            profile,
+        )
+    }
+
+    #[test]
+    fn configured_name_matches_equal_profile() {
+        assert!(configured_names(CONFIGURED, CONFIGURED));
+    }
+
+    #[test]
+    fn configured_name_does_not_match_case_variant() {
+        assert!(!configured_names(CONFIGURED, "Analysis.Customer.Test"));
+        assert!(!configured_names("Analysis.Customer.Test", CONFIGURED));
+    }
+
+    #[test]
+    fn configured_name_does_not_match_trailing_dot_variant() {
+        assert!(!configured_names(CONFIGURED, "analysis.customer.test."));
+        assert!(!configured_names("analysis.customer.test.", CONFIGURED));
+    }
+
+    #[test]
+    fn empty_configured_name_matches_nothing() {
+        for profile in ["", ".", "analysis", CONFIGURED] {
+            assert!(!configured_names("", profile), "{profile:?}");
+        }
+    }
+
+    #[test]
+    fn configured_name_does_not_match_same_label_in_other_domain() {
+        assert!(!configured_names(CONFIGURED, "analysis.other.test"));
+        assert!(!configured_names(CONFIGURED, "analysis"));
+        assert!(!configured_names("analysis", CONFIGURED));
+    }
+
+    #[test]
+    fn configured_name_ignores_os_hostname() {
+        // A node named after the OS hostname is not the manager's, even where
+        // the OS-hostname rule would accept it.
+        for os in ["test-9", "test-9.customer.test"] {
+            assert!(!names_manager(
+                Some(CONFIGURED),
+                || os.to_string(),
+                "test-9.customer.test"
+            ));
+            assert!(names_manager(
+                Some(CONFIGURED),
+                || os.to_string(),
+                CONFIGURED
+            ));
+        }
+    }
+
+    #[test]
+    fn no_configured_name_uses_os_hostname_rule() {
+        assert!(names_manager(
+            None,
+            || "test-9".to_string(),
+            "test-9.customer.test"
+        ));
+        assert!(!names_manager(None, || "test-9".to_string(), CONFIGURED));
     }
 
     #[test]

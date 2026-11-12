@@ -11,7 +11,8 @@ use tracing::info;
 
 use super::{
     super::{Role, RoleGuard, SharedAgentManager, customer_access},
-    NodeStatus, NodeStatusQuery, NodeStatusTotalCount, matches_manager_hostname,
+    ManagerNodeHostname, NodeStatus, NodeStatusQuery, NodeStatusTotalCount,
+    matches_manager_hostname,
     time_sync::NodeTimeSync,
 };
 use crate::graphql::query_with_constraints;
@@ -79,6 +80,7 @@ async fn load(
     };
 
     let agent_manager = ctx.data::<SharedAgentManager>()?;
+    let manager_node_hostname = ctx.data::<ManagerNodeHostname>()?;
 
     let mut connection =
         Connection::with_additional_fields(has_previous, has_next, NodeStatusTotalCount);
@@ -89,7 +91,7 @@ async fn load(
             .as_ref()
             .map_or_default(|profile| profile.hostname.as_str());
 
-        let is_manager = matches_manager_hostname(hostname);
+        let is_manager = matches_manager_hostname(manager_node_hostname, hostname);
 
         let (resource_usage, ping, time_sync) = fetch_runtime_status(agent_manager, hostname).await;
 
@@ -163,6 +165,38 @@ mod tests {
                         "ping": null,
                         "timeSync": null
                     }}]
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn manager_is_the_node_the_host_program_names() {
+        const CONFIGURED: &str = "analysis.customer.test";
+        let os = gethostname::gethostname().to_string_lossy().into_owned();
+        assert_ne!(os, "");
+        assert_ne!(os, CONFIGURED);
+        let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
+            online_apps_by_host_id: HashMap::new(),
+        });
+        let schema =
+            TestSchema::new_with_manager_node_hostname(agent_manager, Some(CONFIGURED.to_string()))
+                .await;
+        insert_active_node(&schema.store(), "os-host", 1, &os);
+        insert_active_node(&schema.store(), "analysis", 1, CONFIGURED);
+
+        let res = schema
+            .execute_as_system_admin(r"{nodeStatusList{edges{node{name manager}}}}")
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "nodeStatusList": {
+                    "edges": [
+                        {"node": {"name": "analysis", "manager": true}},
+                        {"node": {"name": "os-host", "manager": false}}
+                    ]
                 }
             })
         );

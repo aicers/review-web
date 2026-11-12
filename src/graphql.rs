@@ -136,6 +136,7 @@ pub(super) fn schema<B, O>(
     host_onboarder: O,
     ip_locator: Option<Arc<ip2location::DB>>,
     cert_manager: Arc<dyn CertManager>,
+    manager_node_hostname: Option<String>,
     tls_reload_handle: Arc<Notify>,
     maintenance_gate: MaintenanceGate,
     customer_data_deletion_manager: Arc<CustomerDataDeletionTaskManager>,
@@ -156,6 +157,7 @@ where
     .data(package_deployer)
     .data(host_onboarder)
     .data(cert_manager)
+    .data(node::ManagerNodeHostname(manager_node_hostname))
     .data(tls_reload_handle)
     .data(Arc::clone(
         customer_data_deletion_manager.sampling_policies_lock(),
@@ -1572,6 +1574,42 @@ impl TestSchema {
         username: &str,
         event_country_locator: Option<Arc<ip2location::DB>>,
     ) -> Self {
+        Self::build(
+            agent_manager,
+            package_deployer,
+            test_addr,
+            username,
+            event_country_locator,
+            None,
+        )
+        .await
+    }
+
+    /// Builds a schema whose host program names the Central Manager's node
+    /// `manager_node_hostname`, as `ServerConfig::manager_node_hostname` does.
+    async fn new_with_manager_node_hostname(
+        agent_manager: SharedAgentManager,
+        manager_node_hostname: Option<String>,
+    ) -> Self {
+        Self::build(
+            agent_manager,
+            Arc::new(MockPackageDeployer::default()),
+            None,
+            "testuser",
+            None,
+            manager_node_hostname,
+        )
+        .await
+    }
+
+    async fn build(
+        agent_manager: SharedAgentManager,
+        package_deployer: SharedPackageDeployer,
+        test_addr: Option<SocketAddr>,
+        username: &str,
+        event_country_locator: Option<Arc<ip2location::DB>>,
+        manager_node_hostname: Option<String>,
+    ) -> Self {
         let db_dir = tempfile::tempdir().unwrap();
         let backup_dir = tempfile::tempdir().unwrap();
         let store = Store::new(db_dir.path(), backup_dir.path(), event_country_locator).unwrap();
@@ -1596,6 +1634,7 @@ impl TestSchema {
         .data(engine_config_lock.clone())
         .data(sampling_policies_lock.clone())
         .data(customer_data_deletion_manager)
+        .data(node::ManagerNodeHostname(manager_node_hostname))
         .extension(install_state::LatestBuildMemoExtension)
         .extension(MaintenanceExtension::new(MaintenanceGate::new()));
 
