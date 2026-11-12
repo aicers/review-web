@@ -12,6 +12,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Option<String>`, the hostname of the node for the host the server runs on. A
   node is the Central Manager's exactly when its profile hostname equals this
   name; `None` keeps finding it by the host's OS hostname, as before.
+- **Breaking change:** Bumped `review-protocol` dependency to 0.25.0.
+  `AgentManager` takes review-protocol types, so an implementation must use
+  review-protocol 0.25.0 as well.
 
 ### Fixed
 
