@@ -185,8 +185,7 @@ pub fn get_customer_networks(db: &Store, customer_id: u32) -> Result<database::H
     Ok(db
         .customer_networks_map()
         .get(customer_id)?
-        .map(|set| set.merged_group())
-        .unwrap_or_default())
+        .map_or_default(|set| set.merged_group()))
 }
 
 /// Returns a list of agents that received the internal networks.

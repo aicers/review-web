@@ -1292,8 +1292,7 @@ fn internal_networks(store: &Store) -> anyhow::Result<InternalNetworks> {
             Entry::Vacant(entry) => {
                 let groups = table
                     .get(customer_id)?
-                    .map(|set| set.internal_groups())
-                    .unwrap_or_default();
+                    .map_or_default(|set| set.internal_groups());
                 entry.insert(groups).clone()
             }
         };

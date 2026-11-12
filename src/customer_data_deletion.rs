@@ -2108,8 +2108,7 @@ impl Supervisor {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(host)
-            .map(|host_progress| host_progress.removed.clone())
-            .unwrap_or_default();
+            .map_or_default(|host_progress| host_progress.removed.clone());
         if job
             .service_results
             .iter()
@@ -8684,8 +8683,7 @@ server_name = "{server_name}"
             .extensions
             .as_ref()
             .and_then(|extensions| extensions.get("code"))
-            .map(ToString::to_string)
-            .unwrap_or_default();
+            .map_or_default(ToString::to_string);
         (code, error.message.clone())
     }
 

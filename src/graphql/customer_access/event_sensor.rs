@@ -36,8 +36,7 @@ pub(crate) fn event_sensor_names(node: &Node) -> Vec<String> {
     }
     AgentKind::Sensor
         .package_id()
-        .map(|service| vec![format!("{service}.{}", profile.hostname)])
-        .unwrap_or_default()
+        .map_or_default(|service| vec![format!("{service}.{}", profile.hostname)])
 }
 
 /// Returns the source names of `node`: the names a training definition or an

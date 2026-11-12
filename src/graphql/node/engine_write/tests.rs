@@ -158,8 +158,7 @@ impl Fixture {
             .expect("read engine instances")
             .into_iter()
             .find(|state| state.instance == *instance)
-            .map(|state| (state.applied, state.pending))
-            .unwrap_or_default()
+            .map_or_default(|state| (state.applied, state.pending))
     }
 
     /// Replaces the profiles of node `id` through a plain node update.

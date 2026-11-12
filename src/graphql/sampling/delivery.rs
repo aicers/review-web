@@ -156,7 +156,7 @@ fn stored_delivery(
     if withholding_reason(policy, customer_id, customer_sensors).is_some() {
         return Ok(Stored::Decided(SamplingPolicyDelivery::Withheld));
     }
-    let hostname = profile.map(|profile| profile.hostname).unwrap_or_default();
+    let hostname = profile.map_or_default(|profile| profile.hostname);
     let agent_lookup_key = gen_agent_lookup_key(&assignee.agent_key, &hostname);
     Ok(Stored::Given {
         hostname,
