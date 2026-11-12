@@ -2874,6 +2874,7 @@ mod tests {
             MockHostOnboarder {},
             None,
             Arc::new(StubCertManager),
+            None,
             Arc::new(Notify::new()),
             crate::maintenance::MaintenanceGate::new(),
             Arc::new(crate::customer_data_deletion::CustomerDataDeletionTaskManager::default()),

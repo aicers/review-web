@@ -7,7 +7,7 @@ use tracing::info;
 
 use super::{
     super::{Role, RoleGuard, SharedAgentManager},
-    TimeSyncMutation, TimeSyncQuery, matches_manager_hostname,
+    ManagerNodeHostname, TimeSyncMutation, TimeSyncQuery, matches_manager_hostname,
 };
 use crate::backend::TimeSyncStatus;
 use crate::info_with_username;
@@ -128,12 +128,13 @@ impl TimeSyncMutation {
 /// Only the node store is read, so no Host Agent is asked and none can delay
 /// the lookup.
 fn manager_node(ctx: &Context<'_>) -> Result<(u32, String)> {
+    let manager_node_hostname = ctx.data::<ManagerNodeHostname>()?;
     let store = crate::graphql::get_store(ctx)?;
     let map = store.node_map();
     for entry in map.iter(Direction::Forward, None) {
         let node = entry?;
         if let Some(profile) = node.profile
-            && matches_manager_hostname(&profile.hostname)
+            && matches_manager_hostname(manager_node_hostname, &profile.hostname)
         {
             return Ok((node.id, profile.hostname));
         }
@@ -507,6 +508,49 @@ mod tests {
         }
 
         assert_eq!(stub.calls(), vec![Call::Get(manager); 3]);
+    }
+
+    #[tokio::test]
+    async fn configured_manager_node_hostname_is_used_whatever_the_os_hostname() {
+        const CONFIGURED: &str = "analysis.customer.test";
+        let os = manager_hostname();
+        assert_ne!(os, CONFIGURED);
+        let stub = Arc::new(StubAgentManager::new());
+        let agent_manager: SharedAgentManager = stub.clone();
+        let schema =
+            TestSchema::new_with_manager_node_hostname(agent_manager, Some(CONFIGURED.to_string()))
+                .await;
+        // The node named after the OS hostname comes first in forward order,
+        // so it would be found first if the OS hostname were consulted.
+        insert_active_node(&schema.store(), "a-os-host", 1, &os);
+        let id = insert_active_node(&schema.store(), "b-analysis", 1, CONFIGURED);
+
+        let res = schema.execute_as_system_admin(GET_QUERY).await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            json!({
+                "centralManagerTimeSources": {
+                    "nodeId": id.to_string(),
+                    "servers": SERVERS,
+                }
+            })
+        );
+
+        let res = schema.execute_as_system_admin(SET_MUTATION).await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            json!({"setCentralManagerTimeSources": SERVERS})
+        );
+
+        assert_eq!(
+            stub.calls(),
+            vec![
+                Call::Get(CONFIGURED.to_string()),
+                Call::Set(CONFIGURED.to_string(), servers()),
+            ]
+        );
     }
 
     /// Returns the OS hostname and a profile hostname that adds a domain to it.

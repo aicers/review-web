@@ -4,6 +4,24 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking change:** `ServerConfig` has a required `manager_node_hostname:
+  Option<String>`, the hostname of the node for the host the server runs on. A
+  node is the Central Manager's exactly when its profile hostname equals this
+  name; `None` keeps finding it by the host's OS hostname, as before.
+
+### Fixed
+
+- `nodeStatusList`'s `manager`, the `centralManagerTimeSources` query and the
+  `setCentralManagerTimeSources` mutation find the Central Manager's node when
+  `manager_node_hostname` names it, whatever the host's OS hostname is. A host
+  whose OS hostname was neither its node's hostname nor that hostname's first
+  label used to show the Central Manager as not running and could not read or
+  set its upstream NTP servers.
+
 ## [0.56.0] - 2026-11-08
 
 ### Changed
@@ -2917,6 +2935,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.56.0...main
 [0.56.0]: https://github.com/aicers/review-web/compare/0.55.0...0.56.0
 [0.55.0]: https://github.com/aicers/review-web/compare/0.54.0...0.55.0
 [0.54.0]: https://github.com/aicers/review-web/compare/0.53.0...0.54.0
