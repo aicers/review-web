@@ -1503,7 +1503,7 @@ impl HostOnboarder for MockHostOnboarder {
 
 #[cfg(test)]
 struct TestSchema {
-    _dir: tempfile::TempDir,        // to delete the data directory when dropped
+    dir: tempfile::TempDir,         // to delete the data directory when dropped
     _backup_dir: tempfile::TempDir, // to delete the backup directory when dropped
     store: Arc<RwLock<Store>>,
     schema: Schema,
@@ -1641,7 +1641,7 @@ impl TestSchema {
         let schema = builder.finish();
 
         Self {
-            _dir: db_dir,
+            dir: db_dir,
             _backup_dir: backup_dir,
             store,
             schema,
