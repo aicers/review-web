@@ -9,7 +9,7 @@ use tracing::info;
 
 use super::{Role, RoleGuard, SharedAgentManager};
 use crate::graphql::query_with_constraints;
-use crate::info_with_username;
+use crate::info_with_caller;
 
 #[derive(Default)]
 pub(super) struct TrustedDomainQuery;
@@ -66,7 +66,7 @@ impl TrustedDomainMutation {
 
         let agent_manager = ctx.data::<SharedAgentManager>()?;
         agent_manager.broadcast_trusted_domains().await?;
-        info_with_username!(ctx, "Trusted domain {} has been registered", entry_name);
+        info_with_caller!(ctx, "Trusted domain {} has been registered", entry_name);
         Ok(entry_name)
     }
 
@@ -90,7 +90,7 @@ impl TrustedDomainMutation {
 
         let agent_manager = ctx.data::<SharedAgentManager>()?;
         agent_manager.broadcast_trusted_domains().await?;
-        info_with_username!(
+        info_with_caller!(
             ctx,
             "Trusted domain {} has been updated to {}",
             old_name,
@@ -118,7 +118,7 @@ impl TrustedDomainMutation {
                 .into_iter()
                 .try_fold(Vec::with_capacity(count), |mut removed, name| {
                     if map.remove(&name).is_ok() {
-                        info_with_username!(ctx, "Trusted domain {name} has been deleted");
+                        info_with_caller!(ctx, "Trusted domain {name} has been deleted");
                         removed.push(name);
                         Ok(removed)
                     } else {

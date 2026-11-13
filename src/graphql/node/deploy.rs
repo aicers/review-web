@@ -39,7 +39,7 @@ use crate::{
         MODULE_PACKAGE_IDS, OperationId, RunningRoxydBuild as BackendRunningRoxydBuild,
         ServableBuild,
     },
-    info_with_username,
+    info_with_caller,
     maintenance::maintenance_refusal,
 };
 
@@ -623,7 +623,7 @@ impl OnboardingQuery {
     /// Returns an error if the hosts could not be enumerated.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn running_roxyd_builds(&self, ctx: &Context<'_>) -> Result<Vec<RunningRoxydBuild>> {
-        info_with_username!(ctx, "Running roxyd builds requested");
+        info_with_caller!(ctx, "Running roxyd builds requested");
         let onboarder = ctx.data::<BoxedHostOnboarder>()?;
         let running = onboarder.running_roxyd_builds().await?;
         Ok(running.into_iter().map(RunningRoxydBuild::from).collect())
@@ -669,7 +669,7 @@ impl OnboardingQuery {
             RoleGuard::new(Role::SystemAdministrator).check(ctx).await?;
         }
 
-        info_with_username!(ctx, "Store build list of {package_id} requested");
+        info_with_caller!(ctx, "Store build list of {package_id} requested");
         let deployer = ctx.data::<SharedPackageDeployer>()?;
         let builds = deployer.servable_builds(&package_id).await?;
         Ok(builds.into_iter().map(StoreBuild::from).collect())
@@ -693,7 +693,7 @@ impl OnboardingQuery {
         target: String,
     ) -> Result<ConfigTemplateList> {
         bind_package_class(&target, &MODULE_PACKAGE_IDS)?;
-        info_with_username!(ctx, "Configuration templates of {target} requested");
+        info_with_caller!(ctx, "Configuration templates of {target} requested");
         let deployer = ctx.data::<SharedPackageDeployer>()?;
         Ok(deployer.config_templates(&target).await?.into())
     }
@@ -761,9 +761,9 @@ impl DeployMutation {
         // whatever review answers: a refusal is exactly the case an audit
         // reads back.
         if run_as_root {
-            info_with_username!(ctx, "Install of {target} as root requested on {host}");
+            info_with_caller!(ctx, "Install of {target} as root requested on {host}");
         } else {
-            info_with_username!(ctx, "Install of {target} requested on {host}");
+            info_with_caller!(ctx, "Install of {target} requested on {host}");
         }
         match deployer
             .install(
@@ -895,7 +895,7 @@ impl DeployMutation {
 
         let deployer = ctx.data::<SharedPackageDeployer>()?;
         // Logged before the call, for the same reason as in `install_service`.
-        info_with_username!(ctx, "Update of {target} requested on {host}");
+        info_with_caller!(ctx, "Update of {target} requested on {host}");
         match deployer
             .update(
                 &host,
@@ -969,7 +969,7 @@ impl DeployMutation {
 
         let deployer = ctx.data::<SharedPackageDeployer>()?;
         // Logged before the call, for the same reason as in `install_service`.
-        info_with_username!(ctx, "Removal of {target} requested on {host}");
+        info_with_caller!(ctx, "Removal of {target} requested on {host}");
         match deployer.remove(&host, &target, Some(instance.0)).await {
             Ok(operation_id) => Ok(RemoveServiceResult::Success(RemoveServiceSuccess {
                 operation_id: operation_id.into_inner(),
@@ -1014,7 +1014,7 @@ impl DeployMutation {
         }
 
         let deployer = ctx.data::<SharedPackageDeployer>()?;
-        info_with_username!(ctx, "Update of {component} requested on {host}");
+        info_with_caller!(ctx, "Update of {component} requested on {host}");
         match deployer
             .update(&host, &component, None, selector, on_failure.into())
             .await
@@ -1083,7 +1083,7 @@ impl DeployMutation {
         // scoping, so a refused attempt is the record an audit comes looking
         // for. The token does not exist yet at this point, which is how the
         // line stays free of it.
-        info_with_username!(
+        info_with_caller!(
             ctx,
             "Onboarding of {host} with roxyd {version} ({commit}) requested"
         );

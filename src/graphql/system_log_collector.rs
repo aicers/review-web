@@ -29,7 +29,7 @@ use super::{
 };
 use crate::{
     backend::{DeployError, SystemLogCollectorState},
-    info_with_username,
+    info_with_caller,
     maintenance::maintenance_refusal,
 };
 
@@ -157,7 +157,7 @@ impl SystemLogCollectorQuery {
         &self,
         ctx: &Context<'_>,
     ) -> Result<Vec<SystemLogCollector>> {
-        info_with_username!(ctx, "System log collector list requested");
+        info_with_caller!(ctx, "System log collector list requested");
         let deployer = ctx.data::<SharedPackageDeployer>()?;
         let collectors = deployer.system_log_collectors().await?;
         Ok(collectors.into_iter().map(Into::into).collect())
@@ -184,7 +184,7 @@ impl SystemLogCollectorMutation {
         server_name: String,
     ) -> Result<bool> {
         let deployer = ctx.data::<SharedPackageDeployer>()?;
-        info_with_username!(
+        info_with_caller!(
             ctx,
             "Data Store {server_name} requested for the system log collector on {host}"
         );
@@ -223,7 +223,7 @@ impl SystemLogCollectorMutation {
         let deployer = ctx.data::<SharedPackageDeployer>()?;
         // Logged before the call, as the deploy mutations log theirs, so a
         // refusal is in the log too.
-        info_with_username!(
+        info_with_caller!(
             ctx,
             "Update of the system log collector requested on {host}"
         );

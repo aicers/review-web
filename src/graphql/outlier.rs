@@ -22,7 +22,7 @@ use tokio::time;
 use tracing::error;
 
 use super::{Role, RoleGuard, customer_access, model::ModelDigest, query, training_result};
-use crate::error_with_username;
+use crate::error_with_caller;
 
 const MAX_EVENT_NUM_OF_OUTLIER: usize = 50;
 const DEFAULT_RANKED_OUTLIER_FETCH_TIME: u64 = 60;
@@ -77,7 +77,7 @@ impl OutlierStream {
             if let Err(e) =
                 fetch_ranked_outliers(store, users_customers, start, tx, fetch_time).await
             {
-                error_with_username!(caller: caller, role: role, "Fetch failed: {e:?}");
+                error_with_caller!(caller: caller, role: role, "Fetch failed: {e:?}");
             }
         });
         Ok(rx)

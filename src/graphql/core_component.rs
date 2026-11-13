@@ -17,7 +17,7 @@ use super::{
     install_state::{self, Lifecycle, UpdateState, WithdrawalState},
     operation_attempt::{self, OperationAttempt},
 };
-use crate::info_with_username;
+use crate::info_with_caller;
 
 #[derive(Default)]
 pub(super) struct CoreComponentQuery;
@@ -38,7 +38,7 @@ impl CoreComponentQuery {
     /// Returns an error if the registry cannot be read.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn core_component_list(&self, ctx: &Context<'_>) -> Result<Vec<CoreComponent>> {
-        info_with_username!(ctx, "Core component list requested");
+        info_with_caller!(ctx, "Core component list requested");
         let store = super::get_store(ctx)?;
         let map = store.core_component_map();
         map.iter(database::event::Direction::Forward, None)

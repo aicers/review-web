@@ -81,7 +81,7 @@ use super::{
     network::Network,
     triage::{ConfidenceInput, PacketAttrInput, ResponseInput, ThreatCategory},
 };
-use crate::{error_with_username, graphql::query, warn_with_username};
+use crate::{error_with_caller, graphql::query, warn_with_caller};
 
 const DEFAULT_CONNECTION_SIZE: usize = 100;
 const DEFAULT_EVENT_FETCH_INTERVAL_SECS: u64 = 20;
@@ -150,7 +150,7 @@ impl EventStream {
             )
             .await;
             if let Err(e) = fetch {
-                error_with_username!(caller: caller, role: role, "Failed to fetch events: {e:?}");
+                error_with_caller!(caller: caller, role: role, "Failed to fetch events: {e:?}");
             }
         });
         Ok(rx)
@@ -1527,11 +1527,11 @@ fn readable_event(
     match item {
         Ok(event) => Ok(Some(event)),
         Err(e) if is_event_read_failure(&e) => {
-            error_with_username!(ctx, "Failed to read events: {e:?}");
+            error_with_caller!(ctx, "Failed to read events: {e:?}");
             Err(anyhow!("failed to read events"))
         }
         Err(e) => {
-            warn_with_username!(ctx, "Invalid event: {e:?}");
+            warn_with_caller!(ctx, "Invalid event: {e:?}");
             Ok(None)
         }
     }

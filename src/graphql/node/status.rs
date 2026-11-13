@@ -16,7 +16,7 @@ use super::{
     time_sync::NodeTimeSync,
 };
 use crate::graphql::query_with_constraints;
-use crate::info_with_username;
+use crate::info_with_caller;
 
 /// How long a node's Host Agent is given to report its time synchronization.
 ///
@@ -38,7 +38,7 @@ impl NodeStatusQuery {
         last: Option<i32>,
     ) -> Result<Connection<OpaqueCursor<Vec<u8>>, NodeStatus, NodeStatusTotalCount, EmptyFields>>
     {
-        info_with_username!(ctx, "Node status lookup requested");
+        info_with_caller!(ctx, "Node status lookup requested");
         query_with_constraints(
             after,
             before,
