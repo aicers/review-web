@@ -714,38 +714,50 @@ fn build_mtls_server_config(
     Ok(config)
 }
 
-#[macro_export]
 macro_rules! error_with_username {
     ($ctx:expr, $($arg:tt)+) => {{
-        let (caller, role) = $crate::graphql::logging_context($ctx);
-        $crate::error_with_username!(caller: caller, role: role, $($arg)+);
+        error!(
+            caller = %$crate::auth::Caller($ctx.data_opt::<$crate::auth::MtlsIdentity>()),
+            role = $ctx.data_opt::<$crate::graphql::RoleGuard>().map(|$crate::graphql::RoleGuard::Role(role)| tracing::field::debug(role)),
+            $($arg)+
+        );
     }};
+    // Values captured from the connection that started the subscription.
     (caller: $caller:expr, role: $role:expr, $($arg:tt)+) => {{
-        error!(caller = %$caller, role = %$role, $($arg)+);
+        error!(caller = %$caller, role = $role.as_ref().map(tracing::field::debug), $($arg)+);
     }};
 }
+pub(crate) use error_with_username;
 
-#[macro_export]
 macro_rules! info_with_username {
     ($ctx:expr, $($arg:tt)+) => {{
-        let (caller, role) = $crate::graphql::logging_context($ctx);
-        $crate::info_with_username!(caller: caller, role: role, $($arg)+);
+        info!(
+            caller = %$crate::auth::Caller($ctx.data_opt::<$crate::auth::MtlsIdentity>()),
+            role = $ctx.data_opt::<$crate::graphql::RoleGuard>().map(|$crate::graphql::RoleGuard::Role(role)| tracing::field::debug(role)),
+            $($arg)+
+        );
     }};
+    // Values captured from the connection that started the subscription.
     (caller: $caller:expr, role: $role:expr, $($arg:tt)+) => {{
-        info!(caller = %$caller, role = %$role, $($arg)+);
+        info!(caller = %$caller, role = $role.as_ref().map(tracing::field::debug), $($arg)+);
     }};
 }
+pub(crate) use info_with_username;
 
-#[macro_export]
 macro_rules! warn_with_username {
     ($ctx:expr, $($arg:tt)+) => {{
-        let (caller, role) = $crate::graphql::logging_context($ctx);
-        $crate::warn_with_username!(caller: caller, role: role, $($arg)+);
+        warn!(
+            caller = %$crate::auth::Caller($ctx.data_opt::<$crate::auth::MtlsIdentity>()),
+            role = $ctx.data_opt::<$crate::graphql::RoleGuard>().map(|$crate::graphql::RoleGuard::Role(role)| tracing::field::debug(role)),
+            $($arg)+
+        );
     }};
+    // Values captured from the connection that started the subscription.
     (caller: $caller:expr, role: $role:expr, $($arg:tt)+) => {{
-        warn!(caller = %$caller, role = %$role, $($arg)+);
+        warn!(caller = %$caller, role = $role.as_ref().map(tracing::field::debug), $($arg)+);
     }};
 }
+pub(crate) use warn_with_username;
 
 #[cfg(test)]
 mod tests {

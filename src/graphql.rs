@@ -4,6 +4,8 @@
 #![allow(clippy::unused_async, clippy::unused_async_trait_impl)]
 
 #[cfg(test)]
+mod logging_test_support;
+#[cfg(test)]
 mod logging_tests;
 
 mod category;
@@ -737,24 +739,6 @@ where
         nodes.pop();
     }
     (nodes, has_more)
-}
-
-/// Captures owned logging fields while the request context is still available.
-pub(crate) fn logging_context(ctx: &Context<'_>) -> (String, String) {
-    let caller = ctx.data_opt::<crate::auth::MtlsIdentity>().map_or_else(
-        || "an unauthenticated caller".to_string(),
-        |identity| {
-            format!(
-                "{}.{}.{}.{}",
-                identity.instance, identity.service, identity.host, identity.domain
-            )
-        },
-    );
-    let role = ctx.data_opt::<RoleGuard>().map_or_else(
-        || "None".to_string(),
-        |RoleGuard::Role(role)| format!("{role:?}"),
-    );
-    (caller, role)
 }
 
 #[derive(Debug, PartialEq)]
@@ -1648,7 +1632,6 @@ impl TestSchema {
             agent_manager,
             package_deployer,
             test_addr,
-            username,
             event_country_locator,
             None,
         )
@@ -1665,7 +1648,6 @@ impl TestSchema {
             agent_manager,
             Arc::new(MockPackageDeployer::default()),
             None,
-            "testuser",
             None,
             manager_node_hostname,
         )
@@ -1676,7 +1658,6 @@ impl TestSchema {
         agent_manager: SharedAgentManager,
         package_deployer: SharedPackageDeployer,
         test_addr: Option<SocketAddr>,
-        username: &str,
         event_country_locator: Option<Arc<ip2location::DB>>,
         manager_node_hostname: Option<String>,
     ) -> Self {
