@@ -68,7 +68,10 @@ impl OutlierStream {
         let users_customers = customer_access::users_customers(ctx)?;
         let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
         let fetch_time = fetch_interval.unwrap_or(DEFAULT_RANKED_OUTLIER_FETCH_TIME);
-        let (caller, role) = super::logging_context(ctx);
+        let caller = crate::auth::Caller(ctx.data_opt::<crate::auth::MtlsIdentity>()).to_string();
+        let role = ctx
+            .data_opt::<super::RoleGuard>()
+            .map(|super::RoleGuard::Role(role)| *role);
         let (tx, rx) = unbounded();
         tokio::spawn(async move {
             if let Err(e) =
@@ -863,9 +866,9 @@ mod tests {
     use crate::graphql::Role;
     use crate::graphql::model_test_support::{replace_model, schema_with_models_through};
 
-    #[tokio::test(flavor = "current_thread")]
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn subscription_task_logs_the_starting_connection() {
-        use crate::graphql::logging_tests::{CapturedEvents, identity};
+        use crate::graphql::logging_test_support::{CapturedEvents, identity};
         use crate::graphql::{CustomerIds, RoleGuard, TestSchema};
 
         let schema = TestSchema::new().await;
@@ -903,7 +906,7 @@ mod tests {
         events.assert_fields(
             "Fetch failed:",
             "subscription.web-app.node-01.customer.internal",
-            "SecurityMonitor",
+            Some("SecurityMonitor"),
         );
     }
 

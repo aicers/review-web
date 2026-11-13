@@ -135,7 +135,10 @@ impl EventStream {
         } else {
             DEFAULT_EVENT_FETCH_INTERVAL_SECS
         };
-        let (caller, role) = super::logging_context(ctx);
+        let caller = crate::auth::Caller(ctx.data_opt::<crate::auth::MtlsIdentity>()).to_string();
+        let role = ctx
+            .data_opt::<super::RoleGuard>()
+            .map(|super::RoleGuard::Role(role)| *role);
         let (tx, rx) = unbounded();
         tokio::spawn(async move {
             let fetch = fetch_events(
@@ -1811,9 +1814,9 @@ mod tests {
 
     use crate::graphql::{Role, RoleGuard, TestSchema};
 
-    #[tokio::test(flavor = "current_thread")]
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn subscription_task_logs_the_starting_connection() {
-        use crate::graphql::logging_tests::{CapturedEvents, identity};
+        use crate::graphql::logging_test_support::{CapturedEvents, identity};
         use crate::graphql::{CustomerIds, RoleGuard, TestSchema};
 
         let schema = TestSchema::new().await;
@@ -1846,7 +1849,7 @@ mod tests {
         events.assert_fields(
             "Failed to fetch events:",
             "subscription.web-app.node-01.customer.internal",
-            "SecurityMonitor",
+            Some("SecurityMonitor"),
         );
     }
 

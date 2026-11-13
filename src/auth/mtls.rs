@@ -31,6 +31,22 @@ pub struct MtlsIdentity {
     pub domain: String,
 }
 
+/// Formats the identity of the connection that made a request.
+pub(crate) struct Caller<'a>(pub(crate) Option<&'a MtlsIdentity>);
+
+impl std::fmt::Display for Caller<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            Some(identity) => write!(
+                f,
+                "{}.{}.{}.{}",
+                identity.instance, identity.service, identity.host, identity.domain
+            ),
+            None => f.write_str("an unauthenticated caller"),
+        }
+    }
+}
+
 /// Validates a client certificate and extracts its identity.
 ///
 /// Implementations live in the `review` crate and are injected at runtime,
