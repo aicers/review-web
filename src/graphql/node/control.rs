@@ -27,7 +27,7 @@ use crate::graphql::{
     network_list::lock_network_lists,
     node::input::NodeInput,
 };
-use crate::{error_with_username, info_with_username, warn_with_username};
+use crate::{error_with_caller, info_with_caller, warn_with_caller};
 
 #[derive(SimpleObject)]
 pub(super) struct AgentNotifyAttempt {
@@ -168,7 +168,7 @@ impl NodeControlMutation {
         customer_access::check_hostname_access(ctx, &hostname)?;
 
         let agents = ctx.data::<SharedAgentManager>()?;
-        info_with_username!(ctx, "Reboot request sent to {hostname}");
+        info_with_caller!(ctx, "Reboot request sent to {hostname}");
         agents.reboot(&hostname).await?;
         update_agent_status_to_unknown(ctx, &hostname);
         Ok(hostname)
@@ -180,7 +180,7 @@ impl NodeControlMutation {
         customer_access::check_hostname_access(ctx, &hostname)?;
 
         let agents = ctx.data::<SharedAgentManager>()?;
-        info_with_username!(ctx, "Shutdown request sent to {hostname}");
+        info_with_caller!(ctx, "Shutdown request sent to {hostname}");
         agents.halt(&hostname).await?;
         update_agent_status_to_unknown(ctx, &hostname);
         Ok(hostname)
@@ -265,7 +265,7 @@ impl NodeControlMutation {
             )
             .await?;
 
-            info_with_username!(
+            info_with_caller!(
                 ctx,
                 "[{}] Node ID {i} - Node's drafts are applied.\nName: {}, Name draft: {}\nProfile: {}, Profile draft: {}",
                 chrono::Utc::now(),
@@ -293,7 +293,7 @@ impl NodeControlMutation {
                 .unwrap_or_default();
 
             if hostname.is_empty() {
-                info_with_username!(
+                info_with_caller!(
                     ctx,
                     "Node ID {i} - Node's agents are not notified because the hostname is empty.",
                 );
@@ -307,13 +307,13 @@ impl NodeControlMutation {
                 )
                 .await
                 {
-                    warn_with_username!(
+                    warn_with_caller!(
                         ctx,
                         "Failed to notify agents for node {i} to be updated. This failure may impact configuration synchronization.\nDetails: {e:?}"
                     );
                 }
 
-                info_with_username!(
+                info_with_caller!(
                     ctx,
                     "[{}] Node ID {i} - Node's agents are notified to be updated. {:?}",
                     chrono::Utc::now(),
@@ -400,7 +400,7 @@ impl NodeControlMutation {
                 .profile_draft
                 .as_ref()
                 .map_or_default(ToString::to_string);
-            info_with_username!(
+            info_with_caller!(
                 ctx,
                 "[{now}] Node ID {i} - Node's drafts are applied.\nName: {name}, Name draft: {name_draft}\nProfile: {profile}, Profile draft: {profile_draft}",
             );
@@ -642,7 +642,7 @@ async fn reapply_sensor(
 
     // Logged before the call, as the deploy mutations log theirs, so a change to or from `root` is
     // in the log whatever review answers.
-    info_with_username!(
+    info_with_caller!(
         ctx,
         "Re-apply of {target} instance {instance} on {hostname} as {derived} (was {recorded}) requested"
     );
@@ -652,7 +652,7 @@ async fn reapply_sensor(
     {
         Ok((DeployOutcome::Applied, _)) => AgentNotifyAttempt::ok(key),
         Ok((DeployOutcome::Accepted, _)) => {
-            info_with_username!(
+            info_with_caller!(
                 ctx,
                 "Re-apply of {target} instance {instance} on {hostname} as {derived} dispatched; its outcome is pending"
             );
@@ -926,7 +926,7 @@ async fn update_db(
         let mut sensor_names = customer_access::event_sensor_names(&stored);
         sensor_names.extend(customer_access::event_sensor_names(&updated));
         sampling::generators_of_node(&store, i, &sensor_names).unwrap_or_else(|e| {
-            error_with_username!(
+            error_with_caller!(
                 ctx,
                 "Failed to find the Time Series Generators of node {i} to tell of its customer or hostname change: {}",
                 e.message
@@ -969,14 +969,14 @@ async fn send_customer_change_if_needed(ctx: &Context<'_>, i: u32, node: &NodeIn
             .map(|agent| gen_agent_lookup_key(&agent.key, hostname))
             .collect::<Vec<String>>();
         let Ok(customer_id) = customer_id.parse::<u32>() else {
-            error_with_username!(
+            error_with_caller!(
                 ctx,
                 "Failed to parse customer ID from node {i} for broadcasting customer change"
             );
             return;
         };
         if let Err(e) = send_customer_change(ctx, i, customer_id, agent_lookup_keys).await {
-            error_with_username!(
+            error_with_caller!(
                 ctx,
                 "Failed to broadcast customer change for customer ID {customer_id} on node {i}. The failure did not affect the node application operation. Error: {e:?}",
             );
@@ -1013,7 +1013,7 @@ async fn send_customer_change(
         pair(get_customer_networks(&store, customer_id)?)
     };
     if let Err(e) = send_agent_specific_customer_networks(ctx, &[network_list]).await {
-        error_with_username!(ctx, "Failed to broadcast internal networks: {e:?}");
+        error_with_caller!(ctx, "Failed to broadcast internal networks: {e:?}");
     }
 
     // hog pulls its allowlist and blocklist only when it connects, so a node
@@ -1044,17 +1044,17 @@ async fn send_customer_change(
         }
     };
     let Some((allow_list, block_list)) = lists else {
-        info_with_username!(
+        info_with_caller!(
             ctx,
             "Node {node_id} no longer belongs to customer {customer_id}; its allowlist and blocklist are left to the later change"
         );
         return Ok(());
     };
     if let Err(e) = send_agent_specific_allow_networks(ctx, &[allow_list]).await {
-        error_with_username!(ctx, "Failed to broadcast allowlist: {e:?}");
+        error_with_caller!(ctx, "Failed to broadcast allowlist: {e:?}");
     }
     if let Err(e) = send_agent_specific_block_networks(ctx, &[block_list]).await {
-        error_with_username!(ctx, "Failed to broadcast blocklist: {e:?}");
+        error_with_caller!(ctx, "Failed to broadcast blocklist: {e:?}");
     }
 
     Ok(())

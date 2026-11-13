@@ -714,7 +714,7 @@ fn build_mtls_server_config(
     Ok(config)
 }
 
-macro_rules! error_with_username {
+macro_rules! error_with_caller {
     ($ctx:expr, $($arg:tt)+) => {{
         error!(
             caller = %$crate::auth::Caller($ctx.data_opt::<$crate::auth::MtlsIdentity>()),
@@ -727,9 +727,9 @@ macro_rules! error_with_username {
         error!(caller = %$caller, role = $role.as_ref().map(tracing::field::debug), $($arg)+);
     }};
 }
-pub(crate) use error_with_username;
+pub(crate) use error_with_caller;
 
-macro_rules! info_with_username {
+macro_rules! info_with_caller {
     ($ctx:expr, $($arg:tt)+) => {{
         info!(
             caller = %$crate::auth::Caller($ctx.data_opt::<$crate::auth::MtlsIdentity>()),
@@ -742,9 +742,9 @@ macro_rules! info_with_username {
         info!(caller = %$caller, role = $role.as_ref().map(tracing::field::debug), $($arg)+);
     }};
 }
-pub(crate) use info_with_username;
+pub(crate) use info_with_caller;
 
-macro_rules! warn_with_username {
+macro_rules! warn_with_caller {
     ($ctx:expr, $($arg:tt)+) => {{
         warn!(
             caller = %$crate::auth::Caller($ctx.data_opt::<$crate::auth::MtlsIdentity>()),
@@ -757,7 +757,7 @@ macro_rules! warn_with_username {
         warn!(caller = %$caller, role = $role.as_ref().map(tracing::field::debug), $($arg)+);
     }};
 }
-pub(crate) use warn_with_username;
+pub(crate) use warn_with_caller;
 
 #[cfg(test)]
 mod tests {

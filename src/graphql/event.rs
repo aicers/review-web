@@ -81,7 +81,7 @@ use super::{
     network::Network,
     triage::{ConfidenceInput, PacketAttrInput, ResponseInput, ThreatCategory},
 };
-use crate::{error_with_username, graphql::query, warn_with_username};
+use crate::{error_with_caller, graphql::query, warn_with_caller};
 
 const DEFAULT_CONNECTION_SIZE: usize = 100;
 const DEFAULT_EVENT_FETCH_INTERVAL_SECS: u64 = 20;
@@ -150,7 +150,7 @@ impl EventStream {
             )
             .await;
             if let Err(e) = fetch {
-                error_with_username!(caller: caller, role: role, "Failed to fetch events: {e:?}");
+                error_with_caller!(caller: caller, role: role, "Failed to fetch events: {e:?}");
             }
         });
         Ok(rx)
@@ -1111,7 +1111,7 @@ impl EventTotalCount {
             let (key, event) = match item {
                 Ok(kv) => kv,
                 Err(e) => {
-                    warn_with_username!(ctx, "Invalid event: {:?}", e);
+                    warn_with_caller!(ctx, "Invalid event: {:?}", e);
                     continue;
                 }
             };
@@ -1373,7 +1373,7 @@ async fn load_event(ctx: &Context<'_>, id: &ID) -> Result<Option<Event>> {
     let (found_key, mut event) = match item {
         Ok(kv) => kv,
         Err(e) => {
-            warn_with_username!(ctx, "Invalid event: {:?}", e);
+            warn_with_caller!(ctx, "Invalid event: {:?}", e);
             return Ok(None);
         }
     };
@@ -1538,7 +1538,7 @@ fn iter_to_events(
         let (key, event) = match item {
             Ok(kv) => kv,
             Err(e) => {
-                warn_with_username!(ctx, "Invalid event: {:?}", e);
+                warn_with_caller!(ctx, "Invalid event: {:?}", e);
                 continue;
             }
         };
@@ -1761,7 +1761,7 @@ fn iter_to_events_with_triage(
         let (key, mut event) = match item {
             Ok(kv) => kv,
             Err(e) => {
-                warn_with_username!(ctx, "Invalid event: {:?}", e);
+                warn_with_caller!(ctx, "Invalid event: {:?}", e);
                 continue;
             }
         };

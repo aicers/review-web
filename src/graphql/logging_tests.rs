@@ -9,9 +9,9 @@ struct LogQuery;
 #[Object]
 impl LogQuery {
     async fn log(&self, ctx: &Context<'_>) -> bool {
-        crate::error_with_username!(ctx, "error {}", 42);
-        crate::info_with_username!(ctx, "info {}", 42);
-        crate::warn_with_username!(ctx, "warn {}", 42);
+        crate::error_with_caller!(ctx, "error {}", 42);
+        crate::info_with_caller!(ctx, "info {}", 42);
+        crate::warn_with_caller!(ctx, "warn {}", 42);
         true
     }
 }

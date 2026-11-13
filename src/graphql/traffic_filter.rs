@@ -8,7 +8,7 @@ use review_database::{self as database};
 use tracing::info;
 
 use super::{Role, RoleGuard, SharedAgentManager};
-use crate::info_with_username;
+use crate::info_with_caller;
 
 #[derive(Default)]
 pub(super) struct TrafficFilterQuery;
@@ -94,7 +94,7 @@ impl TrafficFilterMutation {
         let store = crate::graphql::get_store(ctx)?;
         let table = store.traffic_filter_map();
 
-        info_with_username!(ctx, "All traffic filters have been deleted");
+        info_with_caller!(ctx, "All traffic filters have been deleted");
         table.remove(&host_fqdn).map_err(Into::into).map(|()| 0)
     }
 

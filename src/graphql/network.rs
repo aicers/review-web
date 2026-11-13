@@ -15,7 +15,7 @@ use super::{
     customer::{HostNetworkGroup, HostNetworkGroupInput},
 };
 use crate::graphql::query_with_constraints;
-use crate::info_with_username;
+use crate::info_with_caller;
 
 #[derive(Default)]
 pub(super) struct NetworkQuery;
@@ -35,7 +35,7 @@ impl NetworkQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Network, NetworkTotalCount, EmptyFields>> {
-        info_with_username!(ctx, "Network configuration list retrieved");
+        info_with_caller!(ctx, "Network configuration list retrieved");
         query_with_constraints(
             after,
             before,
@@ -59,7 +59,7 @@ impl NetworkQuery {
         let Some(inner) = map.get_by_id(i)? else {
             return Err("no such network".into());
         };
-        info_with_username!(ctx, "Network configuration for {} retrieved", inner.name);
+        info_with_caller!(ctx, "Network configuration for {} retrieved", inner.name);
         Ok(Network { inner })
     }
 }
@@ -84,7 +84,7 @@ impl NetworkMutation {
         let map = store.network_map();
         let entry = review_database::Network::new(name.clone(), description, networks.try_into()?);
         let id = map.insert(entry)?;
-        info_with_username!(ctx, "Network {name} has been registered");
+        info_with_caller!(ctx, "Network {name} has been registered");
         Ok(ID(id.to_string()))
     }
 
@@ -108,7 +108,7 @@ impl NetworkMutation {
                 Ok(key) => key,
                 Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
             };
-            info_with_username!(ctx, "Network {name} has been deleted");
+            info_with_caller!(ctx, "Network {name} has been deleted");
             removed.push(name);
         }
         Ok(removed)
@@ -130,7 +130,7 @@ impl NetworkMutation {
         let store = crate::graphql::get_store(ctx)?;
         let mut map = store.network_map();
         map.update(i, &old.try_into()?, &new.try_into()?)?;
-        info_with_username!(
+        info_with_caller!(
             ctx,
             "Network {:?} has been updated to {:?}",
             old_name,

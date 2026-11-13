@@ -23,7 +23,7 @@ use super::customer_network::{
 };
 use super::node::SEMI_SUPERVISED_AGENT;
 use super::{Role, RoleGuard};
-use crate::{error_with_username, info_with_username};
+use crate::{error_with_caller, info_with_caller};
 
 /// The most entries one list of one customer may hold.
 const MAX_ENTRIES_PER_LIST: usize = 256;
@@ -201,7 +201,7 @@ impl NetworkListMutation {
                 NetworkListReplaceOutcome::Written { previous } => previous,
                 NetworkListReplaceOutcome::Stale { stored } => return Err(stale_revision(stored)),
             };
-            info_with_username!(
+            info_with_caller!(
                 ctx,
                 "Network lists of customer {customer_id} have been replaced at revision {revision}"
             );
@@ -226,7 +226,7 @@ impl NetworkListMutation {
             let Some(removed) = store.network_lists_map().remove(customer_id)? else {
                 return Ok(false);
             };
-            info_with_username!(
+            info_with_caller!(
                 ctx,
                 "Network lists of customer {customer_id} have been removed"
             );
@@ -422,7 +422,7 @@ async fn send_pushes(
             NetworkList::Blocklist => send_agent_specific_block_networks(ctx, &[push]).await,
         };
         if let Err(e) = sent {
-            error_with_username!(
+            error_with_caller!(
                 ctx,
                 "Failed to send the {list} of customer {customer_id} to its agents: {e:?}"
             );

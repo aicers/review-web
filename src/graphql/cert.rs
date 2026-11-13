@@ -5,7 +5,7 @@ use tokio::sync::Notify;
 use tracing::info;
 
 use super::{CertManager, Role, RoleGuard};
-use crate::info_with_username;
+use crate::info_with_caller;
 
 #[derive(Debug, SimpleObject)]
 struct CertificatePayload {
@@ -32,7 +32,7 @@ impl CertMutation {
         cert: String,
         key: String,
     ) -> Result<CertificatePayload> {
-        info_with_username!(
+        info_with_caller!(
             ctx,
             "Received a request to update certificate and private key"
         );

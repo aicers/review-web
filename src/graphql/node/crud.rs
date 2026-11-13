@@ -26,7 +26,7 @@ use super::{
     },
     installed_guard,
 };
-use crate::{graphql::query_with_constraints, info_with_username};
+use crate::{graphql::query_with_constraints, info_with_caller};
 
 #[Object]
 impl NodeQuery {
@@ -42,7 +42,7 @@ impl NodeQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Node, NodeTotalCount, EmptyFields>> {
-        info_with_username!(ctx, "Node list requested");
+        info_with_caller!(ctx, "Node list requested");
         query_with_constraints(
             after,
             before,
@@ -79,7 +79,7 @@ impl NodeQuery {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<OpaqueCursor<Vec<u8>>, Sensor, SensorTotalCount, EmptyFields>> {
-        info_with_username!(ctx, "Customer sensor list requested");
+        info_with_caller!(ctx, "Customer sensor list requested");
         query_with_constraints(
             after,
             before,
@@ -105,7 +105,7 @@ impl NodeQuery {
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
     async fn data_store_endpoints(&self, ctx: &Context<'_>) -> Result<Vec<DataStoreEndpoint>> {
-        info_with_username!(ctx, "Data Store endpoints requested");
+        info_with_caller!(ctx, "Data Store endpoints requested");
         data_store_endpoint::load(ctx).await
     }
 }
@@ -244,7 +244,7 @@ impl NodeMutation {
             system_admin,
         )?;
         let id = map.put(&value)?;
-        info_with_username!(ctx, "Node {} has been registered", value.name);
+        info_with_caller!(ctx, "Node {} has been registered", value.name);
         Ok(ID(id.to_string()))
     }
 
@@ -305,7 +305,7 @@ impl NodeMutation {
                 Ok(key) => key,
                 Err(e) => String::from_utf8_lossy(e.as_bytes()).into(),
             };
-            info_with_username!(ctx, "Node {name} has been deleted");
+            info_with_caller!(ctx, "Node {name} has been deleted");
             removed.push(name);
         }
         Ok(removed)
@@ -389,7 +389,7 @@ impl NodeMutation {
             &engine_write::document_writes(&documents, Slot::Draft),
         )
         .map_err(|e| engine_write::store_refusal(e, &old, &documents))?;
-        info_with_username!(ctx, "Node {:?} has been modified", old.name);
+        info_with_caller!(ctx, "Node {:?} has been modified", old.name);
         Ok(id)
     }
 }

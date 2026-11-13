@@ -10,7 +10,7 @@ use super::{
     ManagerNodeHostname, TimeSyncMutation, TimeSyncQuery, matches_manager_hostname,
 };
 use crate::backend::TimeSyncStatus;
-use crate::info_with_username;
+use crate::info_with_caller;
 
 /// How long the Central Manager host's Host Agent is given to answer a Get or
 /// a Set of its time sources, stream acquisition and response included.
@@ -76,7 +76,7 @@ impl TimeSyncQuery {
         &self,
         ctx: &Context<'_>,
     ) -> Result<CentralManagerTimeSources> {
-        info_with_username!(ctx, "Central Manager time sources lookup requested");
+        info_with_caller!(ctx, "Central Manager time sources lookup requested");
         let (id, hostname) = manager_node(ctx)?;
         let agent_manager = ctx.data::<SharedAgentManager>()?;
         let servers =
@@ -106,7 +106,7 @@ impl TimeSyncMutation {
         ctx: &Context<'_>,
         servers: Vec<String>,
     ) -> Result<Vec<String>> {
-        info_with_username!(
+        info_with_caller!(
             ctx,
             "Central Manager time sources update requested: {servers:?}"
         );

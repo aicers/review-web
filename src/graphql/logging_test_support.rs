@@ -9,10 +9,10 @@ use tracing_subscriber::{Layer, Registry};
 use crate::auth::MtlsIdentity;
 
 #[derive(Clone, Default)]
-pub(super) struct CapturedEvents(
-    Arc<Mutex<Vec<BTreeMap<String, String>>>>,
-    Arc<tokio::sync::Notify>,
-);
+pub(super) struct CapturedEvents {
+    events: Arc<Mutex<Vec<BTreeMap<String, String>>>>,
+    notify: Arc<tokio::sync::Notify>,
+}
 
 #[derive(Default)]
 struct Fields(BTreeMap<String, String>);
@@ -32,8 +32,8 @@ impl<S: Subscriber> Layer<S> for CapturedEvents {
     fn on_event(&self, event: &Event<'_>, _ctx: LayerContext<'_, S>) {
         let mut fields = Fields::default();
         event.record(&mut fields);
-        self.0.lock().unwrap().push(fields.0);
-        self.1.notify_one();
+        self.events.lock().unwrap().push(fields.0);
+        self.notify.notify_one();
     }
 }
 
@@ -45,7 +45,7 @@ impl CapturedEvents {
     }
 
     pub(super) fn assert_fields(&self, message: &str, caller: &str, role: Option<&str>) {
-        let events = self.0.lock().unwrap();
+        let events = self.events.lock().unwrap();
         let matching: Vec<_> = events
             .iter()
             .filter(|fields| {
@@ -64,14 +64,14 @@ impl CapturedEvents {
     pub(super) async fn wait_for(&self, message: &str) {
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
-                if self.0.lock().unwrap().iter().any(|fields| {
+                if self.events.lock().unwrap().iter().any(|fields| {
                     fields
                         .get("message")
                         .is_some_and(|m| m.starts_with(message))
                 }) {
                     break;
                 }
-                self.1.notified().await;
+                self.notify.notified().await;
             }
         })
         .await
