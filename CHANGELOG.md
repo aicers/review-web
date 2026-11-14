@@ -4,6 +4,32 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking change:** Bumped `review-protocol` to 0.26.0 (`AgentManager`
+  implementations must match). Bumped `review-database` to 0.63.0; its store
+  format stays at 0.61.0, so no migration. Both move Arrow to 57.3.2
+  (RUSTSEC-2026-0442).
+- `topTimeSeriesOfCluster` returns an error for a request whose zero-filled
+  series would together hold more than 100,000 points, even when only
+  `earliest` and `latest` are selected: `response budget exceeded: series
+  length sum {sum}, limit 100000; narrow the query period using start and
+  end`. A column holding two values more than the `i64` nanosecond range
+  apart, which used to be returned as is, now fails with `cannot zero-fill
+  column {columnIndex}: {error}`.
+- An error while iterating events in RocksDB is reported as the field error
+  `failed to read events` by `totalCount`, the `eventCountsBy*` fields and
+  `eventFrequencySeries`, instead of returning the counts read before it as a
+  complete answer.
+
+### Fixed
+
+- `topTimeSeries` without `time` and `topTimeSeriesOfCluster` with neither
+  `start` nor `end` no longer fail when the latest stored value is within two
+  hours of the earliest representable time; the window starts at that time.
+
 ## [0.57.0] - 2026-11-12
 
 ### Changed
@@ -2938,6 +2964,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - An initial version.
 
+[Unreleased]: https://github.com/aicers/review-web/compare/0.57.0...main
 [0.57.0]: https://github.com/aicers/review-web/compare/0.56.0...0.57.0
 [0.56.0]: https://github.com/aicers/review-web/compare/0.55.0...0.56.0
 [0.55.0]: https://github.com/aicers/review-web/compare/0.54.0...0.55.0

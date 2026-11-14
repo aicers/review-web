@@ -420,6 +420,12 @@ const DEFAULT_TRENDI_ORDER: i32 = 4;
 const MAX_TRENDI_ORDER: i32 = 20;
 // One day bounds streaming API update intervals and prevents period overflow.
 const MAX_STREAM_FETCH_INTERVAL_SECS: u64 = 86_400;
+// The width of the window a time-series query covers when a bound is omitted.
+const DEFAULT_TIME_SERIES_WIDTH_NANOS: u64 = 2 * 60 * 60 * 1_000_000_000;
+// Limits on the sum of zero-filled series lengths a time-series query may
+// compute and return, respectively.
+const COMPUTATION_SERIES_BUDGET: u128 = 1_000_000;
+const RESPONSE_SERIES_BUDGET: u128 = 100_000;
 
 struct CutoffRate;
 
@@ -791,6 +797,60 @@ fn minimum_time_interval(series: &[TimeCount]) -> anyhow::Result<Option<i64>> {
             minimum.map_or(interval, |value: i64| value.min(interval)),
         ))
     })
+}
+
+/// Returns the range a time-series query selects for the given bounds.
+///
+/// Both bounds are used as given. A single bound covers
+/// `DEFAULT_TIME_SERIES_WIDTH_NANOS` from it, saturating at the `i64` limits,
+/// and no bound covers that width up to the latest stored value.
+fn time_series_range(start: Option<i64>, end: Option<i64>) -> database::TimeSeriesRange {
+    match (start, end) {
+        (Some(_), Some(_)) => database::TimeSeriesRange::Between { start, end },
+        (Some(start), None) => database::TimeSeriesRange::Between {
+            start: Some(start),
+            end: Some(start.saturating_add_unsigned(DEFAULT_TIME_SERIES_WIDTH_NANOS)),
+        },
+        (None, Some(end)) => database::TimeSeriesRange::Between {
+            start: Some(end.saturating_sub_unsigned(DEFAULT_TIME_SERIES_WIDTH_NANOS)),
+            end: Some(end),
+        },
+        (None, None) => database::TimeSeriesRange::Latest {
+            width: DEFAULT_TIME_SERIES_WIDTH_NANOS,
+        },
+    }
+}
+
+#[derive(Clone, Copy)]
+enum SeriesBudget {
+    Computation,
+    Response,
+}
+
+/// Refuses a series length `sum` over `budget`, advising the arguments the
+/// query can narrow: `start` and `end` unless `has_time`, and `size` for the
+/// response budget when `has_size`.
+fn check_series_budget(
+    sum: u128,
+    budget: SeriesBudget,
+    has_time: bool,
+    has_size: bool,
+) -> async_graphql::Result<()> {
+    let (name, limit) = match budget {
+        SeriesBudget::Computation => ("computation", COMPUTATION_SERIES_BUDGET),
+        SeriesBudget::Response => ("response", RESPONSE_SERIES_BUDGET),
+    };
+    if sum > limit {
+        let mut message = format!("{name} budget exceeded: series length sum {sum}, limit {limit}");
+        if !has_time {
+            message.push_str("; narrow the query period using start and end");
+        }
+        if has_size && matches!(budget, SeriesBudget::Response) {
+            message.push_str("; lower size");
+        }
+        return Err(async_graphql::Error::new(message));
+    }
+    Ok(())
 }
 
 fn zero_filled_length(series: &[TimeCount]) -> anyhow::Result<u128> {
@@ -1876,6 +1936,72 @@ impl TestSchema {
 #[cfg(test)]
 mod tests {
     use super::{AgentManager, Direction, MockPackageDeployer, OpaqueCursor, TestSchema, database};
+
+    #[test]
+    fn time_series_range_covers_two_hours_from_an_omitted_bound() {
+        use database::TimeSeriesRange::{Between, Latest};
+
+        const WIDTH: i64 = 7_200_000_000_000;
+        for (start, end, expected) in [
+            (
+                Some(-5),
+                Some(5),
+                Between {
+                    start: Some(-5),
+                    end: Some(5),
+                },
+            ),
+            (
+                Some(5),
+                Some(-5),
+                Between {
+                    start: Some(5),
+                    end: Some(-5),
+                },
+            ),
+            (
+                Some(1),
+                None,
+                Between {
+                    start: Some(1),
+                    end: Some(1 + WIDTH),
+                },
+            ),
+            (
+                None,
+                Some(1),
+                Between {
+                    start: Some(1 - WIDTH),
+                    end: Some(1),
+                },
+            ),
+            (
+                Some(i64::MAX - 1),
+                None,
+                Between {
+                    start: Some(i64::MAX - 1),
+                    end: Some(i64::MAX),
+                },
+            ),
+            (
+                None,
+                Some(i64::MIN + 1),
+                Between {
+                    start: Some(i64::MIN),
+                    end: Some(i64::MIN + 1),
+                },
+            ),
+            (
+                None,
+                None,
+                Latest {
+                    width: 7_200_000_000_000,
+                },
+            ),
+        ] {
+            assert_eq!(super::time_series_range(start, end), expected);
+        }
+    }
 
     #[test]
     fn vacant_slots_use_nanoseconds() {
