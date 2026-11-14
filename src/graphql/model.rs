@@ -9,6 +9,7 @@ use review_database::{self as database, UniqueKey, event::Direction};
 
 use super::{
     CutoffRate, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, MAX_TRENDI_ORDER, Role, RoleGuard,
+    SeriesBudget, check_series_budget,
     cluster::TimeCount,
     customer_access, customer_deletion_guard, fill_vacant_time_slots, get_trend,
     refusal::{RefusalCode, refusal},
@@ -16,9 +17,6 @@ use super::{
     training_result, zero_filled_length,
 };
 use crate::graphql::query;
-
-const COMPUTATION_SERIES_BUDGET: u128 = 1_000_000;
-const RESPONSE_SERIES_BUDGET: u128 = 100_000;
 
 const DEFAULT_MIN_SLOPE: f64 = 10.0;
 const DEFAULT_MIN_ZERO_COUNT_FOR_TREND: usize = 5;
@@ -184,7 +182,13 @@ impl ModelQuery {
         customer_access::load_accessible_model(ctx, "model", model)?;
         let store = crate::graphql::get_store(ctx)?;
         let map = store.time_series_map();
-        let time_series = map.get_top_time_series_of_model(model, time, start, end)?;
+        let range = if time.is_some() {
+            // The batch selected by `time` is not filtered by the range.
+            database::TimeSeriesRange::Between { start, end }
+        } else {
+            super::time_series_range(start, end)
+        };
+        let time_series = map.get_top_time_series_of_model(model, time, range)?;
 
         check_computation_budget(&time_series, time.is_some())?;
 
@@ -853,30 +857,6 @@ fn zero_fill_error(cluster_id: u32, error: &anyhow::Error) -> async_graphql::Err
     async_graphql::Error::new(format!("cannot zero-fill cluster {cluster_id}: {error}"))
 }
 
-#[derive(Clone, Copy)]
-enum SeriesBudget {
-    Computation,
-    Response,
-}
-
-fn check_series_budget(sum: u128, budget: SeriesBudget, has_time: bool) -> Result<()> {
-    let (name, limit) = match budget {
-        SeriesBudget::Computation => ("computation", COMPUTATION_SERIES_BUDGET),
-        SeriesBudget::Response => ("response", RESPONSE_SERIES_BUDGET),
-    };
-    if sum > limit {
-        let mut message = format!("{name} budget exceeded: series length sum {sum}, limit {limit}");
-        if !has_time {
-            message.push_str("; narrow the query period using start and end");
-        }
-        if matches!(budget, SeriesBudget::Response) {
-            message.push_str("; lower size");
-        }
-        return Err(async_graphql::Error::new(message));
-    }
-    Ok(())
-}
-
 fn check_computation_budget(
     columns: &[(Option<i32>, Vec<database::ClusterTimeSeries>)],
     has_time: bool,
@@ -888,7 +868,7 @@ fn check_computation_budget(
         sum += zero_filled_length(&cluster.time_counts)
             .map_err(|error| zero_fill_error(cluster.id, &error))?;
     }
-    check_series_budget(sum, SeriesBudget::Computation, has_time)
+    check_series_budget(sum, SeriesBudget::Computation, has_time, true)
 }
 
 fn check_response_budget(columns: &[TopTrendsByColumn], has_time: bool) -> Result<()> {
@@ -897,7 +877,7 @@ fn check_response_budget(columns: &[TopTrendsByColumn], has_time: bool) -> Resul
         .flat_map(|column| &column.trends)
         .map(|cluster| u128::try_from(cluster.series.len()).expect("usize fits in u128"))
         .sum();
-    check_series_budget(sum, SeriesBudget::Response, has_time)
+    check_series_budget(sum, SeriesBudget::Response, has_time, true)
 }
 
 #[derive(SimpleObject)]

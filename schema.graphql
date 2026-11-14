@@ -8487,10 +8487,22 @@ type Query {
 	"""
 	topIpAddressesOfCluster(model: ID!, clusterId: ID!, size: Int, previous: Boolean = false): [TopElementCountsByColumn!]!
 	"""
-	The time series of a cluster.
+	The time series of a cluster, by column, with vacant time slots filled
+	with 0.
+	
+	With both `start` and `end`, the series covers that period. With one of
+	them, it covers two hours from that bound, and with neither, the two
+	hours up to the latest value stored for the cluster.
 	
 	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
-	model of none of the caller's customers with `Forbidden`.
+	model of none of the caller's customers with `Forbidden`. A column whose
+	vacant slots cannot be filled, such as one with two values more than
+	the `i64` nanosecond range apart, is refused with `cannot zero-fill
+	column {columnIndex}: {error}`. A request whose filled series would
+	together hold more than 100,000 points is refused, before any series
+	is filled and whichever fields are selected, with `response budget
+	exceeded: series length sum {sum}, limit 100000; narrow the query
+	period using start and end`.
 	"""
 	topTimeSeriesOfCluster(		model: ID!,		clusterId: ID!,
 		"""

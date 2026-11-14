@@ -14,13 +14,14 @@ use review_database as database;
 
 use super::{
     CutoffRate, DEFAULT_CUTOFF_RATE, DEFAULT_TRENDI_ORDER, MAX_TRENDI_ORDER, Role, RoleGuard,
+    SeriesBudget,
     category::Category,
-    customer_access, get_trend,
+    check_series_budget, customer_access, fill_vacant_time_slots, get_trend,
     model::{ModelDigest, TopElementCountsByColumn},
     qualifier::Qualifier,
     slicing,
     status::Status,
-    training_result,
+    training_result, zero_filled_length,
 };
 use crate::graphql::{query, statistics::i64_to_naive_date_time};
 
@@ -132,10 +133,22 @@ impl ClusterQuery {
         Ok(counts.into_iter().map(Into::into).collect())
     }
 
-    /// The time series of a cluster.
+    /// The time series of a cluster, by column, with vacant time slots filled
+    /// with 0.
+    ///
+    /// With both `start` and `end`, the series covers that period. With one of
+    /// them, it covers two hours from that bound, and with neither, the two
+    /// hours up to the latest value stored for the cluster.
     ///
     /// An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
-    /// model of none of the caller's customers with `Forbidden`.
+    /// model of none of the caller's customers with `Forbidden`. A column whose
+    /// vacant slots cannot be filled, such as one with two values more than
+    /// the `i64` nanosecond range apart, is refused with `cannot zero-fill
+    /// column {columnIndex}: {error}`. A request whose filled series would
+    /// together hold more than 100,000 points is refused, before any series
+    /// is filled and whichever fields are selected, with `response budget
+    /// exceeded: series length sum {sum}, limit 100000; narrow the query
+    /// period using start and end`.
     #[allow(clippy::too_many_arguments)]
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
@@ -175,10 +188,26 @@ impl ClusterQuery {
         customer_access::load_accessible_model(ctx, "model", model)?;
         let store = crate::graphql::get_store(ctx)?;
         let map = store.time_series_map();
-        let time_series = map.get_top_time_series_of_cluster(model, id, start, end)?;
+        let (earliest, latest, columns) =
+            map.get_top_time_series_of_cluster(model, id, super::time_series_range(start, end))?;
+
+        check_response_budget(&columns)?;
+        // Fill once here so that `series` and `seriesTrend` share the result,
+        // and a filling error fails the query rather than a non-null field.
+        let columns = columns
+            .into_iter()
+            .map(|column| {
+                let time_counts = fill_vacant_time_slots(&column.time_counts)
+                    .map_err(|error| zero_fill_error(column.index, &error))?;
+                Ok(database::ColumnTimeSeries {
+                    index: column.index,
+                    time_counts,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(TimeSeriesResult::from_database(
-            time_series,
+            (earliest, latest, columns),
             cutoff_rate.unwrap_or(DEFAULT_CUTOFF_RATE),
             trendi_order.unwrap_or(DEFAULT_TRENDI_ORDER),
         ))
@@ -334,6 +363,34 @@ impl ClusterTotalCount {
     }
 }
 
+fn zero_fill_error(index: Option<i32>, error: &anyhow::Error) -> async_graphql::Error {
+    async_graphql::Error::new(format!(
+        "cannot zero-fill column {}: {error}",
+        column_index(index)
+    ))
+}
+
+/// Refuses columns whose zero-filled series would together exceed the
+/// response budget, without filling any of them.
+fn check_response_budget(columns: &[database::ColumnTimeSeries]) -> Result<()> {
+    // Each series has at most 2^64 slots over i64 timestamps. The in-memory
+    // collection has fewer than 2^64 columns, so u128 preserves the exact sum.
+    let mut sum = 0_u128;
+    for column in columns {
+        sum += zero_filled_length(&column.time_counts)
+            .map_err(|error| zero_fill_error(column.index, &error))?;
+    }
+    // Every filled series is returned, so the larger computation budget
+    // cannot be exceeded without exceeding this one.
+    check_series_budget(sum, SeriesBudget::Response, false, false)
+}
+
+/// Returns the `columnIndex` of a column with the given stored index.
+fn column_index(index: Option<i32>) -> usize {
+    // 100_000 means counting events themselves, not any other column values.
+    index.map_or(100_000, |i| i.to_usize().expect("safe: positive"))
+}
+
 struct TimeSeriesResult {
     inner: (Option<i64>, Option<i64>, Vec<database::ColumnTimeSeries>), //earliest, latest, series
     cutoff_rate: f64,
@@ -384,12 +441,7 @@ impl ColumnTimeSeries<'_> {
     /// The column index of the time series in string within the representable
     /// range of `usize`.
     async fn column_index(&self) -> StringNumber<usize> {
-        // 100_000 means counting events themselves, not any other column values.
-        StringNumber(
-            self.inner
-                .index
-                .map_or(100_000, |i| i.to_usize().expect("safe: positive")),
-        )
+        StringNumber(column_index(self.inner.index))
     }
 
     async fn series(&self) -> Vec<TimeCount> {
@@ -563,6 +615,9 @@ fn load_cluster_ids(
 
     Ok(ids)
 }
+
+#[cfg(test)]
+mod time_series_tests;
 
 #[cfg(test)]
 mod tests {
