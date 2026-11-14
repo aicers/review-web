@@ -379,6 +379,28 @@ async fn datetime_optional_bounds_keep_two_hour_windows() {
 }
 
 #[tokio::test]
+async fn datetime_unbounded_window_saturates_at_the_earliest_instant() {
+    let schema = schema_with_models_through(1).await;
+    // The latest value is under an hour after i64::MIN, so the two-hour
+    // window up to it would start before i64::MIN.
+    for index in 0..100_i64 {
+        let count = usize::try_from((20 - (index % 40).abs_diff(20)) * 100 + 100).unwrap();
+        insert(&schema, i64::MIN + index * 36_000_000_000, 0, count);
+    }
+    for (resolver, selection, path) in QUERIES {
+        let result = data(&schema, &query(resolver, selection, "")).await;
+        let expected: Vec<_> = (0..100_u32)
+            .map(|index| json!({"count": (20 - (index % 40).abs_diff(20)) * 100 + 100}))
+            .collect();
+        assert_eq!(
+            result.pointer(path),
+            Some(&json!(expected)),
+            "{resolver}: {result}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn datetime_ranges_describe_all_stored_data_in_their_scope() {
     let schema = schema_with_models_through(1).await;
     insert(&schema, -1, 0, 1);
