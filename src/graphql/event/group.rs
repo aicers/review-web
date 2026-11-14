@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     graphql::{Role, RoleGuard, filter::EventKind},
-    warn_with_username,
+    warn_with_caller,
 };
 
 const MAX_EVENT_FREQUENCY_SERIES_BUCKETS: usize = 10_000;
@@ -290,7 +290,7 @@ impl EventGroupQuery {
             let (key, event) = match item {
                 Ok(kv) => kv,
                 Err(e) => {
-                    warn_with_username!(ctx, "Invalid event: {:?}", e);
+                    warn_with_caller!(ctx, "Invalid event: {:?}", e);
                     continue;
                 }
             };
@@ -347,7 +347,7 @@ async fn count_events<T>(
         let (key, event) = match item {
             Ok(kv) => kv,
             Err(e) => {
-                warn_with_username!(ctx, "Invalid event: {:?}", e);
+                warn_with_caller!(ctx, "Invalid event: {:?}", e);
                 continue;
             }
         };
@@ -394,7 +394,7 @@ async fn count_events_by_network(
         let (key, event) = match item {
             Ok(kv) => kv,
             Err(e) => {
-                warn_with_username!(ctx, "Invalid event: {:?}", e);
+                warn_with_caller!(ctx, "Invalid event: {:?}", e);
                 continue;
             }
         };

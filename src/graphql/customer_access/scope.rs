@@ -132,14 +132,13 @@ mod tests {
     }
 
     impl TestContext {
-        fn new_without_account(username: &str) -> Self {
+        fn new_without_account() -> Self {
             let db_dir = tempfile::tempdir().expect("create data dir");
             let backup_dir = tempfile::tempdir().expect("create backup dir");
             let store = Store::new(db_dir.path(), backup_dir.path(), None).expect("create store");
             let store = Arc::new(RwLock::new(store));
             let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
                 .data(store)
-                .data(username.to_string())
                 .finish();
             Self {
                 _dir: db_dir,
@@ -172,7 +171,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_users_customers_scoped_user() {
-        let test_ctx = TestContext::new_without_account("scoped_user");
+        let test_ctx = TestContext::new_without_account();
         let res = test_ctx
             .execute_with_guard_and_customer_ids(
                 "{ usersCustomers }",
@@ -189,7 +188,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_users_customers_admin_user() {
-        let test_ctx = TestContext::new_without_account("admin_user");
+        let test_ctx = TestContext::new_without_account();
         let res = test_ctx
             .execute_with_guard_and_customer_ids(
                 "{ usersCustomers }",
@@ -206,7 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_users_customers_system_admin_ignores_customer_ids_context() {
-        let test_ctx = TestContext::new_without_account("admin_user");
+        let test_ctx = TestContext::new_without_account();
         let res = test_ctx
             .execute_with_guard_and_customer_ids(
                 "{ usersCustomers }",
@@ -223,7 +222,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_users_customers_mtls_scoped_user() {
-        let test_ctx = TestContext::new_without_account("scoped_user");
+        let test_ctx = TestContext::new_without_account();
         let res = test_ctx
             .execute_with_guard_and_customer_ids(
                 "{ usersCustomers }",
@@ -240,7 +239,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_users_customers_missing_customer_ids_context() {
-        let test_ctx = TestContext::new_without_account("scoped_user");
+        let test_ctx = TestContext::new_without_account();
         let res = test_ctx
             .execute_with_guard(
                 "{ usersCustomers }",
@@ -256,7 +255,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_customer_membership_scoped_user_allowed() {
-        let test_ctx = TestContext::new_without_account("scoped_user");
+        let test_ctx = TestContext::new_without_account();
         let request = Request::new(r#"{ checkCustomerMembership(customerId: "2") }"#)
             .data(crate::graphql::RoleGuard::Role(
                 crate::graphql::Role::SecurityMonitor,
@@ -269,7 +268,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_customer_membership_scoped_user_forbidden() {
-        let test_ctx = TestContext::new_without_account("scoped_user");
+        let test_ctx = TestContext::new_without_account();
         let request = Request::new(r#"{ checkCustomerMembership(customerId: "2") }"#)
             .data(crate::graphql::RoleGuard::Role(
                 crate::graphql::Role::SecurityMonitor,
@@ -283,7 +282,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_customer_membership_invalid_customer_id() {
-        let test_ctx = TestContext::new_without_account("scoped_user");
+        let test_ctx = TestContext::new_without_account();
         let request = Request::new(r#"{ checkCustomerMembership(customerId: "abc") }"#)
             .data(crate::graphql::RoleGuard::Role(
                 crate::graphql::Role::SecurityMonitor,
@@ -297,7 +296,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_customer_membership_admin_allowed() {
-        let test_ctx = TestContext::new_without_account("admin_user");
+        let test_ctx = TestContext::new_without_account();
         let request = Request::new(r#"{ checkCustomerMembership(customerId: "999") }"#).data(
             crate::graphql::RoleGuard::Role(crate::graphql::Role::SystemAdministrator),
         );

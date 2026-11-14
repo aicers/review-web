@@ -10,7 +10,7 @@ use tracing::info;
 
 use super::{ParseEnumError, Role, RoleGuard};
 use crate::graphql::query_with_constraints;
-use crate::info_with_username;
+use crate::info_with_caller;
 
 #[derive(Default)]
 pub(super) struct TemplateQuery;
@@ -84,7 +84,7 @@ impl TemplateMutation {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.template_map();
         map.insert(template)?;
-        info_with_username!(ctx, "Template {name} has been registered");
+        info_with_caller!(ctx, "Template {name} has been registered");
         Ok(name)
     }
 
@@ -96,7 +96,7 @@ impl TemplateMutation {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.template_map();
         map.remove(&name)?;
-        info_with_username!(ctx, "Template {name} has been deleted");
+        info_with_caller!(ctx, "Template {name} has been deleted");
         Ok(name)
     }
 
@@ -150,7 +150,7 @@ impl TemplateMutation {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.template_map();
         map.update(old, new)?;
-        info_with_username!(ctx, "Template {old_name} has been updated to {new_name}");
+        info_with_caller!(ctx, "Template {old_name} has been updated to {new_name}");
         Ok(true)
     }
 }

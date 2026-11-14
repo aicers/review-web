@@ -9,7 +9,7 @@ use review_database::{BackupConfig as DbBackupConfig, BackupConfigUpdate, Store,
 use tracing::info;
 
 use super::{Role, RoleGuard};
-use crate::info_with_username;
+use crate::info_with_caller;
 
 #[derive(SimpleObject)]
 pub struct BackupInfo {
@@ -132,7 +132,7 @@ impl DbManagementQuery {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn backups(&self, ctx: &Context<'_>) -> Result<Vec<BackupInfo>> {
         let store = ctx.data::<Arc<std::sync::RwLock<Store>>>()?;
-        info_with_username!(ctx, "Database backup list is being fetched");
+        info_with_caller!(ctx, "Database backup list is being fetched");
         let backup_infos = backup::list(store)?;
 
         // Convert from review_database::backup::BackupInfo to our GraphQL BackupInfo
@@ -171,14 +171,14 @@ impl DbManagementMutation {
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn backup(&self, ctx: &Context<'_>, num_of_backups_to_keep: u32) -> Result<bool> {
         let store = ctx.data::<Arc<std::sync::RwLock<Store>>>()?;
-        info_with_username!(ctx, "Database backup is being executed");
+        info_with_caller!(ctx, "Database backup is being executed");
         Ok(backup::create(store, false, num_of_backups_to_keep).is_ok())
     }
 
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)")]
     async fn restore_from_latest_backup(&self, ctx: &Context<'_>) -> Result<bool> {
         let store = ctx.data::<Arc<std::sync::RwLock<Store>>>()?;
-        info_with_username!(ctx, "Database is being restored from the latest backup");
+        info_with_caller!(ctx, "Database is being restored from the latest backup");
         backup::restore(store, None)?;
         Ok(true)
     }
@@ -195,9 +195,9 @@ impl DbManagementMutation {
     async fn restore_from_backup(&self, ctx: &Context<'_>, id: ID) -> Result<bool> {
         let id = id.as_str().parse::<u32>().map_err(|_| "invalid ID")?;
         let store = ctx.data::<Arc<std::sync::RwLock<Store>>>()?;
-        info_with_username!(ctx, "Database is being restored from backup {}", id);
+        info_with_caller!(ctx, "Database is being restored from backup {}", id);
         backup::restore(store, Some(id))?;
-        info_with_username!(ctx, "Database successfully restored from backup {}", id);
+        info_with_caller!(ctx, "Database successfully restored from backup {}", id);
         Ok(true)
     }
 
@@ -241,7 +241,7 @@ impl DbManagementMutation {
                 store.init_backup_config(&config)?;
             }
         }
-        info_with_username!(ctx, "Backup configuration has been set");
+        info_with_caller!(ctx, "Backup configuration has been set");
         Ok(config.into())
     }
 
@@ -279,7 +279,7 @@ impl DbManagementMutation {
             num_of_backups_to_keep: Some(new.num_of_backups_to_keep),
         };
         store.update_backup_config(&old_config, &update)?;
-        info_with_username!(ctx, "Backup configuration has been updated");
+        info_with_caller!(ctx, "Backup configuration has been updated");
         Ok(BackupConfig {
             backup_duration: new.backup_duration,
             backup_time: new.backup_time,

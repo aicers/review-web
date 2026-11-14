@@ -1490,7 +1490,7 @@ mod tests {
         let agent_manager: SharedAgentManager = Arc::new(MockAgentManager {
             online_apps_by_host_id: std::collections::HashMap::default(),
         });
-        TestSchema::new_with_params(agent_manager, None, "testuser").await
+        TestSchema::new_with_params(agent_manager, None).await
     }
 
     #[tokio::test]

@@ -852,13 +852,7 @@ fn retry(
             customer_id = job.customer_id,
             hosts = ?give_up.hosts,
             data_stores = ?give_up.data_stores,
-            caller = %caller.map_or_else(
-                || "an unauthenticated caller".to_string(),
-                |identity| format!(
-                    "{}.{}.{}.{}",
-                    identity.instance, identity.service, identity.host, identity.domain
-                ),
-            ),
+            caller = %crate::auth::Caller(caller),
             "giving up hosts and Data Stores of a customer deletion"
         );
         persist_give_up(store, job, &updated_job)?;
