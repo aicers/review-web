@@ -4,16 +4,12 @@ use async_graphql::{Context, Object, OutputType, Result, SimpleObject};
 use num_traits::ToPrimitive;
 use review_database::event::{Direction, EventFilter};
 use review_database::{Event, IndexedTable, Iterable};
-use tracing::warn;
 
 use super::{
     EventListFilterInput, ThreatLevel, earliest, empty_time_range, from_filter_input, latest,
-    timestamp_nanos,
+    readable_event, timestamp_nanos,
 };
-use crate::{
-    graphql::{Role, RoleGuard, filter::EventKind},
-    warn_with_username,
-};
+use crate::graphql::{Role, RoleGuard, filter::EventKind};
 
 const MAX_EVENT_FREQUENCY_SERIES_BUCKETS: usize = 10_000;
 
@@ -287,12 +283,8 @@ impl EventGroupQuery {
         let mut series = vec![0; usize::try_from(bucket_count)?];
         let db = store.events();
         for item in db.iter_from(earliest(Some(start))?, Direction::Forward) {
-            let (key, event) = match item {
-                Ok(kv) => kv,
-                Err(e) => {
-                    warn_with_username!(ctx, "Invalid event: {:?}", e);
-                    continue;
-                }
+            let Some((key, event)) = readable_event(ctx, item)? else {
+                continue;
             };
             let event_nanos = key >> 64;
             if event_nanos >= end_nanos {
@@ -344,12 +336,8 @@ async fn count_events<T>(
     let db = store.events();
     let mut counter = HashMap::new();
     for item in db.iter_from(start, Direction::Forward) {
-        let (key, event) = match item {
-            Ok(kv) => kv,
-            Err(e) => {
-                warn_with_username!(ctx, "Invalid event: {:?}", e);
-                continue;
-            }
+        let Some((key, event)) = readable_event(ctx, item)? else {
+            continue;
         };
         if key > end {
             break;
@@ -391,12 +379,8 @@ async fn count_events_by_network(
     let db = store.events();
     let mut counter = HashMap::new();
     for item in db.iter_from(start, Direction::Forward) {
-        let (key, event) = match item {
-            Ok(kv) => kv,
-            Err(e) => {
-                warn_with_username!(ctx, "Invalid event: {:?}", e);
-                continue;
-            }
+        let Some((key, event)) = readable_event(ctx, item)? else {
+            continue;
         };
         if key > end {
             break;

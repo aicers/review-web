@@ -39,7 +39,7 @@ use num_traits::FromPrimitive;
 use review_database::{
     self as database, EventKind, ExclusionReason, IndexedTable, Iterable, Store, TriageExclusion,
     TriagePolicyInput as DbTriagePolicyInput,
-    event::{Direction, EventFilter, EventIterator, InternalNetworks, RecordType},
+    event::{Direction, EventFilter, EventIterator, InternalNetworks, InvalidEvent, RecordType},
     types::{Endpoint, EventCategory, HostNetworkGroup},
 };
 use tokio::time;
@@ -1108,12 +1108,8 @@ impl EventTotalCount {
 
         let mut count = 0;
         for item in iter {
-            let (key, event) = match item {
-                Ok(kv) => kv,
-                Err(e) => {
-                    warn_with_username!(ctx, "Invalid event: {:?}", e);
-                    continue;
-                }
+            let Some((key, event)) = readable_event(ctx, item)? else {
+                continue;
             };
             if key > last {
                 break;
@@ -1370,12 +1366,8 @@ async fn load_event(ctx: &Context<'_>, id: &ID) -> Result<Option<Event>> {
     let Some(item) = iter.next() else {
         return Ok(None);
     };
-    let (found_key, mut event) = match item {
-        Ok(kv) => kv,
-        Err(e) => {
-            warn_with_username!(ctx, "Invalid event: {:?}", e);
-            return Ok(None);
-        }
+    let Some((found_key, mut event)) = readable_event(ctx, item)? else {
+        return Ok(None);
     };
     if found_key != key {
         return Ok(None);
@@ -1524,6 +1516,27 @@ fn latest_before(before: &str) -> Result<Option<i128>> {
     Ok(before.checked_sub(1))
 }
 
+fn is_event_read_failure(error: &InvalidEvent) -> bool {
+    matches!(error, InvalidEvent::Iteration(_))
+}
+
+fn readable_event(
+    ctx: &Context<'_>,
+    item: std::result::Result<(i128, database::Event), InvalidEvent>,
+) -> anyhow::Result<Option<(i128, database::Event)>> {
+    match item {
+        Ok(event) => Ok(Some(event)),
+        Err(e) if is_event_read_failure(&e) => {
+            error_with_username!(ctx, "Failed to read events: {e:?}");
+            Err(anyhow!("failed to read events"))
+        }
+        Err(e) => {
+            warn_with_username!(ctx, "Invalid event: {e:?}");
+            Ok(None)
+        }
+    }
+}
+
 fn iter_to_events(
     ctx: &Context<'_>,
     iter: EventIterator,
@@ -1535,12 +1548,8 @@ fn iter_to_events(
     let mut events = Vec::new();
     let mut exceeded = false;
     for item in iter {
-        let (key, event) = match item {
-            Ok(kv) => kv,
-            Err(e) => {
-                warn_with_username!(ctx, "Invalid event: {:?}", e);
-                continue;
-            }
+        let Some((key, event)) = readable_event(ctx, item)? else {
+            continue;
         };
         if !(cond)(key.cmp(&to)) {
             break;
@@ -1758,12 +1767,8 @@ fn iter_to_events_with_triage(
     let mut events = Vec::new();
     let mut exceeded = false;
     for item in iter {
-        let (key, mut event) = match item {
-            Ok(kv) => kv,
-            Err(e) => {
-                warn_with_username!(ctx, "Invalid event: {:?}", e);
-                continue;
-            }
+        let Some((key, mut event)) = readable_event(ctx, item)? else {
+            continue;
         };
         if !(cond)(key.cmp(&to)) {
             break;
@@ -1812,6 +1817,162 @@ mod tests {
     };
 
     use crate::graphql::{Role, RoleGuard, TestSchema};
+
+    #[test]
+    fn undecodable_event_records_are_skippable() {
+        use review_database::event::{EventDb, InvalidEvent};
+
+        let dir = tempfile::tempdir().unwrap();
+        let raw = rocksdb::OptimisticTransactionDB::open_default(dir.path()).unwrap();
+        let events = EventDb::new(&raw);
+        let keys: Vec<_> = (0..3)
+            .map(|second| {
+                events
+                    .put(&event_message_at_timestamp(
+                        Timestamp::from_second(second).unwrap(),
+                        1,
+                        2,
+                        Some(EventCategory::CommandAndControl),
+                        "sensor1",
+                    ))
+                    .unwrap()
+            })
+            .collect();
+        raw.put(keys[1].to_be_bytes(), [0xff]).unwrap();
+        let mut iter = events.iter_forward();
+        assert!(matches!(iter.next(), Some(Ok((key, _))) if key == keys[0]));
+        let error = iter.next().unwrap().err().unwrap();
+        assert!(matches!(&error, InvalidEvent::Value(_)));
+        assert!(!super::is_event_read_failure(&error));
+        assert!(matches!(iter.next(), Some(Ok((key, _))) if key == keys[2]));
+        assert!(iter.next().is_none());
+        drop(iter);
+
+        raw.put([0xff], [0xff]).unwrap();
+        let error = events.iter_forward().find_map(Result::err).unwrap();
+        assert!(matches!(&error, InvalidEvent::Key(_)));
+        assert!(!super::is_event_read_failure(&error));
+    }
+
+    fn sst_files(dir: &std::path::Path) -> std::collections::HashSet<std::path::PathBuf> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "sst"))
+            .collect()
+    }
+
+    async fn corrupted_event_store() -> (TestSchema, Vec<i128>, i128, i128) {
+        use std::io::{Seek, SeekFrom, Write};
+
+        use review_database::event::InvalidEvent;
+
+        let schema = TestSchema::new().await;
+        let db_dir = schema.dir.path().join("states.db");
+        let existing = sst_files(&db_dir);
+        let keys = {
+            let store = schema.store();
+            let events = store.events();
+            (0..20_000)
+                .map(|second| {
+                    events
+                        .put(&event_message_at_timestamp(
+                            Timestamp::from_second(second).unwrap(),
+                            1,
+                            2,
+                            Some(EventCategory::CommandAndControl),
+                            "sensor1",
+                        ))
+                        .unwrap()
+                })
+                .collect::<Vec<_>>()
+        };
+        review_database::backup::create(&schema.store, true, 1).unwrap();
+        let new_files = sst_files(&db_dir);
+        let created: Vec<_> = new_files.difference(&existing).collect();
+        assert_eq!(created.len(), 1);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(created[0])
+            .unwrap();
+        file.seek(SeekFrom::Start(file.metadata().unwrap().len() / 3))
+            .unwrap();
+        file.write_all(&[0; 64]).unwrap();
+        file.sync_all().unwrap();
+
+        let (last_good, first_bad) = {
+            let store = schema.store();
+            let events = store.events();
+            let mut last_good = None;
+            let mut failure = None;
+            for (index, item) in events.iter_forward().enumerate() {
+                match item {
+                    Ok((key, _)) => last_good = Some(key),
+                    Err(error) => {
+                        assert!(matches!(&error, InvalidEvent::Iteration(error)
+                            if error.kind() == rocksdb::ErrorKind::Corruption));
+                        assert!(super::is_event_read_failure(&error));
+                        failure = Some((last_good.unwrap(), keys[index]));
+                        break;
+                    }
+                }
+            }
+            failure.expect("the damaged SST block must produce an iteration failure")
+        };
+        (schema, keys, last_good, first_bad)
+    }
+
+    #[tokio::test]
+    async fn corrupted_event_store_returns_field_errors() {
+        let (schema, keys, last_good, first_bad) = corrupted_event_store().await;
+        let after_bad = keys.iter().copied().find(|key| *key > first_bad).unwrap();
+        let cases = [
+            ("eventList(filter: {}) { totalCount }".to_string(), serde_json::json!({"eventList": null}), vec!["eventList", "totalCount"]),
+            ("eventListWithTriage(filter: {}) { totalCount }".to_string(), serde_json::json!({"eventListWithTriage": null}), vec!["eventListWithTriage", "totalCount"]),
+            (format!("eventList(filter: {{}}, after: \"{last_good}\", first: 100) {{ edges {{ cursor }} }}"), serde_json::Value::Null, vec!["eventList"]),
+            (format!("eventListWithTriage(filter: {{}}, after: \"{last_good}\", first: 100) {{ edges {{ cursor }} }}"), serde_json::Value::Null, vec!["eventListWithTriage"]),
+            (format!("eventList(filter: {{}}, before: \"{after_bad}\", last: 100) {{ edges {{ cursor }} }}"), serde_json::Value::Null, vec!["eventList"]),
+            (format!("event(id: \"{first_bad}\") {{ __typename }}"), serde_json::Value::Null, vec!["event"]),
+            ("eventCountsByKind(filter: {}, first: 10) { counts }".to_string(), serde_json::Value::Null, vec!["eventCountsByKind"]),
+            ("eventCountsByNetwork(filter: {}, first: 10) { counts }".to_string(), serde_json::Value::Null, vec!["eventCountsByNetwork"]),
+            (r#"eventFrequencySeries(filter: {start: "1970-01-01T00:00:00Z", end: "1970-01-01T05:33:20Z"}, period: 20000)"#.to_string(), serde_json::Value::Null, vec!["eventFrequencySeries"]),
+        ];
+        for (query, data, path) in cases {
+            let response = schema
+                .execute_as_system_admin(&format!("{{ {query} }}"))
+                .await;
+            assert_eq!(response.data.into_json().unwrap(), data, "{query}");
+            assert_eq!(response.errors.len(), 1, "{query}: {:?}", response.errors);
+            let error = response.errors.first().unwrap();
+            assert_eq!(error.message, "failed to read events", "{query}");
+            assert_eq!(
+                serde_json::to_value(&error.path).unwrap(),
+                serde_json::json!(path),
+                "{query}"
+            );
+            if let Some(source) = &error.source {
+                if let Some(source) = source.downcast_ref::<anyhow::Error>() {
+                    assert_eq!(source.chain().count(), 1);
+                    assert_eq!(format!("{source:#}"), "failed to read events");
+                } else {
+                    assert_eq!(
+                        source.downcast_ref::<String>().unwrap(),
+                        "failed to read events"
+                    );
+                }
+            }
+        }
+
+        // An independently resolved sibling can still read an unaffected range.
+        let response = schema
+            .execute_as_system_admin(&format!(
+                "{{ eventList(filter: {{}}) {{ totalCount }} event(id: \"{}\") {{ __typename }} }}",
+                keys[0]
+            ))
+            .await;
+        assert_eq!(response.errors.len(), 1);
+        assert!(!response.data.into_json().unwrap()["event"].is_null());
+    }
 
     /// The `Event.sensor` of events emitted by the test node whose hostname is
     /// `sensor1`.
