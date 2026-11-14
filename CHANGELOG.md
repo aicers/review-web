@@ -20,9 +20,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   apart, which used to be returned as is, now fails with `cannot zero-fill
   column {columnIndex}: {error}`.
 - An error while iterating events in RocksDB is reported as the field error
-  `failed to read events` by `totalCount`, the `eventCountsBy*` fields and
-  `eventFrequencySeries`, instead of returning the counts read before it as a
-  complete answer.
+  `failed to read events`, instead of an answer built from the events read
+  before it. This covers `edges` and `totalCount` of `eventList` and
+  `eventListWithTriage`, which returned that partial page or count,
+  `event(id:)`, which returned `null`, and the `eventCountsBy*` fields and
+  `eventFrequencySeries`, which counted only those events. An event record
+  that cannot be decoded is still skipped.
 
 ### Fixed
 
