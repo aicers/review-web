@@ -1102,7 +1102,7 @@ mod tests {
     async fn recording_schema() -> (TestSchema, Deliveries) {
         let (agent_manager, deliveries): (SharedAgentManager, Deliveries) =
             DeliveryRecorder::boxed();
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         (schema, deliveries)
     }
 

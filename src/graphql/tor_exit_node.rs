@@ -210,7 +210,7 @@ mod tests {
     #[tokio::test]
     async fn update_broadcasts_the_stored_list_once() {
         let (agent_manager, broadcasts) = BroadcastAgentManager::boxed(false);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let res = schema
             .execute_as_system_admin(
@@ -236,7 +236,7 @@ mod tests {
     #[tokio::test]
     async fn update_succeeds_when_broadcast_fails() {
         let (agent_manager, broadcasts) = BroadcastAgentManager::boxed(true);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let res = schema
             .execute_as_system_admin(

@@ -20,7 +20,7 @@ use super::customer::{
 use super::customer_access::check_customer_membership;
 use super::node::{SEMI_SUPERVISED_AGENT, agent_lookup_key_service_token};
 use super::{Role, RoleGuard, agent_lookup_keys_by_customer_id};
-use crate::{error_with_username, info_with_username};
+use crate::{error_with_caller, info_with_caller};
 
 /// The most networks one customer may own.
 const MAX_NETWORKS_PER_CUSTOMER: usize = 256;
@@ -92,7 +92,7 @@ impl CustomerNetworkMutation {
                 ReplaceOutcome::Written { previous } => previous,
                 ReplaceOutcome::Stale { stored } => return Err(stale_revision(stored)),
             };
-            info_with_username!(
+            info_with_caller!(
                 ctx,
                 "Networks of customer {customer_id} have been replaced at revision {revision}"
             );
@@ -124,7 +124,7 @@ impl CustomerNetworkMutation {
             if !store.customer_networks_map().remove(customer_id)? {
                 return Ok(false);
             }
-            info_with_username!(ctx, "Networks of customer {customer_id} have been removed");
+            info_with_caller!(ctx, "Networks of customer {customer_id} have been removed");
             hog_push(
                 ctx,
                 &store,
@@ -320,7 +320,7 @@ pub(super) fn hog_agent_lookup_keys(
     let agent_lookup_keys = match agent_lookup_keys_by_customer_id(store) {
         Ok(mut by_customer) => by_customer.remove(&customer_id)?,
         Err(e) => {
-            error_with_username!(
+            error_with_caller!(
                 ctx,
                 "Failed to find the agents of customer {customer_id} to send its {what} to: {e:?}"
             );
@@ -342,7 +342,7 @@ pub(super) fn hog_agent_lookup_keys(
 /// already stored, and hog pulls the list again when it reconnects.
 async fn send_push(ctx: &Context<'_>, customer_id: u32, push: NetworksTargetAgentLookupKeysPair) {
     if let Err(e) = send_agent_specific_customer_networks(ctx, &[push]).await {
-        error_with_username!(
+        error_with_caller!(
             ctx,
             "Failed to send the networks of customer {customer_id} to its agents: {e:?}"
         );

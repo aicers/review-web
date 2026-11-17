@@ -246,7 +246,7 @@ pub(super) async fn paused_schema(kind: PushKind) -> (TestSchema, Pushes, Arc<Pa
 
 async fn schema_with(failing: bool, pause: Option<(PushKind, Arc<Pause>)>) -> (TestSchema, Pushes) {
     let (agent_manager, pushes) = RecordingAgentManager::boxed_with(failing, pause);
-    let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+    let schema = TestSchema::new_with_params(agent_manager, None).await;
     (schema, pushes)
 }
 

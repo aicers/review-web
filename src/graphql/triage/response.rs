@@ -17,7 +17,7 @@ use crate::graphql::customer_access::{
 use crate::graphql::{
     cluster::try_id_args_into_ints, network::id_args_into_uints, query_with_constraints,
 };
-use crate::info_with_username;
+use crate::info_with_caller;
 
 #[allow(clippy::module_name_repetitions)]
 pub struct TriageResponse {
@@ -143,7 +143,7 @@ impl super::TriageResponseQuery {
 
         if let Some(ref triage_response) = response {
             let tag_ids_str = triage_response.inner.tag_ids().iter().join(", ");
-            info_with_username!(
+            info_with_caller!(
                 ctx,
                 "Retrieved TriageResponse: id: {}, sensor: \"{}\", time: {}, tag_ids: [{}], remarks: \"{}\"",
                 triage_response.inner.id,
@@ -153,7 +153,7 @@ impl super::TriageResponseQuery {
                 triage_response.inner.remarks
             );
         } else {
-            info_with_username!(
+            info_with_caller!(
                 ctx,
                 "No TriageResponse found for sensor: \"{}\", time: {}",
                 sensor,
@@ -243,7 +243,7 @@ impl super::TriageResponseMutation {
         let store = crate::graphql::get_store(ctx)?;
         let map = store.triage_response_map();
         let id = map.put(pol)?;
-        info_with_username!(
+        info_with_caller!(
             ctx,
             "Triage response has been registered: id: {}, sensor: \"{}\", time: {}, tag_ids: [{}], remarks: \"{}\"",
             id,
@@ -288,7 +288,7 @@ impl super::TriageResponseMutation {
         let mut removed = Vec::<String>::with_capacity(ids.len());
         for i in ids {
             let _key = map.remove(i)?;
-            info_with_username!(ctx, "Triage response {i} has been deleted");
+            info_with_caller!(ctx, "Triage response {i} has been deleted");
 
             removed.push(i.to_string());
         }
@@ -327,7 +327,7 @@ impl super::TriageResponseMutation {
         let old_update: review_database::TriageResponseUpdate = old.try_into()?;
         let new_update: review_database::TriageResponseUpdate = new.try_into()?;
         map.update(i, &old_update, &new_update)?;
-        info_with_username!(
+        info_with_caller!(
             ctx,
             "Updated TriageResponse: id: {}, old_tag_ids: [{}], new_tag_ids: [{}], old_remarks: \"{}\", new_remarks: \"{}\"",
             i,

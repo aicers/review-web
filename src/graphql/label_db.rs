@@ -3,7 +3,7 @@ use review_database::{self as database, LabelDbRuleKind as DbLabelDbRuleKind};
 use tracing::info;
 
 use super::{Role, RoleGuard, triage::ThreatCategory};
-use crate::info_with_username;
+use crate::info_with_caller;
 
 #[derive(Default)]
 pub(super) struct LabelDbQuery;
@@ -29,7 +29,7 @@ impl LabelDbQuery {
         let store = super::get_store(ctx)?;
         let table = store.label_db_map();
 
-        info_with_username!(ctx, "Label DB list requested");
+        info_with_caller!(ctx, "Label DB list requested");
         Ok(table.get_list()?.into_iter().map(Into::into).collect())
     }
 
@@ -80,7 +80,7 @@ impl LabelDbMutation {
         let store = super::get_store(ctx)?;
         let table = store.label_db_map();
         table.insert(label_db)?;
-        info_with_username!(ctx, "Label DB {} has been registered", output.name);
+        info_with_caller!(ctx, "Label DB {} has been registered", output.name);
 
         Ok(output)
     }
@@ -104,7 +104,7 @@ impl LabelDbMutation {
                 Err(e) => return Err(format!("{e:?}").into()),
             }
         }
-        info_with_username!(ctx, "Label DB {:?} has been deleted", removed);
+        info_with_caller!(ctx, "Label DB {:?} has been deleted", removed);
         Ok(removed)
     }
 
@@ -130,7 +130,7 @@ impl LabelDbMutation {
         let table = store.label_db_map();
 
         table.update(&name, label_db)?;
-        info_with_username!(ctx, "Label DB {name} has been updated to {}", output.name);
+        info_with_caller!(ctx, "Label DB {name} has been updated to {}", output.name);
 
         Ok(output)
     }

@@ -17,7 +17,7 @@ const MUTATIONS: [&str; 2] = ["applyNode", "applyNodeDraft"];
 
 async fn recording_schema() -> (TestSchema, Deliveries) {
     let (agent_manager, deliveries) = DeliveryRecorder::boxed();
-    let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+    let schema = TestSchema::new_with_params(agent_manager, None).await;
     (schema, deliveries)
 }
 

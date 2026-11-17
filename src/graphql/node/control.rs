@@ -27,7 +27,7 @@ use crate::graphql::{
     network_list::lock_network_lists,
     node::input::NodeInput,
 };
-use crate::{error_with_username, info_with_username, warn_with_username};
+use crate::{error_with_caller, info_with_caller, warn_with_caller};
 
 #[derive(SimpleObject)]
 pub(super) struct AgentNotifyAttempt {
@@ -168,7 +168,7 @@ impl NodeControlMutation {
         customer_access::check_hostname_access(ctx, &hostname)?;
 
         let agents = ctx.data::<SharedAgentManager>()?;
-        info_with_username!(ctx, "Reboot request sent to {hostname}");
+        info_with_caller!(ctx, "Reboot request sent to {hostname}");
         agents.reboot(&hostname).await?;
         update_agent_status_to_unknown(ctx, &hostname);
         Ok(hostname)
@@ -180,7 +180,7 @@ impl NodeControlMutation {
         customer_access::check_hostname_access(ctx, &hostname)?;
 
         let agents = ctx.data::<SharedAgentManager>()?;
-        info_with_username!(ctx, "Shutdown request sent to {hostname}");
+        info_with_caller!(ctx, "Shutdown request sent to {hostname}");
         agents.halt(&hostname).await?;
         update_agent_status_to_unknown(ctx, &hostname);
         Ok(hostname)
@@ -265,7 +265,7 @@ impl NodeControlMutation {
             )
             .await?;
 
-            info_with_username!(
+            info_with_caller!(
                 ctx,
                 "[{}] Node ID {i} - Node's drafts are applied.\nName: {}, Name draft: {}\nProfile: {}, Profile draft: {}",
                 chrono::Utc::now(),
@@ -293,7 +293,7 @@ impl NodeControlMutation {
                 .unwrap_or_default();
 
             if hostname.is_empty() {
-                info_with_username!(
+                info_with_caller!(
                     ctx,
                     "Node ID {i} - Node's agents are not notified because the hostname is empty.",
                 );
@@ -307,13 +307,13 @@ impl NodeControlMutation {
                 )
                 .await
                 {
-                    warn_with_username!(
+                    warn_with_caller!(
                         ctx,
                         "Failed to notify agents for node {i} to be updated. This failure may impact configuration synchronization.\nDetails: {e:?}"
                     );
                 }
 
-                info_with_username!(
+                info_with_caller!(
                     ctx,
                     "[{}] Node ID {i} - Node's agents are notified to be updated. {:?}",
                     chrono::Utc::now(),
@@ -400,7 +400,7 @@ impl NodeControlMutation {
                 .profile_draft
                 .as_ref()
                 .map_or_default(ToString::to_string);
-            info_with_username!(
+            info_with_caller!(
                 ctx,
                 "[{now}] Node ID {i} - Node's drafts are applied.\nName: {name}, Name draft: {name_draft}\nProfile: {profile}, Profile draft: {profile_draft}",
             );
@@ -642,7 +642,7 @@ async fn reapply_sensor(
 
     // Logged before the call, as the deploy mutations log theirs, so a change to or from `root` is
     // in the log whatever review answers.
-    info_with_username!(
+    info_with_caller!(
         ctx,
         "Re-apply of {target} instance {instance} on {hostname} as {derived} (was {recorded}) requested"
     );
@@ -652,7 +652,7 @@ async fn reapply_sensor(
     {
         Ok((DeployOutcome::Applied, _)) => AgentNotifyAttempt::ok(key),
         Ok((DeployOutcome::Accepted, _)) => {
-            info_with_username!(
+            info_with_caller!(
                 ctx,
                 "Re-apply of {target} instance {instance} on {hostname} as {derived} dispatched; its outcome is pending"
             );
@@ -926,7 +926,7 @@ async fn update_db(
         let mut sensor_names = customer_access::event_sensor_names(&stored);
         sensor_names.extend(customer_access::event_sensor_names(&updated));
         sampling::generators_of_node(&store, i, &sensor_names).unwrap_or_else(|e| {
-            error_with_username!(
+            error_with_caller!(
                 ctx,
                 "Failed to find the Time Series Generators of node {i} to tell of its customer or hostname change: {}",
                 e.message
@@ -969,14 +969,14 @@ async fn send_customer_change_if_needed(ctx: &Context<'_>, i: u32, node: &NodeIn
             .map(|agent| gen_agent_lookup_key(&agent.key, hostname))
             .collect::<Vec<String>>();
         let Ok(customer_id) = customer_id.parse::<u32>() else {
-            error_with_username!(
+            error_with_caller!(
                 ctx,
                 "Failed to parse customer ID from node {i} for broadcasting customer change"
             );
             return;
         };
         if let Err(e) = send_customer_change(ctx, i, customer_id, agent_lookup_keys).await {
-            error_with_username!(
+            error_with_caller!(
                 ctx,
                 "Failed to broadcast customer change for customer ID {customer_id} on node {i}. The failure did not affect the node application operation. Error: {e:?}",
             );
@@ -1013,7 +1013,7 @@ async fn send_customer_change(
         pair(get_customer_networks(&store, customer_id)?)
     };
     if let Err(e) = send_agent_specific_customer_networks(ctx, &[network_list]).await {
-        error_with_username!(ctx, "Failed to broadcast internal networks: {e:?}");
+        error_with_caller!(ctx, "Failed to broadcast internal networks: {e:?}");
     }
 
     // hog pulls its allowlist and blocklist only when it connects, so a node
@@ -1044,17 +1044,17 @@ async fn send_customer_change(
         }
     };
     let Some((allow_list, block_list)) = lists else {
-        info_with_username!(
+        info_with_caller!(
             ctx,
             "Node {node_id} no longer belongs to customer {customer_id}; its allowlist and blocklist are left to the later change"
         );
         return Ok(());
     };
     if let Err(e) = send_agent_specific_allow_networks(ctx, &[allow_list]).await {
-        error_with_username!(ctx, "Failed to broadcast allowlist: {e:?}");
+        error_with_caller!(ctx, "Failed to broadcast allowlist: {e:?}");
     }
     if let Err(e) = send_agent_specific_block_networks(ctx, &[block_list]).await {
-        error_with_username!(ctx, "Failed to broadcast blocklist: {e:?}");
+        error_with_caller!(ctx, "Failed to broadcast blocklist: {e:?}");
     }
 
     Ok(())
@@ -1107,7 +1107,7 @@ mod tests {
             ],
         });
 
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         // check empty
         let res = schema
@@ -2526,7 +2526,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
         });
 
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         // insert node
         let res = schema
@@ -2674,7 +2674,7 @@ mod tests {
             ],
         });
 
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         // insert node
         let res = schema
@@ -2765,7 +2765,7 @@ mod tests {
             ],
         });
 
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         // insert node
         let res = schema
@@ -2847,7 +2847,7 @@ mod tests {
             ],
         });
 
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         // insert node
         let res = schema
@@ -2927,7 +2927,7 @@ mod tests {
             available_agents: vec![test_agent_lookup_key("unsupervised", "all-in-one")],
         });
 
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         // insert node with external service
         let res = schema
@@ -3112,7 +3112,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
         });
 
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         // insert node
         let res = schema
@@ -3387,7 +3387,7 @@ mod tests {
             available_agents: vec![test_agent_lookup_key("semi-supervised", "analysis")],
         });
 
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         // Insert a node with hostname "analysis" and an agent with ENABLED status
         let res = schema
@@ -3478,7 +3478,7 @@ mod tests {
             available_agents: vec![test_agent_lookup_key("semi-supervised", "analysis")],
         });
 
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         // Insert a node with hostname "analysis" and an agent with ENABLED status
         let res = schema
@@ -3568,7 +3568,7 @@ mod tests {
             online_apps_by_host_id,
             available_agents: vec![test_agent_lookup_key("semi-supervised", "host-customer-1")],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let id0 = insert_active_node(&schema.store(), "shutdown_target", 1, "host-customer-1");
         assert_eq!(id0, 0);
@@ -3601,7 +3601,7 @@ mod tests {
             online_apps_by_host_id,
             available_agents: vec![test_agent_lookup_key("semi-supervised", "host-customer-2")],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let id0 = insert_active_node(&schema.store(), "shutdown_target", 2, "host-customer-2");
         assert_eq!(id0, 0);
@@ -3624,7 +3624,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
         });
 
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let res = schema
             .execute_as_system_admin(
@@ -3642,7 +3642,7 @@ mod tests {
         let agent_manager: SharedAgentManager = Arc::new(FailingMockAgentManager {
             online_apps_by_host_id: HashMap::new(),
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let hostname = gethostname::gethostname().to_string_lossy().into_owned();
         assert_ne!(hostname, "");
 
@@ -3660,7 +3660,7 @@ mod tests {
         let agent_manager: SharedAgentManager = Arc::new(FailingMockAgentManager {
             online_apps_by_host_id: HashMap::new(),
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let hostname = gethostname::gethostname().to_string_lossy().into_owned();
         assert_ne!(hostname, "");
 
@@ -3683,7 +3683,7 @@ mod tests {
                 online_apps_by_host_id: HashMap::new(),
                 available_agents: vec![],
             });
-            let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+            let schema = TestSchema::new_with_params(agent_manager, None).await;
             let id = put_node_with_agents(
                 &schema.store(),
                 "manager",
@@ -3741,7 +3741,7 @@ mod tests {
         let agent_manager: SharedAgentManager = Arc::new(FailingMockAgentManager {
             online_apps_by_host_id: HashMap::new(),
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let id0 = insert_active_node(&schema.store(), "reboot_target", 1, "host-customer-1");
         assert_eq!(id0, 0);
@@ -3770,7 +3770,7 @@ mod tests {
             online_apps_by_host_id,
             available_agents: vec![test_agent_lookup_key("semi-supervised", "host-customer-2")],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let id0 = insert_active_node(&schema.store(), "reboot_target", 2, "host-customer-2");
         assert_eq!(id0, 0);
@@ -3793,7 +3793,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let res = schema
             .execute_as_system_admin(
@@ -3846,7 +3846,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let res = schema
             .execute_as_system_admin(
@@ -3901,7 +3901,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let res = schema
             .execute_as_system_admin(
@@ -3952,7 +3952,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let res = schema
             .execute_as_system_admin(
@@ -4080,7 +4080,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![test_agent_lookup_key("unsupervised", "all-in-one")],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let res = schema
             .execute_as_system_admin(
@@ -4168,7 +4168,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let store = schema.store();
         let id = put_node_with_agents(
@@ -4234,7 +4234,7 @@ mod tests {
     #[allow(clippy::too_many_lines)] // two nodes and the three pushes each receives
     async fn test_apply_node_draft_customer_change() {
         let (agent_manager, pushes) = PushRecordingAgentManager::boxed();
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         // Customer 1 has an allowlist and a blocklist; customer 2 has none.
         let allowlist = group(&[], &["10.0.0.0/8"], &[]);
@@ -4817,7 +4817,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let store = schema.store();
         let id = put_node_with_agents(
@@ -4908,7 +4908,7 @@ mod tests {
                 test_agent_lookup_key("hog", "mixed"),
             ],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let store = schema.store();
         let id = put_node_with_agents(
@@ -4968,7 +4968,7 @@ mod tests {
                 test_agent_lookup_key("sensor", "subset"),
             ],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let store = schema.store();
         let id = put_node_with_agents(
@@ -5023,7 +5023,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![test_agent_lookup_key("unsupervised", "empty")],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let store = schema.store();
         let id = put_node_with_agents(
@@ -5071,7 +5071,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![test_agent_lookup_key("unsupervised", "dup")],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let store = schema.store();
         let id = put_node_with_agents(
@@ -5111,7 +5111,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![test_agent_lookup_key("unsupervised", "unk")],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let store = schema.store();
         let id = put_node_with_agents(
@@ -5155,7 +5155,7 @@ mod tests {
                 test_agent_lookup_key("hog", "order"),
             ],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let store = schema.store();
         // DB order is unsupervised, sensor, hog.
@@ -5251,7 +5251,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let store = schema.store();
         let node = review_database::Node {
@@ -5300,7 +5300,7 @@ mod tests {
             // Only the unsupervised lookup key succeeds; the sensor lookup key will fail.
             available_agents: vec![test_agent_lookup_key("unsupervised", "mixfail")],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let store = schema.store();
         let id = put_node_with_agents(
@@ -5356,7 +5356,7 @@ mod tests {
                 test_agent_lookup_key("002.hog", "multi-instance"),
             ],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let store = schema.store();
         let id = put_node_with_agents(
@@ -5418,7 +5418,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let id = put_node_with_agents(&schema.store(), "scoped-node", 2, "host-customer-2", vec![]);
         assert_eq!(id, 0);
@@ -5460,7 +5460,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let id = put_node_with_agents(&schema.store(), "scoped-node", 2, "host-customer-2", vec![]);
         assert_eq!(id, 0);
@@ -5487,7 +5487,7 @@ mod tests {
             online_apps_by_host_id: HashMap::new(),
             available_agents: vec![],
         });
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
 
         let res = schema
             .execute_as_system_admin(
@@ -5721,7 +5721,7 @@ mod tests {
     #[tokio::test]
     async fn switch_only_apply_stores_the_switch_and_notifies_no_agent() {
         let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_switch_node(&schema.store());
         let before = stored_node(&schema.store(), id);
 
@@ -5743,7 +5743,7 @@ mod tests {
     #[tokio::test]
     async fn apply_node_refuses_a_switch_change_that_changes_the_profile() {
         let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_switch_node(&schema.store());
         let before = stored_node(&schema.store(), id);
 
@@ -5770,7 +5770,7 @@ mod tests {
         for mutation in ["applyNodeDraft", "applyNode"] {
             for (run_as_root, run_as_root_draft) in [(false, Some(true)), (true, Some(false))] {
                 let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
-                let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+                let schema = TestSchema::new_with_params(agent_manager, None).await;
                 let id = put_node(
                     &schema.store(),
                     "switch-node",
@@ -5827,7 +5827,7 @@ mod tests {
     #[tokio::test]
     async fn a_no_op_switch_draft_is_applied_and_cleared() {
         let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let mut sensor = make_agent(
             "001.piglet",
             review_database::AgentKind::Sensor,
@@ -5857,7 +5857,7 @@ mod tests {
     #[tokio::test]
     async fn an_installed_sensor_never_configured_applies_a_switch_draft() {
         let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let mut sensor = installed_agent(
             "001.piglet",
             review_database::AgentKind::Sensor,
@@ -5890,7 +5890,7 @@ mod tests {
     #[tokio::test]
     async fn a_switch_change_beside_a_config_change_notifies_only_the_changed_config() {
         let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let mut sensor = make_agent(
             "001.piglet",
             review_database::AgentKind::Sensor,
@@ -5929,7 +5929,7 @@ mod tests {
     #[tokio::test]
     async fn apply_agent_config_includes_giganto_services() {
         let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_giganto_node(&schema.store());
         assert_eq!(id, 0);
 
@@ -5974,7 +5974,7 @@ mod tests {
     #[tokio::test]
     async fn apply_agent_config_skips_giganto_without_draft() {
         let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_node_with_services(
             &schema.store(),
             "giganto-node",
@@ -6021,7 +6021,7 @@ mod tests {
     #[tokio::test]
     async fn apply_agent_config_ignores_ti_container() {
         let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_node_with_services(
             &schema.store(),
             "ti-node",
@@ -6078,7 +6078,7 @@ mod tests {
     #[tokio::test]
     async fn apply_agent_config_explicit_giganto_key() {
         let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_giganto_node(&schema.store());
         assert_eq!(id, 0);
 
@@ -6117,7 +6117,7 @@ mod tests {
     #[tokio::test]
     async fn apply_agent_config_explicit_keys_keep_caller_order_across_kinds() {
         let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_giganto_node(&schema.store());
         assert_eq!(id, 0);
 
@@ -6161,7 +6161,7 @@ mod tests {
     async fn apply_agent_config_reports_the_giganto_cause_chain() {
         let failing_key = test_agent_lookup_key("001.giganto", GIGANTO_HOST);
         let (agent_manager, calls) = RecordingAgentManager::boxed(vec![failing_key.clone()]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_giganto_node(&schema.store());
         assert_eq!(id, 0);
 
@@ -6206,7 +6206,7 @@ mod tests {
     #[tokio::test]
     async fn apply_agent_config_lookup_key_per_build() {
         let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_giganto_node(&schema.store());
         assert_eq!(id, 0);
 
@@ -6230,7 +6230,7 @@ mod tests {
     #[tokio::test]
     async fn apply_agent_config_explicit_key_resolves_to_the_first_entry() {
         let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_node_with_services(
             &schema.store(),
             "shared-key-node",
@@ -6382,7 +6382,7 @@ mod tests {
     #[tokio::test]
     async fn apply_node_draft_refuses_dropping_a_numbered_agent() {
         let (agent_manager, _) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_installed_node(&schema.store(), Some(INSTALLED_HOST));
 
         let node = stage(&schema, id, |n| {
@@ -6405,7 +6405,7 @@ mod tests {
     #[tokio::test]
     async fn apply_node_draft_refuses_dropping_a_numbered_external_service() {
         let (agent_manager, _) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_installed_node(&schema.store(), Some(INSTALLED_HOST));
 
         let node = stage(&schema, id, |n| {
@@ -6426,7 +6426,7 @@ mod tests {
     #[tokio::test]
     async fn apply_node_refuses_dropping_a_numbered_agent_and_notifies_nothing() {
         let (agent_manager, calls) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_installed_node(&schema.store(), Some(INSTALLED_HOST));
 
         let node = stage(&schema, id, |n| {
@@ -6460,7 +6460,7 @@ mod tests {
     #[tokio::test]
     async fn apply_node_draft_refuses_changing_a_numbered_nodes_hostname() {
         let (agent_manager, _) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_installed_node(&schema.store(), Some(INSTALLED_HOST));
 
         for profile_draft in [Some(profile("host2.example.com")), None] {
@@ -6490,7 +6490,7 @@ mod tests {
     #[tokio::test]
     async fn apply_node_draft_on_numbered_node_without_hostname_reports_inconsistent_state() {
         let (agent_manager, _) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_installed_node(&schema.store(), None);
         let stored = stored_node(&schema.store(), id);
 
@@ -6522,7 +6522,7 @@ mod tests {
     #[tokio::test]
     async fn apply_node_draft_rehosts_and_drops_unnumbered_rows() {
         let (agent_manager, _) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_node(
             &schema.store(),
             "plain",
@@ -6575,7 +6575,7 @@ mod tests {
     #[tokio::test]
     async fn apply_node_draft_keeps_numbered_rows_while_dropping_unnumbered_ones() {
         let (agent_manager, _) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_installed_node(&schema.store(), Some(INSTALLED_HOST));
         let stored = stored_node(&schema.store(), id);
 
@@ -6610,7 +6610,7 @@ mod tests {
     #[tokio::test]
     async fn apply_node_draft_keeps_a_numbered_agent_without_draft_when_no_agent_changed() {
         let (agent_manager, _) = RecordingAgentManager::boxed(vec![]);
-        let schema = TestSchema::new_with_params(agent_manager, None, "testuser").await;
+        let schema = TestSchema::new_with_params(agent_manager, None).await;
         let id = put_node(
             &schema.store(),
             "unconfigured",
@@ -6844,8 +6844,7 @@ mod tests {
                     answers: Mutex::new(answers.into()),
                 };
                 let schema =
-                    TestSchema::new_with_all(manager, Arc::new(deployer), None, "testuser", None)
-                        .await;
+                    TestSchema::new_with_all(manager, Arc::new(deployer), None, None).await;
                 Self {
                     schema,
                     notified,

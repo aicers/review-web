@@ -24,7 +24,7 @@ use super::{
     sampling::{SourceDelivery, source_deliveries},
     training::{TargetInstance, relay_refusal, resolve_instance},
 };
-use crate::info_with_username;
+use crate::info_with_caller;
 
 #[derive(Default)]
 pub(super) struct EngineInstanceQuery;
@@ -158,7 +158,7 @@ impl EngineInstanceMutation {
         };
 
         let agent_manager = ctx.data::<SharedAgentManager>()?;
-        info_with_username!(
+        info_with_caller!(
             ctx,
             "Run once request of detector {id} sent to {agent_lookup_key}"
         );
@@ -194,7 +194,7 @@ impl EngineInstanceMutation {
             .instance
             .node_id;
         let agent_manager = ctx.data::<SharedAgentManager>()?;
-        info_with_username!(
+        info_with_caller!(
             ctx,
             "Start request of engine instance {agent_key} sent to node {node_id}"
         );
@@ -227,7 +227,7 @@ impl EngineInstanceMutation {
             .instance
             .node_id;
         let agent_manager = ctx.data::<SharedAgentManager>()?;
-        info_with_username!(
+        info_with_caller!(
             ctx,
             "Stop request of engine instance {agent_key} sent to node {node_id}"
         );
