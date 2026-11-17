@@ -54,6 +54,7 @@ mod status;
 mod system_log_collector;
 mod tags;
 mod template;
+pub(crate) mod timestamp;
 mod toml_refusal;
 mod tor_exit_node;
 mod traffic_filter;
