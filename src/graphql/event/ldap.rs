@@ -1,9 +1,8 @@
 use async_graphql::{Context, ID, Object, Result, StringNumber};
-use jiff::Timestamp;
 use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore, country_code, find_ip_network};
-use crate::graphql::{network::Network, triage::ThreatCategory};
+use crate::graphql::{network::Network, timestamp::Timestamp, triage::ThreatCategory};
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct LdapBruteForce {
@@ -20,7 +19,7 @@ impl LdapBruteForce {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -91,12 +90,12 @@ impl LdapBruteForce {
 
     /// Session start time of the first raw event used for detection.
     async fn first_event_start_time(&self) -> Timestamp {
-        self.inner.first_event_start_time
+        self.inner.first_event_start_time.into()
     }
 
     /// Session start time of the last raw event used for detection.
     async fn last_event_start_time(&self) -> Timestamp {
-        self.inner.last_event_start_time
+        self.inner.last_event_start_time.into()
     }
 
     /// Confidence
@@ -144,7 +143,7 @@ impl LdapPlainText {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -211,7 +210,7 @@ impl LdapPlainText {
 
     /// Start Time
     async fn start_time(&self) -> Timestamp {
-        self.inner.start_time
+        self.inner.start_time.into()
     }
 
     /// Duration
@@ -320,7 +319,7 @@ impl BlocklistLdap {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -387,7 +386,7 @@ impl BlocklistLdap {
 
     /// Start Time
     async fn start_time(&self) -> Timestamp {
-        self.inner.start_time
+        self.inner.start_time.into()
     }
 
     /// Duration

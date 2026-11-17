@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
-async-graphql = { version = "7", features = ["chrono", "jiff", "string_number"] }
+async-graphql = { version = "7", features = ["chrono", "string_number"] }
 async-graphql-axum = "7"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["macros", "tokio", "ws"] }
@@ -24,14 +24,14 @@ humantime = "2"
 ip2location = "0.6.0"
 ipnet = { version = "2", features = ["serde"] }
 itertools = "0.15"
-jiff = "0.2"
+jiff = "1"
 jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
 num-traits = "0.2"
 reqwest = { version = "0.13", default-features = false, features = [
   "rustls-no-provider",
 ] }
-review-database = { git = "https://github.com/aicers/review-database.git", tag = "0.63.0" }
-review-protocol = { git = "https://github.com/aicers/review-protocol.git", tag = "0.26.0" }
+review-database = { git = "https://github.com/aicers/review-database.git", tag = "0.64.0" }
+review-protocol = { git = "https://github.com/aicers/review-protocol.git", tag = "0.27.0" }
 rustls = { version = "0.23", default-features = false, features = [
   "aws_lc_rs",
   "std",

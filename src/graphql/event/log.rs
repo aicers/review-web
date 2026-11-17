@@ -1,9 +1,8 @@
 use async_graphql::{ID, Object};
-use jiff::Timestamp;
 use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore};
-use crate::graphql::{filter::LearningMethod, triage::ThreatCategory};
+use crate::graphql::{filter::LearningMethod, timestamp::Timestamp, triage::ThreatCategory};
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct ExtraThreat {
@@ -20,7 +19,7 @@ impl ExtraThreat {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor

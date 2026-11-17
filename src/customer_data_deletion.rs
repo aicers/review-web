@@ -57,7 +57,6 @@ use futures::{
     future::join_all,
     stream::{FuturesUnordered, StreamExt},
 };
-use jiff::Timestamp;
 use review_database::Role;
 use review_database::{
     AgentKind, CustomerDataDeletionJob, CustomerDataDeletionService,
@@ -75,7 +74,7 @@ use crate::{
     backend::{DeployError, MODULE_PACKAGE_IDS, SharedAgentManager, SharedPackageDeployer},
     graphql::{
         RoleGuard, SamplingPoliciesLock, agent_lookup_key_service_token, data_store_in_use_message,
-        data_stores_in_use, listed_rows, operator_installs,
+        data_stores_in_use, listed_rows, operator_installs, timestamp::Timestamp,
     },
 };
 
@@ -399,11 +398,12 @@ impl TryFrom<CustomerDataDeletionServiceResult> for DeletionServiceResult {
             service: result.service.into(),
             host_fqdns: result.host_fqdns,
             status: result.status.into(),
-            requested_at: Timestamp::from_nanosecond(i128::from(result.requested_at))
-                .context("converting deletion result request timestamp")?,
+            requested_at: jiff::Timestamp::from_nanosecond(i128::from(result.requested_at))
+                .context("converting deletion result request timestamp")?
+                .into(),
             completed_at: result
                 .completed_at
-                .map(|value| Timestamp::from_nanosecond(i128::from(value)))
+                .map(|value| jiff::Timestamp::from_nanosecond(i128::from(value)).map(Into::into))
                 .transpose()
                 .context("converting deletion result completion timestamp")?,
             error: result.error,
@@ -794,7 +794,7 @@ fn already_deleted_refusal(
         .map(|result| result.completed_at.unwrap_or(result.requested_at))
         .max()
         .unwrap_or_default();
-    let deleted_at = Timestamp::from_nanosecond(i128::from(deleted_at))
+    let deleted_at = jiff::Timestamp::from_nanosecond(i128::from(deleted_at))
         .context("converting the deletion's completion timestamp")?;
     Ok(Some(format!(
         "the customer's data was deleted on {deleted_at}; it now holds {}, created since; \

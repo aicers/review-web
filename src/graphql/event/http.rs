@@ -1,9 +1,10 @@
 use async_graphql::{Context, ID, Object, Result, StringNumber};
-use jiff::Timestamp;
 use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore, country_code, find_ip_network};
-use crate::graphql::{filter::LearningMethod, network::Network, triage::ThreatCategory};
+use crate::graphql::{
+    filter::LearningMethod, network::Network, timestamp::Timestamp, triage::ThreatCategory,
+};
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct HttpThreat {
@@ -20,7 +21,7 @@ impl HttpThreat {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -87,7 +88,7 @@ impl HttpThreat {
 
     /// Start Time
     async fn start_time(&self) -> Timestamp {
-        self.inner.start_time
+        self.inner.start_time.into()
     }
 
     /// Duration
@@ -307,7 +308,7 @@ impl RepeatedHttpSessions {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -358,12 +359,12 @@ impl RepeatedHttpSessions {
 
     /// Session start time of the first raw event used for detection.
     async fn first_event_start_time(&self) -> Timestamp {
-        self.inner.first_event_start_time
+        self.inner.first_event_start_time.into()
     }
 
     /// Session start time of the last raw event used for detection.
     async fn last_event_start_time(&self) -> Timestamp {
-        self.inner.last_event_start_time
+        self.inner.last_event_start_time.into()
     }
 
     /// Responder Country
@@ -431,7 +432,7 @@ impl TorConnection {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -498,7 +499,7 @@ impl TorConnection {
 
     /// Start Time
     async fn start_time(&self) -> Timestamp {
-        self.inner.start_time
+        self.inner.start_time.into()
     }
 
     /// Duration
@@ -677,7 +678,7 @@ impl DomainGenerationAlgorithm {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -744,7 +745,7 @@ impl DomainGenerationAlgorithm {
 
     /// Start Time
     async fn start_time(&self) -> Timestamp {
-        self.inner.start_time
+        self.inner.start_time.into()
     }
 
     /// Duration
@@ -923,7 +924,7 @@ impl NonBrowser {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -990,7 +991,7 @@ impl NonBrowser {
 
     /// Start Time
     async fn start_time(&self) -> Timestamp {
-        self.inner.start_time
+        self.inner.start_time.into()
     }
 
     /// Duration
@@ -1169,7 +1170,7 @@ impl BlocklistHttp {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -1236,7 +1237,7 @@ impl BlocklistHttp {
 
     /// Start Time
     async fn start_time(&self) -> Timestamp {
-        self.inner.start_time
+        self.inner.start_time.into()
     }
 
     /// Duration

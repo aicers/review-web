@@ -1,9 +1,10 @@
 use async_graphql::{Context, ID, Object, Result, StringNumber};
-use jiff::Timestamp;
 use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore, country_code, country_codes, find_ip_network};
-use crate::graphql::{filter::LearningMethod, network::Network, triage::ThreatCategory};
+use crate::graphql::{
+    filter::LearningMethod, network::Network, timestamp::Timestamp, triage::ThreatCategory,
+};
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct PortScan {
@@ -20,7 +21,7 @@ impl PortScan {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -82,12 +83,12 @@ impl PortScan {
 
     /// Session start time of the first raw event used for detection.
     async fn first_event_start_time(&self) -> Timestamp {
-        self.inner.first_event_start_time
+        self.inner.first_event_start_time.into()
     }
 
     /// Session start time of the last raw event used for detection.
     async fn last_event_start_time(&self) -> Timestamp {
-        self.inner.last_event_start_time
+        self.inner.last_event_start_time.into()
     }
 
     /// Confidence
@@ -134,7 +135,7 @@ impl MultiHostPortScan {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -208,12 +209,12 @@ impl MultiHostPortScan {
 
     /// Session start time of the first raw event used for detection.
     async fn first_event_start_time(&self) -> Timestamp {
-        self.inner.first_event_start_time
+        self.inner.first_event_start_time.into()
     }
 
     /// Session start time of the last raw event used for detection.
     async fn last_event_start_time(&self) -> Timestamp {
-        self.inner.last_event_start_time
+        self.inner.last_event_start_time.into()
     }
 
     /// Confidence
@@ -260,7 +261,7 @@ impl ExternalDdos {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -329,12 +330,12 @@ impl ExternalDdos {
 
     /// Session start time of the first raw event used for detection.
     async fn first_event_start_time(&self) -> Timestamp {
-        self.inner.first_event_start_time
+        self.inner.first_event_start_time.into()
     }
 
     /// Session start time of the last raw event used for detection.
     async fn last_event_start_time(&self) -> Timestamp {
-        self.inner.last_event_start_time
+        self.inner.last_event_start_time.into()
     }
 
     /// Confidence
@@ -380,7 +381,7 @@ impl BlocklistConn {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -452,7 +453,7 @@ impl BlocklistConn {
 
     /// Start Time
     async fn start_time(&self) -> Timestamp {
-        self.inner.start_time
+        self.inner.start_time.into()
     }
 
     /// Duration
@@ -541,7 +542,7 @@ impl TorConnectionConn {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -613,7 +614,7 @@ impl TorConnectionConn {
 
     /// Start Time
     async fn start_time(&self) -> Timestamp {
-        self.inner.start_time
+        self.inner.start_time.into()
     }
 
     /// Duration
