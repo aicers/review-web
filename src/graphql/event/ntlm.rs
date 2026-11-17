@@ -1,9 +1,8 @@
 use async_graphql::{Context, ID, Object, Result, StringNumber};
-use jiff::Timestamp;
 use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore, country_code, find_ip_network};
-use crate::graphql::{network::Network, triage::ThreatCategory};
+use crate::graphql::{network::Network, timestamp::Timestamp, triage::ThreatCategory};
 
 pub(super) struct BlocklistNtlm {
     id: i128,
@@ -19,7 +18,7 @@ impl BlocklistNtlm {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -86,7 +85,7 @@ impl BlocklistNtlm {
 
     /// Start Time
     async fn start_time(&self) -> Timestamp {
-        self.inner.start_time
+        self.inner.start_time.into()
     }
 
     /// Duration

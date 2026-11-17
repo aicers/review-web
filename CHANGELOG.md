@@ -8,6 +8,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- **Breaking change:** Bumped `jiff` to 1.0. The `jiff` types in this crate's
+  public API, such as the `expires_at` argument of `HostOnboardingTicket::new`,
+  are now jiff 1 types, so a consumer that names them must use jiff 1 as well.
+  Bumped `review-protocol` to 0.27.0 and `review-database` to 0.64.0, which also
+  move to jiff 1. The GraphQL schema and responses are unchanged.
 - Log messages no longer carry the `user=` prefix. Logs now carry a `caller`
   field containing the client certificate's
   `<instance>.<service>.<host>.<domain>`, and a `role` field when a role is present.

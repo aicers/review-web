@@ -1,9 +1,10 @@
 use async_graphql::{Context, ID, Object, Result};
-use jiff::Timestamp;
 use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore, country_codes, find_ip_network};
-use crate::graphql::{filter::LearningMethod, network::Network, triage::ThreatCategory};
+use crate::graphql::{
+    filter::LearningMethod, network::Network, timestamp::Timestamp, triage::ThreatCategory,
+};
 
 /// An event indicating an unusual pattern of connections to multiple
 /// responder IP addresses.
@@ -21,7 +22,7 @@ impl UnusualDestinationPattern {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -31,12 +32,12 @@ impl UnusualDestinationPattern {
 
     /// Start boundary of the anomaly sampling window used for detection.
     async fn sampling_window_start_time(&self) -> Timestamp {
-        self.inner.sampling_window_start_time
+        self.inner.sampling_window_start_time.into()
     }
 
     /// End boundary of the anomaly sampling window used for detection.
     async fn sampling_window_end_time(&self) -> Timestamp {
-        self.inner.sampling_window_end_time
+        self.inner.sampling_window_end_time.into()
     }
 
     /// Responder IP (Address) List

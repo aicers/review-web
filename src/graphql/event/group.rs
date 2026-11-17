@@ -248,12 +248,14 @@ impl EventGroupQuery {
     ) -> Result<Vec<usize>> {
         let store = crate::graphql::get_store(ctx)?;
         let event_filter = from_filter_input(ctx, &store, &filter)?;
-        let start = filter
+        let start: jiff::Timestamp = filter
             .start
-            .ok_or("eventFrequencySeries requires non-null filter.start")?;
-        let end = filter
+            .ok_or("eventFrequencySeries requires non-null filter.start")?
+            .into();
+        let end: jiff::Timestamp = filter
             .end
-            .ok_or("eventFrequencySeries requires non-null filter.end")?;
+            .ok_or("eventFrequencySeries requires non-null filter.end")?
+            .into();
         let start_nanos = i128::from(timestamp_nanos(start)?);
         let end_nanos = i128::from(timestamp_nanos(end)?);
         let period_nanos = i128::from(period)
@@ -323,8 +325,8 @@ async fn count_events<T>(
     count: EventCountFn<T>,
     first: i32,
 ) -> Result<(Vec<T>, Vec<usize>)> {
-    let start = filter.start;
-    let end = filter.end;
+    let start = filter.start.map(Into::into);
+    let end = filter.end.map(Into::into);
     let store = crate::graphql::get_store(ctx)?;
     let filter = from_filter_input(ctx, &store, filter)?;
     if empty_time_range(start, end)? {
@@ -364,8 +366,8 @@ async fn count_events_by_network(
     filter: &EventListFilterInput,
     first: i32,
 ) -> Result<(Vec<String>, Vec<usize>)> {
-    let start = filter.start;
-    let end = filter.end;
+    let start = filter.start.map(Into::into);
+    let end = filter.end.map(Into::into);
     let store = crate::graphql::get_store(ctx)?;
     let filter = from_filter_input(ctx, &store, filter)?;
     if empty_time_range(start, end)? {

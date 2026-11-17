@@ -23,7 +23,7 @@ use tracing::info;
 use super::{
     super::{
         BoxedHostOnboarder, Role, RoleGuard, SharedAgentManager, SharedPackageDeployer,
-        customer_access, customer_deletion_guard, get_store,
+        customer_access, customer_deletion_guard, get_store, timestamp::Timestamp,
     },
     DeployMutation, OnboardingQuery,
     bind_addr::{
@@ -263,7 +263,7 @@ pub(crate) struct HostOnboardingTicket {
     /// The one-liner the operator runs on the host.
     command: String,
     /// The granted absolute deadline at which the token expires.
-    expires_at: jiff::Timestamp,
+    expires_at: Timestamp,
     /// The product namespace the operator passes to the host's join command
     /// as `--namespace`. It is not secret and is not part of `command`.
     namespace: String,
@@ -1095,7 +1095,7 @@ impl DeployMutation {
             operation_id: operation_id.into_inner(),
             token: token.expose(),
             command,
-            expires_at,
+            expires_at: expires_at.into(),
             namespace,
             binary_sha256,
         })

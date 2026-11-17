@@ -34,7 +34,6 @@ use chrono::Utc;
 use database::ThreatLevel as DatabaseThreatLevel;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
-use jiff::Timestamp;
 use num_traits::FromPrimitive;
 use review_database::{
     self as database, EventKind, ExclusionReason, IndexedTable, Iterable, Store, TriageExclusion,
@@ -79,6 +78,7 @@ use super::{
     customer::HostNetworkGroupInput,
     filter::{EventKind as EventKindInput, FlowKind, LearningMethod, TrafficDirection},
     network::Network,
+    timestamp::Timestamp,
     triage::{ConfidenceInput, PacketAttrInput, ResponseInput, ThreatCategory},
 };
 use crate::{error_with_caller, graphql::query, warn_with_caller};
@@ -128,7 +128,7 @@ impl EventStream {
         event_stuck_check_interval: Option<u64>,
     ) -> Result<impl Stream<Item = Event> + use<>> {
         use std::sync::RwLock;
-        let start = timestamp_nanos(start)?;
+        let start = timestamp_nanos(start.into())?;
         let store = ctx.data::<Arc<RwLock<Store>>>()?.clone();
         let fetch_interval_secs = if let Some(fetch_interval_secs) = fetch_interval {
             fetch_interval_secs
@@ -1084,8 +1084,8 @@ fn find_ip_network(map: &IndexedTable<database::Network>, addr: IpAddr) -> Resul
 }
 
 struct EventTotalCount {
-    start: Option<Timestamp>,
-    end: Option<Timestamp>,
+    start: Option<jiff::Timestamp>,
+    end: Option<jiff::Timestamp>,
     filter: EventFilter,
     exclusions: Vec<TriageExclusion>,
 }
@@ -1393,8 +1393,8 @@ async fn load(
 ) -> Result<Connection<String, Event, EventTotalCount, EmptyFields>> {
     let store = crate::graphql::get_store(ctx)?;
 
-    let start = filter.start;
-    let end = filter.end;
+    let start = filter.start.map(Into::into);
+    let end = filter.end.map(Into::into);
     let filter = from_filter_input(ctx, &store, filter)?;
     let db = store.events();
     let bounds = if empty_time_range(start, end)? {
@@ -1439,14 +1439,14 @@ async fn load(
     Ok(connection)
 }
 
-fn earliest(start: Option<Timestamp>) -> Result<i128> {
+fn earliest(start: Option<jiff::Timestamp>) -> Result<i128> {
     start
         .map(event_key_prefix)
         .transpose()
         .map(|start| start.unwrap_or(i128::MIN))
 }
 
-fn latest(end: Option<Timestamp>) -> Result<i128> {
+fn latest(end: Option<jiff::Timestamp>) -> Result<i128> {
     if let Some(end) = end {
         Ok(event_key_prefix(end)?.saturating_sub(1))
     } else {
@@ -1455,8 +1455,8 @@ fn latest(end: Option<Timestamp>) -> Result<i128> {
 }
 
 fn event_range(
-    start: Option<Timestamp>,
-    end: Option<Timestamp>,
+    start: Option<jiff::Timestamp>,
+    end: Option<jiff::Timestamp>,
     after: Option<&str>,
     before: Option<&str>,
 ) -> Result<Option<(i128, i128)>> {
@@ -1486,19 +1486,19 @@ fn event_range(
     Ok((earliest <= latest).then_some((earliest, latest)))
 }
 
-fn empty_time_range(start: Option<Timestamp>, end: Option<Timestamp>) -> Result<bool> {
+fn empty_time_range(start: Option<jiff::Timestamp>, end: Option<jiff::Timestamp>) -> Result<bool> {
     let Some(end) = end else {
         return Ok(false);
     };
     Ok(earliest(start)? >= event_key_prefix(end)?)
 }
 
-fn timestamp_nanos(timestamp: Timestamp) -> Result<i64> {
+fn timestamp_nanos(timestamp: jiff::Timestamp) -> Result<i64> {
     i64::try_from(timestamp.as_nanosecond())
         .map_err(|_| "event timestamp is outside the supported nanosecond range".into())
 }
 
-fn event_key_prefix(timestamp: Timestamp) -> Result<i128> {
+fn event_key_prefix(timestamp: jiff::Timestamp) -> Result<i128> {
     Ok(i128::from(timestamp_nanos(timestamp)?) << 64)
 }
 
@@ -1690,8 +1690,8 @@ async fn load_with_triage(
 ) -> Result<Connection<String, Event, EventTotalCount, EmptyFields>> {
     let store = crate::graphql::get_store(ctx)?;
 
-    let start = filter.start;
-    let end = filter.end;
+    let start = filter.start.map(Into::into);
+    let end = filter.end.map(Into::into);
     let list_filter: EventListFilterInput = filter.clone().into();
     let event_filter = from_filter_input(ctx, &store, &list_filter)?;
     let db = store.events();

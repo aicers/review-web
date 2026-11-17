@@ -1,9 +1,10 @@
 use async_graphql::{Context, ID, Object, Result, StringNumber};
-use jiff::Timestamp;
 use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore, country_code, find_ip_network};
-use crate::graphql::{filter::LearningMethod, network::Network, triage::ThreatCategory};
+use crate::graphql::{
+    filter::LearningMethod, network::Network, timestamp::Timestamp, triage::ThreatCategory,
+};
 
 #[allow(clippy::module_name_repetitions)]
 pub(super) struct DnsCovertChannel {
@@ -20,7 +21,7 @@ impl DnsCovertChannel {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -87,7 +88,7 @@ impl DnsCovertChannel {
 
     /// Start Time
     async fn start_time(&self) -> Timestamp {
-        self.inner.start_time
+        self.inner.start_time.into()
     }
 
     /// Duration
@@ -227,7 +228,7 @@ impl LockyRansomware {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -294,7 +295,7 @@ impl LockyRansomware {
 
     /// Start Time
     async fn start_time(&self) -> Timestamp {
-        self.inner.start_time
+        self.inner.start_time.into()
     }
 
     /// Duration
@@ -428,7 +429,7 @@ impl CryptocurrencyMiningPool {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -495,7 +496,7 @@ impl CryptocurrencyMiningPool {
 
     /// Start Time
     async fn start_time(&self) -> Timestamp {
-        self.inner.start_time
+        self.inner.start_time.into()
     }
 
     /// Duration
@@ -634,7 +635,7 @@ impl BlocklistDns {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -701,7 +702,7 @@ impl BlocklistDns {
 
     /// Start Time
     async fn start_time(&self) -> Timestamp {
-        self.inner.start_time
+        self.inner.start_time.into()
     }
 
     /// Duration

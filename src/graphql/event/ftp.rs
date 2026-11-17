@@ -1,9 +1,8 @@
 use async_graphql::{Context, ID, Object, Result, StringNumber};
-use jiff::Timestamp;
 use review_database::event as database;
 
 use super::{ThreatLevel, TriageScore, country_code, find_ip_network};
-use crate::graphql::{network::Network, triage::ThreatCategory};
+use crate::graphql::{network::Network, timestamp::Timestamp, triage::ThreatCategory};
 
 #[derive(Clone)]
 pub(super) struct FtpCommand {
@@ -84,7 +83,7 @@ impl FtpBruteForce {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -151,12 +150,12 @@ impl FtpBruteForce {
 
     /// Session start time of the first raw event used for detection.
     async fn first_event_start_time(&self) -> Timestamp {
-        self.inner.first_event_start_time
+        self.inner.first_event_start_time.into()
     }
 
     /// Session start time of the last raw event used for detection.
     async fn last_event_start_time(&self) -> Timestamp {
-        self.inner.last_event_start_time
+        self.inner.last_event_start_time.into()
     }
 
     /// Is Internal
@@ -209,7 +208,7 @@ impl FtpPlainText {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -276,7 +275,7 @@ impl FtpPlainText {
 
     /// Start Time
     async fn start_time(&self) -> Timestamp {
-        self.inner.start_time
+        self.inner.start_time.into()
     }
 
     /// Duration
@@ -371,7 +370,7 @@ impl BlocklistFtp {
 
     /// Event Generation Time
     pub async fn time(&self) -> Timestamp {
-        self.inner.time
+        self.inner.time.into()
     }
 
     /// Sensor
@@ -438,7 +437,7 @@ impl BlocklistFtp {
 
     /// Start Time
     async fn start_time(&self) -> Timestamp {
-        self.inner.start_time
+        self.inner.start_time.into()
     }
 
     /// Duration

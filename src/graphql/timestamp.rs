@@ -1,4 +1,59 @@
-pub use jiff::Timestamp;
+//! The GraphQL `DateTime` scalar for `jiff::Timestamp` fields.
+//!
+//! This type exists only because async-graphql does not support jiff 1 yet;
+//! it parses and prints exactly what async-graphql's built-in jiff scalar
+//! does. Once async-graphql supports jiff 1, the body of this module is
+//! replaced by `pub use jiff::Timestamp;`.
+
+use std::{fmt, ops::Deref};
+
+use async_graphql::{InputValueError, InputValueResult, Scalar, ScalarType, Value};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Timestamp(jiff::Timestamp);
+
+#[Scalar(
+    name = "DateTime",
+    specified_by_url = "https://datatracker.ietf.org/doc/html/rfc3339"
+)]
+impl ScalarType for Timestamp {
+    fn parse(value: Value) -> InputValueResult<Self> {
+        match value {
+            Value::String(s) => Ok(Self(s.parse()?)),
+            _ => Err(InputValueError::expected_type(value)),
+        }
+    }
+
+    fn to_value(&self) -> Value {
+        Value::String(self.0.to_string())
+    }
+}
+
+impl From<jiff::Timestamp> for Timestamp {
+    fn from(ts: jiff::Timestamp) -> Self {
+        Self(ts)
+    }
+}
+
+impl From<Timestamp> for jiff::Timestamp {
+    fn from(ts: Timestamp) -> Self {
+        ts.0
+    }
+}
+
+impl Deref for Timestamp {
+    type Target = jiff::Timestamp;
+
+    fn deref(&self) -> &jiff::Timestamp {
+        &self.0
+    }
+}
+
+impl fmt::Display for Timestamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
 
 #[cfg(test)]
 #[allow(
