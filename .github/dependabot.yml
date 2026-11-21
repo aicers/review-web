@@ -4,6 +4,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
     open-pull-requests-limit: 5
     ignore:
       - dependency-name: "review-database"
@@ -13,6 +16,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
     groups:
       github-actions-minor-patch:
         patterns:
