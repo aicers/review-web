@@ -14,7 +14,6 @@ use std::{net::SocketAddr, sync::Mutex};
 
 use async_trait::async_trait;
 use axum::body::Bytes;
-use chrono::Utc;
 use futures::StreamExt;
 use review_database::{
     BuildSelector, ListenerBinding, ListenerTransport, PortOwner, RequestKeyError,
@@ -720,7 +719,7 @@ fn a_system_log_collector_state_is_constructible_field_by_field() {
             data_store: Some("001.giganto.host2".to_string()),
             config: None,
             last_refusal: Some(SystemLogCollectorRefusal {
-                at: Utc::now(),
+                at: jiff::Timestamp::now(),
                 message: "refused".to_string(),
             }),
         },

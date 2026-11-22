@@ -139,7 +139,6 @@ pub(crate) fn event_sensor_customer_id_map(store: &Store) -> Result<HashMap<Stri
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
     use review_database::{Agent, AgentStatus, Lifecycle, NodeProfile};
 
     use super::*;
@@ -185,7 +184,7 @@ mod tests {
             profile_draft,
             agents,
             external_services: vec![],
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         }
     }
 

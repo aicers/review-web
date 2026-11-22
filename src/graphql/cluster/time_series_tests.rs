@@ -77,7 +77,7 @@ async fn unbounded_query_uses_the_latest_value_of_the_cluster() {
     .await;
     assert_eq!(
         result["topTimeSeriesOfCluster"]["series"],
-        json!([{"series": [{"time": "2024-01-01T06:00:00", "count": 40}]}])
+        json!([{"series": [{"time": "2024-01-01T06:00:00Z", "count": 40}]}])
     );
 }
 
@@ -146,7 +146,7 @@ async fn cluster_series_and_trend_share_zero_filled_slots() {
     let expected: Vec<_> = [10, 20, 0, 30, 0, 0, 40]
         .into_iter()
         .enumerate()
-        .map(|(hour, count)| json!({"time": format!("2024-01-01T0{hour}:00:00"), "count": count}))
+        .map(|(hour, count)| json!({"time": format!("2024-01-01T0{hour}:00:00Z"), "count": count}))
         .collect();
     let column = &result["topTimeSeriesOfCluster"]["series"][0];
     assert_eq!(column["columnIndex"], "0");

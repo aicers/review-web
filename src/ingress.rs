@@ -1187,7 +1187,7 @@ mod tests {
         body: Body,
         configure: impl FnOnce(Router) -> Router,
     ) -> Sent {
-        use chrono::{Duration, Utc};
+        use jiff::SignedDuration;
         use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
         use rcgen::{CertificateParams, KeyPair, PKCS_ECDSA_P256_SHA256};
         use rustls::pki_types::CertificateDer;
@@ -1218,7 +1218,7 @@ mod tests {
                 let claims = ContextClaims {
                     role: role.to_string(),
                     customer_ids: Some(vec![1]),
-                    exp: (Utc::now() + Duration::minutes(5)).timestamp(),
+                    exp: (jiff::Timestamp::now() + SignedDuration::from_mins(5)).as_second(),
                 };
                 Some(
                     encode(

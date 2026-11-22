@@ -4,7 +4,6 @@ use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
     types::ID,
 };
-use chrono::{DateTime, Utc};
 use itertools::Itertools;
 use review_database::{Indexable, UniqueKey};
 use tracing::info;
@@ -16,6 +15,7 @@ use crate::graphql::customer_access::{
 };
 use crate::graphql::{
     cluster::try_id_args_into_ints, network::id_args_into_uints, query_with_constraints,
+    timestamp::Timestamp,
 };
 use crate::info_with_caller;
 
@@ -133,8 +133,9 @@ impl super::TriageResponseQuery {
         &self,
         ctx: &Context<'_>,
         sensor: String,
-        time: DateTime<Utc>,
+        time: Timestamp,
     ) -> Result<Option<TriageResponse>> {
+        let time = crate::graphql::outlier::stored_time(time)?;
         check_hostname_access(ctx, &sensor)?;
 
         let store = crate::graphql::get_store(ctx)?;
@@ -226,10 +227,11 @@ impl super::TriageResponseMutation {
         &self,
         ctx: &Context<'_>,
         sensor: String,
-        time: DateTime<Utc>,
+        time: Timestamp,
         tag_ids: Vec<ID>,
         remarks: String,
     ) -> Result<ID> {
+        let time = crate::graphql::outlier::stored_time(time)?;
         check_hostname_access(ctx, &sensor)?;
 
         let tag_ids_converted = id_args_into_uints(&tag_ids)?;
@@ -896,7 +898,7 @@ mod tests {
                 r#"mutation {
                     insertTriageResponse(
                         sensor: "sensor1"
-                        time: "2023-02-14 14:54:46.083902898 +00:00"
+                        time: "2023-02-14T14:54:46.083902898Z"
                         tagIds: [1, 2, 3]
                         remarks: "before"
                     )
@@ -944,7 +946,7 @@ mod tests {
                 r#"mutation {
                     insertTriageResponse(
                         sensor: "sensor1"
-                        time: "2023-02-14 14:54:46.083902898 +00:00"
+                        time: "2023-02-14T14:54:46.083902898Z"
                         tagIds: [1, 2, 3]
                         remarks: "before"
                     )
@@ -982,7 +984,7 @@ mod tests {
 
         let res = schema
             .execute_as_scoped_user(
-                r#"{ triageResponse(sensor: "sensor1", time: "2023-02-14 14:54:46.083902898 +00:00") { remarks tagIds } }"#,
+                r#"{ triageResponse(sensor: "sensor1", time: "2023-02-14T14:54:46.083902898Z") { remarks tagIds } }"#,
                 Role::SecurityAdministrator,
                 Some(vec![cid_num]),
             )
@@ -1004,7 +1006,7 @@ mod tests {
                 r#"mutation {
                     insertTriageResponse(
                         sensor: "sensor1"
-                        time: "2023-02-14 14:54:46.083902898 +00:00"
+                        time: "2023-02-14T14:54:46.083902898Z"
                         tagIds: [1, 2, 3]
                         remarks: "before"
                     )
@@ -1038,6 +1040,109 @@ mod tests {
         assert_eq!(res.errors[0].message, "Forbidden");
     }
 
+    /// Times outside the i64 nanosecond range a triage response is stored in.
+    const OUT_OF_RANGE_TIMES: [&str; 2] = ["1600-01-01T00:00:00Z", "2300-01-01T00:00:00Z"];
+
+    #[tokio::test]
+    async fn out_of_range_times_are_refused_and_nothing_is_stored() {
+        let schema = TestSchema::new().await;
+        for time in OUT_OF_RANGE_TIMES {
+            let res = schema
+                .execute_as_system_admin(&format!(
+                    r#"mutation {{
+                        insertTriageResponse(
+                            sensor: "sensor1"
+                            time: "{time}"
+                            tagIds: [1]
+                            remarks: "out of range"
+                        )
+                    }}"#
+                ))
+                .await;
+            assert_eq!(res.errors.len(), 1, "{time}: {res:?}");
+            assert!(
+                res.errors[0].message.contains("time is out of range"),
+                "{time}: {res:?}"
+            );
+
+            let res = schema
+                .execute_as_system_admin(&format!(
+                    r#"{{ triageResponse(sensor: "sensor1", time: "{time}") {{ id }} }}"#
+                ))
+                .await;
+            assert_eq!(res.errors.len(), 1, "{time}: {res:?}");
+            assert!(
+                res.errors[0].message.contains("time is out of range"),
+                "{time}: {res:?}"
+            );
+        }
+        let res = schema
+            .execute_as_system_admin(r"{triageResponseList{totalCount}}")
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{triageResponseList: {totalCount: "0"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn a_space_before_the_offset_or_a_utc_suffix_is_refused() {
+        let schema = TestSchema::new().await;
+        for time in [
+            "2023-02-14 14:54:46.083902898 +00:00",
+            "2000-02-29 12:34:56 UTC",
+        ] {
+            let res = schema
+                .execute_as_system_admin(&format!(
+                    r#"mutation {{
+                        insertTriageResponse(
+                            sensor: "sensor1"
+                            time: "{time}"
+                            tagIds: [1]
+                            remarks: "refused"
+                        )
+                    }}"#
+                ))
+                .await;
+            assert_eq!(res.errors.len(), 1, "{time}: {res:?}");
+        }
+        let res = schema
+            .execute_as_system_admin(r"{triageResponseList{totalCount}}")
+            .await;
+        assert_eq!(
+            res.data.to_string(),
+            r#"{triageResponseList: {totalCount: "0"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn a_time_with_an_hour_only_offset_is_accepted() {
+        let schema = TestSchema::new().await;
+        let res = schema
+            .execute_as_system_admin(
+                r#"mutation {
+                    insertTriageResponse(
+                        sensor: "sensor1"
+                        time: "2026-03-15T15:00:04+09"
+                        tagIds: [1]
+                        remarks: "accepted"
+                    )
+                }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{res:?}");
+        let res = schema
+            .execute_as_system_admin(
+                r#"{ triageResponse(sensor: "sensor1", time: "2026-03-15T06:00:04Z") { remarks } }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "{res:?}");
+        assert_eq!(
+            res.data.to_string(),
+            r#"{triageResponse: {remarks: "accepted"}}"#
+        );
+    }
+
     #[tokio::test]
     async fn test_triage_response() {
         let schema = TestSchema::new().await;
@@ -1056,7 +1161,7 @@ mod tests {
                 mutation {
                     insertTriageResponse(
                         sensor: "sensor1"
-                        time: "2023-02-14 14:54:46.083902898 +00:00"
+                        time: "2023-02-14T14:54:46.083902898Z"
                         tagIds: [1, 2, 3]
                         remarks: "Hello World"
                     )

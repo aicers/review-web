@@ -4,7 +4,6 @@
 use std::collections::HashSet;
 use std::io::Write;
 
-use chrono::{DateTime, Utc};
 use review_database::{
     EngineDetectorRef, EngineDocumentRefs, EngineDocumentWrite, ModelInstance, ModelMethod,
     ModelOwner, NewTrainingDefinition, NodeUpdate, Store, TrainedWith, types::ModelBatchInfo,
@@ -36,7 +35,7 @@ pub(crate) struct TestModel<'a> {
     pub(crate) version: i32,
     /// The batch timestamps of the rounds the replace makes current.
     pub(crate) rounds: &'a [i64],
-    pub(crate) trained_at: DateTime<Utc>,
+    pub(crate) trained_at: jiff::Timestamp,
     /// The sources of the definition that trained the model.
     pub(crate) trained_sources: Vec<String>,
 }
@@ -52,7 +51,7 @@ impl<'a> TestModel<'a> {
             kind: "Multifield",
             version: 1,
             rounds: &[],
-            trained_at: Utc::now(),
+            trained_at: jiff::Timestamp::now(),
             trained_sources: Vec::new(),
         }
     }
@@ -158,7 +157,7 @@ pub(crate) fn insert_engine_node(store: &Store, customer_id: u32) -> ModelInstan
         profile_draft: Some(profile),
         agents: vec![agent],
         external_services: vec![],
-        creation_time: Utc::now(),
+        creation_time: jiff::Timestamp::now(),
     };
     let node_id = store.node_map().put(&node).expect("insert engine node");
     ModelInstance {
@@ -229,7 +228,7 @@ pub(crate) fn insert_indicator(store: &Store, name: &str, model_id: u32) {
             description: format!("indicator {name}"),
             model_id,
             tokens: HashSet::from([vec!["token".to_string()]]),
-            last_modification_time: Utc::now(),
+            last_modification_time: jiff::Timestamp::now(),
         })
         .expect("insert indicator");
 }
@@ -241,8 +240,8 @@ struct IndicatorValue {
     description: String,
     model_id: u32,
     tokens: HashSet<Vec<String>>,
-    #[serde(with = "chrono::serde::ts_seconds")]
-    last_modification_time: DateTime<Utc>,
+    /// Seconds since the Unix epoch.
+    last_modification_time: i64,
 }
 
 /// Returns the `dbfile` of an indicator of `model_id` with `description`: its
@@ -255,7 +254,7 @@ pub(super) fn indicator_dbfile(model_id: u32, description: &str) -> String {
         description: description.to_string(),
         model_id,
         tokens: HashSet::from([vec!["token".to_string()]]),
-        last_modification_time: Utc::now(),
+        last_modification_time: jiff::Timestamp::now().as_second(),
     };
     let serialized = bincode::DefaultOptions::new()
         .serialize(&value)

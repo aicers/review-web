@@ -11,11 +11,11 @@
 //! `prune`.
 
 use async_graphql::{Context, Enum, Object, Result, StringNumber};
-use chrono::{DateTime, Utc};
 use review_database::{self as database, Store, event::Direction};
 
 use super::{Role, RoleGuard, customer_access, install_state, node::deploy::bind_package_class};
 use crate::backend::{CORE_PACKAGE_IDS, MODULE_PACKAGE_IDS};
+use crate::graphql::timestamp::Timestamp;
 
 /// The refusal message every role and customer-scope rejection in this crate
 /// carries.
@@ -280,8 +280,8 @@ impl OperationAttempt {
     }
 
     /// When the attempt began.
-    async fn started_at(&self) -> DateTime<Utc> {
-        self.inner.started_at
+    async fn started_at(&self) -> Timestamp {
+        self.inner.started_at.into()
     }
 
     /// The absolute deadline the attempt carries.
@@ -289,8 +289,8 @@ impl OperationAttempt {
     /// An attempt past it that `review` has not yet swept is still
     /// non-terminal and still reported: expiry is `review`'s to act on, and
     /// this is what lets a client age the row itself.
-    async fn expires_at(&self) -> DateTime<Utc> {
-        self.inner.expires_at
+    async fn expires_at(&self) -> Timestamp {
+        self.inner.expires_at.into()
     }
 }
 
@@ -629,7 +629,6 @@ fn node_hostname(store: &Store, node_id: u32) -> Result<Option<String>> {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{DateTime, TimeDelta, TimeZone, Utc};
     use review_database::{
         Agent, AgentKind, AgentStatus, CoreComponent, ExternalService, ExternalServiceKind,
         ExternalServiceStatus, Lifecycle, Node, NodeProfile, OperationAction,
@@ -660,9 +659,8 @@ mod tests {
     const HOST: &str = "host1.example.com";
 
     /// Returns a fixed instant `offset` seconds past a fixed epoch.
-    fn instant(offset: i64) -> DateTime<Utc> {
-        Utc.timestamp_opt(1_700_000_000 + offset, 0)
-            .single()
+    fn instant(offset: i64) -> jiff::Timestamp {
+        jiff::Timestamp::from_second(1_700_000_000 + offset)
             .expect("a fixed timestamp is representable")
     }
 
@@ -764,7 +762,7 @@ mod tests {
             profile_draft: None,
             agents,
             external_services,
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         store.node_map().put(&node).expect("insert node")
     }
@@ -926,8 +924,29 @@ mod tests {
         assert_eq!(found["resolvedVersion"], json!("1.2.0"));
         assert_eq!(found["resolvedCommit"], json!("abcabc"));
         assert_eq!(found["cleanupOwed"], json!(null));
-        assert_eq!(found["startedAt"], json!("2023-11-14T22:13:20+00:00"));
-        assert_eq!(found["expiresAt"], json!("2023-11-14T23:13:20+00:00"));
+        assert_eq!(found["startedAt"], json!("2023-11-14T22:13:20Z"));
+        assert_eq!(found["expiresAt"], json!("2023-11-14T23:13:20Z"));
+    }
+
+    /// A time with a fraction of a second prints it with its trailing zeros
+    /// trimmed.
+    #[tokio::test]
+    async fn a_fractional_start_prints_its_trimmed_fraction() {
+        const KEY: &str = "22222222-2222-4222-8222-222222222222";
+        let schema = TestSchema::new().await;
+        let mut record = attempt(KEY, OperationAction::Install, HOST, "hog", Some(3));
+        record.started_at = instant(0)
+            .checked_add(jiff::SignedDuration::from_millis(120))
+            .expect("a fixed timestamp is representable");
+        seed(&schema.store(), &record);
+
+        let res = schema.execute_as_system_admin(&attempt_query(KEY)).await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        assert_eq!(
+            data["operationAttempt"]["startedAt"],
+            json!("2023-11-14T22:13:20.12Z")
+        );
     }
 
     /// A null for an id the ledger does not hold and a null for a refusal are
@@ -2017,7 +2036,7 @@ mod tests {
             .operation_attempt_map()
             .prune(
                 OperationRetentionBound {
-                    max_age: TimeDelta::zero(),
+                    max_age: jiff::SignedDuration::ZERO,
                     max_terminal_per_triple: 1,
                 },
                 instant(120),
@@ -2298,7 +2317,7 @@ mod tests {
             }),
             agents: vec![agent("hog1", AgentKind::SemiSupervised, Some(1))],
             external_services: Vec::new(),
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         let node_id = schema.store().node_map().put(&node).expect("insert node");
         // An attempt under the drafted hostname, which a lookup that fell back

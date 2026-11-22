@@ -14,7 +14,6 @@
 //! the connection state, and each collector's attempts.
 
 use async_graphql::{Context, Object, Result, SimpleObject, StringNumber, Union};
-use chrono::{DateTime, Utc};
 use review_database as database;
 use tracing::info;
 
@@ -27,6 +26,7 @@ use super::{
     },
     operation_attempt::OperationAttempt,
 };
+use crate::graphql::timestamp::Timestamp;
 use crate::{
     backend::{DeployError, SystemLogCollectorState},
     info_with_caller,
@@ -107,7 +107,7 @@ impl From<SystemLogCollectorState> for SystemLogCollector {
 #[derive(SimpleObject)]
 pub(crate) struct SystemLogCollectorRefusal {
     /// When the install was refused.
-    at: DateTime<Utc>,
+    at: Timestamp,
     /// The reason the install was refused, as reported.
     message: String,
 }
@@ -115,7 +115,7 @@ pub(crate) struct SystemLogCollectorRefusal {
 impl From<database::SystemLogCollectorRefusal> for SystemLogCollectorRefusal {
     fn from(refusal: database::SystemLogCollectorRefusal) -> Self {
         Self {
-            at: refusal.at,
+            at: refusal.at.into(),
             message: refusal.message,
         }
     }
@@ -276,7 +276,6 @@ mod tests {
     };
 
     use assert_json_diff::assert_json_eq;
-    use chrono::{DateTime, TimeZone, Utc};
     use review_database::{
         BuildSelector, ListenerBinding, ListenerTransport, OperationAction,
         OperationAttempt as Record, OperationOutcome, OperationPhase, OperationRetryPolicy,
@@ -342,9 +341,8 @@ mod tests {
         )
     }
 
-    fn instant(offset: i64) -> DateTime<Utc> {
-        Utc.timestamp_opt(1_700_000_000 + offset, 0)
-            .single()
+    fn instant(offset: i64) -> jiff::Timestamp {
+        jiff::Timestamp::from_second(1_700_000_000 + offset)
             .expect("a fixed timestamp is representable")
     }
 
@@ -881,7 +879,7 @@ mod tests {
                         "dataStore": SERVER_NAME,
                         "connected": true,
                         "lastRefusal": {
-                            "at": "2023-11-14T22:13:30+00:00",
+                            "at": "2023-11-14T22:13:30Z",
                             "message": "the host refused",
                         },
                         "latestOperationAttempt": {

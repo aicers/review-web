@@ -9,7 +9,6 @@ use std::fmt;
 use std::sync::Arc;
 
 use async_graphql::{Context, InputObject, Object, Result, StringNumber, types::ID};
-use chrono::{DateTime, Utc};
 use review_database::{self as database, NetworkListReplaceOutcome, Store};
 use tracing::{error, info};
 
@@ -23,6 +22,7 @@ use super::customer_network::{
 };
 use super::node::SEMI_SUPERVISED_AGENT;
 use super::{Role, RoleGuard};
+use crate::graphql::timestamp::Timestamp;
 use crate::{error_with_caller, info_with_caller};
 
 /// The most entries one list of one customer may hold.
@@ -185,7 +185,7 @@ impl NetworkListMutation {
             revision,
             allowlist,
             blocklist,
-            updated_at: Utc::now(),
+            updated_at: jiff::Timestamp::now(),
         };
         let merged = (set.merged_allowlist(), set.merged_blocklist());
         let _lock = lock_network_lists(ctx).await?;
@@ -275,8 +275,8 @@ impl NetworkListSet {
     }
 
     /// The time when this set was last written.
-    async fn updated_at(&self) -> DateTime<Utc> {
-        self.inner.updated_at
+    async fn updated_at(&self) -> Timestamp {
+        self.inner.updated_at.into()
     }
 }
 

@@ -112,8 +112,12 @@ impl<'de> Deserialize<'de> for TextDuration {
 /// Deserializes text that is RFC 3339 with an offset.
 fn rfc3339<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     let text = String::deserialize(deserializer)?;
-    chrono::DateTime::parse_from_rfc3339(&text)
-        .map_err(|e| D::Error::custom(format!("{text:?} is not RFC 3339 with an offset: {e}")))?;
+    super::rfc3339::parse(&text).map_err(|e| {
+        D::Error::custom(format!(
+            "{text:?} is not RFC 3339 with an offset{}",
+            e.detail()
+        ))
+    })?;
     Ok(text)
 }
 

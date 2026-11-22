@@ -1,7 +1,6 @@
 //! Resolver tests of the engine documents and the node guards of
 //! `insertNode`, `updateNodeDraft`, `applyNode` and `applyNodeDraft`.
 
-use chrono::Utc;
 use review_database::{
     AgentStatus, EngineDetectorRef, EngineDocumentRefs, ExternalServiceKind, ExternalServiceStatus,
     Lifecycle, ModelMethod, ModelUse, NewTrainingDefinition,
@@ -847,7 +846,7 @@ async fn a_detector_on_a_node_without_an_applied_profile_is_refused() {
             privilege_profile: None,
         }],
         external_services: vec![],
-        creation_time: Utc::now(),
+        creation_time: jiff::Timestamp::now(),
     };
     let id = f.store().node_map().put(&node).unwrap();
     let bare = ModelInstance {
@@ -1085,7 +1084,7 @@ async fn a_change_of_kind_to_or_from_unsupervised_is_refused() {
             agent("002.piglet", AgentKind::Sensor),
         ],
         external_services: vec![],
-        creation_time: Utc::now(),
+        creation_time: jiff::Timestamp::now(),
     };
     let id = f.store().node_map().put(&node).unwrap();
     let stored = f.node(id);

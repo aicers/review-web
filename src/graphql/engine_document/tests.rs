@@ -368,6 +368,47 @@ fn unknown_keys_are_refused_at_every_level() {
     assert_eq!(detector_id, Value::from(1));
 }
 
+/// Detector starts that are refused, some of which jiff alone would take, each
+/// with whether the shape check (`false`) or the jiff parse (`true`) refuses
+/// it.
+const REFUSED_STARTS: [(&str, bool); 8] = [
+    ("2026-03-15T15:00:04", false),
+    ("2026-03-15T15:00:04+09", false),
+    ("2026-03-15T15:00:04+0900", false),
+    ("2026-03-15T15:00:04Z[Asia/Seoul]", false),
+    ("2026-03-15T15:00:04,5Z", false),
+    ("20260315T150004Z", false),
+    ("2026-03-15T15:00:04.1234567890Z", true),
+    ("9999-12-31T00:00:00Z", true),
+];
+
+#[test]
+fn other_start_forms_are_refused() {
+    for (start, parse_failure) in REFUSED_STARTS {
+        let text = with(VALID, "start", &format!("start = \"{start}\""));
+        let error = EngineDocument::parse_and_validate(&text).expect_err(start);
+        let (code, field, _, detector_id) = parts(&error);
+        assert_eq!(
+            (code.as_str(), field.as_str()),
+            ("INVALID_DOCUMENT", "detectors[0].start"),
+            "{start}"
+        );
+        assert_eq!(detector_id, Value::from(1), "{start}");
+        let prefix = format!("{start:?} is not RFC 3339 with an offset");
+        assert!(
+            error.message.contains(&prefix),
+            "{start}: {}",
+            error.message
+        );
+        assert_eq!(
+            error.message.contains(&format!("{prefix}: ")),
+            parse_failure,
+            "{start}: {}",
+            error.message
+        );
+    }
+}
+
 /// RFC 3339 detector starts with an offset that are accepted and passed on
 /// to the engine exactly as written.
 const ACCEPTED_STARTS: [&str; 3] = [

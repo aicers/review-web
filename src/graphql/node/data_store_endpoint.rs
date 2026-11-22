@@ -151,7 +151,6 @@ mod tests {
         sync::{Arc, Mutex},
     };
 
-    use chrono::Utc;
     use review_database::{ExternalServiceKind, Lifecycle, Node, NodeProfile, Role};
     use serde_json::{Value, json};
 
@@ -409,7 +408,7 @@ mod tests {
             profile_draft: None,
             agents: vec![],
             external_services: vec![data_store(host, 1)],
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         schema.store().node_map().put(&node).unwrap();
 

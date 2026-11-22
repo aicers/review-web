@@ -9,7 +9,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use chrono::Utc;
 use review_database::{
     Agent, AgentKind, AgentStatus, Lifecycle, ModelInstance, ModelMethod, NewSamplingPolicy,
     NewTrainingDefinition, Node, NodeProfile, NodeUpdate, SamplingInterval, SamplingKind,
@@ -107,7 +106,7 @@ pub(super) fn insert_generator_node_with(
             agent(AgentKind::TimeSeriesGenerator, GENERATOR_KEY, config),
         ],
         external_services: vec![],
-        creation_time: Utc::now(),
+        creation_time: jiff::Timestamp::now(),
     };
     let node_id = store.node_map().put(&node).expect("insert generator node");
     ModelInstance {

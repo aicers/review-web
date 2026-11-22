@@ -10,7 +10,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use chrono::Utc;
 use review_database::{
     Agent, AgentKind, AgentStatus, ExternalService, ExternalServiceKind, ExternalServiceStatus,
     Lifecycle, ModelInstance, Node, NodeProfile, RunId, Store,
@@ -432,7 +431,7 @@ fn put_named_node(
         profile_draft: Some(profile),
         agents,
         external_services,
-        creation_time: Utc::now(),
+        creation_time: jiff::Timestamp::now(),
     };
     store.node_map().put(&node).expect("insert node")
 }

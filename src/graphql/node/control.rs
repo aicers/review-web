@@ -268,7 +268,7 @@ impl NodeControlMutation {
             info_with_caller!(
                 ctx,
                 "[{}] Node ID {i} - Node's drafts are applied.\nName: {}, Name draft: {}\nProfile: {}, Profile draft: {}",
-                chrono::Utc::now(),
+                jiff::Timestamp::now(),
                 node.name,
                 node.name_draft.as_ref().map_or_default(ToString::to_string),
                 node.profile.as_ref().map_or_default(ToString::to_string),
@@ -316,7 +316,7 @@ impl NodeControlMutation {
                 info_with_caller!(
                     ctx,
                     "[{}] Node ID {i} - Node's agents are notified to be updated. {:?}",
-                    chrono::Utc::now(),
+                    jiff::Timestamp::now(),
                     target_agents.updates,
                 );
             }
@@ -392,7 +392,7 @@ impl NodeControlMutation {
             )
             .await?;
 
-            let now = chrono::Utc::now();
+            let now = jiff::Timestamp::now();
             let name = node.name.as_str();
             let name_draft = node.name_draft.as_ref().map_or_default(ToString::to_string);
             let profile = node.profile.as_ref().map_or_default(ToString::to_string);
@@ -4031,7 +4031,7 @@ mod tests {
             }),
             agents,
             external_services,
-            creation_time: chrono::Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         store.node_map().put(&node).expect("insert node")
     }
@@ -4280,7 +4280,7 @@ mod tests {
                     Some("test = 'toml'"),
                 )],
                 external_services: vec![],
-                creation_time: chrono::Utc::now(),
+                creation_time: jiff::Timestamp::now(),
             };
             schema.store().node_map().put(&node).expect("insert node");
         }
@@ -4403,7 +4403,7 @@ mod tests {
                 Some("test = 'toml'"),
             )],
             external_services: vec![],
-            creation_time: chrono::Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         schema.store().node_map().put(&node).expect("insert node");
 
@@ -4543,7 +4543,7 @@ mod tests {
                 Some("test = 'toml'"),
             )],
             external_services: vec![],
-            creation_time: chrono::Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         schema.store().node_map().put(&node).expect("insert node");
 
@@ -4682,7 +4682,7 @@ mod tests {
                 Some("test = 'toml'"),
             )],
             external_services: vec![],
-            creation_time: chrono::Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         schema.store().node_map().put(&node).expect("insert node");
 
@@ -5270,7 +5270,7 @@ mod tests {
                 Some("test = 'toml'"),
             )],
             external_services: vec![],
-            creation_time: chrono::Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         let id = store.node_map().put(&node).expect("insert node");
         assert_eq!(id, 0);

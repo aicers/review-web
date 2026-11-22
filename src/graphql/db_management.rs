@@ -4,17 +4,17 @@ use async_graphql::{
     Context, CustomValidator, ID, InputObject, InputValueError, Object, Result, SimpleObject,
     StringNumber,
 };
-use chrono::{DateTime, Utc};
 use review_database::{BackupConfig as DbBackupConfig, BackupConfigUpdate, Store, backup};
 use tracing::info;
 
 use super::{Role, RoleGuard};
+use crate::graphql::timestamp::Timestamp;
 use crate::info_with_caller;
 
 #[derive(SimpleObject)]
 pub struct BackupInfo {
     pub id: ID,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub size: StringNumber<u64>,
 }
 
@@ -141,7 +141,7 @@ impl DbManagementQuery {
             .into_iter()
             .map(|info| BackupInfo {
                 id: ID::from(info.id),
-                timestamp: info.timestamp,
+                timestamp: info.timestamp.into(),
                 size: StringNumber(info.size),
             })
             .collect();

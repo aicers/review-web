@@ -74,7 +74,6 @@ mod tests {
 
     use async_graphql::Request;
     use async_graphql::{EmptyMutation, EmptySubscription, Object, Schema};
-    use chrono::Utc;
     use review_database::Store;
 
     use super::*;
@@ -92,7 +91,7 @@ mod tests {
             }),
             agents: vec![],
             external_services: vec![],
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         }
     }
 
@@ -215,7 +214,7 @@ mod tests {
             }),
             agents: vec![],
             external_services: vec![],
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
 
         assert!(can_access_node(Some(&[7]), &node));
@@ -239,7 +238,7 @@ mod tests {
             }),
             agents: vec![],
             external_services: vec![],
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
 
         assert!(!can_access_node(Some(&[1]), &node));

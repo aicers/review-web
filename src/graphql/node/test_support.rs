@@ -1,7 +1,6 @@
 use std::{collections::HashMap, time::Duration};
 
 use async_trait::async_trait;
-use chrono::Utc;
 use review_protocol::types::ResourceUsage;
 
 use crate::graphql::{AgentManager, customer::NetworksTargetAgentLookupKeysPair};
@@ -112,7 +111,7 @@ pub(super) fn insert_active_node(
         profile_draft: None,
         agents: vec![],
         external_services: vec![],
-        creation_time: Utc::now(),
+        creation_time: jiff::Timestamp::now(),
     };
     store.node_map().put(&node).expect("insert node")
 }
@@ -194,7 +193,7 @@ pub(super) fn put_node(
         profile_draft: profile,
         agents,
         external_services,
-        creation_time: Utc::now(),
+        creation_time: jiff::Timestamp::now(),
     };
     store.node_map().put(&node).expect("insert node")
 }

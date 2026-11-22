@@ -8,7 +8,6 @@ use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
     types::ID,
 };
-use chrono::{DateTime, Utc};
 use review_database::{
     Iterable, ModelInstance, NewSamplingPolicy, PolicyState, PolicyUse, SamplingPolicyError, Store,
     UniqueKey, event::Direction,
@@ -21,6 +20,7 @@ use crate::graphql::customer_access::{customer_sensor_names, is_member, users_cu
 use crate::graphql::customer_deletion_guard;
 use crate::graphql::engine_config::lock_engine_config;
 use crate::graphql::query_with_constraints;
+use crate::graphql::timestamp::Timestamp;
 use crate::graphql::training::resolve_generator;
 
 mod delivery;
@@ -454,8 +454,8 @@ impl SamplingPolicy {
         policy_delivery(ctx, &self.inner).await
     }
 
-    async fn creation_time(&self) -> DateTime<Utc> {
-        self.inner.creation_time
+    async fn creation_time(&self) -> Timestamp {
+        self.inner.creation_time.into()
     }
 }
 

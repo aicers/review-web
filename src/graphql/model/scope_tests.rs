@@ -1,7 +1,6 @@
 //! Customer-scope tests of the model-keyed reads and writes, and tests of the
 //! model record and the previous training result they expose.
 
-use chrono::{DateTime, Utc};
 use review_database::{Cluster, ColumnStats, OutlierInfo, Store, types::ModelBatchInfo};
 use serde_json::{Value, json};
 
@@ -538,8 +537,8 @@ async fn models_pages_hold_only_the_caller_models() {
 #[tokio::test]
 async fn model_digest_returns_the_record() {
     let schema = TestSchema::new().await;
-    let trained_at: DateTime<Utc> = "2026-01-02T03:04:05Z".parse().unwrap();
-    let retrained_at: DateTime<Utc> = "2026-02-03T04:05:06Z".parse().unwrap();
+    let trained_at: jiff::Timestamp = "2026-01-02T03:04:05Z".parse().unwrap();
+    let retrained_at: jiff::Timestamp = "2026-02-03T04:05:06Z".parse().unwrap();
     let detached = review_database::ModelInstance {
         node_id: 50,
         agent_key: TEST_AGENT_KEY.to_string(),
@@ -598,13 +597,13 @@ async fn model_digest_returns_the_record() {
                 "method": "MULTIDIMENSION",
                 "eventKind": "http",
                 "customerId": "1",
-                "trainedAt": retrained_at.to_rfc3339(),
+                "trainedAt": retrained_at.to_string(),
                 "instance": {
                     "nodeId": instance_a.node_id.to_string(),
                     "agentKey": instance_a.agent_key,
                 },
                 "previousTrainingResult": {
-                    "trainedAt": trained_at.to_rfc3339(),
+                    "trainedAt": trained_at.to_string(),
                     "version": 1,
                     "clusterCount": "2",
                     "outlierCount": "3",
@@ -643,7 +642,7 @@ fn res_time(schema: &TestSchema, name: &str) -> String {
         .load_model_by_name(name)
         .unwrap()
         .trained_at
-        .to_rfc3339()
+        .to_string()
 }
 
 fn put_batch_info(store: &Store, model: u32, id: i64) {
@@ -783,4 +782,108 @@ async fn previous_reads_return_the_previous_rows() {
     }
     assert_eq!(empty["topIpAddressesOfCluster"], json!([]));
     assert_eq!(empty["columnStatistics"], json!([]));
+}
+
+/// 2026-03-15T15:00:04Z, a round time of a whole second, in nanoseconds.
+const WHOLE_SECOND_ROUND: i64 = 1_773_586_804_000_000_000;
+/// 2026-03-15T15:00:04.12Z, a round time with a fraction, in nanoseconds.
+const FRACTION_ROUND: i64 = 1_773_586_804_120_000_000;
+
+#[tokio::test]
+async fn a_round_time_prints_as_rfc3339_and_selects_its_round() {
+    let schema = TestSchema::new().await;
+    let model = {
+        let store = schema.store();
+        let model = TestModel {
+            rounds: &[WHOLE_SECOND_ROUND, FRACTION_ROUND],
+            ..TestModel::new("model", CUSTOMER_A)
+        }
+        .replace(&store);
+        store
+            .cluster_map()
+            .put(&cluster(model, CLUSTER, 10, 1))
+            .unwrap();
+        for (batch_ts, address) in [
+            (WHOLE_SECOND_ROUND, "10.0.0.1"),
+            (FRACTION_ROUND, "10.0.0.2"),
+        ] {
+            store
+                .column_stats_map()
+                .put(&ip_column_stats(model, CLUSTER, batch_ts, address))
+                .unwrap();
+        }
+        model
+    };
+
+    let rounds = data(
+        schema
+            .execute_as_system_admin(&format!(
+                "{{ roundsByCluster(model: {model}, cluster: {CLUSTER}) {{ nodes {{ time }} }} }}"
+            ))
+            .await,
+    );
+    let nodes = &rounds["roundsByCluster"]["nodes"];
+    assert_eq!(
+        nodes,
+        &json!([
+            { "time": "2026-03-15T15:00:04Z" },
+            { "time": "2026-03-15T15:00:04.12Z" },
+        ])
+    );
+
+    // Each time, sent back unchanged, selects its own round.
+    for (node, address) in nodes
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(["10.0.0.1", "10.0.0.2"])
+    {
+        let time = node["time"].as_str().unwrap();
+        let res = data(
+            schema
+                .execute_as_system_admin(&format!(
+                    "{{ columnStatistics(model: {model}, cluster: {CLUSTER}, time: [\"{time}\"])
+                        topIpAddresses(model: {model}, time: \"{time}\") {{ counts {{ value }} }} }}"
+                ))
+                .await,
+        );
+        let statistics = res["columnStatistics"].as_array().unwrap();
+        assert_eq!(statistics.len(), 1, "{time}");
+        assert_eq!(statistics[0]["batch_ts"], json!(time));
+        assert_eq!(
+            statistics[0]["column_stats"]["n_largest_count"]["mode"],
+            json!({ "IpAddr": address })
+        );
+        assert_eq!(
+            res["topIpAddresses"],
+            json!([{ "counts": [{ "value": address }] }]),
+            "{time}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn column_statistics_batch_ts_is_the_display_of_the_time() {
+    let schema = TestSchema::new().await;
+    let model = {
+        let store = schema.store();
+        let model = replace_model(&store, "model", CUSTOMER_A);
+        store
+            .column_stats_map()
+            .put(&ip_column_stats(model, CLUSTER, FRACTION_ROUND, "10.0.0.1"))
+            .unwrap();
+        model
+    };
+    let res = data(
+        schema
+            .execute_as_system_admin(&format!(
+                "{{ columnStatistics(model: {model}, cluster: {CLUSTER}, time: []) }}"
+            ))
+            .await,
+    );
+    let expected = review_database::timestamp::from_i64_nanos(FRACTION_ROUND)
+        .unwrap()
+        .to_string();
+    assert_eq!(expected, "2026-03-15T15:00:04.12Z");
+    assert_eq!(res["columnStatistics"][0]["batch_ts"], json!(expected));
 }
