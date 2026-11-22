@@ -4,6 +4,17 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.60.0](https://github.com/aicers/review-web/compare/0.59.0...0.60.0) - 2026-11-22
+
+### Added
+
+- [**breaking**] replace chrono with jiff in the GraphQL schema ([#1253](https://github.com/aicers/review-web/pull/1253))
+
+### Other
+
+- update shared instruction blocks to 0.6.3 ([#1252](https://github.com/aicers/review-web/pull/1252))
+- automate releases with release-plz ([#1247](https://github.com/aicers/review-web/pull/1247))
+
 ## [0.59.0] - 2026-11-18
 
 ### Changed
