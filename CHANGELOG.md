@@ -4,6 +4,12 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.60.1](https://github.com/aicers/review-web/compare/0.60.0...0.60.1) - 2026-11-22
+
+### Other
+
+- *(deps)* update jsonwebtoken requirement from 11 to 12 ([#1246](https://github.com/aicers/review-web/pull/1246))
+
 ## [0.60.0](https://github.com/aicers/review-web/compare/0.59.0...0.60.0) - 2026-11-22
 
 ### Changed
