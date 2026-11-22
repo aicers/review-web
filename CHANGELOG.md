@@ -4,6 +4,34 @@ This file documents recent notable changes to this project. The format of this
 file is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.60.0](https://github.com/aicers/review-web/compare/0.59.0...0.60.0) - 2026-11-22
+
+### Changed
+
+- **Breaking change:** The GraphQL schema drops `NaiveDateTime`. Every field
+  and argument that used it is now `DateTime`: `Cluster.lastModificationTime`,
+  `TimeCount.time` and `Round.time`, and the `time` argument of
+  `topTimeSeries`, `topColumns`, `topIpAddresses`, `topMultimaps`,
+  `savedOutliers`, `rankedOutliers` and `columnStatistics`. A client must send
+  these values with an offset (for example `Z`) and query them as `DateTime`.
+- **Breaking change:** Every `DateTime` value is written in RFC 3339 with `Z`
+  and the shortest fraction that keeps it (for example
+  `2026-03-15T15:00:04.12Z`) instead of `+00:00` with 0, 3, 6 or 9 fractional
+  digits. In `columnStatistics`, each `batch_ts` is now this string instead of
+  an integer.
+- `DateTime` input no longer accepts a space before the offset or a ` UTC`
+  suffix, and it now accepts other RFC 3339 and ISO 8601 forms such as `+09`,
+  `+0900` and `20260315T150004Z`.
+- Time inputs that are stored, or that look up a stored key (such as
+  `insertTriageResponse` and `columnStatistics`), are refused with an error
+  outside 1677-09-21 to 2262-04-11.
+- The training window and the engine document start refuse a value with 10 or
+  more fractional-second digits, or one after `9999-12-30T22:00:00.999999999Z`.
+  Otherwise they accept and pass on the same text as before.
+- Bumped `review-database` to 0.65.0, which stores timestamps in DB format 0.62
+  and migrates a 0.61 database on start; there is no migration back.
+- Timestamps in log and error messages use the same `Z` form.
+
 ## [0.59.0] - 2026-11-18
 
 ### Changed
