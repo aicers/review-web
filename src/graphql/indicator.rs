@@ -1,10 +1,10 @@
 use async_graphql::{Context, ErrorExtensions, ID, Object, Result, StringNumber};
-use chrono::{DateTime, Utc};
 use review_database::{self as database, Referrer, Store, TrainingError};
 
 use super::customer_access::{is_member, users_customers};
 use super::engine_config::lock_engine_config;
 use super::refusal::{RefusalCode, refusal};
+use crate::graphql::timestamp::Timestamp;
 use crate::graphql::{Role, RoleGuard};
 
 #[derive(Default)]
@@ -217,8 +217,8 @@ impl ModelIndicator {
     }
 
     /// The last modified time of the model indicator.
-    async fn last_modified(&self) -> DateTime<Utc> {
-        self.inner.last_modification_time
+    async fn last_modified(&self) -> Timestamp {
+        self.inner.last_modification_time.into()
     }
 }
 

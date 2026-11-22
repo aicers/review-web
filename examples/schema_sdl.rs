@@ -1,3 +1,4 @@
+use async_graphql::SDLExportOptions;
 use review_web::graphql::{Mutation, Query, Schema, Subscription};
 
 fn main() {
@@ -8,8 +9,14 @@ fn main() {
     )
     .finish();
 
-    // `sdl()` already ends in a newline, so this prints the artifact byte for
+    // `include_specified_by` prints the `@specifiedBy` URL a scalar declares,
+    // which plain `sdl()` leaves out.
+    //
+    // The SDL already ends in a newline, so this prints the artifact byte for
     // byte: `tests/schema_sdl.rs` compares the committed file against the same
     // string, and a trailing newline added here would make that comparison fail.
-    print!("{}", schema.sdl());
+    print!(
+        "{}",
+        schema.sdl_with_options(SDLExportOptions::new().include_specified_by())
+    );
 }

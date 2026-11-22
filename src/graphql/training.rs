@@ -16,7 +16,6 @@ use async_graphql::{
     Context, Enum, ErrorExtensions, InputObject, MaybeUndefined, Object, Result, SimpleObject,
     types::ID,
 };
-use chrono::{DateTime, Utc};
 use review_database::{
     self as database, NewTrainingDefinition, Referrer, RunId, RunKind, Store,
     TrainingDefinitionUpdate, TrainingError,
@@ -38,6 +37,7 @@ use super::{
     unsupervised::{DataStore, data_store_addrs},
 };
 use crate::backend::EngineRefused;
+use crate::graphql::timestamp::Timestamp;
 
 /// The reason a run fails when its request or cancel did not reach the
 /// instance and the agent manager left it active.
@@ -1403,13 +1403,13 @@ impl TrainingDefinition {
     }
 
     /// When the definition was created.
-    async fn created_at(&self) -> DateTime<Utc> {
-        self.inner.created_at
+    async fn created_at(&self) -> Timestamp {
+        self.inner.created_at.into()
     }
 
     /// When the definition was last updated.
-    async fn updated_at(&self) -> DateTime<Utc> {
-        self.inner.updated_at
+    async fn updated_at(&self) -> Timestamp {
+        self.inner.updated_at.into()
     }
 }
 
@@ -1479,13 +1479,13 @@ impl ModelRun {
     }
 
     /// When the run was requested.
-    async fn requested_at(&self) -> DateTime<Utc> {
-        self.inner.requested_at
+    async fn requested_at(&self) -> Timestamp {
+        self.inner.requested_at.into()
     }
 
     /// When the state of the run last changed.
-    async fn updated_at(&self) -> DateTime<Utc> {
-        self.inner.updated_at
+    async fn updated_at(&self) -> Timestamp {
+        self.inner.updated_at.into()
     }
 }
 

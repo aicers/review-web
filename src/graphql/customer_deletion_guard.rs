@@ -710,7 +710,7 @@ mod tests {
             profile_draft: None,
             agents,
             external_services,
-            creation_time: chrono::Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         store.node_map().put(&node).unwrap();
     }

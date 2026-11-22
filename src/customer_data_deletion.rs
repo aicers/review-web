@@ -52,7 +52,6 @@ use anyhow::{Context as _, anyhow, bail};
 use async_graphql::{
     Context, Enum, ErrorExtensions, ID, Object, Result as GraphqlResult, SimpleObject,
 };
-use chrono::Utc;
 use futures::{
     future::join_all,
     stream::{FuturesUnordered, StreamExt},
@@ -956,9 +955,8 @@ fn timestamp_nanos() -> anyhow::Result<i64> {
     if let Some(now) = tests::mocked_now() {
         return Ok(now);
     }
-    Utc::now()
-        .timestamp_nanos_opt()
-        .ok_or_else(|| anyhow!("current UTC time is outside the i64 nanosecond range"))
+    review_database::timestamp::to_i64_nanos(jiff::Timestamp::now())
+        .map_err(|_| anyhow!("current UTC time is outside the i64 nanosecond range"))
 }
 
 fn read_store(store: &RwLock<Store>) -> anyhow::Result<std::sync::RwLockReadGuard<'_, Store>> {
@@ -3948,8 +3946,10 @@ mod tests {
 
     /// The `expires_at` of every attempt the tests write: far enough that
     /// nothing in this module sweeps it.
-    fn attempt_deadline() -> chrono::DateTime<Utc> {
-        Utc::now() + chrono::TimeDelta::days(1)
+    fn attempt_deadline() -> jiff::Timestamp {
+        jiff::Timestamp::now()
+            .checked_add(jiff::SignedDuration::from_hours(24))
+            .expect("a day from now is representable")
     }
 
     /// Returns a live attempt of `action` on `(host, target, instance)`.
@@ -3973,7 +3973,7 @@ mod tests {
             resolved_commit: "abcdef".to_string(),
             phase: OperationPhase::Dispatched,
             cleanup_state: None,
-            started_at: Utc::now(),
+            started_at: jiff::Timestamp::now(),
             retry_policy: OperationRetryPolicy {
                 max_attempts: 3,
                 attempts_made: 0,
@@ -3998,7 +3998,7 @@ mod tests {
         attempt.phase = OperationPhase::Completed;
         attempt.outcome = Some(outcome);
         attempt.failure_kind = (outcome == OperationOutcome::Failed).then_some(kind);
-        attempt.finalized_at = Some(Utc::now());
+        attempt.finalized_at = Some(jiff::Timestamp::now());
         attempt
     }
 
@@ -4365,7 +4365,7 @@ mod tests {
             profile_draft: None,
             agents: vec![sensor, semi_supervised, duplicate_sensor_instance],
             external_services: vec![external_service],
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         read_store(&test_store.store)
             .unwrap()
@@ -4986,7 +4986,7 @@ mod tests {
             }),
             agents: Vec::new(),
             external_services: Vec::new(),
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         read_store(&test_store.store)
             .unwrap()
@@ -5878,7 +5878,7 @@ mod tests {
                     profile_draft: None,
                     agents: vec![engine],
                     external_services: vec![],
-                    creation_time: Utc::now(),
+                    creation_time: jiff::Timestamp::now(),
                 })
                 .unwrap();
             let own = put_policy(&store, "own", 1, "piglet.one.example");
@@ -7394,7 +7394,7 @@ mod tests {
                 profile_draft: None,
                 agents,
                 external_services: Vec::new(),
-                creation_time: Utc::now(),
+                creation_time: jiff::Timestamp::now(),
             })
             .unwrap()
     }
@@ -7441,7 +7441,7 @@ mod tests {
                 profile_draft: None,
                 agents,
                 external_services: vec![service],
-                creation_time: Utc::now(),
+                creation_time: jiff::Timestamp::now(),
             })
             .unwrap();
     }
@@ -9170,7 +9170,7 @@ server_name = "{server_name}"
                         None,
                     )],
                     external_services: Vec::new(),
-                    creation_time: Utc::now(),
+                    creation_time: jiff::Timestamp::now(),
                 })
                 .unwrap();
         })));
@@ -11454,7 +11454,7 @@ server_name = "{server_name}"
                         None,
                     )],
                     external_services: Vec::new(),
-                    creation_time: Utc::now(),
+                    creation_time: jiff::Timestamp::now(),
                 })
                 .unwrap();
         })));

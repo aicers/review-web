@@ -1114,7 +1114,6 @@ mod tests {
     };
 
     use assert_json_diff::assert_json_eq;
-    use chrono::Utc;
     use review_database::{
         Agent, AgentKind, AgentStatus, BuildSelector, Lifecycle, ListenerBinding,
         ListenerTransport, Node, NodeProfile, PortOwner, RequestKeyError, Role,
@@ -3920,7 +3919,7 @@ mod tests {
                 privilege_profile: None,
             }],
             external_services: Vec::new(),
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         let id = schema.store().node_map().put(&node).expect("insert node");
 

@@ -11,7 +11,6 @@ use async_graphql::{
     ComplexObject, Context, Enum, ErrorExtensions, Object, Result, SimpleObject, StringNumber,
     types::ID,
 };
-use chrono::{DateTime, Utc};
 use review_database as database;
 use tracing::info;
 
@@ -24,6 +23,7 @@ use super::{
     sampling::{SourceDelivery, source_deliveries},
     training::{TargetInstance, relay_refusal, resolve_instance},
 };
+use crate::graphql::timestamp::Timestamp;
 use crate::info_with_caller;
 
 #[derive(Default)]
@@ -294,7 +294,7 @@ struct DetectorStatus {
     /// The detector's state, which says why it does not run if it does not.
     state: DetectorState,
     /// When the detector's last round finished, or null before its first.
-    finished_at: Option<DateTime<Utc>>,
+    finished_at: Option<Timestamp>,
     /// The outcome of the detector's last round, or null before its first.
     outcome: Option<RoundOutcome>,
     /// The failure reason of the detector's last round.
@@ -304,7 +304,7 @@ struct DetectorStatus {
     /// The state of each of the detector's sources in its last round.
     sources: Vec<DetectorSourceStatus>,
     /// When the Central Manager stored the report.
-    reported_at: DateTime<Utc>,
+    reported_at: Timestamp,
     #[graphql(skip)]
     applied: AppliedSources,
 }
@@ -325,12 +325,12 @@ impl DetectorStatus {
         Self {
             detector_id: ID(detector_id.to_string()),
             state: status.state.into(),
-            finished_at: status.finished_at,
+            finished_at: status.finished_at.map(Into::into),
             outcome: status.outcome.map(Into::into),
             reason: status.reason,
             events: StringNumber(status.events),
             sources: status.sources.into_iter().map(Into::into).collect(),
-            reported_at: status.reported_at,
+            reported_at: status.reported_at.into(),
             applied,
         }
     }

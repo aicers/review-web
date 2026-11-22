@@ -197,7 +197,6 @@ pub(super) async fn load(
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
     use review_database::{Agent, AgentKind, AgentStatus, Node, NodeProfile, Store};
     use serde_json::json;
 
@@ -237,7 +236,7 @@ mod tests {
             profile_draft,
             agents,
             external_services: vec![],
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         store.node_map().put(&node).expect("insert node")
     }

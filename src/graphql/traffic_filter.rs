@@ -1,13 +1,13 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 use async_graphql::{Context, Object, Result};
-use chrono::{DateTime, Utc};
 use ipnet::IpNet;
 use itertools::Itertools;
 use review_database::{self as database};
 use tracing::info;
 
 use super::{Role, RoleGuard, SharedAgentManager};
+use crate::graphql::timestamp::Timestamp;
 use crate::info_with_caller;
 
 #[derive(Default)]
@@ -188,13 +188,13 @@ impl TrafficFilter {
     }
 
     /// The last modification time.
-    async fn last_modification_time(&self) -> DateTime<Utc> {
-        self.inner.last_modification_time
+    async fn last_modification_time(&self) -> Timestamp {
+        self.inner.last_modification_time.into()
     }
 
     /// The latest time when rules are applied to the agent successfully.
-    async fn update_time(&self) -> Option<DateTime<Utc>> {
-        self.inner.update_time
+    async fn update_time(&self) -> Option<Timestamp> {
+        self.inner.update_time.map(Into::into)
     }
 
     /// The last modification time.

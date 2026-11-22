@@ -6,7 +6,6 @@ use async_graphql::{
     connection::{Connection, EmptyFields},
     types::ID,
 };
-use chrono::{DateTime, Utc};
 use review_database::{self as database};
 use tracing::info;
 
@@ -15,6 +14,7 @@ use super::{
     customer::{HostNetworkGroup, HostNetworkGroupInput},
 };
 use crate::graphql::query_with_constraints;
+use crate::graphql::timestamp::Timestamp;
 use crate::info_with_caller;
 
 #[derive(Default)]
@@ -181,8 +181,8 @@ impl Network {
         (&self.inner.networks).into()
     }
 
-    async fn creation_time(&self) -> DateTime<Utc> {
-        self.inner.creation_time
+    async fn creation_time(&self) -> Timestamp {
+        self.inner.creation_time.into()
     }
 }
 

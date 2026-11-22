@@ -411,6 +411,119 @@ fn windows_must_be_rfc3339_with_an_offset() {
     }
 }
 
+/// Window bounds that are refused, some of which jiff alone would take, each
+/// with whether the shape check (`false`) or the jiff parse (`true`) refuses
+/// it.
+const REFUSED_WINDOW_STARTS: [(&str, bool); 8] = [
+    ("2026-03-15T15:00:04", false),
+    ("2026-03-15T15:00:04+09", false),
+    ("2026-03-15T15:00:04+0900", false),
+    ("2026-03-15T15:00:04Z[Asia/Seoul]", false),
+    ("2026-03-15T15:00:04,5Z", false),
+    ("20260315T150004Z", false),
+    ("2026-03-15T15:00:04.1234567890Z", true),
+    ("9999-12-31T00:00:00Z", true),
+];
+
+#[test]
+fn other_window_forms_are_refused() {
+    for (start, parse_failure) in REFUSED_WINDOW_STARTS {
+        let text = with(
+            VALID,
+            "window_start",
+            &format!("window_start = \"{start}\""),
+        );
+        let error = TrainingDocument::parse_and_validate(&text).expect_err(start);
+        assert_eq!(
+            parts(&error),
+            (
+                "INVALID_DOCUMENT".to_string(),
+                "window_start".to_string(),
+                start.to_string()
+            )
+        );
+        let prefix = "window_start is not RFC 3339 with an offset";
+        if parse_failure {
+            assert!(
+                error.message.starts_with(&format!("{prefix}: ")),
+                "{start}: {}",
+                error.message
+            );
+        } else {
+            assert_eq!(error.message, prefix, "{start}");
+        }
+    }
+}
+
+/// RFC 3339 window bounds with an offset that are accepted and passed on
+/// to the engine exactly as written.
+const ACCEPTED_WINDOW_STARTS: [&str; 3] = [
+    "2026-03-15T15:00:04Z",
+    "2026-03-15T15:00:04.123456789+09:00",
+    "2026-03-15 15:00:04-05:30",
+];
+
+#[test]
+fn rfc3339_windows_are_accepted_and_kept_as_written() {
+    for start in ACCEPTED_WINDOW_STARTS {
+        let text = with(
+            &with(
+                VALID,
+                "window_start",
+                &format!("window_start = \"{start}\""),
+            ),
+            "window_end",
+            "window_end = \"2026-03-20T00:00:00Z\"",
+        );
+        let document = TrainingDocument::parse_and_validate(&text).expect(start);
+        assert_eq!(document.window_start, start);
+        let reparsed = TrainingDocument::parse(&document.to_text().unwrap()).unwrap();
+        assert_eq!(reparsed.window_start, start);
+    }
+}
+
+/// A leap second (`:60`) orders and measures a window as the engine reads
+/// it, not as the `:59` jiff reads it as.
+#[test]
+fn a_window_through_a_leap_second_is_ordered_as_the_engine_reads_it() {
+    let window = |start: &str, end: &str| {
+        with(
+            &with(
+                VALID,
+                "window_start",
+                &format!("window_start = \"{start}\""),
+            ),
+            "window_end",
+            &format!("window_end = \"{end}\""),
+        )
+    };
+    for (start, end) in [
+        ("2016-12-31T23:59:59Z", "2016-12-31T23:59:60Z"),
+        ("2016-12-31T23:59:59.5Z", "2016-12-31T23:59:60Z"),
+        ("2016-12-31T23:59:60Z", "2016-12-31T23:59:60.5Z"),
+        ("2016-12-31T23:59:60Z", "2017-03-31T23:59:60Z"),
+        ("2016-12-31T23:59:60Z", "2017-04-01T00:00:00Z"),
+    ] {
+        let document = TrainingDocument::parse_and_validate(&window(start, end))
+            .unwrap_or_else(|e| panic!("{start} to {end}: {}", e.message));
+        assert_eq!(document.window_start, start);
+        assert_eq!(document.window_end, end);
+    }
+    for (start, end) in [
+        ("2016-12-31T23:59:60Z", "2016-12-31T23:59:59.5Z"),
+        ("2016-12-31T23:59:60Z", "2016-12-31T23:59:59Z"),
+        ("2017-01-01T08:59:60+09:00", "2016-12-31T23:59:60Z"),
+        ("2016-12-31T23:59:60Z", "2017-04-01T00:00:00.000000001Z"),
+    ] {
+        let (code, field, value) = refused(&window(start, end));
+        assert_eq!(
+            (code.as_str(), field.as_str(), value.as_str()),
+            ("BOUND_VIOLATED", "window_end", end),
+            "{start} to {end}"
+        );
+    }
+}
+
 #[test]
 fn bounds_are_accepted_at_their_limit_and_refused_past_it() {
     let at_limit = [

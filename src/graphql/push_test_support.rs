@@ -8,7 +8,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use chrono::Utc;
 use review_database::{
     Agent, AgentKind, AgentStatus, HostNetworkGroup, Lifecycle, Node, NodeProfile,
 };
@@ -286,7 +285,7 @@ pub(super) fn insert_node(schema: &TestSchema, customer_id: u32, hostname: &str)
             agent("001.piglet", AgentKind::Sensor),
         ],
         external_services: vec![],
-        creation_time: Utc::now(),
+        creation_time: jiff::Timestamp::now(),
     };
     schema.store().node_map().put(&node).expect("insert node");
 }

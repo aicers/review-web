@@ -420,32 +420,32 @@ fn load_networks(
 mod tests {
     use std::net::Ipv4Addr;
 
-    use chrono::{DateTime, NaiveDate, Utc};
+    use jiff::{SignedDuration, Timestamp};
     use review_database::{
         EventCategory, EventKind, EventMessage,
         event::{DnsEventFields, ExternalDdosFields, MultiHostPortScanFields},
     };
 
     use super::super::tests::{
-        event_country_locator, jiff_timestamp, schema_with_country_filter_events,
+        event_country_locator, nanos, schema_with_country_filter_events, utc_micro,
     };
     use crate::graphql::TestSchema;
 
     /// Creates an event message at `timestamp` with the given source and
     /// destination `IPv4` addresses.
-    fn event_message_at(timestamp: DateTime<Utc>, src: u32, dst: u32) -> EventMessage {
+    fn event_message_at(timestamp: Timestamp, src: u32, dst: u32) -> EventMessage {
         event_message_with_category(timestamp, src, dst, Some(EventCategory::CommandAndControl))
     }
 
     fn event_message_with_category(
-        timestamp: DateTime<Utc>,
+        timestamp: Timestamp,
         src: u32,
         dst: u32,
         category: Option<EventCategory>,
     ) -> EventMessage {
         let fields = DnsEventFields {
             sensor: "sensor1".to_string(),
-            start_time: timestamp.timestamp_nanos_opt().unwrap(),
+            start_time: nanos(timestamp),
             duration: 0,
             orig_addr: Ipv4Addr::from(src).into(),
             orig_port: 10000,
@@ -472,7 +472,7 @@ mod tests {
             category,
         };
         EventMessage {
-            time: jiff_timestamp(timestamp),
+            time: timestamp,
             kind: EventKind::DnsCovertChannel,
             fields: bincode::serialize(&fields).expect("serializable"),
         }
@@ -483,16 +483,11 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
 
         for offset in 0..3 {
             db.put(&event_message_with_category(
-                ts + chrono::Duration::seconds(offset),
+                ts + SignedDuration::from_secs(offset),
                 1,
                 2,
                 None,
@@ -501,7 +496,7 @@ mod tests {
         }
         for offset in 3..5 {
             db.put(&event_message_with_category(
-                ts + chrono::Duration::seconds(offset),
+                ts + SignedDuration::from_secs(offset),
                 3,
                 4,
                 Some(EventCategory::InitialAccess),
@@ -563,18 +558,18 @@ mod tests {
     #[tokio::test]
     async fn event_frequency_series_requires_explicit_start() {
         let schema = TestSchema::new().await;
-        let epoch = DateTime::from_timestamp(0, 0).expect("the Unix epoch is valid");
+        let epoch = Timestamp::UNIX_EPOCH;
         let store = schema.store();
         let db = store.events();
         db.put(&event_message_at(epoch, 1, 2)).unwrap();
         db.put(&event_message_at(
-            epoch + chrono::Duration::seconds(1),
+            epoch + SignedDuration::from_secs(1),
             3,
             4,
         ))
         .unwrap();
         drop(store);
-        let end = jiff_timestamp(epoch + chrono::Duration::seconds(2));
+        let end = epoch + SignedDuration::from_secs(2);
 
         let output = schema
             .execute_as_system_admin(&format!(
@@ -620,7 +615,7 @@ mod tests {
                 store
                     .events()
                     .put(&event_message_at(
-                        DateTime::from_timestamp(9_999, 0).unwrap(),
+                        Timestamp::from_second(9_999).unwrap(),
                         1,
                         2,
                     ))
@@ -665,7 +660,7 @@ mod tests {
                 store
                     .events()
                     .put(&event_message_at(
-                        DateTime::from_timestamp_nanos(nanos),
+                        Timestamp::from_nanosecond(i128::from(nanos)).unwrap(),
                         1,
                         2,
                     ))
@@ -707,7 +702,7 @@ mod tests {
                     store
                         .events()
                         .put(&event_message_at(
-                            DateTime::from_timestamp(seconds, 0).unwrap(),
+                            Timestamp::from_second(seconds).unwrap(),
                             1,
                             2,
                         ))
@@ -730,7 +725,7 @@ mod tests {
                 store
                     .events()
                     .put(&event_message_at(
-                        DateTime::from_timestamp_nanos(nanos),
+                        Timestamp::from_nanosecond(i128::from(nanos)).unwrap(),
                         1,
                         2,
                     ))
@@ -848,26 +843,11 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let ts1 = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts1 = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
         db.put(&event_message_at(ts1, 1, 2)).unwrap();
-        let ts2 = NaiveDate::from_ymd_opt(2018, 1, 27)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts2 = utc_micro(2018, 1, 27, 18, 30, 9, 453_829);
         db.put(&event_message_at(ts2, 3, 4)).unwrap();
-        let ts3 = NaiveDate::from_ymd_opt(2018, 1, 28)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts3 = utc_micro(2018, 1, 28, 18, 30, 9, 453_829);
 
         let res = schema
             .execute_as_system_admin(
@@ -885,8 +865,6 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
-        let ts1 = jiff_timestamp(ts1);
-        let ts3 = jiff_timestamp(ts3);
         let query = format!(
             "{{ \
                 eventCountsByNetwork(
@@ -910,12 +888,7 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
         db.put(&event_message_at(
             ts,
             u32::from(Ipv4Addr::new(1, 0, 0, 1)),
@@ -954,12 +927,7 @@ mod tests {
         let schema = TestSchema::new_with_event_country_locator(locator).await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
 
         // The first event contributes US and KR. The second contributes US
         // once because its originator and responder have the same code. The
@@ -972,7 +940,7 @@ mod tests {
         ))
         .unwrap();
         db.put(&event_message_at(
-            ts + chrono::Duration::seconds(1),
+            ts + SignedDuration::from_secs(1),
             u32::from(Ipv4Addr::new(1, 0, 0, 2)),
             u32::from(Ipv4Addr::new(1, 0, 0, 3)),
         ))
@@ -987,17 +955,13 @@ mod tests {
                 Ipv4Addr::new(2, 0, 0, 3).into(),
             ],
             proto: 6,
-            first_event_start_time: (ts + chrono::Duration::seconds(2))
-                .timestamp_nanos_opt()
-                .unwrap(),
-            last_event_start_time: (ts + chrono::Duration::seconds(2))
-                .timestamp_nanos_opt()
-                .unwrap(),
+            first_event_start_time: nanos(ts + SignedDuration::from_secs(2)),
+            last_event_start_time: nanos(ts + SignedDuration::from_secs(2)),
             confidence: 0.8,
             category: Some(EventCategory::CommandAndControl),
         };
         db.put(&EventMessage {
-            time: jiff_timestamp(ts + chrono::Duration::seconds(2)),
+            time: ts + SignedDuration::from_secs(2),
             kind: EventKind::MultiHostPortScan,
             fields: bincode::serialize(&multi_host_fields).expect("serializable"),
         })
@@ -1028,12 +992,7 @@ mod tests {
         let schema = TestSchema::new_with_event_country_locator(locator).await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
 
         // Both first endpoints are US. Only later originators carry KR, and
         // the repeated KR and the US on both sides must each count once.
@@ -1046,19 +1005,19 @@ mod tests {
             ],
             resp_addr: Ipv4Addr::new(1, 0, 0, 2).into(),
             proto: 17,
-            first_event_start_time: ts.timestamp_nanos_opt().unwrap(),
-            last_event_start_time: ts.timestamp_nanos_opt().unwrap(),
+            first_event_start_time: nanos(ts),
+            last_event_start_time: nanos(ts),
             confidence: 0.8,
             category: Some(EventCategory::Impact),
         };
         db.put(&EventMessage {
-            time: jiff_timestamp(ts),
+            time: ts,
             kind: EventKind::ExternalDdos,
             fields: bincode::serialize(&fields).expect("serializable"),
         })
         .unwrap();
         db.put(&event_message_at(
-            ts + chrono::Duration::seconds(1),
+            ts + SignedDuration::from_secs(1),
             u32::from(Ipv4Addr::new(1, 0, 0, 3)),
             u32::from(Ipv4Addr::new(1, 0, 0, 4)),
         ))
@@ -1102,16 +1061,11 @@ mod tests {
 
     #[tokio::test]
     async fn event_frequency_series_country_filter_uses_stored_codes_without_locator() {
-        let start = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-        let end = start + chrono::Duration::minutes(2);
+        let start = utc_micro(2026, 1, 1, 0, 0, 0, 0);
+        let end = start + SignedDuration::from_mins(2);
         let (_locator_dir, schema) = schema_with_country_filter_events(
-            start + chrono::Duration::seconds(10),
-            start + chrono::Duration::seconds(20),
+            start + SignedDuration::from_secs(10),
+            start + SignedDuration::from_secs(20),
         )
         .await;
 
@@ -1120,14 +1074,12 @@ mod tests {
         let store = schema.store();
         let db = store.events();
         db.put(&event_message_at(
-            start + chrono::Duration::seconds(70),
+            start + SignedDuration::from_secs(70),
             u32::from(Ipv4Addr::new(2, 0, 0, 4)),
             u32::from(Ipv4Addr::new(2, 0, 0, 5)),
         ))
         .unwrap();
         drop(store);
-        let start = jiff_timestamp(start);
-        let end = jiff_timestamp(end);
 
         let res = schema
             .execute_as_system_admin(&format!(
@@ -1146,14 +1098,9 @@ mod tests {
 
     #[tokio::test]
     async fn event_counts_by_network_country_filter_uses_stored_codes_without_locator() {
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
         let (_locator_dir, schema) =
-            schema_with_country_filter_events(ts, ts + chrono::Duration::seconds(1)).await;
+            schema_with_country_filter_events(ts, ts + SignedDuration::from_secs(1)).await;
 
         // Both events belong to the same configured network, but only the
         // first contains a stored US endpoint code.

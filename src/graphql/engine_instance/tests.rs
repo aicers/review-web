@@ -1,7 +1,6 @@
 //! Resolver tests of run once, engine start and stop, and the engine instance
 //! read.
 
-use chrono::{DateTime, Utc};
 use review_database::{
     AgentKind, DetectorSourceStatus, EngineDetectorRef, EngineDocumentRefs, EngineDocumentWrite,
     ModelInstance, NodeUpdate, Store,
@@ -162,7 +161,7 @@ fn write_refs(
         .expect("write engine document references");
 }
 
-fn time(text: &str) -> DateTime<Utc> {
+fn time(text: &str) -> jiff::Timestamp {
     text.parse().expect("an RFC 3339 time")
 }
 
@@ -801,12 +800,12 @@ async fn the_read_returns_the_stopped_state_and_every_status() {
                     "reason": null,
                     "events": "0",
                     "sources": [],
-                    "reportedAt": time("2026-10-21T00:00:01Z").to_rfc3339(),
+                    "reportedAt": time("2026-10-21T00:00:01Z").to_string(),
                 },
                 {
                     "detectorId": "3",
                     "state": "RUNNING",
-                    "finishedAt": time("2026-10-21T00:05:00Z").to_rfc3339(),
+                    "finishedAt": time("2026-10-21T00:05:00Z").to_string(),
                     "outcome": "FAILED",
                     "reason": "source failed",
                     "events": "12345678901",
@@ -823,7 +822,7 @@ async fn the_read_returns_the_stopped_state_and_every_status() {
                             "reason": "read failed"
                         },
                     ],
-                    "reportedAt": time("2026-10-21T00:05:01Z").to_rfc3339(),
+                    "reportedAt": time("2026-10-21T00:05:01Z").to_string(),
                 },
             ],
         }

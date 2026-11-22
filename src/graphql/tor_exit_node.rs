@@ -3,12 +3,12 @@ use async_graphql::{
     Context, Object, Result, SimpleObject, StringNumber,
     connection::{Connection, EmptyFields},
 };
-use chrono::{DateTime, Utc};
 use review_database::{Iterable, event::Direction};
 use tracing::warn;
 
 use super::{Role, RoleGuard, SharedAgentManager};
 use crate::graphql::query_with_constraints;
+use crate::graphql::timestamp::Timestamp;
 
 #[derive(Default)]
 pub(super) struct TorExitNodeQuery;
@@ -58,7 +58,7 @@ impl TorExitNodeMutation {
         {
             let store = crate::graphql::get_store(ctx)?;
             let map = store.tor_exit_node_map();
-            let updated_at = Utc::now();
+            let updated_at = jiff::Timestamp::now();
             map.replace_all(
                 ip_addresses
                     .iter()
@@ -83,14 +83,14 @@ impl TorExitNodeMutation {
 #[derive(SimpleObject)]
 struct TorExitNode {
     ip_address: String,
-    updated_at: DateTime<Utc>,
+    updated_at: Timestamp,
 }
 
 impl From<review_database::TorExitNode> for TorExitNode {
     fn from(input: review_database::TorExitNode) -> Self {
         Self {
             ip_address: input.ip_address,
-            updated_at: input.updated_at,
+            updated_at: input.updated_at.into(),
         }
     }
 }

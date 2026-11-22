@@ -3,12 +3,12 @@ use async_graphql::{
     Context, Object, Result, SimpleObject, StringNumber,
     connection::{Connection, EmptyFields},
 };
-use chrono::{DateTime, Utc};
 use database::{Iterable, event::Direction};
 use review_database::{self as database, Store};
 
 use super::{Role, RoleGuard, SharedAgentManager};
 use crate::graphql::query_with_constraints;
+use crate::graphql::timestamp::Timestamp;
 
 #[derive(Default)]
 pub(super) struct UserAgentQuery;
@@ -65,7 +65,7 @@ impl UserAgentMutation {
             for user_agent in user_agents {
                 let entry = database::TrustedUserAgent {
                     user_agent,
-                    updated_at: Utc::now(),
+                    updated_at: jiff::Timestamp::now(),
                 };
                 map.put(&entry)?;
             }
@@ -138,7 +138,7 @@ impl UserAgentMutation {
             let map = store.trusted_user_agent_map();
             let new = database::TrustedUserAgent {
                 user_agent: new,
-                updated_at: Utc::now(),
+                updated_at: jiff::Timestamp::now(),
             };
             map.update(&old, &new)?;
             get_trusted_user_agent_list(&store)?
@@ -155,14 +155,14 @@ impl UserAgentMutation {
 #[derive(SimpleObject)]
 struct TrustedUserAgent {
     user_agent: String,
-    updated_at: DateTime<Utc>,
+    updated_at: Timestamp,
 }
 
 impl From<database::TrustedUserAgent> for TrustedUserAgent {
     fn from(input: database::TrustedUserAgent) -> Self {
         Self {
             user_agent: input.user_agent,
-            updated_at: input.updated_at,
+            updated_at: input.updated_at.into(),
         }
     }
 }

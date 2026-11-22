@@ -207,7 +207,7 @@ where
 #[cfg(test)]
 mod tests {
     use base64::Engine as _;
-    use chrono::{Duration, Utc};
+    use jiff::SignedDuration;
     use jsonwebtoken::{EncodingKey, Header, encode};
     use rcgen::{CertificateParams, KeyPair, PKCS_ECDSA_P256_SHA256};
     use review_database as database;
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn context_jwt_validates_role_and_customer_ids() {
         let (cert, key_der) = build_ec_cert(SERVICE_DNS);
-        let exp = (Utc::now() + Duration::minutes(5)).timestamp();
+        let exp = (jiff::Timestamp::now() + SignedDuration::from_mins(5)).as_second();
         let token = sign_token(exp, Some(vec![CUSTOMER_ID]), &key_der);
         let (role, customer_ids) =
             validate_context_jwt(&token, &cert).expect("token is signed by the test key");
@@ -297,7 +297,7 @@ mod tests {
     #[test]
     fn context_jwt_rejects_expired_token() {
         let (cert, key_der) = build_ec_cert(SERVICE_DNS);
-        let exp = (Utc::now() - Duration::minutes(5)).timestamp();
+        let exp = (jiff::Timestamp::now() - SignedDuration::from_mins(5)).as_second();
         let token = sign_token(exp, Some(vec![CUSTOMER_ID]), &key_der);
         let err = validate_context_jwt(&token, &cert).expect_err("token is already expired");
         match err {
@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn context_jwt_rejects_missing_customer_ids_for_non_admin() {
         let (cert, key_der) = build_ec_cert(SERVICE_DNS);
-        let exp = (Utc::now() + Duration::minutes(5)).timestamp();
+        let exp = (jiff::Timestamp::now() + SignedDuration::from_mins(5)).as_second();
         let claims = TestClaims {
             role: NON_ADMIN_ROLE,
             customer_ids: None,
@@ -332,7 +332,7 @@ mod tests {
     #[test]
     fn context_jwt_allows_missing_customer_ids_for_admin() {
         let (cert, key_der) = build_ec_cert(SERVICE_DNS);
-        let exp = (Utc::now() + Duration::minutes(5)).timestamp();
+        let exp = (jiff::Timestamp::now() + SignedDuration::from_mins(5)).as_second();
         let claims = MissingCustomerIdsClaims { role: ROLE, exp };
         let header = Header::new(Algorithm::ES256);
         let token = encode(&header, &claims, &EncodingKey::from_ec_der(&key_der))
@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn context_jwt_rejects_alg_mismatch() {
         let (cert, _key_der) = build_ec_cert(SERVICE_DNS);
-        let exp = (Utc::now() + Duration::minutes(5)).timestamp();
+        let exp = (jiff::Timestamp::now() + SignedDuration::from_mins(5)).as_second();
         let token = unsigned_token(exp);
         let err =
             validate_context_jwt(&token, &cert).expect_err("token header uses RS256 with EC cert");

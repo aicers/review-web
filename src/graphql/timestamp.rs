@@ -102,6 +102,38 @@ mod tests {
     }
 
     #[test]
+    fn input_takes_the_forms_jiff_takes() {
+        let expected = jiff::Timestamp::new(SECOND, 0).expect("valid timestamp");
+        for input in [
+            "2026-03-16T00:00:04+09",
+            "2026-03-16T00:00:04+0900",
+            "2026-03-15T15:00:04Z[Asia/Seoul]",
+            "20260315T150004Z",
+        ] {
+            let parsed = <Timestamp as ScalarType>::parse(Value::String(input.to_owned()))
+                .expect("valid input");
+            assert_eq!(jiff::Timestamp::from(parsed), expected, "{input}");
+        }
+        let parsed =
+            <Timestamp as ScalarType>::parse(Value::String("2026-03-15T15:00:04,5Z".to_owned()))
+                .expect("valid input");
+        assert_eq!(parsed.to_string(), "2026-03-15T15:00:04.5Z");
+    }
+
+    #[test]
+    fn input_rejects_a_space_before_the_offset_or_a_utc_suffix() {
+        for input in [
+            "2023-02-14 14:54:46.083902898 +00:00",
+            "2000-02-29 12:34:56 UTC",
+        ] {
+            assert!(
+                <Timestamp as ScalarType>::parse(Value::String(input.to_owned())).is_err(),
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
     fn input_rejects_a_date_and_non_strings() {
         assert!(<Timestamp as ScalarType>::parse(Value::String("2026-03-15".to_owned())).is_err());
         assert!(<Timestamp as ScalarType>::parse(Value::Boolean(true)).is_err());

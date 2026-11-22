@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 anyhow = "1"
-async-graphql = { version = "7", features = ["chrono", "string_number"] }
+async-graphql = { version = "7", features = ["string_number"] }
 async-graphql-axum = "7"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["macros", "tokio", "ws"] }
@@ -14,9 +14,6 @@ axum-server = { version = "0.9", features = ["tls-rustls-no-provider"] }
 axum-extra = { version = "0.12", features = ["typed-header"] }
 base64 = "0.23"
 bincode = "1"
-chrono = { version = "0.4.42", default-features = false, features = [
-  "serde",
-] } # NOTE: match with review-database
 futures = "0.3"
 futures-util = "0.3"
 gethostname = "1"
@@ -28,10 +25,11 @@ itertools = "0.15"
 jiff = "1"
 jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
 num-traits = "0.2"
+regex = "1"
 reqwest = { version = "0.13", default-features = false, features = [
   "rustls-no-provider",
 ] }
-review-database = { git = "https://github.com/aicers/review-database.git", tag = "0.64.0" }
+review-database = { git = "https://github.com/aicers/review-database.git", tag = "0.65.0" }
 review-protocol = { git = "https://github.com/aicers/review-protocol.git", tag = "0.27.0" }
 rustls = { version = "0.23", default-features = false, features = [
   "aws_lc_rs",

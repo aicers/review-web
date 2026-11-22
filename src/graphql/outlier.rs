@@ -9,10 +9,8 @@ use async_graphql::{
     types::ID,
 };
 use bincode::Options;
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc, offset::LocalResult};
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
-use num_traits::ToPrimitive;
 use review_database::{
     IndexedTable, Iterable, OutlierInfo, Store, TriageResponse, UniqueKey, event::Direction,
 };
@@ -22,7 +20,7 @@ use tokio::time;
 use tracing::error;
 
 use super::{Role, RoleGuard, customer_access, model::ModelDigest, query, training_result};
-use crate::error_with_caller;
+use crate::{error_with_caller, graphql::timestamp::Timestamp};
 
 const MAX_EVENT_NUM_OF_OUTLIER: usize = 50;
 const DEFAULT_RANKED_OUTLIER_FETCH_TIME: u64 = 60;
@@ -33,9 +31,20 @@ const MAX_MODEL_LIST_SIZE: usize = 100;
 /// # Errors
 ///
 /// Returns an error if the time is outside the i64 nanosecond range.
-pub(super) fn timestamp_nanos(time: DateTime<Utc>) -> Result<i64> {
-    time.timestamp_nanos_opt()
-        .ok_or_else(|| "time is out of range for i64 nanoseconds".into())
+pub(super) fn timestamp_nanos(time: Timestamp) -> Result<i64> {
+    review_database::timestamp::to_i64_nanos(time.into())
+        .map_err(|_| "time is out of range for i64 nanoseconds".into())
+}
+
+/// Returns a time argument that is stored, or that looks up a stored key,
+/// refusing one outside the i64 nanosecond range stored times use.
+///
+/// # Errors
+///
+/// Returns an error if the time is outside the i64 nanosecond range.
+pub(super) fn stored_time(time: Timestamp) -> Result<jiff::Timestamp> {
+    timestamp_nanos(time)?;
+    Ok(time.into())
 }
 
 #[derive(Default)]
@@ -54,7 +63,7 @@ impl OutlierStream {
     async fn ranked_outlier_stream(
         &self,
         ctx: &Context<'_>,
-        start: DateTime<Utc>,
+        start: Timestamp,
         #[graphql(
             desc = "The fetch interval in seconds, from 1 to 86400 (one day) inclusive. Omitted or null values use 60 seconds.",
             validator(
@@ -195,10 +204,10 @@ impl OutlierMutation {
 pub(super) struct OutlierQuery;
 
 #[allow(clippy::module_name_repetitions)]
-#[derive(InputObject, Serialize)]
+#[derive(InputObject)]
 pub struct OutlierTimeRange {
-    start: Option<DateTime<Utc>>,
-    end: Option<DateTime<Utc>>,
+    start: Option<Timestamp>,
+    end: Option<Timestamp>,
 }
 
 #[allow(clippy::module_name_repetitions)]
@@ -208,7 +217,7 @@ pub struct OutlierDistanceRange {
     end: Option<f64>,
 }
 
-#[derive(InputObject, Serialize)]
+#[derive(InputObject)]
 pub struct SearchFilterInput {
     pub time: Option<OutlierTimeRange>,
     distance: Option<OutlierDistanceRange>,
@@ -270,7 +279,7 @@ impl OutlierQuery {
         &self,
         ctx: &Context<'_>,
         model_id: ID,
-        time: Option<NaiveDateTime>,
+        time: Option<Timestamp>,
         after: Option<String>,
         before: Option<String>,
         first: Option<i32>,
@@ -280,7 +289,7 @@ impl OutlierQuery {
         Connection<OpaqueCursor<Vec<u8>>, RankedOutlier, RankedOutlierTotalCount, EmptyFields>,
     > {
         let previous = previous.unwrap_or_default();
-        let time = time.map(|t| timestamp_nanos(t.and_utc())).transpose()?;
+        let time = time.map(timestamp_nanos).transpose()?;
         let model_id: u32 = model_id.as_str().parse()?;
         customer_access::load_accessible_model(ctx, "modelId", model_id)?;
         query(
@@ -310,7 +319,7 @@ impl OutlierQuery {
         &self,
         ctx: &Context<'_>,
         model_id: ID,
-        time: Option<NaiveDateTime>,
+        time: Option<Timestamp>,
         after: Option<String>,
         before: Option<String>,
         first: Option<i32>,
@@ -321,7 +330,7 @@ impl OutlierQuery {
         Connection<OpaqueCursor<Vec<u8>>, RankedOutlier, RankedOutlierTotalCount, EmptyFields>,
     > {
         let previous = previous.unwrap_or_default();
-        let time = time.map(|t| timestamp_nanos(t.and_utc())).transpose()?;
+        let time = time.map(timestamp_nanos).transpose()?;
         let model_id: u32 = model_id.as_str().parse()?;
         customer_access::load_accessible_model(ctx, "modelId", model_id)?;
         let time_range = filter
@@ -557,11 +566,12 @@ impl Outlier {
         ID(self.model_id.to_string())
     }
 
-    async fn events(&self) -> Result<Vec<DateTime<Utc>>> {
+    async fn events(&self) -> Result<Vec<Timestamp>> {
         Ok(self
             .events
             .iter()
             .filter_map(|e| datetime_from_ts_nano(*e))
+            .map(Into::into)
             .collect::<Vec<_>>())
     }
 
@@ -679,14 +689,8 @@ async fn load(
     Ok(connection)
 }
 
-pub(crate) fn datetime_from_ts_nano(time: i64) -> Option<DateTime<Utc>> {
-    let sec = time / 1_000_000_000;
-    let nano = (time - sec * 1_000_000_000).to_u32()?;
-    if let LocalResult::Single(time) = Utc.timestamp_opt(sec, nano) {
-        Some(time)
-    } else {
-        None
-    }
+pub(crate) fn datetime_from_ts_nano(time: i64) -> Option<jiff::Timestamp> {
+    review_database::timestamp::from_i64_nanos(time).ok()
 }
 
 fn check_filter_to_ranked_outlier(
@@ -698,7 +702,10 @@ fn check_filter_to_ranked_outlier(
 ) -> Result<bool> {
     if let Some(filter) = filter {
         if filter.remark.is_some() || tag_id_list.is_some() {
-            if let Some(value) = remarks_map.get(&node.sensor, &Utc.timestamp_nanos(node.id))? {
+            if let Some(value) = remarks_map.get(
+                &node.sensor,
+                &review_database::timestamp::from_i64_nanos(node.id)?,
+            )? {
                 if let Some(remark) = &filter.remark
                     && !value.remarks.contains(remark)
                 {
@@ -858,8 +865,8 @@ async fn load_ranked_outliers_with_filter(
 mod tests {
 
     use async_graphql::Value;
-    use chrono::{DateTime, Utc};
     use futures_util::StreamExt;
+    use jiff::{SignedDuration, Timestamp};
     use num_traits::ToPrimitive;
     use review_database::OutlierInfo;
 
@@ -872,11 +879,7 @@ mod tests {
         use crate::graphql::{CustomerIds, RoleGuard, TestSchema};
 
         let schema = TestSchema::new().await;
-        let time = "2025-01-01T00:00:00Z"
-            .parse::<DateTime<Utc>>()
-            .unwrap()
-            .timestamp_nanos_opt()
-            .unwrap();
+        let time = nanos("2025-01-01T00:00:00Z".parse().unwrap());
         let model = replace_model(&schema.store(), "logging model", 0);
         schema
             .store()
@@ -910,8 +913,12 @@ mod tests {
         );
     }
 
-    fn time_str(t: &DateTime<Utc>) -> String {
-        t.format("%FT%T%.9f").to_string()
+    fn time_str(t: &Timestamp) -> String {
+        t.to_string()
+    }
+
+    fn nanos(t: Timestamp) -> i64 {
+        review_database::timestamp::to_i64_nanos(t).unwrap()
     }
 
     fn samples(model_id: u32, timestamp: i64, start: i64, total: i64) -> Vec<OutlierInfo> {
@@ -934,18 +941,22 @@ mod tests {
     }
 
     const OUT_OF_RANGE_TIMES: [&str; 2] = [
-        "1677-09-21T00:12:43.145224191",
-        "2262-04-11T23:47:16.854775808",
+        "1677-09-21T00:12:43.145224191Z",
+        "2262-04-11T23:47:16.854775808Z",
     ];
     const BOUNDARY_TIMES: [&str; 2] = [
-        "1677-09-21T00:12:43.145224192",
-        "2262-04-11T23:47:16.854775807",
+        "1677-09-21T00:12:43.145224192Z",
+        "2262-04-11T23:47:16.854775807Z",
     ];
 
     fn time_queries(time: &str) -> Vec<String> {
-        let mut queries = vec![format!(
-            "{{topTimeSeries(model: 3, time: \"{time}\") {{countIndex}}}}"
-        )];
+        let mut queries = vec![
+            format!("{{topTimeSeries(model: 3, time: \"{time}\") {{countIndex}}}}"),
+            format!("{{topColumns(model: 3, time: \"{time}\") {{columnIndex}}}}"),
+            format!("{{topIpAddresses(model: 3, time: \"{time}\") {{columnIndex}}}}"),
+            format!("{{topMultimaps(model: 3, time: \"{time}\") {{nIndex}}}}"),
+            format!("{{columnStatistics(model: 3, cluster: 1, time: [\"{time}\"])}}"),
+        ];
         for field in ["savedOutliers", "rankedOutliers"] {
             queries.push(format!(
                 "{{{field}(modelId: 3, time: \"{time}\") {{nodes {{id}}}}}}"
@@ -954,7 +965,7 @@ mod tests {
         for bound in ["start", "end"] {
             for tag in ["", ", tag: \"no matching tag\""] {
                 queries.push(format!(
-                    "{{rankedOutliers(modelId: 3, filter: {{time: {{{bound}: \"{time}Z\"}}{tag}}}) {{nodes {{id}}}}}}"
+                    "{{rankedOutliers(modelId: 3, filter: {{time: {{{bound}: \"{time}\"}}{tag}}}) {{nodes {{id}}}}}}"
                 ));
             }
         }
@@ -993,7 +1004,7 @@ mod tests {
     async fn reject_out_of_range_stream_start() {
         let schema = schema_with_models_through(3).await;
         for time in OUT_OF_RANGE_TIMES {
-            let query = format!("subscription {{rankedOutlierStream(start: \"{time}Z\") {{id}}}}");
+            let query = format!("subscription {{rankedOutlierStream(start: \"{time}\") {{id}}}}");
             let mut stream = schema.execute_stream(&query).await;
             let response = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
                 .await
@@ -1012,12 +1023,8 @@ mod tests {
     #[tokio::test]
     async fn representable_times_return_stored_data() {
         let schema = schema_with_models_through(3).await;
-        let time = "2025-01-01T00:00:00";
-        let timestamp = format!("{time}Z")
-            .parse::<DateTime<Utc>>()
-            .unwrap()
-            .timestamp_nanos_opt()
-            .unwrap();
+        let time = "2025-01-01T00:00:00Z";
+        let timestamp = nanos(time.parse().unwrap());
         {
             let store = schema.store();
             for batch in [timestamp - 1, timestamp, timestamp + 1] {
@@ -1050,7 +1057,7 @@ mod tests {
             );
         }
         let query = format!(
-            "{{rankedOutliers(modelId: 3, filter: {{time: {{start: \"{time}Z\", end: \"{time}Z\"}}}}) {{nodes {{timestamp}}}}}}"
+            "{{rankedOutliers(modelId: 3, filter: {{time: {{start: \"{time}\", end: \"{time}\"}}}}) {{nodes {{timestamp}}}}}}"
         );
         let response = schema.execute_as_system_admin(&query).await;
         assert!(response.errors.is_empty(), "{response:?}");
@@ -1073,11 +1080,7 @@ mod tests {
     async fn valid_stream_start_returns_outliers() {
         let schema = schema_with_models_through(3).await;
         let time = "2025-01-01T00:00:00Z";
-        let timestamp = time
-            .parse::<DateTime<Utc>>()
-            .unwrap()
-            .timestamp_nanos_opt()
-            .unwrap();
+        let timestamp = nanos(time.parse().unwrap());
         let model_id = {
             let store = schema.store();
             let model_id = replace_model(&store, "stream model", 0);
@@ -1114,8 +1117,8 @@ mod tests {
         {
             let store = schema.store();
             let model = replace_model(&store, "stream-test", 0);
-            let timestamp = "2018-01-28T01:00:00Z".parse::<DateTime<Utc>>().unwrap();
-            for outlier in samples(model, timestamp.timestamp_nanos_opt().unwrap(), 5, 1) {
+            let timestamp = "2018-01-28T01:00:00Z".parse::<Timestamp>().unwrap();
+            for outlier in samples(model, nanos(timestamp), 5, 1) {
                 store.outlier_map().insert(&outlier).unwrap();
             }
         }
@@ -1174,8 +1177,8 @@ mod tests {
         let store = schema.store();
         let map = store.outlier_map();
         let model = 3;
-        let t1 = chrono::Utc::now();
-        let outliers = samples(model, t1.timestamp_nanos_opt().unwrap(), 0, 2);
+        let t1 = jiff::Timestamp::now();
+        let outliers = samples(model, nanos(t1), 0, 2);
         for outlier in &outliers {
             assert!(map.insert(outlier).is_ok());
         }
@@ -1189,22 +1192,22 @@ mod tests {
             }",
             )
             .await;
-        let e0 = DateTime::from_timestamp(0, 0).unwrap().to_rfc3339();
-        let e1 = DateTime::from_timestamp(0, 1).unwrap().to_rfc3339();
+        let e0 = "1970-01-01T00:00:00Z";
+        let e1 = "1970-01-01T00:00:00.000000001Z";
         assert_eq!(
             res.data.to_string(),
             format!(
                 "{{outliers: {{nodes: [{{id: \"{}\", events: [\"{e0}\", \"{e1}\"], size: 2}}], totalCount: \"{}\"}}}}",
-                t1.timestamp_nanos_opt().unwrap(),
+                nanos(t1),
                 1
             )
         );
 
-        let t2 = t1 + chrono::TimeDelta::hours(1);
+        let t2 = t1 + SignedDuration::from_hours(1);
         let start = 3;
         let total = 4;
 
-        let outliers = samples(model, t2.timestamp_nanos_opt().unwrap(), start, total);
+        let outliers = samples(model, nanos(t2), start, total);
         for outlier in &outliers {
             assert!(map.insert(outlier).is_ok());
         }
@@ -1231,8 +1234,8 @@ mod tests {
         let store = schema.store();
         let map = store.outlier_map();
         let model = 3;
-        let t1 = chrono::Utc::now();
-        let outliers = samples(model, t1.timestamp_nanos_opt().unwrap(), 0, 2);
+        let t1 = jiff::Timestamp::now();
+        let outliers = samples(model, nanos(t1), 0, 2);
         for outlier in &outliers {
             assert!(map.insert(outlier).is_ok());
         }
@@ -1251,13 +1254,13 @@ mod tests {
             format!("{{rankedOutliers: {{totalCount: \"{}\"}}}}", outliers.len())
         );
 
-        let t2 = t1 + chrono::TimeDelta::hours(1);
+        let t2 = t1 + SignedDuration::from_hours(1);
         let t2_str = time_str(&t2);
         let start = 3;
         let total = 4;
         let last = start + total - 1;
 
-        let outliers = samples(model, t2.timestamp_nanos_opt().unwrap(), start, total);
+        let outliers = samples(model, nanos(t2), start, total);
         for outlier in &outliers {
             assert!(map.insert(outlier).is_ok());
         }
@@ -1362,9 +1365,9 @@ mod tests {
         let store = schema.store();
         let map = store.outlier_map();
 
-        let t = chrono::Utc::now();
+        let t = jiff::Timestamp::now();
         let t_str = time_str(&t);
-        let outliers = samples(0, t.timestamp_nanos_opt().unwrap(), 0, 2);
+        let outliers = samples(0, nanos(t), 0, 2);
         for outlier in &outliers {
             assert!(map.insert(outlier).is_ok());
         }
@@ -1374,7 +1377,7 @@ mod tests {
         let start = 3;
         let total = 4;
 
-        let outliers = samples(model, t.timestamp_nanos_opt().unwrap(), start, total);
+        let outliers = samples(model, nanos(t), start, total);
         for outlier in &outliers {
             assert!(map.insert(outlier).is_ok());
         }
@@ -1396,7 +1399,7 @@ mod tests {
         let store = schema.store();
         let map = store.outlier_map();
 
-        let t = chrono::Utc::now();
+        let t = jiff::Timestamp::now();
         let t_str = time_str(&t);
 
         let model = 3;
@@ -1404,7 +1407,7 @@ mod tests {
         let start = 3;
         let total = 4;
 
-        let outliers = samples(model, t.timestamp_nanos_opt().unwrap(), start, total);
+        let outliers = samples(model, nanos(t), start, total);
         for outlier in &outliers {
             assert!(map.insert(outlier).is_ok());
         }
@@ -1422,7 +1425,7 @@ mod tests {
         let to_save = start;
         let to_preserve = format!(
             "[{{id: {to_save}, modelId: {model}, timestamp: {}, rank: {to_save}, sensor: \"test\"}}]",
-            t.timestamp_nanos_opt().unwrap()
+            nanos(t)
         );
         let res = schema
             .execute_as_system_admin(&format!(
@@ -1442,7 +1445,7 @@ mod tests {
         let saved = start + 1;
         let to_preserve = format!(
             "[{{id: {saved}, modelId: {model}, timestamp: {}, rank: {saved}, sensor: \"test\"}}]",
-            t.timestamp_nanos_opt().unwrap()
+            nanos(t)
         );
         let res = schema
             .execute_as_system_admin(&format!(
@@ -1458,7 +1461,7 @@ mod tests {
             .await;
         let expect = format!(
             "{{preserveOutliers: [{{id: \"{saved}\", modelId: \"{model}\", timestamp: \"{}\", sensor: \"test\"}}]}}",
-            t.timestamp_nanos_opt().unwrap()
+            nanos(t)
         );
         assert_eq!(res.data.to_string(), expect);
     }
@@ -1468,11 +1471,7 @@ mod tests {
         const CUSTOMER_A: u32 = 1;
         const CUSTOMER_B: u32 = 2;
         let schema = schema_with_models_through(0).await;
-        let timestamp = "2025-01-01T00:00:00Z"
-            .parse::<DateTime<Utc>>()
-            .unwrap()
-            .timestamp_nanos_opt()
-            .unwrap();
+        let timestamp = nanos("2025-01-01T00:00:00Z".parse().unwrap());
         let (first_b, model_a) = {
             let store = schema.store();
             // More models of customer B than the stream reads per tick, all
@@ -1526,12 +1525,12 @@ mod tests {
     #[tokio::test]
     async fn saved_outlier_pages_hold_only_saved_outliers() {
         let schema = schema_with_models_through(3).await;
-        let t = chrono::Utc::now();
+        let t = jiff::Timestamp::now();
         let t_str = time_str(&t);
         {
             let store = schema.store();
             // Saved outliers are the even ids; the odd ones are not saved.
-            for outlier in samples(3, t.timestamp_nanos_opt().unwrap(), 0, 11) {
+            for outlier in samples(3, nanos(t), 0, 11) {
                 store.outlier_map().insert(&outlier).unwrap();
             }
         }

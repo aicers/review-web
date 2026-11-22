@@ -6,8 +6,6 @@ use async_graphql::{
     connection::{Connection, Edge, EmptyFields, OpaqueCursor},
     types::ID,
 };
-use chrono::NaiveDateTime;
-use chrono::{DateTime, Utc};
 use database::Store;
 use num_traits::ToPrimitive;
 use review_database as database;
@@ -23,7 +21,7 @@ use super::{
     status::Status,
     training_result, zero_filled_length,
 };
-use crate::graphql::{query, statistics::i64_to_naive_date_time};
+use crate::graphql::{query, statistics::i64_to_timestamp, timestamp::Timestamp};
 
 #[derive(Default)]
 pub(super) struct ClusterQuery;
@@ -172,8 +170,8 @@ impl ClusterQuery {
             )
         )]
         trendi_order: Option<i32>,
-        start: Option<DateTime<Utc>>,
-        end: Option<DateTime<Utc>>,
+        start: Option<Timestamp>,
+        end: Option<Timestamp>,
     ) -> Result<TimeSeriesResult> {
         let start = start.map(super::outlier::timestamp_nanos).transpose()?;
         let end = end.map(super::outlier::timestamp_nanos).transpose()?;
@@ -275,7 +273,7 @@ struct Cluster {
     score: Option<f64>,
     #[graphql(skip)]
     model_id: u32,
-    last_modification_time: Option<NaiveDateTime>,
+    last_modification_time: Option<Timestamp>,
 }
 
 #[ComplexObject]
@@ -296,11 +294,12 @@ impl Cluster {
         Ok(res.into())
     }
 
-    async fn events(&self) -> Result<Vec<DateTime<Utc>>> {
+    async fn events(&self) -> Result<Vec<Timestamp>> {
         Ok(self
             .events
             .iter()
             .filter_map(|e| super::outlier::datetime_from_ts_nano(*e))
+            .map(Into::into)
             .collect::<Vec<_>>())
     }
 
@@ -399,12 +398,12 @@ struct TimeSeriesResult {
 
 #[Object]
 impl TimeSeriesResult {
-    async fn earliest(&self) -> Option<DateTime<Utc>> {
-        self.inner.0.map(DateTime::from_timestamp_nanos)
+    async fn earliest(&self) -> Option<Timestamp> {
+        self.inner.0.map(i64_to_timestamp)
     }
 
-    async fn latest(&self) -> Option<DateTime<Utc>> {
-        self.inner.1.map(DateTime::from_timestamp_nanos)
+    async fn latest(&self) -> Option<Timestamp> {
+        self.inner.1.map(i64_to_timestamp)
     }
 
     async fn series(&self) -> Vec<ColumnTimeSeries<'_>> {
@@ -460,7 +459,7 @@ impl ColumnTimeSeries<'_> {
             .iter()
             .enumerate()
             .map(|(index, t)| TimeCount {
-                time: i64_to_naive_date_time(self.inner.time_counts[index].0),
+                time: i64_to_timestamp(self.inner.time_counts[index].0),
                 count: super::trend_count(*t).expect("get_trend validated every count"),
             })
             .collect::<Vec<_>>()
@@ -483,14 +482,14 @@ impl<'a> ColumnTimeSeries<'a> {
 
 #[derive(SimpleObject)]
 pub(super) struct TimeCount {
-    pub(super) time: NaiveDateTime,
+    pub(super) time: Timestamp,
     pub(super) count: usize,
 }
 
 impl From<&super::TimeCount> for TimeCount {
     fn from(inner: &super::TimeCount) -> Self {
         Self {
-            time: i64_to_naive_date_time(inner.0),
+            time: i64_to_timestamp(inner.0),
             count: inner.1,
         }
     }
@@ -557,7 +556,7 @@ async fn load(
                 size: c.size,
                 score: c.score,
                 model_id: c.model_id,
-                last_modification_time: c.last_modification_time,
+                last_modification_time: c.last_modification_time.map(Into::into),
             },
         )
     }));

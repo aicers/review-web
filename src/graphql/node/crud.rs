@@ -7,7 +7,6 @@ use async_graphql::{
     connection::{Connection, Edge, EmptyFields, OpaqueCursor},
     types::ID,
 };
-use chrono::Utc;
 use review_database::{Store, UniqueKey, event::Direction};
 use tracing::info;
 
@@ -232,7 +231,7 @@ impl NodeMutation {
             }),
             agents,
             external_services,
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         engine_write::validate_new_node_documents(&store, &value.agents)?;
         engine_write::check_node_guards(
@@ -577,7 +576,7 @@ mod tests {
                 },
             ],
             external_services: vec![],
-            creation_time: chrono::Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         store.node_map().put(&node).expect("insert node");
 

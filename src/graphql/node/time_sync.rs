@@ -149,7 +149,6 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use chrono::Utc;
     use review_protocol::types::ResourceUsage;
     use serde_json::json;
     use tokio::sync::Barrier;
@@ -346,7 +345,7 @@ mod tests {
             }),
             agents: vec![],
             external_services: vec![],
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         store.node_map().put(&node).expect("insert node")
     }

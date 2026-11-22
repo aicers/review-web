@@ -3,7 +3,6 @@ use async_graphql::{
     connection::{Connection, Edge, EmptyFields, OpaqueCursor},
     types::ID,
 };
-use chrono::{DateTime, NaiveDateTime, Utc};
 use num_traits::ToPrimitive;
 use review_database::{self as database, UniqueKey, event::Direction};
 
@@ -16,7 +15,7 @@ use super::{
     training::{self, ModelDetectorUse, ModelRun, TrainingDefinition, TrainingDefinitionState},
     training_result, zero_filled_length,
 };
-use crate::graphql::query;
+use crate::graphql::{query, statistics::i64_to_timestamp, timestamp::Timestamp};
 
 const DEFAULT_MIN_SLOPE: f64 = 10.0;
 const DEFAULT_MIN_ZERO_COUNT_FOR_TREND: usize = 5;
@@ -123,10 +122,7 @@ impl ModelQuery {
         let map = store.time_series_map();
         let time_range = map.get_time_range_of_model(model)?;
         let (lower, upper) = time_range.map_or((None, None), |(l, u)| {
-            (
-                Some(DateTime::from_timestamp_nanos(l)),
-                Some(DateTime::from_timestamp_nanos(u)),
-            )
+            (Some(i64_to_timestamp(l)), Some(i64_to_timestamp(u)))
         });
         Ok(TimeRange { lower, upper })
     }
@@ -145,7 +141,7 @@ impl ModelQuery {
         ctx: &Context<'_>,
         model: ID,
         size: Option<i32>,
-        time: Option<NaiveDateTime>,
+        time: Option<Timestamp>,
         min_slope: Option<f64>,
         #[graphql(
             desc = "The dimensionless trend filter order, from 0 to 20 inclusive. Omitted or null values use 4.",
@@ -161,15 +157,13 @@ impl ModelQuery {
         )]
         cutoff_rate: Option<f64>,
         trend_category: Option<String>,
-        start: Option<DateTime<Utc>>,
-        end: Option<DateTime<Utc>>,
+        start: Option<Timestamp>,
+        end: Option<Timestamp>,
     ) -> Result<Vec<TopTrendsByColumn>> {
         const DEFAULT_SIZE: i32 = 20;
         let start = start.map(super::outlier::timestamp_nanos).transpose()?;
         let end = end.map(super::outlier::timestamp_nanos).transpose()?;
-        let time = time
-            .map(|t| super::outlier::timestamp_nanos(t.and_utc()))
-            .transpose()?;
+        let time = time.map(super::outlier::timestamp_nanos).transpose()?;
         let size = size
             .unwrap_or(DEFAULT_SIZE)
             .to_usize()
@@ -227,11 +221,12 @@ impl ModelQuery {
         ctx: &Context<'_>,
         model: ID,
         size: Option<i32>,
-        time: Option<NaiveDateTime>,
+        time: Option<Timestamp>,
         portion_of_clusters: Option<f64>,
         portion_of_top_n: Option<f64>,
     ) -> Result<Vec<TopElementCountsByColumn>> {
         const DEFAULT_SIZE: i32 = 30;
+        let time = time.map(super::outlier::stored_time).transpose()?;
         let size = size
             .unwrap_or(DEFAULT_SIZE)
             .to_usize()
@@ -281,11 +276,12 @@ impl ModelQuery {
         ctx: &Context<'_>,
         model: ID,
         size: Option<i32>,
-        time: Option<NaiveDateTime>,
+        time: Option<Timestamp>,
         portion_of_clusters: Option<f64>,
         portion_of_top_elements: Option<f64>,
     ) -> Result<Vec<TopElementCountsByColumn>> {
         const DEFAULT_SIZE: i32 = 30;
+        let time = time.map(super::outlier::stored_time).transpose()?;
         let size = size
             .unwrap_or(DEFAULT_SIZE)
             .to_usize()
@@ -324,10 +320,11 @@ impl ModelQuery {
         model: ID,
         size: Option<i32>,
         min_map_size: Option<i32>,
-        time: Option<NaiveDateTime>,
+        time: Option<Timestamp>,
     ) -> Result<Vec<TopMultimaps>> {
         const DEFAULT_SIZE: i32 = 30;
         const DEFAULT_MIN_MAP_SIZE: i32 = 5;
+        let time = time.map(super::outlier::stored_time).transpose()?;
         let size = size
             .unwrap_or(DEFAULT_SIZE)
             .to_usize()
@@ -572,8 +569,8 @@ impl ModelDigest {
     }
 
     /// When the training that produced the current result succeeded.
-    async fn trained_at(&self) -> DateTime<Utc> {
-        self.inner.trained_at
+    async fn trained_at(&self) -> Timestamp {
+        self.inner.trained_at.into()
     }
 
     /// The summary of the previous training result, or null if the model has
@@ -584,7 +581,7 @@ impl ModelDigest {
             .as_ref()
             .map(|previous| PreviousTrainingResult {
                 model_id: self.inner.id,
-                trained_at: previous.trained_at,
+                trained_at: previous.trained_at.into(),
                 version: previous.version,
                 trained_definition: previous.trained_definition.clone(),
                 trained_run_id: ID(previous.trained_run_id.to_string()),
@@ -697,7 +694,7 @@ struct PreviousTrainingResult {
     #[graphql(skip)]
     model_id: u32,
     /// When the training that produced the previous result succeeded.
-    trained_at: DateTime<Utc>,
+    trained_at: Timestamp,
     /// The version of the previous result's model.
     version: i32,
     /// The training definition, a TOML document, of the run that trained the
@@ -756,8 +753,8 @@ impl From<database::StructuredColumnType> for StructuredColumnType {
 
 #[derive(SimpleObject)]
 struct TimeRange {
-    lower: Option<DateTime<Utc>>,
-    upper: Option<DateTime<Utc>>,
+    lower: Option<Timestamp>,
+    upper: Option<Timestamp>,
 }
 
 struct ElementCount<'a> {
@@ -1671,7 +1668,7 @@ mod tests {
             cluster_id: 1,
             series: (0..length)
                 .map(|_| super::TimeCount {
-                    time: chrono::DateTime::UNIX_EPOCH.naive_utc(),
+                    time: jiff::Timestamp::UNIX_EPOCH.into(),
                     count: 1,
                 })
                 .collect(),
@@ -1774,7 +1771,7 @@ mod tests {
     #[tokio::test]
     async fn top_time_series_computation_errors() {
         let schema = schema_with_sparse_series(599_999, true, false).await;
-        for (time, has_time) in [("", false), (", time: \"1970-01-01T00:00:00\"", true)] {
+        for (time, has_time) in [("", false), (", time: \"1970-01-01T00:00:00Z\"", true)] {
             let response = schema
                 .execute_as_system_admin(&format!(
                     "{{ topTimeSeries(model: 1, start: \"1970-01-01T00:00:00Z\", end: \"1970-01-01T00:00:00.000599999Z\"{time}) {{ countIndex }} }}"
@@ -1804,7 +1801,7 @@ mod tests {
     #[tokio::test]
     async fn top_time_series_response_budget_and_size() {
         let schema = schema_with_sparse_series(59_999, false, false).await;
-        for time in ["", ", time: \"1970-01-01T00:00:00\""] {
+        for time in ["", ", time: \"1970-01-01T00:00:00Z\""] {
             let arguments = format!(
                 "model: 1, start: \"1970-01-01T00:00:00Z\", end: \"1970-01-01T00:00:00.000059999Z\", trendiOrder: 0, minSlope: -1000000{time}"
             );

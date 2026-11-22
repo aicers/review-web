@@ -201,10 +201,10 @@ async fn datetime_range_outputs_are_exact_and_nullable() {
         })
     );
     for (nanos, expected) in [
-        (-1, "1969-12-31T23:59:59.999999999+00:00"),
-        (1, "1970-01-01T00:00:00.000000001+00:00"),
-        (i64::MIN, "1677-09-21T00:12:43.145224192+00:00"),
-        (i64::MAX, "2262-04-11T23:47:16.854775807+00:00"),
+        (-1, "1969-12-31T23:59:59.999999999Z"),
+        (1, "1970-01-01T00:00:00.000000001Z"),
+        (i64::MIN, "1677-09-21T00:12:43.145224192Z"),
+        (i64::MAX, "2262-04-11T23:47:16.854775807Z"),
     ] {
         let schema = schema_with_models_through(1).await;
         insert(&schema, nanos, 0, 1);
@@ -231,7 +231,7 @@ async fn datetime_bounds_accept_i64_limits_and_reject_adjacent_instants() {
         let time_arguments = if resolver.starts_with("topTimeSeriesOfCluster") {
             vec![""]
         } else {
-            vec!["", ", time: \"1970-01-01T00:00:00\""]
+            vec!["", ", time: \"1970-01-01T00:00:00Z\""]
         };
         for time_argument in time_arguments {
             for bound in ["start", "end"] {
@@ -269,7 +269,7 @@ async fn datetime_bounds_do_not_filter_a_selected_batch() {
         insert(&schema, index * 1_000_000_000, 1_000_000_000, 50_000);
     }
     let (resolver, selection, path) = QUERIES[1];
-    let batch = ", time: \"1970-01-01T00:00:00\"";
+    let batch = ", time: \"1970-01-01T00:00:00Z\"";
     let selected = data(&schema, &query(resolver, selection, batch)).await;
     assert_eq!(
         selected.pointer(path).unwrap().as_array().unwrap().len(),
@@ -321,7 +321,7 @@ async fn datetime_schema_signatures() {
         assert!(arguments.contains("start: DateTime"), "{arguments}");
         assert!(arguments.contains("end: DateTime"), "{arguments}");
         if name == "topTimeSeries(" {
-            assert!(arguments.contains("time: NaiveDateTime"));
+            assert!(arguments.contains("time: DateTime"));
         }
     }
     for (name, fields) in [
@@ -346,7 +346,7 @@ async fn datetime_schema_signatures() {
         .split_once('}')
         .unwrap()
         .0;
-    assert!(body.contains("time: NaiveDateTime!"));
+    assert!(body.contains("time: DateTime!"));
 }
 
 #[tokio::test]
@@ -429,12 +429,12 @@ async fn datetime_ranges_describe_all_stored_data_in_their_scope() {
         result,
         json!({
             "topTimeSeriesOfCluster": {
-                "earliest": "1969-12-31T23:59:59.999999999+00:00",
-                "latest": "1970-01-01T00:00:00.000000001+00:00",
+                "earliest": "1969-12-31T23:59:59.999999999Z",
+                "latest": "1970-01-01T00:00:00.000000001Z",
             },
             "timeRangeOfModel": {
-                "lower": "1969-12-31T23:59:59.999999999+00:00",
-                "upper": "1970-01-01T00:00:00.000000010+00:00",
+                "lower": "1969-12-31T23:59:59.999999999Z",
+                "upper": "1970-01-01T00:00:00.00000001Z",
             },
         })
     );

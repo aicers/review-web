@@ -765,7 +765,7 @@ async fn a_timeseries_model_of_unknown_shape_cannot_be_cloned() {
                 customer_id: A,
                 instance: f.engine_a.clone(),
             },
-            chrono::Utc::now(),
+            jiff::Timestamp::now(),
             review_database::TrainedWith {
                 run_id: 1,
                 definition: text,

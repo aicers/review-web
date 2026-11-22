@@ -426,7 +426,7 @@ mod tests {
             profile_draft: None,
             agents,
             external_services: vec![],
-            creation_time: chrono::Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         }
     }
 

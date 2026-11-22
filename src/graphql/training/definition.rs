@@ -12,13 +12,14 @@ use std::{
 };
 
 use async_graphql::Result;
-use chrono::{DateTime, TimeDelta};
+use jiff::SignedDuration;
 use review_database::{ModelMethod, Store};
 use serde::{Deserialize, Serialize};
 
 use crate::graphql::{
     customer_access::customer_source_names,
     refusal::{RefusalCode, refusal},
+    rfc3339::LeapAwareTime,
     sampling::{ShapeReference, check_policy_sources},
     toml_refusal::parse_refusal,
     unsupervised::{DataStore, check_data_store},
@@ -400,7 +401,7 @@ impl TrainingDocument {
                 self.window_end.as_str(),
             ));
         }
-        if end - start > TimeDelta::days(MAX_WINDOW_DAYS) {
+        if end.duration_since(start) > SignedDuration::from_hours(MAX_WINDOW_DAYS * 24) {
             return Err(refusal(
                 RefusalCode::BoundViolated,
                 format!("the training window is longer than {MAX_WINDOW_DAYS} days"),
@@ -613,11 +614,11 @@ pub(crate) fn sources_of(text: &str) -> Vec<String> {
 }
 
 /// Checks that `value` is RFC 3339 with an offset.
-fn rfc3339(field: &str, value: &str) -> Result<DateTime<chrono::FixedOffset>> {
-    DateTime::parse_from_rfc3339(value).map_err(|e| {
+fn rfc3339(field: &str, value: &str) -> Result<LeapAwareTime> {
+    LeapAwareTime::parse(value).map_err(|e| {
         refusal(
             RefusalCode::InvalidDocument,
-            format!("{field} is not RFC 3339 with an offset: {e}"),
+            format!("{field} is not RFC 3339 with an offset{}", e.detail()),
             field,
             value,
         )

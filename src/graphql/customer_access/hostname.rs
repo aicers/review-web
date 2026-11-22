@@ -114,7 +114,6 @@ mod tests {
 
     use async_graphql::Request;
     use async_graphql::{Context, EmptyMutation, EmptySubscription, Object, Result, Schema};
-    use chrono::Utc;
     use review_database::Store;
 
     use super::*;
@@ -138,7 +137,7 @@ mod tests {
             profile_draft: None,
             agents: vec![],
             external_services: vec![],
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         let map = store.node_map();
         map.put(&node).expect("insert node");
@@ -190,7 +189,7 @@ mod tests {
                     profile_draft: None,
                     agents: vec![],
                     external_services: vec![],
-                    creation_time: Utc::now(),
+                    creation_time: jiff::Timestamp::now(),
                 };
                 node_map.put(&node).expect("insert node");
             }
@@ -263,7 +262,7 @@ mod tests {
             }),
             agents: vec![],
             external_services: vec![],
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         store.node_map().put(&node).expect("insert node");
 
@@ -288,7 +287,7 @@ mod tests {
             }),
             agents: vec![],
             external_services: vec![],
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         store.node_map().put(&node).expect("insert node");
 
@@ -313,7 +312,7 @@ mod tests {
             profile_draft: None,
             agents: vec![],
             external_services: vec![],
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         let node2 = review_database::Node {
             id: u32::MAX,
@@ -327,7 +326,7 @@ mod tests {
             profile_draft: None,
             agents: vec![],
             external_services: vec![],
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         let map = store.node_map();
         map.put(&node1).expect("insert node1");

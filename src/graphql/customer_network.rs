@@ -9,7 +9,6 @@ use std::collections::HashSet;
 use async_graphql::{
     Context, Enum, ErrorExtensions, InputObject, Object, Result, StringNumber, types::ID,
 };
-use chrono::{DateTime, Utc};
 use review_database::{self as database, ReplaceOutcome, Store};
 use tracing::{error, info};
 
@@ -20,6 +19,7 @@ use super::customer::{
 use super::customer_access::check_customer_membership;
 use super::node::{SEMI_SUPERVISED_AGENT, agent_lookup_key_service_token};
 use super::{Role, RoleGuard, agent_lookup_keys_by_customer_id};
+use crate::graphql::timestamp::Timestamp;
 use crate::{error_with_caller, info_with_caller};
 
 /// The most networks one customer may own.
@@ -79,7 +79,7 @@ impl CustomerNetworkMutation {
         let set = database::OwnedNetworkSet {
             revision,
             networks,
-            updated_at: Utc::now(),
+            updated_at: jiff::Timestamp::now(),
         };
         let merged = set.merged_group();
         let push = {
@@ -168,8 +168,8 @@ impl OwnedNetworkSet {
     }
 
     /// The time when this set was last written.
-    async fn updated_at(&self) -> DateTime<Utc> {
-        self.inner.updated_at
+    async fn updated_at(&self) -> Timestamp {
+        self.inner.updated_at.into()
     }
 }
 

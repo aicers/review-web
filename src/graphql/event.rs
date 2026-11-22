@@ -30,7 +30,6 @@ use async_graphql::{
     Context, Enum, ID, InputObject, Interface, Object, Result, StringNumber, Subscription,
     connection::{Connection, Edge, EmptyFields},
 };
-use chrono::Utc;
 use database::ThreatLevel as DatabaseThreatLevel;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures_util::stream::Stream;
@@ -1600,7 +1599,7 @@ impl From<EventStandardFilterInput> for EventListFilterInput {
 fn convert_event_triage_policies(
     policies: &[EventTriagePolicyInput],
 ) -> anyhow::Result<Vec<DbTriagePolicyInput>> {
-    let now = Utc::now();
+    let now = jiff::Timestamp::now();
     let mut result = Vec::with_capacity(policies.len());
     for policy in policies {
         let id: u32 = policy
@@ -1803,9 +1802,8 @@ mod tests {
 
     use std::{net::Ipv4Addr, sync::Arc};
 
-    use chrono::{DateTime, NaiveDate, Utc};
     use futures_util::StreamExt;
-    use jiff::Timestamp;
+    use jiff::{SignedDuration, Timestamp};
     use review_database::{
         EventCategory, EventKind, EventMessage,
         event::{
@@ -1981,7 +1979,7 @@ mod tests {
         use crate::graphql::{CustomerIds, RoleGuard, TestSchema};
 
         let schema = TestSchema::new().await;
-        let time = "2025-01-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let time = "2025-01-01T00:00:00Z".parse::<Timestamp>().unwrap();
         schema
             .store()
             .events()
@@ -2004,7 +2002,7 @@ mod tests {
         schema
             .store()
             .events()
-            .put(&event_message_at(time + chrono::Duration::seconds(1), 3, 4))
+            .put(&event_message_at(time + SignedDuration::from_secs(1), 3, 4))
             .unwrap();
         events.wait_for("Failed to fetch events:").await;
         events.assert_fields(
@@ -2020,7 +2018,7 @@ mod tests {
 
     /// Creates an event message at `timestamp` emitted by the `sensor1` test
     /// node.
-    fn sensor1_event_at(timestamp: DateTime<Utc>, src: u32, dst: u32) -> EventMessage {
+    fn sensor1_event_at(timestamp: Timestamp, src: u32, dst: u32) -> EventMessage {
         event_message_with_category(
             timestamp,
             src,
@@ -2052,9 +2050,9 @@ mod tests {
 
     /// Creates an event message at `timestamp` with the given sensor and
     /// destination `IPv4` addresses.
-    fn event_message_at(timestamp: DateTime<Utc>, src: u32, dst: u32) -> EventMessage {
+    fn event_message_at(timestamp: Timestamp, src: u32, dst: u32) -> EventMessage {
         event_message_at_timestamp(
-            jiff_timestamp(timestamp),
+            timestamp,
             src,
             dst,
             Some(EventCategory::CommandAndControl),
@@ -2063,13 +2061,13 @@ mod tests {
     }
 
     fn event_message_with_category(
-        timestamp: DateTime<Utc>,
+        timestamp: Timestamp,
         src: u32,
         dst: u32,
         category: Option<EventCategory>,
         sensor: &str,
     ) -> EventMessage {
-        event_message_at_timestamp(jiff_timestamp(timestamp), src, dst, category, sensor)
+        event_message_at_timestamp(timestamp, src, dst, category, sensor)
     }
 
     fn event_message_at_timestamp(
@@ -2115,13 +2113,30 @@ mod tests {
         }
     }
 
-    pub(super) fn jiff_timestamp(timestamp: DateTime<Utc>) -> Timestamp {
-        Timestamp::from_nanosecond(i128::from(
-            timestamp
-                .timestamp_nanos_opt()
-                .expect("test timestamp must fit in i64 nanoseconds"),
-        ))
-        .expect("chrono's timestamp range must fit in jiff")
+    /// Returns the UTC time of the given date and time of day.
+    pub(super) fn utc_micro(
+        year: i16,
+        month: i8,
+        day: i8,
+        hour: i8,
+        minute: i8,
+        second: i8,
+        microsecond: i32,
+    ) -> Timestamp {
+        jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::date(year, month, day).at(
+                hour,
+                minute,
+                second,
+                microsecond * 1_000,
+            ))
+            .expect("a test time is representable")
+    }
+
+    /// Returns `timestamp` in nanoseconds since the Unix epoch.
+    pub(super) fn nanos(timestamp: Timestamp) -> i64 {
+        review_database::timestamp::to_i64_nanos(timestamp)
+            .expect("test timestamp must fit in i64 nanoseconds")
     }
 
     #[tokio::test]
@@ -2947,8 +2962,8 @@ mod tests {
     /// Creates a schema with one US-to-KR event and one KR-only event while
     /// keeping the ingestion-time country locator out of the GraphQL context.
     pub(super) async fn schema_with_country_filter_events(
-        us_event_time: DateTime<Utc>,
-        kr_event_time: DateTime<Utc>,
+        us_event_time: Timestamp,
+        kr_event_time: Timestamp,
     ) -> (tempfile::TempDir, TestSchema) {
         let (locator_dir, locator) = event_country_locator();
         let schema = TestSchema::new_with_event_country_locator(locator).await;
@@ -2990,12 +3005,7 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
         let key = db.put(&event_message_at(ts, 1, 2)).unwrap();
         drop(store);
 
@@ -3016,12 +3026,7 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
         let key = db.put(&event_message_at(ts, 1, 2)).unwrap();
         drop(store);
 
@@ -3043,27 +3048,22 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-        let first_event_start_time = ts - chrono::Duration::minutes(5);
+        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
+        let first_event_start_time = ts - SignedDuration::from_mins(5);
         let fields = MultiHostPortScanFields {
             sensor: "sensor1".to_string(),
             orig_addr: Ipv4Addr::from(1).into(),
             resp_port: 443,
             resp_addrs: vec![Ipv4Addr::from(2).into(), Ipv4Addr::from(3).into()],
             proto: 6,
-            first_event_start_time: first_event_start_time.timestamp_nanos_opt().unwrap(),
-            last_event_start_time: ts.timestamp_nanos_opt().unwrap(),
+            first_event_start_time: nanos(first_event_start_time),
+            last_event_start_time: nanos(ts),
             confidence: 0.8,
             category: Some(EventCategory::CommandAndControl),
         };
         let key = db
             .put(&EventMessage {
-                time: jiff_timestamp(ts),
+                time: ts,
                 kind: EventKind::MultiHostPortScan,
                 fields: bincode::serialize(&fields).expect("serializable"),
             })
@@ -3085,13 +3085,12 @@ mod tests {
         let data = res.data.to_string();
         assert!(
             data.contains(&format!(
-                "firstEventStartTime: \"{}\"",
-                jiff_timestamp(first_event_start_time)
+                "firstEventStartTime: \"{first_event_start_time}\""
             )),
             "data: {data}"
         );
         assert!(
-            data.contains(&format!("lastEventStartTime: \"{}\"", jiff_timestamp(ts))),
+            data.contains(&format!("lastEventStartTime: \"{ts}\"")),
             "data: {data}"
         );
         assert!(data.contains(r#"origCountry: "XX""#), "data: {data}");
@@ -3107,12 +3106,7 @@ mod tests {
         let schema = TestSchema::new_with_event_country_locator(locator).await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
         db.put(&event_message_at(
             ts,
             u32::from(Ipv4Addr::new(1, 0, 0, 1)),
@@ -3156,12 +3150,7 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
         db.put(&event_message_at(
             ts,
             u32::from(Ipv4Addr::new(1, 0, 0, 1)),
@@ -3194,12 +3183,7 @@ mod tests {
         let schema = TestSchema::new_with_event_country_locator(locator).await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
         let key = db
             .put(&event_message_at(
                 ts,
@@ -3241,15 +3225,10 @@ mod tests {
         ] {
             let store = schema.store();
             let db = store.events();
-            let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_local_timezone(Utc)
-                .unwrap();
+            let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
             for offset in 0..2 {
                 db.put(&event_message_at(
-                    ts + chrono::Duration::seconds(offset),
+                    ts + SignedDuration::from_secs(offset),
                     u32::from(address),
                     u32::from(address),
                 ))
@@ -3321,14 +3300,9 @@ mod tests {
 
     #[tokio::test]
     async fn event_list_with_triage_country_filter_uses_stored_codes_without_locator() {
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
         let (_locator_dir, schema) =
-            schema_with_country_filter_events(ts, ts + chrono::Duration::seconds(1)).await;
+            schema_with_country_filter_events(ts, ts + SignedDuration::from_secs(1)).await;
 
         // Omitting inline triage still exercises the dedicated
         // eventListWithTriage matching and pagination path.
@@ -3456,12 +3430,7 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
         db.put(&event_message_at(ts, 1, 2)).unwrap();
         drop(store);
 
@@ -3533,12 +3502,7 @@ mod tests {
 
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
         let key = db.put(&sensor1_event_at(ts, 1, 2)).unwrap();
         drop(store);
 
@@ -3567,17 +3531,12 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let base = NaiveDate::from_ymd_opt(2026, 4, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let base = utc_micro(2026, 4, 1, 0, 0, 0, 0);
 
         let conn_ts = base;
         let conn_key = db
             .put(&EventMessage {
-                time: jiff_timestamp(conn_ts),
+                time: conn_ts,
                 kind: EventKind::BlocklistConn,
                 fields: bincode::serialize(&BlocklistConnFields {
                     sensor: "sensor1".to_string(),
@@ -3587,7 +3546,7 @@ mod tests {
                     resp_port: 80,
                     proto: 6,
                     conn_state: "S0".to_string(),
-                    start_time: conn_ts.timestamp_nanos_opt().unwrap(),
+                    start_time: nanos(conn_ts),
                     duration: 0,
                     service: "http".to_string(),
                     orig_bytes: 0,
@@ -3603,15 +3562,10 @@ mod tests {
             })
             .unwrap();
 
-        let dns_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 1)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let dns_ts = utc_micro(2026, 4, 1, 0, 0, 1, 0);
         let dns_key = db
             .put(&EventMessage {
-                time: jiff_timestamp(dns_ts),
+                time: dns_ts,
                 kind: EventKind::BlocklistDns,
                 fields: bincode::serialize(&BlocklistDnsFields {
                     sensor: "sensor1".to_string(),
@@ -3620,7 +3574,7 @@ mod tests {
                     resp_addr: Ipv4Addr::new(10, 0, 0, 4).into(),
                     resp_port: 53,
                     proto: 17,
-                    start_time: dns_ts.timestamp_nanos_opt().unwrap(),
+                    start_time: nanos(dns_ts),
                     duration: 0,
                     orig_pkts: 0,
                     resp_pkts: 0,
@@ -3645,15 +3599,10 @@ mod tests {
             })
             .unwrap();
 
-        let dcerpc_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 2)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let dcerpc_ts = utc_micro(2026, 4, 1, 0, 0, 2, 0);
         let dcerpc_key = db
             .put(&EventMessage {
-                time: jiff_timestamp(dcerpc_ts),
+                time: dcerpc_ts,
                 kind: EventKind::BlocklistDceRpc,
                 fields: bincode::serialize(&BlocklistDceRpcFields {
                     sensor: "sensor1".to_string(),
@@ -3662,7 +3611,7 @@ mod tests {
                     resp_addr: Ipv4Addr::new(10, 0, 0, 6).into(),
                     resp_port: 135,
                     proto: 6,
-                    start_time: dcerpc_ts.timestamp_nanos_opt().unwrap(),
+                    start_time: nanos(dcerpc_ts),
                     duration: 0,
                     orig_pkts: 0,
                     resp_pkts: 0,
@@ -3677,15 +3626,10 @@ mod tests {
             })
             .unwrap();
 
-        let kerberos_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 3)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let kerberos_ts = utc_micro(2026, 4, 1, 0, 0, 3, 0);
         let kerberos_key = db
             .put(&EventMessage {
-                time: jiff_timestamp(kerberos_ts),
+                time: kerberos_ts,
                 kind: EventKind::BlocklistKerberos,
                 fields: bincode::serialize(&BlocklistKerberosFields {
                     sensor: "sensor1".to_string(),
@@ -3694,7 +3638,7 @@ mod tests {
                     resp_addr: Ipv4Addr::new(10, 0, 0, 8).into(),
                     resp_port: 88,
                     proto: 6,
-                    start_time: kerberos_ts.timestamp_nanos_opt().unwrap(),
+                    start_time: nanos(kerberos_ts),
                     duration: 0,
                     orig_pkts: 0,
                     resp_pkts: 0,
@@ -3716,15 +3660,10 @@ mod tests {
             })
             .unwrap();
 
-        let mqtt_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 4)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let mqtt_ts = utc_micro(2026, 4, 1, 0, 0, 4, 0);
         let mqtt_key = db
             .put(&EventMessage {
-                time: jiff_timestamp(mqtt_ts),
+                time: mqtt_ts,
                 kind: EventKind::BlocklistMqtt,
                 fields: bincode::serialize(&BlocklistMqttFields {
                     sensor: "sensor1".to_string(),
@@ -3733,7 +3672,7 @@ mod tests {
                     resp_addr: Ipv4Addr::new(10, 0, 0, 10).into(),
                     resp_port: 1883,
                     proto: 6,
-                    start_time: mqtt_ts.timestamp_nanos_opt().unwrap(),
+                    start_time: nanos(mqtt_ts),
                     duration: 0,
                     orig_pkts: 0,
                     resp_pkts: 0,
@@ -3752,15 +3691,10 @@ mod tests {
             })
             .unwrap();
 
-        let nfs_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 5)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let nfs_ts = utc_micro(2026, 4, 1, 0, 0, 5, 0);
         let nfs_key = db
             .put(&EventMessage {
-                time: jiff_timestamp(nfs_ts),
+                time: nfs_ts,
                 kind: EventKind::BlocklistNfs,
                 fields: bincode::serialize(&BlocklistNfsFields {
                     sensor: "sensor1".to_string(),
@@ -3769,7 +3703,7 @@ mod tests {
                     resp_addr: Ipv4Addr::new(10, 0, 0, 12).into(),
                     resp_port: 2049,
                     proto: 6,
-                    start_time: nfs_ts.timestamp_nanos_opt().unwrap(),
+                    start_time: nanos(nfs_ts),
                     duration: 0,
                     orig_pkts: 0,
                     resp_pkts: 0,
@@ -3784,15 +3718,10 @@ mod tests {
             })
             .unwrap();
 
-        let ntlm_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 6)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ntlm_ts = utc_micro(2026, 4, 1, 0, 0, 6, 0);
         let ntlm_key = db
             .put(&EventMessage {
-                time: jiff_timestamp(ntlm_ts),
+                time: ntlm_ts,
                 kind: EventKind::BlocklistNtlm,
                 fields: bincode::serialize(&BlocklistNtlmFields {
                     sensor: "sensor1".to_string(),
@@ -3801,7 +3730,7 @@ mod tests {
                     resp_addr: Ipv4Addr::new(10, 0, 0, 14).into(),
                     resp_port: 445,
                     proto: 6,
-                    start_time: ntlm_ts.timestamp_nanos_opt().unwrap(),
+                    start_time: nanos(ntlm_ts),
                     duration: 0,
                     orig_pkts: 0,
                     resp_pkts: 0,
@@ -3819,15 +3748,10 @@ mod tests {
             })
             .unwrap();
 
-        let rdp_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 7)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let rdp_ts = utc_micro(2026, 4, 1, 0, 0, 7, 0);
         let rdp_key = db
             .put(&EventMessage {
-                time: jiff_timestamp(rdp_ts),
+                time: rdp_ts,
                 kind: EventKind::BlocklistRdp,
                 fields: bincode::serialize(&BlocklistRdpFields {
                     sensor: "sensor1".to_string(),
@@ -3836,7 +3760,7 @@ mod tests {
                     resp_addr: Ipv4Addr::new(10, 0, 0, 16).into(),
                     resp_port: 3389,
                     proto: 6,
-                    start_time: rdp_ts.timestamp_nanos_opt().unwrap(),
+                    start_time: nanos(rdp_ts),
                     duration: 0,
                     orig_pkts: 0,
                     resp_pkts: 0,
@@ -3850,15 +3774,10 @@ mod tests {
             })
             .unwrap();
 
-        let smb_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 8)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let smb_ts = utc_micro(2026, 4, 1, 0, 0, 8, 0);
         let smb_key = db
             .put(&EventMessage {
-                time: jiff_timestamp(smb_ts),
+                time: smb_ts,
                 kind: EventKind::BlocklistSmb,
                 fields: bincode::serialize(&BlocklistSmbFields {
                     sensor: "sensor1".to_string(),
@@ -3867,7 +3786,7 @@ mod tests {
                     resp_addr: Ipv4Addr::new(10, 0, 0, 18).into(),
                     resp_port: 445,
                     proto: 6,
-                    start_time: smb_ts.timestamp_nanos_opt().unwrap(),
+                    start_time: nanos(smb_ts),
                     duration: 0,
                     orig_pkts: 0,
                     resp_pkts: 0,
@@ -3891,15 +3810,10 @@ mod tests {
             })
             .unwrap();
 
-        let smtp_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 9)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let smtp_ts = utc_micro(2026, 4, 1, 0, 0, 9, 0);
         let smtp_key = db
             .put(&EventMessage {
-                time: jiff_timestamp(smtp_ts),
+                time: smtp_ts,
                 kind: EventKind::BlocklistSmtp,
                 fields: bincode::serialize(&BlocklistSmtpFields {
                     sensor: "sensor1".to_string(),
@@ -3908,7 +3822,7 @@ mod tests {
                     resp_addr: Ipv4Addr::new(10, 0, 0, 20).into(),
                     resp_port: 25,
                     proto: 6,
-                    start_time: smtp_ts.timestamp_nanos_opt().unwrap(),
+                    start_time: nanos(smtp_ts),
                     duration: 0,
                     orig_pkts: 0,
                     resp_pkts: 0,
@@ -3928,15 +3842,10 @@ mod tests {
             })
             .unwrap();
 
-        let ssh_ts = NaiveDate::from_ymd_opt(2026, 4, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 10)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ssh_ts = utc_micro(2026, 4, 1, 0, 0, 10, 0);
         let ssh_key = db
             .put(&EventMessage {
-                time: jiff_timestamp(ssh_ts),
+                time: ssh_ts,
                 kind: EventKind::BlocklistSsh,
                 fields: bincode::serialize(&BlocklistSshFields {
                     sensor: "sensor1".to_string(),
@@ -3945,7 +3854,7 @@ mod tests {
                     resp_addr: Ipv4Addr::new(10, 0, 0, 22).into(),
                     resp_port: 22,
                     proto: 6,
-                    start_time: ssh_ts.timestamp_nanos_opt().unwrap(),
+                    start_time: nanos(ssh_ts),
                     duration: 0,
                     orig_pkts: 0,
                     resp_pkts: 0,
@@ -4001,15 +3910,9 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
         db.put(&event_message_at(ts, 1, 2)).unwrap();
 
-        let ts = jiff_timestamp(ts);
         let query = format!(
             "{{ \
                 eventList(filter: {{start:\"{ts}\"}}) {{ \
@@ -4039,29 +3942,12 @@ mod tests {
 
         let store = schema.store();
         let db = store.events();
-        let ts1 = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts1 = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
         db.put(&event_message_at(ts1, 1, 2)).unwrap();
-        let ts2 = NaiveDate::from_ymd_opt(2018, 1, 27)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts2 = utc_micro(2018, 1, 27, 18, 30, 9, 453_829);
         db.put(&event_message_at(ts2, 3, 4)).unwrap();
-        let ts3 = NaiveDate::from_ymd_opt(2018, 1, 28)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts3 = utc_micro(2018, 1, 28, 18, 30, 9, 453_829);
         db.put(&event_message_at(ts3, 5, 6)).unwrap();
-        let ts2 = jiff_timestamp(ts2);
-        let ts3 = jiff_timestamp(ts3);
         let query = format!(
             "{{ \
                 eventList(filter: {{ start:\"{ts2}\", end:\"{ts3}\" }}) {{ \
@@ -4140,30 +4026,13 @@ mod tests {
 
         let store = schema.store();
         let db = store.events();
-        let ts1 = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts1 = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
         db.put(&sensor1_event_at(ts1, 1, 2)).unwrap();
-        let ts2 = NaiveDate::from_ymd_opt(2018, 1, 27)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts2 = utc_micro(2018, 1, 27, 18, 30, 9, 453_829);
         db.put(&sensor1_event_at(ts2, 3, 4)).unwrap();
-        let ts3 = NaiveDate::from_ymd_opt(2018, 1, 28)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts3 = utc_micro(2018, 1, 28, 18, 30, 9, 453_829);
         db.put(&sensor1_event_at(ts3, 5, 6)).unwrap();
 
-        let ts2 = jiff_timestamp(ts2);
-        let ts3 = jiff_timestamp(ts3);
         let query = format!(
             "{{ \
                 eventList( \
@@ -4273,14 +4142,7 @@ mod tests {
             (2018, 1, 28, 18, 30, 9, 453_829),
         ]
         .into_iter()
-        .map(|(y, m, d, h, min, s, micro)| {
-            NaiveDate::from_ymd_opt(y, m, d)
-                .unwrap()
-                .and_hms_micro_opt(h, min, s, micro)
-                .unwrap()
-                .and_local_timezone(Utc)
-                .unwrap()
-        })
+        .map(|(y, m, d, h, min, s, micro)| utc_micro(y, m, d, h, min, s, micro))
         .collect();
         let src_dst: Vec<_> = vec![(1, 2), (3, 1), (2, 3)];
         let schema = TestSchema::new().await;
@@ -4300,8 +4162,7 @@ mod tests {
                             totalCount \
                         }} \
                     }}",
-            jiff_timestamp(timestamps[0]),
-            jiff_timestamp(timestamps[2])
+            timestamps[0], timestamps[2]
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
@@ -4315,8 +4176,7 @@ mod tests {
                         totalCount \
                     }} \
                 }}",
-            jiff_timestamp(timestamps[1]),
-            jiff_timestamp(timestamps[2])
+            timestamps[1], timestamps[2]
         );
         let res = schema.execute_as_system_admin(&query).await;
         assert_eq!(
@@ -4330,26 +4190,11 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let ts1 = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts1 = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
         db.put(&event_message_at(ts1, 1, 2)).unwrap();
-        let ts2 = NaiveDate::from_ymd_opt(2018, 1, 27)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts2 = utc_micro(2018, 1, 27, 18, 30, 9, 453_829);
         db.put(&event_message_at(ts2, 3, 4)).unwrap();
-        let ts3 = NaiveDate::from_ymd_opt(2018, 1, 28)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts3 = utc_micro(2018, 1, 28, 18, 30, 9, 453_829);
 
         let res = schema
             .execute_as_system_admin(
@@ -4367,8 +4212,6 @@ mod tests {
             )
             .await;
         assert_eq!(res.data.to_string(), r#"{insertNetwork: "0"}"#);
-        let ts1 = jiff_timestamp(ts1);
-        let ts3 = jiff_timestamp(ts3);
         let query = format!(
             "{{ \
                 eventList(filter: {{
@@ -4393,12 +4236,7 @@ mod tests {
         let store = schema.store();
         let db = store.events();
 
-        let ts1 = NaiveDate::from_ymd_opt(2024, 1, 1)
-            .unwrap()
-            .and_hms_micro_opt(0, 0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts1 = utc_micro(2024, 1, 1, 0, 0, 0, 0);
         db.put(&event_message_with_category(
             ts1,
             1,
@@ -4408,12 +4246,7 @@ mod tests {
         ))
         .unwrap();
 
-        let ts2 = NaiveDate::from_ymd_opt(2024, 1, 1)
-            .unwrap()
-            .and_hms_micro_opt(0, 0, 1, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts2 = utc_micro(2024, 1, 1, 0, 0, 1, 0);
         db.put(&event_message_with_category(ts2, 3, 4, None, "s2"))
             .unwrap();
 
@@ -4447,26 +4280,11 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let ts1 = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts1 = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
         db.put(&event_message_at(ts1, 1, 2)).unwrap();
-        let ts2 = NaiveDate::from_ymd_opt(2018, 1, 27)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts2 = utc_micro(2018, 1, 27, 18, 30, 9, 453_829);
         db.put(&event_message_at(ts2, 3, 4)).unwrap();
-        let ts3 = NaiveDate::from_ymd_opt(2018, 1, 28)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts3 = utc_micro(2018, 1, 28, 18, 30, 9, 453_829);
         db.put(&event_message_at(ts3, 5, 6)).unwrap();
         for argument in [
             "",
@@ -4502,12 +4320,7 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let timestamp = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
         let fields = BlocklistDhcpFields {
             sensor: "sensor1".to_string(),
             orig_addr: Ipv4Addr::LOCALHOST.into(),
@@ -4515,7 +4328,7 @@ mod tests {
             resp_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
             resp_port: 67,
             proto: 17,
-            start_time: timestamp.timestamp_nanos_opt().unwrap(),
+            start_time: nanos(timestamp),
             duration: 0,
             orig_pkts: 0,
             resp_pkts: 0,
@@ -4545,13 +4358,11 @@ mod tests {
         };
 
         let message = EventMessage {
-            time: jiff_timestamp(timestamp),
+            time: timestamp,
             kind: EventKind::BlocklistDhcp,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
         let key = db.put(&message).unwrap();
-
-        let timestamp = jiff_timestamp(timestamp);
 
         let query = format!(
             "{{ \
@@ -4584,12 +4395,7 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let timestamp = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
         let fields = BlocklistBootpFields {
             sensor: "sensor1".to_string(),
             orig_addr: Ipv4Addr::LOCALHOST.into(),
@@ -4597,7 +4403,7 @@ mod tests {
             resp_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
             resp_port: 67,
             proto: 17,
-            start_time: timestamp.timestamp_nanos_opt().unwrap(),
+            start_time: nanos(timestamp),
             duration: 0,
             orig_pkts: 0,
             resp_pkts: 0,
@@ -4619,13 +4425,11 @@ mod tests {
         };
 
         let message = EventMessage {
-            time: jiff_timestamp(timestamp),
+            time: timestamp,
             kind: EventKind::BlocklistBootp,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
         let key = db.put(&message).unwrap();
-
-        let timestamp = jiff_timestamp(timestamp);
 
         let query = format!(
             "{{ \
@@ -4658,15 +4462,10 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let timestamp = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
         let fields = DnsEventFields {
             sensor: "sensor1".to_string(),
-            start_time: timestamp.timestamp_nanos_opt().unwrap(),
+            start_time: nanos(timestamp),
             duration: 0,
             orig_addr: Ipv4Addr::from(1).into(),
             orig_port: 10000,
@@ -4693,12 +4492,11 @@ mod tests {
             category: Some(EventCategory::CommandAndControl),
         };
         let message = EventMessage {
-            time: jiff_timestamp(timestamp),
+            time: timestamp,
             kind: EventKind::LockyRansomware,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
         let key = db.put(&message).unwrap();
-        let timestamp = jiff_timestamp(timestamp);
         let query = format!(
             "{{ \
                 eventList(filter: {{
@@ -4730,12 +4528,7 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let timestamp = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
         let fields = BlocklistTlsFields {
             sensor: "sensor1".to_string(),
             orig_addr: Ipv4Addr::from(1).into(),
@@ -4743,7 +4536,7 @@ mod tests {
             resp_addr: Ipv4Addr::from(2).into(),
             resp_port: 443,
             proto: 6,
-            start_time: timestamp.timestamp_nanos_opt().unwrap(),
+            start_time: nanos(timestamp),
             duration: 0,
             orig_pkts: 0,
             resp_pkts: 0,
@@ -4762,8 +4555,8 @@ mod tests {
             subject_country: "US".into(),
             subject_org_name: "org".into(),
             subject_common_name: "common".into(),
-            validity_not_before: timestamp.timestamp_nanos_opt().unwrap(),
-            validity_not_after: timestamp.timestamp_nanos_opt().unwrap(),
+            validity_not_before: nanos(timestamp),
+            validity_not_after: nanos(timestamp),
             subject_alt_name: "alt".into(),
             issuer_country: "US".into(),
             issuer_org_name: "org".into(),
@@ -4775,12 +4568,11 @@ mod tests {
         };
 
         let message = EventMessage {
-            time: jiff_timestamp(timestamp),
+            time: timestamp,
             kind: EventKind::SuspiciousTlsTraffic,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
         let key = db.put(&message).unwrap();
-        let timestamp = jiff_timestamp(timestamp);
         let query = format!(
             "{{ \
                 eventList(filter: {{
@@ -4815,12 +4607,7 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let timestamp = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
         let fields = BlocklistRadiusFields {
             sensor: "sensor1".to_string(),
             orig_addr: Ipv4Addr::LOCALHOST.into(),
@@ -4828,7 +4615,7 @@ mod tests {
             resp_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
             resp_port: 1812,
             proto: 17,
-            start_time: timestamp.timestamp_nanos_opt().unwrap(),
+            start_time: nanos(timestamp),
             duration: 0,
             orig_pkts: 0,
             resp_pkts: 0,
@@ -4853,13 +4640,11 @@ mod tests {
         };
 
         let message = EventMessage {
-            time: jiff_timestamp(timestamp),
+            time: timestamp,
             kind: EventKind::BlocklistRadius,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
         let key = db.put(&message).unwrap();
-
-        let timestamp = jiff_timestamp(timestamp);
 
         let query = format!(
             "{{ \
@@ -4894,12 +4679,7 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let timestamp = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
         let fields = BlocklistMalformedDnsFields {
             sensor: "sensor1".to_string(),
             orig_addr: Ipv4Addr::LOCALHOST.into(),
@@ -4907,7 +4687,7 @@ mod tests {
             resp_addr: Ipv4Addr::new(127, 0, 0, 2).into(),
             resp_port: 53,
             proto: 17,
-            start_time: timestamp.timestamp_nanos_opt().unwrap(),
+            start_time: nanos(timestamp),
             duration: 1,
             orig_pkts: 2,
             resp_pkts: 3,
@@ -4930,13 +4710,11 @@ mod tests {
         };
 
         let message = EventMessage {
-            time: jiff_timestamp(timestamp),
+            time: timestamp,
             kind: EventKind::BlocklistMalformedDns,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
         let key = db.put(&message).unwrap();
-
-        let timestamp = jiff_timestamp(timestamp);
 
         let query = format!(
             "{{ \
@@ -4966,13 +4744,13 @@ mod tests {
     }
 
     fn http_threat_test_fields(
-        time: DateTime<Utc>,
+        time: Timestamp,
         orig_last_octet: u8,
         cluster_id: Option<u32>,
     ) -> review_database::event::HttpThreatFields {
         review_database::event::HttpThreatFields {
-            time: jiff_timestamp(time),
-            start_time: time.timestamp_nanos_opt().unwrap(),
+            time,
+            start_time: nanos(time),
             duration: 0,
             orig_pkts: 0,
             resp_pkts: 0,
@@ -5014,9 +4792,9 @@ mod tests {
         }
     }
 
-    fn dga_test_fields(time: DateTime<Utc>) -> review_database::event::DgaFields {
+    fn dga_test_fields(time: Timestamp) -> review_database::event::DgaFields {
         review_database::event::DgaFields {
-            start_time: time.timestamp_nanos_opt().unwrap(),
+            start_time: nanos(time),
             duration: 0,
             orig_pkts: 0,
             resp_pkts: 0,
@@ -5053,9 +4831,9 @@ mod tests {
         }
     }
 
-    fn non_browser_test_fields(time: DateTime<Utc>) -> review_database::event::HttpEventFields {
+    fn non_browser_test_fields(time: Timestamp) -> review_database::event::HttpEventFields {
         review_database::event::HttpEventFields {
-            start_time: time.timestamp_nanos_opt().unwrap(),
+            start_time: nanos(time),
             duration: 0,
             orig_pkts: 0,
             resp_pkts: 0,
@@ -5097,13 +4875,8 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let base_ts = NaiveDate::from_ymd_opt(2024, 1, 1)
-            .unwrap()
-            .and_hms_micro_opt(0, 0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-        let at = |secs| base_ts + chrono::TimeDelta::seconds(secs);
+        let base_ts = utc_micro(2024, 1, 1, 0, 0, 0, 0);
+        let at = |secs| base_ts + SignedDuration::from_secs(secs);
 
         let messages = [
             (
@@ -5129,7 +4902,7 @@ mod tests {
         ];
         for (time, kind, fields) in messages {
             db.put(&EventMessage {
-                time: jiff_timestamp(time),
+                time,
                 kind,
                 fields: fields.unwrap(),
             })
@@ -5192,29 +4965,14 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let timestamp = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 9, 453_829)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-        let sampling_window_start_time = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
-        let sampling_window_end_time = NaiveDate::from_ymd_opt(2018, 1, 26)
-            .unwrap()
-            .and_hms_micro_opt(18, 30, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let timestamp = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
+        let sampling_window_start_time = utc_micro(2018, 1, 26, 18, 0, 0, 0);
+        let sampling_window_end_time = utc_micro(2018, 1, 26, 18, 30, 0, 0);
 
         let fields = UnusualDestinationPatternFields {
             sensor: "sensor1".to_string(),
-            sampling_window_start_time: sampling_window_start_time.timestamp_nanos_opt().unwrap(),
-            sampling_window_end_time: sampling_window_end_time.timestamp_nanos_opt().unwrap(),
+            sampling_window_start_time: nanos(sampling_window_start_time),
+            sampling_window_end_time: nanos(sampling_window_end_time),
             destination_ips: vec![
                 Ipv4Addr::new(192, 168, 1, 1).into(),
                 Ipv4Addr::new(192, 168, 1, 2).into(),
@@ -5229,13 +4987,12 @@ mod tests {
         };
 
         let message = EventMessage {
-            time: jiff_timestamp(timestamp),
+            time: timestamp,
             kind: EventKind::UnusualDestinationPattern,
             fields: bincode::serialize(&fields).expect("serializable"),
         };
         db.put(&message).unwrap();
 
-        let timestamp = jiff_timestamp(timestamp);
         let query = format!(
             "{{ \
                 eventList(filter: {{ start:\"{timestamp}\" }}) {{ \
@@ -5265,15 +5022,13 @@ mod tests {
         assert!(data.contains("sensor1"));
         assert!(
             data.contains(&format!(
-                "samplingWindowStartTime: \"{}\"",
-                jiff_timestamp(sampling_window_start_time)
+                "samplingWindowStartTime: \"{sampling_window_start_time}\""
             )),
             "data: {data}"
         );
         assert!(
             data.contains(&format!(
-                "samplingWindowEndTime: \"{}\"",
-                jiff_timestamp(sampling_window_end_time)
+                "samplingWindowEndTime: \"{sampling_window_end_time}\""
             )),
             "data: {data}"
         );
@@ -5295,22 +5050,14 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let timestamps: Vec<_> = (0u32..5)
-            .map(|i| {
-                NaiveDate::from_ymd_opt(2026, 1, 1)
-                    .unwrap()
-                    .and_hms_opt(0, 0, i)
-                    .unwrap()
-                    .and_local_timezone(Utc)
-                    .unwrap()
-            })
+        let timestamps: Vec<_> = (0i8..5)
+            .map(|i| utc_micro(2026, 1, 1, 0, 0, i, 0))
             .collect();
         for (i, ts) in timestamps.iter().enumerate() {
             let src = u32::try_from(i + 1).unwrap();
             db.put(&event_message_at(*ts, src, src + 100)).unwrap();
         }
         let start_ts = timestamps[0];
-        let start_ts = jiff_timestamp(start_ts);
 
         let event_list_query = format!(
             "{{ eventList(filter: {{ start:\"{start_ts}\" }}, first: 3) {{ \
@@ -5339,15 +5086,9 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
         db.put(&event_message_at(ts, 1, 2)).unwrap();
 
-        let ts = jiff_timestamp(ts);
         let query = format!(
             "{{ eventListWithTriage( \
                 filter: {{ start:\"{ts}\" }}, \
@@ -5380,16 +5121,10 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
         db.put(&event_message_at(ts, 1, 2)).unwrap();
 
         // Policy with very high minimum_score so the event scores nothing.
-        let ts = jiff_timestamp(ts);
         let query = format!(
             "{{ eventListWithTriage( \
                 filter: {{ start:\"{ts}\" }}, \
@@ -5418,17 +5153,11 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
         // The default DnsCovertChannel test event has `query: "domain"`,
         // which `TriageExclusion::Domain(["domain"])` matches via its regex.
         db.put(&event_message_at(ts, 1, 2)).unwrap();
 
-        let ts = jiff_timestamp(ts);
         let query = format!(
             "{{ eventListWithTriage( \
                 filter: {{ start:\"{ts}\" }}, \
@@ -5451,7 +5180,7 @@ mod tests {
         let store = schema.store();
         store
             .events()
-            .put(&event_message_at(Utc::now(), 1, 2))
+            .put(&event_message_at(jiff::Timestamp::now(), 1, 2))
             .unwrap();
         let domains: Vec<_> = (0..5_000)
             .map(|index| format!("host{index:06}.sub.example-domain.com"))
@@ -5480,7 +5209,7 @@ mod tests {
         let store = schema.store();
         store
             .events()
-            .put(&event_message_at(Utc::now(), 1, 2))
+            .put(&event_message_at(jiff::Timestamp::now(), 1, 2))
             .unwrap();
         // A buildable exclusion before the invalid one must not hide the failure.
         let query = r#"{ eventListWithTriage(
@@ -5519,14 +5248,7 @@ mod tests {
         let db = store.events();
         // Insert 4 excluded events, then 2 surviving events.
         let mut idx = 0u32;
-        let ts = |seconds: u32| {
-            NaiveDate::from_ymd_opt(2026, 1, 1)
-                .unwrap()
-                .and_hms_opt(0, 0, seconds)
-                .unwrap()
-                .and_local_timezone(Utc)
-                .unwrap()
-        };
+        let ts = |seconds: u32| utc_micro(2026, 1, 1, 0, 0, i8::try_from(seconds).unwrap(), 0);
         for _ in 0..4 {
             // The default `event_message_at` builder uses `query: "domain"`,
             // matched by `TriageExclusion::Domain(["domain"])`.
@@ -5538,7 +5260,7 @@ mod tests {
         for _ in 0..2 {
             let fields = DnsEventFields {
                 sensor: "sensor1".to_string(),
-                start_time: ts(idx).timestamp_nanos_opt().unwrap(),
+                start_time: nanos(ts(idx)),
                 duration: 0,
                 orig_addr: Ipv4Addr::from(idx + 1).into(),
                 orig_port: 10000,
@@ -5565,7 +5287,7 @@ mod tests {
                 category: Some(EventCategory::CommandAndControl),
             };
             db.put(&EventMessage {
-                time: jiff_timestamp(ts(idx)),
+                time: ts(idx),
                 kind: EventKind::DnsCovertChannel,
                 fields: bincode::serialize(&fields).expect("serializable"),
             })
@@ -5573,7 +5295,6 @@ mod tests {
             idx += 1;
         }
         let start_ts = ts(0);
-        let start_ts = jiff_timestamp(start_ts);
 
         // Request first=1 with exclusion that cuts the first 4. The resolver
         // must keep scanning and return the 5th event with hasNextPage=true.
@@ -5637,16 +5358,10 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
         db.put(&event_message_at(ts, 1, 2)).unwrap();
 
         // Single multi-field exclusion: ipAddress (no match) + domain (matches).
-        let ts = jiff_timestamp(ts);
         let query_combined = format!(
             "{{ eventListWithTriage( \
                 filter: {{ start:\"{ts}\" }}, \
@@ -5715,17 +5430,11 @@ mod tests {
         let schema = TestSchema::new().await;
         let store = schema.store();
         let db = store.events();
-        let ts = NaiveDate::from_ymd_opt(2026, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_local_timezone(Utc)
-            .unwrap();
+        let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
         // The default DnsCovertChannel test event has `query: "domain"`,
         // whose first label `TriageExclusion::Hostname(["domain"])` matches.
         db.put(&event_message_at(ts, 1, 2)).unwrap();
 
-        let ts = jiff_timestamp(ts);
         let query_hostname = format!(
             "{{ eventListWithTriage( \
                 filter: {{ start:\"{ts}\" }}, \
@@ -5758,14 +5467,7 @@ mod tests {
         let store = schema.store();
         let db = store.events();
         let mut idx = 0u32;
-        let ts = |seconds: u32| {
-            NaiveDate::from_ymd_opt(2026, 1, 1)
-                .unwrap()
-                .and_hms_opt(0, 0, seconds)
-                .unwrap()
-                .and_local_timezone(Utc)
-                .unwrap()
-        };
+        let ts = |seconds: u32| utc_micro(2026, 1, 1, 0, 0, i8::try_from(seconds).unwrap(), 0);
         // 3 events with default query "domain" (excluded), 2 with "survivor".
         for _ in 0..3 {
             db.put(&event_message_at(ts(idx), idx + 1, idx + 100))
@@ -5775,7 +5477,7 @@ mod tests {
         for _ in 0..2 {
             let fields = DnsEventFields {
                 sensor: "sensor1".to_string(),
-                start_time: ts(idx).timestamp_nanos_opt().unwrap(),
+                start_time: nanos(ts(idx)),
                 duration: 0,
                 orig_addr: Ipv4Addr::from(idx + 1).into(),
                 orig_port: 10000,
@@ -5802,7 +5504,7 @@ mod tests {
                 category: Some(EventCategory::CommandAndControl),
             };
             db.put(&EventMessage {
-                time: jiff_timestamp(ts(idx)),
+                time: ts(idx),
                 kind: EventKind::DnsCovertChannel,
                 fields: bincode::serialize(&fields).expect("serializable"),
             })
@@ -5810,7 +5512,6 @@ mod tests {
             idx += 1;
         }
         let start_ts = ts(0);
-        let start_ts = jiff_timestamp(start_ts);
 
         let query = format!(
             "{{ eventListWithTriage( \
@@ -5880,7 +5581,7 @@ mod tests {
                 profile_draft: None,
                 agents,
                 external_services: vec![],
-                creation_time: Utc::now(),
+                creation_time: jiff::Timestamp::now(),
             };
             store.node_map().put(&node).expect("insert node")
         }
@@ -5913,14 +5614,7 @@ mod tests {
             );
 
             let db = store.events();
-            let ts = |day| {
-                NaiveDate::from_ymd_opt(2018, 1, day)
-                    .unwrap()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap()
-                    .and_local_timezone(Utc)
-                    .unwrap()
-            };
+            let ts = |day| utc_micro(2018, 1, day, 0, 0, 0, 0);
             let put = |day, sensor| {
                 db.put(&event_message_with_category(
                     ts(day),
@@ -6154,7 +5848,7 @@ mod tests {
                     privilege_profile: None,
                 }],
                 external_services: vec![],
-                creation_time: Utc::now(),
+                creation_time: jiff::Timestamp::now(),
             };
             store.node_map().put(&node).expect("insert node");
         }
@@ -6167,13 +5861,8 @@ mod tests {
             }
         }
 
-        fn put_event(store: &Store, day: u32, sensor: &str, src: &str, dst: &str) {
-            let timestamp = NaiveDate::from_ymd_opt(2018, 1, day)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_local_timezone(Utc)
-                .unwrap();
+        fn put_event(store: &Store, day: i8, sensor: &str, src: &str, dst: &str) {
+            let timestamp = utc_micro(2018, 1, day, 0, 0, 0, 0);
             let src: Ipv4Addr = src.parse().unwrap();
             let dst: Ipv4Addr = dst.parse().unwrap();
             store
@@ -6327,17 +6016,11 @@ mod tests {
         const START: &str = "2026-05-01T00:00:00Z";
         const END: &str = "2026-05-02T00:00:00Z";
 
-        fn at(secs: i64) -> DateTime<Utc> {
-            NaiveDate::from_ymd_opt(2026, 5, 1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_local_timezone(Utc)
-                .unwrap()
-                + chrono::TimeDelta::seconds(secs)
+        fn at(secs: i64) -> Timestamp {
+            utc_micro(2026, 5, 1, 0, 0, 0, 0) + SignedDuration::from_secs(secs)
         }
 
-        fn conn_fields(time: DateTime<Utc>) -> BlocklistConnFields {
+        fn conn_fields(time: Timestamp) -> BlocklistConnFields {
             BlocklistConnFields {
                 sensor: "sensor1".to_string(),
                 orig_addr: Ipv4Addr::new(10, 0, 0, 1).into(),
@@ -6346,7 +6029,7 @@ mod tests {
                 resp_port: 443,
                 proto: 6,
                 conn_state: "S0".to_string(),
-                start_time: time.timestamp_nanos_opt().unwrap(),
+                start_time: nanos(time),
                 duration: 0,
                 service: "tls".to_string(),
                 orig_bytes: 0,
@@ -6360,7 +6043,7 @@ mod tests {
             }
         }
 
-        fn ftp_fields(time: DateTime<Utc>) -> FtpEventFields {
+        fn ftp_fields(time: Timestamp) -> FtpEventFields {
             FtpEventFields {
                 sensor: "sensor1".to_string(),
                 orig_addr: Ipv4Addr::new(10, 0, 0, 3).into(),
@@ -6368,7 +6051,7 @@ mod tests {
                 resp_addr: Ipv4Addr::new(10, 0, 0, 4).into(),
                 resp_port: 21,
                 proto: 6,
-                start_time: time.timestamp_nanos_opt().unwrap(),
+                start_time: nanos(time),
                 duration: 0,
                 orig_pkts: 0,
                 resp_pkts: 0,
@@ -6382,7 +6065,7 @@ mod tests {
             }
         }
 
-        fn ldap_fields(time: DateTime<Utc>) -> LdapEventFields {
+        fn ldap_fields(time: Timestamp) -> LdapEventFields {
             LdapEventFields {
                 sensor: "sensor1".to_string(),
                 orig_addr: Ipv4Addr::new(10, 0, 0, 5).into(),
@@ -6390,7 +6073,7 @@ mod tests {
                 resp_addr: Ipv4Addr::new(10, 0, 0, 6).into(),
                 resp_port: 389,
                 proto: 6,
-                start_time: time.timestamp_nanos_opt().unwrap(),
+                start_time: nanos(time),
                 duration: 0,
                 orig_pkts: 0,
                 resp_pkts: 0,
@@ -6408,7 +6091,7 @@ mod tests {
             }
         }
 
-        fn dns_fields(time: DateTime<Utc>) -> BlocklistDnsFields {
+        fn dns_fields(time: Timestamp) -> BlocklistDnsFields {
             BlocklistDnsFields {
                 sensor: "sensor1".to_string(),
                 orig_addr: Ipv4Addr::new(10, 0, 0, 7).into(),
@@ -6416,7 +6099,7 @@ mod tests {
                 resp_addr: Ipv4Addr::new(10, 0, 0, 8).into(),
                 resp_port: 53,
                 proto: 17,
-                start_time: time.timestamp_nanos_opt().unwrap(),
+                start_time: nanos(time),
                 duration: 0,
                 orig_pkts: 0,
                 resp_pkts: 0,
@@ -6439,11 +6122,11 @@ mod tests {
             }
         }
 
-        fn unusual_destination_fields(time: DateTime<Utc>) -> UnusualDestinationPatternFields {
+        fn unusual_destination_fields(time: Timestamp) -> UnusualDestinationPatternFields {
             UnusualDestinationPatternFields {
                 sensor: "sensor1".to_string(),
-                sampling_window_start_time: time.timestamp_nanos_opt().unwrap(),
-                sampling_window_end_time: time.timestamp_nanos_opt().unwrap(),
+                sampling_window_start_time: nanos(time),
+                sampling_window_end_time: nanos(time),
                 destination_ips: vec![Ipv4Addr::new(10, 0, 0, 9).into()],
                 count: 150,
                 expected_mean: 50.0,
@@ -6455,7 +6138,7 @@ mod tests {
         }
 
         fn http_threat_fields(
-            time: DateTime<Utc>,
+            time: Timestamp,
             attack_kind: &str,
         ) -> review_database::event::HttpThreatFields {
             let mut fields = http_threat_test_fields(time, 10, None);
@@ -6509,7 +6192,7 @@ mod tests {
             let db = store.events();
             for (secs, (kind, fields)) in (0..).zip(messages) {
                 db.put(&EventMessage {
-                    time: jiff_timestamp(at(secs)),
+                    time: at(secs),
                     kind,
                     fields: fields.expect("serializable"),
                 })

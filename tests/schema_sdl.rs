@@ -3,6 +3,7 @@
 //! `schema.graphql` is the output of `examples/schema_sdl.rs`, and this test
 //! renders the same schema and compares it against the committed file.
 
+use async_graphql::SDLExportOptions;
 use review_web::graphql::{Mutation, Query, Schema, Subscription};
 
 /// The committed artifact, read at compile time so a missing file is a build
@@ -13,6 +14,7 @@ const REGENERATE: &str = "the GraphQL schema changed. If the change is deliberat
                           committed artifact with:\n\n    cargo run --example schema_sdl > \
                           schema.graphql\n";
 
+/// Renders the schema with the same export options as `examples/schema_sdl.rs`.
 fn rendered_sdl() -> String {
     Schema::build(
         Query::default(),
@@ -20,7 +22,7 @@ fn rendered_sdl() -> String {
         Subscription::default(),
     )
     .finish()
-    .sdl()
+    .sdl_with_options(SDLExportOptions::new().include_specified_by())
 }
 
 #[test]
@@ -157,6 +159,44 @@ fn schema_names_no_enrollment_type() {
     let sdl = rendered_sdl();
     assert!(!sdl.contains("DeliveryMode"), "{REGENERATE}");
     assert!(!sdl.contains("BootstrapMaterial"), "{REGENERATE}");
+}
+
+/// Every time in the schema is the one `DateTime` scalar, which has no
+/// description and names RFC 3339 as its specification; no offset-free time
+/// scalar is left.
+#[tokio::test]
+async fn every_time_is_the_rfc3339_datetime_scalar() {
+    let sdl = rendered_sdl();
+    assert!(!sdl.contains("NaiveDateTime"), "{REGENERATE}");
+    assert!(
+        sdl.contains(
+            "\nscalar DateTime @specifiedBy(url: \"https://datatracker.ietf.org/doc/html/rfc3339\")\n"
+        ),
+        "{REGENERATE}"
+    );
+
+    let response = Schema::build(
+        Query::default(),
+        Mutation::default(),
+        Subscription::default(),
+    )
+    .finish()
+    .execute(r#"{ __type(name: "DateTime") { kind description specifiedByURL } }"#)
+    .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    assert_eq!(
+        response
+            .data
+            .into_json()
+            .expect("introspection data is JSON"),
+        serde_json::json!({
+            "__type": {
+                "kind": "SCALAR",
+                "description": null,
+                "specifiedByURL": "https://datatracker.ietf.org/doc/html/rfc3339",
+            }
+        })
+    );
 }
 
 /// Returns the body of the named type or enum in `sdl`.

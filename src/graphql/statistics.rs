@@ -4,13 +4,11 @@ use async_graphql::{
     connection::{Connection, ConnectionNameType, Edge, EdgeNameType, EmptyFields},
     types::ID,
 };
-use chrono::{DateTime, NaiveDateTime};
-use num_traits::ToPrimitive;
 use review_database::{BatchInfo, UniqueKey};
 use serde_json::Value as JsonValue;
 
 use super::{Role, RoleGuard, customer_access, slicing, training_result};
-use crate::graphql::{query, query_with_constraints};
+use crate::graphql::{query, query_with_constraints, timestamp::Timestamp};
 
 #[derive(Default)]
 pub(super) struct StatisticsQuery;
@@ -31,10 +29,14 @@ impl StatisticsQuery {
         ctx: &Context<'_>,
         model: ID,
         cluster: ID,
-        time: Vec<NaiveDateTime>,
+        time: Vec<Timestamp>,
         #[graphql(default_with = "Some(false)")] previous: Option<bool>,
     ) -> Result<JsonValue> {
         let previous = previous.unwrap_or_default();
+        let time = time
+            .into_iter()
+            .map(super::outlier::stored_time)
+            .collect::<Result<Vec<_>>>()?;
         let cluster = cluster.as_str().parse()?;
         let model = model.as_str().parse()?;
         customer_access::load_accessible_model(ctx, "model", model)?;
@@ -171,8 +173,8 @@ struct Round {
 
 #[Object]
 impl Round {
-    async fn time(&self) -> NaiveDateTime {
-        i64_to_naive_date_time(self.inner.inner.id)
+    async fn time(&self) -> Timestamp {
+        i64_to_timestamp(self.inner.inner.id)
     }
 
     /// The first event id in the round within a string represantable by a
@@ -229,8 +231,8 @@ async fn load_rounds_by_cluster(
     let (_, batches) = map.load_rounds_by_cluster(
         model,
         cluster,
-        &after.map(|k| i64_to_naive_date_time(k.0.1)),
-        &before.map(|k| i64_to_naive_date_time(k.0.1)),
+        &after.map(|k| i64_to_timestamp(k.0.1).into()),
+        &before.map(|k| i64_to_timestamp(k.0.1).into()),
         is_first,
         limit + 1,
     )?;
@@ -241,7 +243,7 @@ async fn load_rounds_by_cluster(
         batches
             .into_iter()
             .take(limit)
-            .filter_map(|t| t.and_utc().timestamp_nanos_opt())
+            .filter_map(|t| review_database::timestamp::to_i64_nanos(t).ok())
             .filter_map(|t| {
                 if let Ok(Some(b)) = map.get(model, t) {
                     Some(b)
@@ -303,11 +305,11 @@ async fn load_rounds_by_model(
     Ok(connection)
 }
 
-pub(super) fn i64_to_naive_date_time(t: i64) -> NaiveDateTime {
-    const A_BILLION: i64 = 1_000_000_000;
-    DateTime::from_timestamp(t / A_BILLION, (t % A_BILLION).to_u32().unwrap_or_default())
-        .unwrap_or_default()
-        .naive_utc()
+/// Returns the time of `t`, nanoseconds since the Unix epoch.
+pub(super) fn i64_to_timestamp(t: i64) -> Timestamp {
+    review_database::timestamp::from_i64_nanos(t)
+        .expect(review_database::timestamp::I64_NANOS_JIFF_INVARIANT)
+        .into()
 }
 
 struct RoundByCluster;

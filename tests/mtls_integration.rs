@@ -8,8 +8,8 @@ mod mtls_integration {
 
     use anyhow::Context;
     use async_trait::async_trait;
-    use chrono::{Duration as ChronoDuration, Utc};
     use futures::StreamExt;
+    use jiff::SignedDuration;
     use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
     use rcgen::{
         BasicConstraints, Certificate, CertificateParams, DnType, IsCa, Issuer, KeyPair,
@@ -483,7 +483,7 @@ mod mtls_integration {
         customer_ids: Option<Vec<u32>>,
         role: &str,
     ) -> anyhow::Result<String> {
-        let exp = (Utc::now() + ChronoDuration::minutes(5)).timestamp();
+        let exp = (jiff::Timestamp::now() + SignedDuration::from_mins(5)).as_second();
         let claims = ContextClaims {
             role,
             customer_ids,

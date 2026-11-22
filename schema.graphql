@@ -3316,7 +3316,7 @@ type Cluster {
 	signature: String!
 	size: Int!
 	score: Float
-	lastModificationTime: NaiveDateTime
+	lastModificationTime: DateTime
 	id: ID!
 	category: Category!
 	events: [DateTime!]!
@@ -3825,12 +3825,7 @@ input DataStoreInput {
 	serverName: String!
 }
 
-"""
-Implement the DateTime<Utc> scalar
-
-The input/output is a string in RFC3339 format.
-"""
-scalar DateTime
+scalar DateTime @specifiedBy(url: "https://datatracker.ietf.org/doc/html/rfc3339")
 
 """
 A single DCE/RPC context entry.
@@ -7336,15 +7331,6 @@ type Mutation {
 	updateSystemLogCollector(host: String!, buildSelector: BuildSelectorInput!, onFailure: FailurePolicy! = ROLLBACK): UpdateSystemLogCollectorResult!
 }
 
-"""
-ISO 8601 combined date and time without timezone.
-
-# Examples
-
-* `2015-07-01T08:59:60.123`,
-"""
-scalar NaiveDateTime
-
 type Network {
 	id: ID!
 	name: String!
@@ -8713,7 +8699,7 @@ type Query {
 	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
 	model of none of the caller's customers with `Forbidden`.
 	"""
-	topTimeSeries(		model: ID!,		size: Int,		time: NaiveDateTime,		minSlope: Float,
+	topTimeSeries(		model: ID!,		size: Int,		time: DateTime,		minSlope: Float,
 		"""
 		The dimensionless trend filter order, from 0 to 20 inclusive. Omitted or null values use 4.
 		"""
@@ -8729,21 +8715,21 @@ type Query {
 	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
 	model of none of the caller's customers with `Forbidden`.
 	"""
-	topColumns(model: ID!, size: Int, time: NaiveDateTime, portionOfClusters: Float, portionOfTopN: Float): [TopElementCountsByColumn!]!
+	topColumns(model: ID!, size: Int, time: DateTime, portionOfClusters: Float, portionOfTopN: Float): [TopElementCountsByColumn!]!
 	"""
 	The top IP addresses of a model, by column.
 	
 	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
 	model of none of the caller's customers with `Forbidden`.
 	"""
-	topIpAddresses(model: ID!, size: Int, time: NaiveDateTime, portionOfClusters: Float, portionOfTopElements: Float): [TopElementCountsByColumn!]!
+	topIpAddresses(model: ID!, size: Int, time: DateTime, portionOfClusters: Float, portionOfTopElements: Float): [TopElementCountsByColumn!]!
 	"""
 	The top multimaps of a model.
 	
 	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
 	model of none of the caller's customers with `Forbidden`.
 	"""
-	topMultimaps(model: ID!, size: Int, minMapSize: Int, time: NaiveDateTime): [TopMultimaps!]!
+	topMultimaps(model: ID!, size: Int, minMapSize: Int, time: DateTime): [TopMultimaps!]!
 	"""
 	A list of networks.
 	"""
@@ -8802,7 +8788,7 @@ type Query {
 	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
 	model of none of the caller's customers with `Forbidden`.
 	"""
-	savedOutliers(modelId: ID!, time: NaiveDateTime, after: String, before: String, first: Int, last: Int, previous: Boolean = false): RankedOutlierConnection!
+	savedOutliers(modelId: ID!, time: DateTime, after: String, before: String, first: Int, last: Int, previous: Boolean = false): RankedOutlierConnection!
 	"""
 	A list of outliers, grouped by clustering time. Within each group,
 	the outliers are sorted by their distance to the cluster centers.
@@ -8811,7 +8797,7 @@ type Query {
 	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
 	model of none of the caller's customers with `Forbidden`.
 	"""
-	rankedOutliers(modelId: ID!, time: NaiveDateTime, after: String, before: String, first: Int, last: Int, filter: SearchFilterInput, previous: Boolean = false): RankedOutlierConnection!
+	rankedOutliers(modelId: ID!, time: DateTime, after: String, before: String, first: Int, last: Int, filter: SearchFilterInput, previous: Boolean = false): RankedOutlierConnection!
 	"""
 	A list of sampling policies.
 	"""
@@ -8827,7 +8813,7 @@ type Query {
 	An unknown model is refused with `extensions.code` `NOT_FOUND`, and a
 	model of none of the caller's customers with `Forbidden`.
 	"""
-	columnStatistics(model: ID!, cluster: ID!, time: [NaiveDateTime!]!, previous: Boolean = false): JSON!
+	columnStatistics(model: ID!, cluster: ID!, time: [DateTime!]!, previous: Boolean = false): JSON!
 	"""
 	The rounds of a cluster.
 	
@@ -9408,7 +9394,7 @@ type RollbackUnsupported {
 }
 
 type Round {
-	time: NaiveDateTime!
+	time: DateTime!
 	"""
 	The first event id in the round within a string represantable by a
 	`i64`.
@@ -10307,7 +10293,7 @@ type ThreatLevelEventCounter {
 }
 
 type TimeCount {
-	time: NaiveDateTime!
+	time: DateTime!
 	count: Int!
 }
 

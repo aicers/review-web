@@ -509,7 +509,6 @@ mod tests {
     };
 
     use assert_json_diff::assert_json_eq;
-    use chrono::Utc;
     use review_database::{
         Agent, AgentKind, AgentStatus, CoreComponent, ExternalService, ExternalServiceKind,
         ExternalServiceStatus, Lifecycle, Node, NodeProfile, Role, Store,
@@ -614,7 +613,7 @@ mod tests {
             profile_draft: None,
             agents,
             external_services,
-            creation_time: Utc::now(),
+            creation_time: jiff::Timestamp::now(),
         };
         store.node_map().put(&node).expect("insert node")
     }
