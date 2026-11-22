@@ -368,6 +368,24 @@ fn unknown_keys_are_refused_at_every_level() {
     assert_eq!(detector_id, Value::from(1));
 }
 
+/// RFC 3339 detector starts with an offset that are accepted and passed on
+/// to the engine exactly as written.
+const ACCEPTED_STARTS: [&str; 3] = [
+    "2026-03-15T15:00:04Z",
+    "2026-03-15T15:00:04.123456789+09:00",
+    "2026-03-15 15:00:04-05:30",
+];
+
+#[test]
+fn rfc3339_starts_are_accepted_and_kept_as_written() {
+    for start in ACCEPTED_STARTS {
+        let text = with(VALID, "start", &format!("start = \"{start}\""));
+        let document = EngineDocument::parse_and_validate(&text).expect(start);
+        let detector = document.detectors.first().expect("one detector");
+        assert_eq!(detector.start, start);
+    }
+}
+
 #[test]
 fn values_outside_their_type_are_invalid() {
     for (key, line, field) in [

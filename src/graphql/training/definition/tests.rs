@@ -411,6 +411,33 @@ fn windows_must_be_rfc3339_with_an_offset() {
     }
 }
 
+/// RFC 3339 window bounds with an offset that are accepted and passed on
+/// to the engine exactly as written.
+const ACCEPTED_WINDOW_STARTS: [&str; 3] = [
+    "2026-03-15T15:00:04Z",
+    "2026-03-15T15:00:04.123456789+09:00",
+    "2026-03-15 15:00:04-05:30",
+];
+
+#[test]
+fn rfc3339_windows_are_accepted_and_kept_as_written() {
+    for start in ACCEPTED_WINDOW_STARTS {
+        let text = with(
+            &with(
+                VALID,
+                "window_start",
+                &format!("window_start = \"{start}\""),
+            ),
+            "window_end",
+            "window_end = \"2026-03-20T00:00:00Z\"",
+        );
+        let document = TrainingDocument::parse_and_validate(&text).expect(start);
+        assert_eq!(document.window_start, start);
+        let reparsed = TrainingDocument::parse(&document.to_text().unwrap()).unwrap();
+        assert_eq!(reparsed.window_start, start);
+    }
+}
+
 #[test]
 fn bounds_are_accepted_at_their_limit_and_refused_past_it() {
     let at_limit = [
