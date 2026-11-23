@@ -350,7 +350,8 @@ impl From<database::DefinitionKeyStatus> for TrainingKeyStatus {
     }
 }
 
-/// The clustering model type a training definition or a model names.
+/// The clustering model type a training definition or a model names, or a
+/// detection event records.
 pub(super) struct ClusteringModelTypeRef<'a>(&'a database::ClusteringModelTypeRef);
 
 impl<'a> From<&'a database::ClusteringModelTypeRef> for ClusteringModelTypeRef<'a> {
@@ -362,7 +363,8 @@ impl<'a> From<&'a database::ClusteringModelTypeRef> for ClusteringModelTypeRef<'
 /// The `type` of a custom definition.
 const CUSTOM: &str = "custom";
 
-/// The clustering model type a training definition or a model names.
+/// The clustering model type a training definition or a model names, or a
+/// detection event records.
 #[Object]
 impl ClusteringModelTypeRef<'_> {
     /// The catalog id of the type, or `custom` for a definition whose every

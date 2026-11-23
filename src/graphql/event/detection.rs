@@ -8,6 +8,7 @@ use review_protocol::types as protocol;
 
 use super::{TriageScore, body::RawEventBody, detail::Detail, opaque_event_id};
 use crate::graphql::{
+    clustering_model_type::ClusteringModelTypeRef,
     filter::{DetectionModel, RawEventKind},
     model::ModelInstance,
     timestamp::Timestamp,
@@ -128,6 +129,20 @@ impl DetectionEvent {
     /// When the model that made the detection was trained, if known.
     async fn trained_at(&self) -> Option<Timestamp> {
         self.record.stamp().trained_at.map(Into::into)
+    }
+
+    /// The clustering model type the model that made the detection had when
+    /// the event was received, as recorded with the event, or null if none
+    /// was recorded, as for every event of the Semi-supervised Engine.
+    ///
+    /// It is not looked up from the model's current record, so a later
+    /// retrain of the model as another type does not change it.
+    async fn clustering_model_type(&self) -> Option<ClusteringModelTypeRef<'_>> {
+        self.record
+            .stamp()
+            .clustering_model_type
+            .as_ref()
+            .map(Into::into)
     }
 
     /// The version of the engine installed when the event was received, or

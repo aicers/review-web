@@ -43,6 +43,8 @@ pub(crate) struct TestModel<'a> {
     pub(crate) clustering_model_type: ClusteringModelTypeRef,
     /// What the upload says the training read.
     pub(crate) training_read: TrainingRead,
+    /// The text of the definition that trained the model.
+    pub(crate) trained_definition: String,
 }
 
 impl<'a> TestModel<'a> {
@@ -60,6 +62,7 @@ impl<'a> TestModel<'a> {
             trained_sources: Vec::new(),
             clustering_model_type: ClusteringModelTypeRef::Custom,
             training_read: TrainingRead::default(),
+            trained_definition: String::new(),
         }
     }
 
@@ -98,7 +101,7 @@ impl<'a> TestModel<'a> {
         };
         let trained = TrainedWith {
             run_id: 1,
-            definition: String::new(),
+            definition: self.trained_definition,
             sources: self.trained_sources,
         };
         store
@@ -292,4 +295,28 @@ pub(super) fn single_error(response: &async_graphql::Response) -> (String, serde
 pub(super) fn data(response: async_graphql::Response) -> serde_json::Value {
     assert!(response.errors.is_empty(), "{response:?}");
     response.data.into_json().expect("data is JSON")
+}
+
+/// Stores an empty label DB `name`.
+pub(crate) fn insert_label_db(store: &Store, name: &str) {
+    store
+        .label_db_map()
+        .insert(review_database::LabelDb {
+            id: 0,
+            name: name.to_string(),
+            description: None,
+            kind: review_database::LabelDbKind::Token,
+            category: review_database::EventCategory::InitialAccess,
+            version: "1.0.0".to_string(),
+            patterns: vec![],
+        })
+        .expect("insert label DB");
+}
+
+/// Returns the clustering model type `http_url` at `version`.
+pub(crate) fn http_url(version: u32) -> ClusteringModelTypeRef {
+    ClusteringModelTypeRef::Catalog {
+        id: "http_url".to_string(),
+        version,
+    }
 }

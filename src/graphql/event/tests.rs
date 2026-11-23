@@ -3919,6 +3919,63 @@ mod detection_event {
     }
 
     #[tokio::test]
+    async fn the_clustering_model_type_is_read_from_the_stamp() {
+        use crate::graphql::model_test_support::{TestModel, http_url};
+
+        let schema = TestSchema::new().await;
+        let retrain = |model_type| {
+            TestModel {
+                clustering_model_type: model_type,
+                ..TestModel::new("url-model", 1)
+            }
+            .replace(&schema.store())
+        };
+        let model_id = retrain(http_url(1));
+        let stamps = [
+            DetectionEventStamp {
+                clustering_model_id: Some(model_id),
+                clustering_model_type: Some(http_url(1)),
+                ..stamp()
+            },
+            DetectionEventStamp {
+                clustering_model_type: Some(review_database::ClusteringModelTypeRef::Custom),
+                ..stamp()
+            },
+            stamp(),
+        ];
+        {
+            let store = schema.store();
+            let events = store.events();
+            for (second, stamp) in stamps.iter().enumerate() {
+                let event = dns_event(
+                    at(i64::try_from(second).unwrap()),
+                    addr("192.0.2.1"),
+                    addr("192.0.2.2"),
+                    None,
+                    "sensor1",
+                );
+                events.put(&event, stamp).unwrap();
+            }
+        }
+
+        let expected = [
+            json!({ "clusteringModelType": { "id": "http_url", "version": "1" } }),
+            json!({ "clusteringModelType": { "id": "custom", "version": null } }),
+            json!({ "clusteringModelType": null }),
+        ];
+        let fields = "clusteringModelType { id version }";
+        assert_eq!(nodes(&schema, fields).await, expected);
+
+        // A retrain of the model as another type does not change what its
+        // earlier events recorded.
+        assert_eq!(
+            retrain(review_database::ClusteringModelTypeRef::Custom),
+            model_id
+        );
+        assert_eq!(nodes(&schema, fields).await, expected);
+    }
+
+    #[tokio::test]
     async fn header_fields_are_returned() {
         let schema = TestSchema::new().await;
         {

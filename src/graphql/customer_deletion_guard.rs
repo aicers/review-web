@@ -549,7 +549,10 @@ mod tests {
     use crate::customer_data_deletion::{
         CustomerDataDeletionTaskManager, recover_customer_data_deletion_on_startup,
     };
-    use crate::graphql::{MockAgentManager, TestSchema, model_test_support::insert_engine_node};
+    use crate::graphql::{
+        MockAgentManager, TestSchema,
+        model_test_support::{TestModel, http_url, insert_engine_node},
+    };
 
     #[tokio::test]
     async fn a_job_locks_until_every_result_succeeds() {
@@ -732,6 +735,9 @@ sources = ["piglet.b.example.com"]
 period = "1m"
 start = "2026-10-14T00:00:00Z"
 batch_size = 100
+read_lag = "0s"
+stats = false
+timeseries = false
 [detectors.data_store]
 address = "10.0.0.5:38371"
 server_name = "{server_name}"
@@ -843,6 +849,74 @@ server_name = "{server_name}"
             }
         );
         assert!(data_stores_in_use(&store, 2).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_completed_engine_document_names_its_data_store_and_the_old_shape_none() {
+        let schema = TestSchema::new().await;
+        let store = schema.store();
+        put_node(
+            &store,
+            "store",
+            Some((1, "store.example.com")),
+            vec![],
+            vec![data_store(Some(1))],
+        );
+        // The applied document the database write stores for a detector of
+        // an `http_url` model, its detection model sections completed.
+        TestModel {
+            clustering_model_type: http_url(1),
+            ..TestModel::new("m", 2)
+        }
+        .replace(&store);
+        let completed = review_database::complete_engine_document(
+            AgentKind::Unsupervised,
+            &engine_document(OWN),
+            &|_| Some(http_url(1)),
+            review_database::CompletionMode::Apply,
+        )
+        .unwrap();
+        assert!(completed.contains("[detectors.detection_models.far_outlier]"));
+        let old_shapes = [
+            format!(
+                "{}[detectors.labeldb]\ncolumns = []\n",
+                engine_document(OWN)
+            ),
+            engine_document(OWN).replace(
+                "batch_size = 100\n",
+                "batch_size = 100\nmax_event_id_num = 25\n",
+            ),
+            engine_document(OWN).replace("read_lag = \"0s\"\n", ""),
+            engine_document(OWN).replace("stats = false\n", ""),
+            engine_document(OWN).replace("timeseries = false\n", ""),
+        ];
+        let mut agents = vec![agent(
+            "001.reconverge",
+            AgentKind::Unsupervised,
+            Some(&completed),
+            None,
+        )];
+        for (i, old_shape) in old_shapes.iter().enumerate() {
+            agents.push(agent(
+                &format!("00{}.reconverge", i + 2),
+                AgentKind::Unsupervised,
+                Some(old_shape),
+                Some(old_shape),
+            ));
+        }
+        put_node(&store, "b", Some((2, "b.example.com")), agents, vec![]);
+
+        let in_use = data_stores_in_use(&store, 1).unwrap();
+        assert_eq!(
+            in_use.data_stores,
+            [DataStoreInUse {
+                server_name: OWN.to_string(),
+                hostname: "store.example.com".to_string(),
+                users: vec![
+                    "the Unsupervised Engine agent 001.reconverge on b.example.com".to_string()
+                ],
+            }]
+        );
     }
 
     #[tokio::test]

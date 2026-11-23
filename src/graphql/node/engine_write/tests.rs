@@ -10,11 +10,15 @@ use serde_json::{Value, json};
 use super::*;
 use crate::graphql::{
     Role, TestSchema,
-    model_test_support::{TestModel, data, insert_definition, insert_indicator, single_error},
+    model_test_support::{
+        TestModel, data, http_url, insert_definition, insert_indicator, insert_label_db,
+        single_error,
+    },
     run_test_support::{
         insert_data_store_node, insert_engine_instance, insert_log_collector_node,
         insert_sensor_node, relay_schema,
     },
+    training_test_support::HTTP_URL_CSV,
 };
 
 const A: u32 = 1;
@@ -25,6 +29,10 @@ const STORE_HOST: &str = "store.example.com";
 const OWN_ADDRESS: &str = "10.0.0.5:38371";
 /// An address that is none of a Data Store's own.
 const OVERRIDE: &str = "192.0.2.1:9999";
+/// A model of `engine_a` of the clustering model type `http_url` version 1.
+const URL_MODEL: &str = "url-a";
+/// A stored label DB.
+const LABEL_DB: &str = "HttpUriThreat";
 
 struct Fixture {
     schema: TestSchema,
@@ -51,6 +59,8 @@ async fn fixture() -> Fixture {
     model(&store, "model-a1", A, &engine_a, "Multifield");
     model(&store, "prefix-a", A, &engine_a, "Prefix");
     model(&store, "model-a2", A, &engine_a2, "Multifield");
+    typed_model(&store, URL_MODEL, &engine_a, http_url(1));
+    insert_label_db(&store, LABEL_DB);
     let model_b = model(&store, "model-b", B, &engine_b, "Multifield");
     insert_indicator(&store, "ind-a", model_a);
     insert_indicator(&store, "ind-b", model_b);
@@ -64,6 +74,23 @@ async fn fixture() -> Fixture {
         logs_a,
         server_name,
     }
+}
+
+/// Creates or retrains the multidimension model `name` of customer A on
+/// `instance` as `model_type`, trained with the `http_url` format.
+fn typed_model(
+    store: &Store,
+    name: &str,
+    instance: &ModelInstance,
+    model_type: ClusteringModelTypeRef,
+) {
+    TestModel {
+        instance: instance.clone(),
+        clustering_model_type: model_type,
+        trained_definition: HTTP_URL_CSV.to_string(),
+        ..TestModel::new(name, A)
+    }
+    .replace(store);
 }
 
 fn model(store: &Store, name: &str, customer_id: u32, instance: &ModelInstance, kind: &str) -> u32 {
@@ -205,7 +232,8 @@ fn config(text: &str) -> AgentConfig {
     text.to_string().try_into().expect("valid TOML")
 }
 
-/// Returns a `[[detectors]]` entry; `extra` holds further detector keys.
+/// Returns a `[[detectors]]` entry; `extra` holds further detector keys, and
+/// `read_lag`, `stats` and `timeseries` take a default unless it has them.
 fn detector(
     id: i32,
     model: &str,
@@ -213,6 +241,14 @@ fn detector(
     (server_name, address): (&str, &str),
     extra: &str,
 ) -> String {
+    let mut required = String::new();
+    for line in ["read_lag = \"0s\"", "stats = false", "timeseries = false"] {
+        let key = line.split(' ').next().unwrap_or_default();
+        if !extra.lines().any(|l| l.starts_with(&format!("{key} ="))) {
+            required.push_str(line);
+            required.push('\n');
+        }
+    }
     format!(
         r#"
 [[detectors]]
@@ -223,7 +259,7 @@ sources = {sources}
 period = "5m"
 start = "2026-10-21T00:00:00Z"
 batch_size = 500000
-{extra}
+{required}{extra}
 
 [detectors.data_store]
 address = "{address}"
@@ -434,11 +470,13 @@ fn ok(res: async_graphql::Response) {
 #[tokio::test]
 async fn a_saved_draft_links_its_models_and_apply_links_them_as_applied() {
     let f = fixture().await;
-    let labeldb = "labeldb = { columns = [{ column_ids = [15], db = \"HttpUriThreat\" }] }\n\
-                   suspicious_tokens = \"ind-a\"";
     let document = format!(
         "cpus = 4\n{}{}",
-        f.doc("model-a", &[&f.sensor_a, &f.logs_a], labeldb),
+        f.doc(
+            "model-a",
+            &[&f.sensor_a, &f.logs_a],
+            "suspicious_tokens = \"ind-a\""
+        ),
         detector(
             2,
             "prefix-a",
@@ -543,13 +581,9 @@ async fn bounds_are_accepted_at_their_limit() {
     let f = fixture().await;
     let document = format!(
         "cpus = 64\n{}",
-        f.doc(
-            "model-a",
-            &[&f.sensor_a],
-            "read_lag = \"1h\"\nmax_event_id_num = 100"
-        )
-        .replace("period = \"5m\"", "period = \"1m\"")
-        .replace("batch_size = 500000", "batch_size = 5000000")
+        f.doc("model-a", &[&f.sensor_a], "read_lag = \"1h\"")
+            .replace("period = \"5m\"", "period = \"1m\"")
+            .replace("batch_size = 500000", "batch_size = 5000000")
     );
     ok(f.save(&f.engine_a, Some(&document)).await);
     ok(f.apply(f.engine_a.node_id).await);
@@ -683,13 +717,58 @@ fn refusal_cases(f: &Fixture) -> Vec<Refused> {
             1,
         ),
         case(
-            f.doc(
-                "prefix-a",
-                &[&f.sensor_a],
-                "labeldb = { columns = [{ column_ids = [1], db = \"X\" }] }",
+            format!(
+                "{}\n[detectors.detection_models.far_outlier]\n",
+                f.doc("model-a", &[&f.sensor_a], "")
             ),
             "FIELD_NOT_ALLOWED",
-            "detectors[0].labeldb",
+            "detectors[0].detection_models.far_outlier",
+            "",
+            1,
+        ),
+        case(
+            format!(
+                "{}\n[detectors.detection_models.label_db_match]\ncolumns = [{{ column_ids = \
+                 [15], db = \"Missing\" }}]\n",
+                f.doc(URL_MODEL, &[&f.sensor_a], "")
+            ),
+            "NOT_FOUND",
+            "detectors[0].detection_models.label_db_match.columns[0].db",
+            "Missing",
+            1,
+        ),
+        case(
+            format!(
+                "{}\n[detectors.detection_models.label_db_match]\ncolumns = [{{ column_ids = \
+                 [33], db = \"{LABEL_DB}\" }}]\n",
+                f.doc(URL_MODEL, &[&f.sensor_a], "")
+            ),
+            "BOUND_VIOLATED",
+            "detectors[0].detection_models.label_db_match.columns[0].column_ids",
+            "33",
+            1,
+        ),
+        case(
+            format!(
+                "{}\n[detectors.detection_models.foo]\n",
+                f.doc(URL_MODEL, &[&f.sensor_a], "")
+            ),
+            "UNKNOWN_FIELD",
+            "detectors[0].detection_models.foo",
+            "",
+            1,
+        ),
+        case(
+            f.doc(URL_MODEL, &[&f.sensor_a], "detection_models = 5"),
+            "INVALID_DOCUMENT",
+            "detectors[0].detection_models",
+            "5",
+            1,
+        ),
+        case(
+            valid.replace("read_lag = \"0s\"\n", ""),
+            "INVALID_DOCUMENT",
+            "detectors[0].read_lag",
             "",
             1,
         ),
@@ -722,10 +801,10 @@ fn refusal_cases(f: &Fixture) -> Vec<Refused> {
             1,
         ),
         case(
-            f.doc("model-a", &[&f.sensor_a], "max_event_id_num = 101"),
-            "BOUND_VIOLATED",
+            f.doc("model-a", &[&f.sensor_a], "max_event_id_num = 25"),
+            "UNKNOWN_FIELD",
             "detectors[0].max_event_id_num",
-            "101",
+            "max_event_id_num",
             1,
         ),
         case(
@@ -739,11 +818,11 @@ fn refusal_cases(f: &Fixture) -> Vec<Refused> {
             f.doc(
                 "model-a",
                 &[&f.sensor_a],
-                "labeldb = { protocol = \"http\", columns = [] }",
+                "labeldb = { columns = [{ column_ids = [15], db = \"X\" }] }",
             ),
             "UNKNOWN_FIELD",
-            "detectors[0].labeldb.protocol",
-            "protocol",
+            "detectors[0].labeldb",
+            "labeldb",
             1,
         ),
         case(
@@ -1855,35 +1934,36 @@ fn inline_detectors(document: &str) -> String {
 }
 
 #[tokio::test]
-async fn a_completion_refusal_of_an_unsupervised_document_refuses_the_whole_apply() {
+async fn an_inline_array_of_detectors_is_refused_as_the_database_write_refuses_it() {
     let f = fixture().await;
-    // review-web's own checker takes an inline array of detectors, which the
-    // database write's completion refuses.
-    let document = inline_detectors(&f.valid());
-    for mutation in ["applyNode", "applyNodeDraft"] {
+    // The database write's completion refuses an inline array of detectors as
+    // a whole, checking none of its sections, so the checker refuses it first,
+    // with the message, code, `field` and `value` the completion refusal
+    // mapper gives the same refusal.
+    let document = inline_detectors(&f.doc(
+        "model-a",
+        &[&f.sensor_a],
+        "detection_models = { far_outlier = {} }",
+    ));
+    let expected = json!({
+        "code": "INVALID_DOCUMENT",
+        "field": "",
+        "value": "",
+    });
+    let res = f.save(&f.engine_a, Some(&document)).await;
+    let (message, extensions) = single_error(&res);
+    assert_eq!(message, "`detectors` is not an array of tables");
+    assert_eq!(extensions, expected);
+    assert_eq!(f.agent(&f.engine_a).draft, None);
+    for mutation in MUTATIONS {
         f.seed(&f.engine_a, Some(&document));
-        let node = f.node(f.engine_a.node_id);
-        let query = if mutation == "applyNode" {
-            apply(&node)
-        } else {
-            apply_draft(&node)
-        };
-        let res = f.sec(&query, &[A]).await;
+        let res = f.apply_through(mutation).await;
         let (message, extensions) = single_error(&res);
         assert_eq!(
             message, "`detectors` is not an array of tables",
             "{mutation}"
         );
-        assert_eq!(
-            extensions,
-            json!({
-                "code": "INVALID_DOCUMENT",
-                "field": "",
-                "value": "",
-                "agentKey": ENGINE_KEY,
-            }),
-            "{mutation}"
-        );
+        assert_eq!(extensions, expected, "{mutation}");
         assert_eq!(f.agent(&f.engine_a).config, None, "{mutation}");
         assert_eq!(f.refs(&f.engine_a), Default::default(), "{mutation}");
         assert_eq!(
@@ -1894,4 +1974,188 @@ async fn a_completion_refusal_of_an_unsupervised_document_refuses_the_whole_appl
             "{mutation}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Detection model sections
+
+const MUTATIONS: [&str; 2] = ["applyNode", "applyNodeDraft"];
+
+/// The sections a detector of an `http_url` model is stored with when its
+/// document has none.
+const DEFAULT_SECTIONS: &str = r"
+[label_db_match]
+enabled = true
+event_range = 100
+min_events_ratio = 10
+columns = []
+
+[far_outlier]
+enabled = true
+";
+
+fn sections(text: &str) -> toml::Table {
+    toml::from_str(text).expect("valid sections")
+}
+
+impl Fixture {
+    /// Applies the stored draft of `engine_a` through `mutation` as a
+    /// Security Administrator of customer A.
+    async fn apply_through(&self, mutation: &str) -> async_graphql::Response {
+        let node = self.node(self.engine_a.node_id);
+        let query = if mutation == "applyNode" {
+            apply(&node)
+        } else {
+            apply_draft(&node)
+        };
+        self.sec(&query, &[A]).await
+    }
+
+    /// Returns the `detection_models` table of the first detector of the
+    /// stored config of `engine_a`, or `None` if it has none.
+    fn stored_sections(&self) -> Option<toml::Table> {
+        let config = self
+            .agent(&self.engine_a)
+            .config
+            .expect("an applied config");
+        let document: toml::Table = config.as_ref().parse().expect("a TOML config");
+        let detector = document["detectors"][0].as_table().expect("a detector");
+        detector
+            .get("detection_models")
+            .map(|sections| sections.as_table().expect("a table").clone())
+    }
+
+    /// Retrains [`URL_MODEL`] as `model_type`.
+    fn retrain(&self, model_type: ClusteringModelTypeRef) {
+        typed_model(&self.store(), URL_MODEL, &self.engine_a, model_type);
+    }
+}
+
+#[tokio::test]
+async fn apply_stores_the_document_completed_with_the_missing_sections_and_values() {
+    let partial = format!(
+        "[detectors.detection_models.label_db_match]\ncolumns = [{{ column_ids = [15], db = \
+         \"{LABEL_DB}\" }}]\n"
+    );
+    let mut partial_completed = sections(DEFAULT_SECTIONS);
+    partial_completed["label_db_match"]["columns"] =
+        toml::Value::Array(vec![toml::Value::Table(sections(&format!(
+            "column_ids = [15]\ndb = \"{LABEL_DB}\"\nmin_score = 0.7\n"
+        )))]);
+    for mutation in MUTATIONS {
+        for (sections_text, expected) in [
+            ("", sections(DEFAULT_SECTIONS)),
+            ("[detectors.detection_models]\n", sections(DEFAULT_SECTIONS)),
+            (partial.as_str(), partial_completed.clone()),
+        ] {
+            let f = fixture().await;
+            let document = format!("{}{sections_text}", f.doc(URL_MODEL, &[&f.sensor_a], ""));
+            ok(f.save(&f.engine_a, Some(&document)).await);
+            ok(f.apply_through(mutation).await);
+            assert_eq!(
+                f.stored_sections(),
+                Some(expected),
+                "{mutation}: {document}"
+            );
+            // The draft is kept as written.
+            assert_eq!(
+                f.agent(&f.engine_a).draft,
+                Some(config(&document)),
+                "{mutation}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_empty_table_of_a_custom_model_is_accepted_and_not_stored() {
+    for mutation in MUTATIONS {
+        let f = fixture().await;
+        let document = format!(
+            "{}[detectors.detection_models]\n",
+            f.doc("model-a", &[&f.sensor_a], "")
+        );
+        ok(f.save(&f.engine_a, Some(&document)).await);
+        ok(f.apply_through(mutation).await);
+        assert_eq!(f.stored_sections(), None, "{mutation}");
+    }
+}
+
+#[tokio::test]
+async fn a_draft_saved_before_a_retrain_as_custom_is_refused_when_applied() {
+    for mutation in MUTATIONS {
+        let f = fixture().await;
+        let document = format!(
+            "{}[detectors.detection_models.far_outlier]\nenabled = false\n",
+            f.doc(URL_MODEL, &[&f.sensor_a], "")
+        );
+        ok(f.save(&f.engine_a, Some(&document)).await);
+        f.retrain(ClusteringModelTypeRef::Custom);
+
+        let res = f.apply_through(mutation).await;
+        assert_eq!(
+            refused(&res),
+            (
+                "FIELD_NOT_ALLOWED".to_string(),
+                "detectors[0].detection_models.far_outlier".to_string(),
+                String::new(),
+                Value::from(1)
+            ),
+            "{mutation}"
+        );
+        let agent = f.agent(&f.engine_a);
+        assert_eq!(agent.draft, Some(config(&document)), "{mutation}");
+        assert_eq!(agent.config, None, "{mutation}");
+    }
+}
+
+#[tokio::test]
+async fn a_custom_draft_applied_after_a_retrain_as_http_url_gets_its_sections() {
+    for mutation in MUTATIONS {
+        let f = fixture().await;
+        f.retrain(ClusteringModelTypeRef::Custom);
+        let document = f.doc(URL_MODEL, &[&f.sensor_a], "");
+        ok(f.save(&f.engine_a, Some(&document)).await);
+        f.retrain(http_url(1));
+
+        ok(f.apply_through(mutation).await);
+        assert_eq!(
+            f.stored_sections(),
+            Some(sections(DEFAULT_SECTIONS)),
+            "{mutation}"
+        );
+        assert_eq!(
+            f.agent(&f.engine_a).draft,
+            Some(config(&document)),
+            "{mutation}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_stored_completed_config_keeps_its_data_store_pair() {
+    let f = fixture().await;
+    let overridden = |extra: &str| {
+        detector(
+            1,
+            URL_MODEL,
+            &[&f.sensor_a],
+            (&f.server_name, OVERRIDE),
+            extra,
+        )
+    };
+    ok(f.sys(&f.save_query(&f.engine_a, Some(&overridden(""))))
+        .await);
+    ok(f.apply(f.engine_a.node_id).await);
+    assert_eq!(f.stored_sections(), Some(sections(DEFAULT_SECTIONS)));
+
+    // Once the draft no longer has it, the override is kept from the stored
+    // config the database write completed.
+    ok(
+        f.save(&f.engine_a, Some(&f.doc(URL_MODEL, &[&f.sensor_a], "")))
+            .await,
+    );
+    ok(f.save(&f.engine_a, Some(&overridden("stats = true"))).await);
+    ok(f.apply(f.engine_a.node_id).await);
+    assert_eq!(f.stored_sections(), Some(sections(DEFAULT_SECTIONS)));
 }
