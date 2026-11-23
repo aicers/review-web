@@ -616,24 +616,33 @@ fn customer_data_deletion_result_contract() {
     }
 }
 
-/// Event filters take `kinds` as the `EventKind` enum, which mirrors every
-/// stored event kind, and `eventCountsByKind` counts into the same enum, so a
-/// counted value can be passed back as a filter.
+/// Event filters take `detectionModels` as the `DetectionModel` enum, which
+/// mirrors review-protocol's detection models, and
+/// `eventCountsByDetectionModel` counts into the same enum, so a counted value
+/// can be passed back as a filter.
 #[test]
-fn event_kinds_cross_as_the_event_kind_enum() {
+fn detection_models_cross_as_the_detection_model_enum() {
     let sdl = rendered_sdl();
 
     for header in [
         "input EventListFilterInput {",
         "input EventStandardFilterInput {",
     ] {
-        assert!(
-            definition(&sdl, header).contains("\n\tkinds: [EventKind!]\n"),
-            "{header}: {REGENERATE}"
-        );
+        let input = definition(&sdl, header);
+        for field in [
+            "\n\tdetectionModels: [DetectionModel!]\n",
+            "\n\trawEventKinds: [RawEventKind!]\n",
+            "\n\tscoreMin: Float\n",
+            "\n\tscoreMax: Float\n",
+        ] {
+            assert!(input.contains(field), "{header} {field}: {REGENERATE}");
+        }
+        for removed in ["\n\tkinds:", "\n\tlevels:"] {
+            assert!(!input.contains(removed), "{header} {removed}: {REGENERATE}");
+        }
     }
 
-    let values: Vec<_> = definition(&sdl, "enum EventKind {")
+    let values: Vec<_> = definition(&sdl, "enum DetectionModel {")
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
@@ -641,62 +650,99 @@ fn event_kinds_cross_as_the_event_kind_enum() {
     assert_eq!(
         values,
         [
-            "DNS_COVERT_CHANNEL",
-            "HTTP_THREAT",
-            "RDP_BRUTE_FORCE",
-            "REPEATED_HTTP_SESSIONS",
-            "EXTRA_THREAT",
-            "TOR_CONNECTION",
-            "DOMAIN_GENERATION_ALGORITHM",
-            "FTP_BRUTE_FORCE",
-            "FTP_PLAIN_TEXT",
-            "PORT_SCAN",
-            "MULTI_HOST_PORT_SCAN",
-            "NON_BROWSER",
-            "LDAP_BRUTE_FORCE",
-            "LDAP_PLAIN_TEXT",
-            "EXTERNAL_DDOS",
+            "WATCHLIST_MATCH",
             "CRYPTOCURRENCY_MINING_POOL",
-            "BLOCKLIST_CONN",
-            "BLOCKLIST_DNS",
-            "BLOCKLIST_DCE_RPC",
-            "BLOCKLIST_FTP",
-            "BLOCKLIST_HTTP",
-            "BLOCKLIST_KERBEROS",
-            "BLOCKLIST_LDAP",
-            "BLOCKLIST_MQTT",
-            "BLOCKLIST_NFS",
-            "BLOCKLIST_NTLM",
-            "BLOCKLIST_RDP",
-            "BLOCKLIST_SMB",
-            "BLOCKLIST_SMTP",
-            "BLOCKLIST_SSH",
-            "BLOCKLIST_TLS",
-            "WINDOWS_THREAT",
-            "NETWORK_THREAT",
             "LOCKY_RANSOMWARE",
             "SUSPICIOUS_TLS_TRAFFIC",
-            "BLOCKLIST_BOOTP",
-            "BLOCKLIST_DHCP",
-            "TOR_CONNECTION_CONN",
-            "BLOCKLIST_RADIUS",
-            "BLOCKLIST_MALFORMED_DNS",
+            "PORT_SCAN",
+            "MULTI_HOST_PORT_SCAN",
+            "EXTERNAL_DDOS",
+            "RDP_BRUTE_FORCE",
+            "FTP_BRUTE_FORCE",
+            "LDAP_BRUTE_FORCE",
+            "REPEATED_HTTP_SESSIONS",
+            "FTP_PLAIN_TEXT",
+            "LDAP_PLAIN_TEXT",
+            "NON_BROWSER",
+            "TOR_EXIT_NODE",
+            "DOMAIN_GENERATION_ALGORITHM",
+            "DNS_COVERT_CHANNEL",
             "UNUSUAL_DESTINATION_PATTERN",
         ],
         "{REGENERATE}"
     );
 
-    let counter = definition(&sdl, "type EventKindEventCounter {");
+    let counter = definition(&sdl, "type DetectionModelEventCounter {");
     assert!(
-        counter.contains("\n\tvalues: [EventKind!]!\n"),
+        counter.contains("\n\tvalues: [DetectionModel!]!\n"),
         "{REGENERATE}"
     );
     assert!(counter.contains("\n\tcounts: [Int!]!\n"), "{REGENERATE}");
+    let query = definition(&sdl, "type Query {");
     assert!(
-        definition(&sdl, "type Query {").contains(
-            "\n\teventCountsByKind(filter: EventListFilterInput!, first: Int!): \
-             EventKindEventCounter!\n"
+        query.contains(
+            "\n\teventCountsByDetectionModel(filter: EventListFilterInput!, first: Int!): \
+             DetectionModelEventCounter!\n"
         ),
         "{REGENERATE}"
+    );
+    assert!(
+        query.contains(
+            "\n\teventCountsByIpAddressPairAndDetectionModel(filter: EventListFilterInput!, \
+             first: Int!): StringEventCounter!\n"
+        ),
+        "{REGENERATE}"
+    );
+    assert!(
+        query.contains(
+            "\n\tdetectionEventsByRawEventKeys(keys: [RawEventKeyInput!]!): \
+             [[DetectionEvent!]!]!\n"
+        ),
+        "{REGENERATE}"
+    );
+}
+
+/// The detection event API has one object type, and the shapes it replaced
+/// are gone without a compatibility layer.
+#[test]
+fn schema_has_one_detection_event_type_and_no_replaced_shapes() {
+    let sdl = rendered_sdl();
+    for removed in [
+        "interface Event ",
+        "enum EventKind ",
+        "enum ThreatLevel ",
+        "type EventKindEventCounter ",
+        "type ThreatLevelEventCounter ",
+        "type DnsCovertChannel ",
+        "type BlocklistConn ",
+        "type HttpThreat ",
+        "type WindowsThreat ",
+        "type NetworkThreat ",
+        "type ExtraThreat ",
+        "type TorConnection ",
+        "input ConfidenceInput ",
+        "eventCountsByLevel",
+        "eventCountsByKind",
+        "confidenceMin",
+        "confidenceMax",
+        "\tlevel:",
+        "\tlearningMethod:",
+    ] {
+        assert!(!sdl.contains(removed), "{removed:?}: {REGENERATE}");
+    }
+    for header in ["enum ThreatRole {", "enum EndpointRole {"] {
+        assert!(sdl.contains(header), "{header}: {REGENERATE}");
+    }
+    assert_eq!(
+        definition(&sdl, "enum ThreatRole {")
+            .split_whitespace()
+            .collect::<Vec<_>>(),
+        ["ACTOR", "TARGET"]
+    );
+    assert_eq!(
+        definition(&sdl, "enum EndpointRole {")
+            .split_whitespace()
+            .collect::<Vec<_>>(),
+        ["SOURCE", "DESTINATION"]
     );
 }

@@ -211,7 +211,8 @@ impl TrainingMutation {
                 customer_id: target.customer_id,
                 instance: target.instance,
                 method: document.method.into(),
-                event_kind: document.event_kind.clone(),
+                raw_event_kind: document.raw_event_kind.clone(),
+                log_kind: None,
                 sources: document.sources.clone(),
                 indicator: document.suspicious_tokens.clone(),
                 definition,
@@ -279,7 +280,8 @@ impl TrainingMutation {
                 &name,
                 TrainingDefinitionUpdate {
                     method: document.method.into(),
-                    event_kind: document.event_kind.clone(),
+                    raw_event_kind: document.raw_event_kind.clone(),
+                    log_kind: None,
                     sources: document.sources.clone(),
                     indicator: document.suspicious_tokens.clone(),
                     definition,
@@ -583,7 +585,8 @@ impl TrainingMutation {
                         customer_id: target.customer_id,
                         instance: target.instance,
                         method: document.method.into(),
-                        event_kind: document.event_kind.clone(),
+                        raw_event_kind: document.raw_event_kind.clone(),
+                        log_kind: None,
                         sources: document.sources.clone(),
                         indicator: document.suspicious_tokens.clone(),
                         definition: document.to_text()?,
@@ -1172,9 +1175,9 @@ fn store_refusal(
                 database::FixedField::Method => {
                     ("method", document.map_or_default(|d| method_name(d.method)))
                 }
-                database::FixedField::EventKind => (
-                    "event_kind",
-                    document.map_or_default(|d| d.event_kind.clone()),
+                database::FixedField::RawEventKind => (
+                    "raw_event_kind",
+                    document.map_or_default(|d| d.raw_event_kind.clone()),
                 ),
             };
             refusal(RefusalCode::FieldFixed, message, field, value)
@@ -1192,10 +1195,10 @@ fn store_refusal(
             "method",
             document.map_or_default(|d| method_name(d.method)),
         ),
-        TrainingError::EventKindMismatch { expected, .. } => refusal(
+        TrainingError::RawEventKindMismatch { expected, .. } => refusal(
             RefusalCode::InvalidDocument,
             message,
-            "event_kind",
+            "raw_event_kind",
             expected.as_str(),
         ),
         TrainingError::RunNotActive { run_id, .. } => refusal(
@@ -1335,8 +1338,8 @@ impl TrainingDefinition {
     }
 
     /// The event kind the definition trains on.
-    async fn event_kind(&self) -> &str {
-        &self.inner.event_kind
+    async fn raw_event_kind(&self) -> &str {
+        &self.inner.raw_event_kind
     }
 
     /// The source names the definition reads events of; for the timeseries

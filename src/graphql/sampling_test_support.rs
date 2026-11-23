@@ -232,7 +232,7 @@ pub(super) fn timeseries_definition(
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        r#"event_kind = "timeseries"
+        r#"raw_event_kind = "timeseries"
 method = "timeseries"
 sources = [{sources}]
 window_start = "2026-10-14T00:00:00Z"
@@ -261,7 +261,8 @@ pub(super) fn use_policy(
             customer_id,
             instance: engine.clone(),
             method: ModelMethod::Timeseries,
-            event_kind: "conn".to_string(),
+            raw_event_kind: "conn".to_string(),
+            log_kind: None,
             sources: vec![id.to_string()],
             indicator: None,
             definition: String::new(),

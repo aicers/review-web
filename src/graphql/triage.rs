@@ -4,39 +4,16 @@ use async_graphql::{Enum, InputObject};
 use review_database as database;
 use serde::Deserialize;
 
-use super::{Role, RoleGuard};
+use super::{
+    Role, RoleGuard,
+    filter::{DetectionModel, RawEventKind},
+};
 
 #[derive(Default)]
 pub(super) struct TriageResponseQuery;
 
 #[derive(Default)]
 pub(super) struct TriageResponseMutation;
-
-#[derive(Clone, Copy, Enum, Eq, PartialEq, Deserialize)]
-#[graphql(remote = "database::RawEventKind")]
-pub enum RawEventKind {
-    Bootp,
-    Conn,
-    Dhcp,
-    Dns,
-    Ftp,
-    Http,
-    Kerberos,
-    Ldap,
-    Log,
-    Mqtt,
-    Network,
-    Nfs,
-    Ntlm,
-    Radius,
-    Rdp,
-    Smb,
-    Smtp,
-    Ssh,
-    Tls,
-    Window,
-    DceRpc,
-}
 
 #[derive(Clone, Copy, Enum, Eq, PartialEq, Deserialize)]
 #[graphql(remote = "database::ValueKind")]
@@ -110,20 +87,27 @@ pub(super) struct PacketAttrInput {
     weight: Option<f64>,
 }
 
+/// A condition of an inline triage policy on a detection event's own score.
+///
+/// The condition adds its `weight` to the policy's score of an event when the
+/// event's category is `threatCategory`, its detection model is
+/// `detectionModel`, and its score is at least `score`. A null
+/// `threatCategory` matches only an event with no category. An omitted
+/// `weight` counts as 1.0.
 #[derive(Clone, InputObject)]
-pub(super) struct ConfidenceInput {
+pub(super) struct ScoreConditionInput {
     threat_category: Option<ThreatCategory>,
-    threat_kind: String,
-    confidence: f64,
+    detection_model: DetectionModel,
+    score: f64,
     weight: Option<f64>,
 }
 
-impl From<&ConfidenceInput> for database::Confidence {
-    fn from(c: &ConfidenceInput) -> Self {
+impl From<&ScoreConditionInput> for database::ScoreCondition {
+    fn from(c: &ScoreConditionInput) -> Self {
         Self {
             threat_category: c.threat_category.map(Into::into),
-            threat_kind: c.threat_kind.clone(),
-            confidence: c.confidence,
+            detection_model: c.detection_model.into(),
+            score: c.score,
             weight: c.weight,
         }
     }
@@ -160,10 +144,20 @@ impl From<&PacketAttrInput> for database::PacketAttr {
 
 #[cfg(test)]
 mod tests {
-    use crate::graphql::TestSchema;
+    use std::net::IpAddr;
+
+    use review_protocol::types::{
+        Detail, DetectionEvent, EventCategory, PrimarySubject, RawEventBody, RawEventKind,
+        ThreatRole, raw_event,
+    };
+
+    use crate::graphql::{
+        TestSchema,
+        event_test_support::{PutEvent, conn_body, dns_event, raw_event, subject_event},
+    };
 
     /// A DCE/RPC packet attribute shared by the inline-policy tests, so that
-    /// only the confidence entry differs between them.
+    /// only the score condition differs between them.
     const DCE_RPC_PACKET_ATTR: &str = r#"[{
         rawEventKind: DCE_RPC
         attrName: "Presentation Context ID"
@@ -174,11 +168,11 @@ mod tests {
     }]"#;
 
     /// Runs `eventListWithTriage` with a single inline policy built from the
-    /// given `packetAttr` and `confidence` lists.
+    /// given `packetAttr` and `score` lists.
     async fn event_list_with_inline_policy(
         schema: &TestSchema,
         packet_attr: &str,
-        confidence: &str,
+        score: &str,
     ) -> async_graphql::Response {
         let query = format!(
             r"{{
@@ -188,7 +182,7 @@ mod tests {
                         policies: [{{
                             id: 0
                             packetAttr: {packet_attr}
-                            confidence: {confidence}
+                            score: {score}
                             response: []
                         }}]
                     }}
@@ -217,21 +211,21 @@ mod tests {
         let res = event_list_with_inline_policy(
             &schema,
             DCE_RPC_PACKET_ATTR,
-            r#"[{ threatCategory: null, threatKind: "Unspecified", confidence: 0.25 }]"#,
+            "[{ threatCategory: null, detectionModel: PORT_SCAN, score: 0.25 }]",
         )
         .await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
     }
 
     #[tokio::test]
-    async fn inline_policy_rejects_missing_threat_kind() {
+    async fn inline_policy_rejects_missing_detection_model() {
         let schema = TestSchema::new().await;
 
-        // threatKind is required even when threatCategory is null.
+        // detectionModel is required even when threatCategory is null.
         let res = event_list_with_inline_policy(
             &schema,
             DCE_RPC_PACKET_ATTR,
-            "[{ threatCategory: null, confidence: 0.25 }]",
+            "[{ threatCategory: null, score: 0.25 }]",
         )
         .await;
         assert!(
@@ -252,17 +246,17 @@ mod tests {
             r#"{ triagePolicy(id: "0") { name } }"#,
             r#"mutation {
                 insertTriagePolicy(
-                    name: "p", triageExclusionId: [], packetAttr: [], confidence: [], response: []
+                    name: "p", triageExclusionId: [], packetAttr: [], score: [], response: []
                 )
             }"#,
             r#"mutation {
                 updateTriagePolicy(
                     id: "0"
                     old: {
-                        name: "p", triageExclusionId: [], packetAttr: [], confidence: [], response: []
+                        name: "p", triageExclusionId: [], packetAttr: [], score: [], response: []
                     }
                     new: {
-                        name: "q", triageExclusionId: [], packetAttr: [], confidence: [], response: []
+                        name: "q", triageExclusionId: [], packetAttr: [], score: [], response: []
                     }
                 )
             }"#,
@@ -329,5 +323,229 @@ mod tests {
                 "type {name} is still in the schema"
             );
         }
+    }
+
+    fn addr(text: &str) -> IpAddr {
+        text.parse().expect("a test address")
+    }
+
+    fn at(second: i64) -> jiff::Timestamp {
+        jiff::Timestamp::from_second(1_700_000_000 + second).expect("a test time")
+    }
+
+    /// Stores `events` and returns, in key order, the `triageScores` the
+    /// inline policy with `packet_attr`, `score` and a minimum score of
+    /// `minimum` gives each of them, as JSON.
+    async fn scores_of(
+        events: &[DetectionEvent],
+        packet_attr: &str,
+        score: &str,
+        minimum: f64,
+    ) -> Vec<serde_json::Value> {
+        let schema = TestSchema::new().await;
+        {
+            let guard = schema.store();
+            for event in events {
+                guard.events().put_event(event).unwrap();
+            }
+        }
+        let query = format!(
+            r"{{
+                eventListWithTriage(
+                    filter: {{}}
+                    triage: {{
+                        policies: [{{
+                            id: 3
+                            packetAttr: {packet_attr}
+                            score: {score}
+                            response: [{{ minimumScore: {minimum:?}, kind: MANUAL }}]
+                        }}]
+                    }}
+                ) {{
+                    edges {{ node {{ triageScores {{ policyId score }} }} }}
+                }}
+            }}"
+        );
+        let res = schema.execute_as_system_admin(&query).await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        data["eventListWithTriage"]["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|edge| edge["node"]["triageScores"].clone())
+            .collect()
+    }
+
+    fn port_scan_event(second: i64, score: f64, category: Option<EventCategory>) -> DetectionEvent {
+        let mut event = dns_event(
+            at(second),
+            addr("192.0.2.1"),
+            addr("192.0.2.2"),
+            category,
+            "sensor1",
+        );
+        event.detection_model = review_protocol::types::DetectionModel::PortScan;
+        event.score = score;
+        event
+    }
+
+    #[tokio::test]
+    async fn score_condition_matches_at_its_threshold_and_not_below() {
+        let events = [
+            port_scan_event(0, 0.5, Some(EventCategory::Reconnaissance)),
+            port_scan_event(1, 0.499_999, Some(EventCategory::Reconnaissance)),
+            port_scan_event(2, 0.9, Some(EventCategory::Reconnaissance)),
+            // Same score, another detection model.
+            dns_event(
+                at(3),
+                addr("192.0.2.1"),
+                addr("192.0.2.2"),
+                Some(EventCategory::Reconnaissance),
+                "sensor1",
+            ),
+        ];
+        let scores = scores_of(
+            &events,
+            "[]",
+            "[{ threatCategory: RECONNAISSANCE, detectionModel: PORT_SCAN, score: 0.5, weight: 2.5 }]",
+            1.0,
+        )
+        .await;
+        assert_eq!(
+            scores,
+            [
+                serde_json::json!([{ "policyId": "3", "score": 2.5 }]),
+                serde_json::Value::Null,
+                serde_json::json!([{ "policyId": "3", "score": 2.5 }]),
+                serde_json::Value::Null,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn null_threat_category_matches_only_uncategorized_and_weight_defaults_to_one() {
+        let events = [
+            port_scan_event(0, 0.5, None),
+            port_scan_event(1, 0.5, Some(EventCategory::Reconnaissance)),
+        ];
+        let scores = scores_of(
+            &events,
+            "[]",
+            "[{ threatCategory: null, detectionModel: PORT_SCAN, score: 0.1 }]",
+            0.5,
+        )
+        .await;
+        assert_eq!(
+            scores,
+            [
+                serde_json::json!([{ "policyId": "3", "score": 1.0 }]),
+                serde_json::Value::Null,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn sysmon_packet_attr_matches_a_sysmon_body() {
+        let body = |process_id| raw_event::ProcessCreate {
+            agent_name: "agent".to_string(),
+            agent_id: "agent-1".to_string(),
+            process_guid: "{guid}".to_string(),
+            process_id,
+            image: "C:\\Windows\\cmd.exe".to_string(),
+            file_version: String::new(),
+            description: String::new(),
+            product: String::new(),
+            company: String::new(),
+            original_file_name: String::new(),
+            command_line: "cmd.exe".to_string(),
+            current_directory: String::new(),
+            user: "user".to_string(),
+            logon_guid: String::new(),
+            logon_id: 0,
+            terminal_session_id: 0,
+            integrity_level: String::new(),
+            hashes: Vec::new(),
+            parent_process_guid: String::new(),
+            parent_process_id: 0,
+            parent_image: String::new(),
+            parent_command_line: String::new(),
+            parent_user: String::new(),
+        };
+        let events = [42, 43].map(|process_id| {
+            raw_event(
+                at(i64::from(process_id)),
+                "sensor1",
+                RawEventKind::ProcessCreate,
+                RawEventBody::ProcessCreate(body(process_id)),
+                Detail::NonBrowser,
+            )
+        });
+        let scores = scores_of(
+            &events,
+            r#"[{
+                rawEventKind: PROCESS_CREATE
+                attrName: "Process ID"
+                valueKind: U_INTEGER
+                cmpKind: EQUAL
+                firstValue: [42]
+                weight: 1.0
+            }]"#,
+            "[]",
+            0.5,
+        )
+        .await;
+        assert_eq!(
+            scores,
+            [
+                serde_json::json!([{ "policyId": "3", "score": 1.0 }]),
+                serde_json::Value::Null,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn packet_attr_never_matches_a_subject_target() {
+        let raw = raw_event(
+            at(0),
+            "sensor1",
+            RawEventKind::Conn,
+            RawEventBody::Conn(conn_body(addr("192.0.2.1"), addr("192.0.2.2"))),
+            Detail::TorExitNode,
+        );
+        // A subject event of the same raw event kind, which has no body to
+        // read the attribute from.
+        let subject = subject_event(
+            at(1),
+            Some("sensor1"),
+            PrimarySubject::Host {
+                ip: addr("192.0.2.1"),
+                role: ThreatRole::Actor,
+            },
+            Vec::new(),
+            Detail::TorExitNode,
+        );
+        assert_eq!(subject.raw_event_kind, RawEventKind::Conn);
+        let scores = scores_of(
+            &[raw, subject],
+            r#"[{
+                rawEventKind: CONN
+                attrName: "Protocol Number"
+                valueKind: U_INTEGER
+                cmpKind: EQUAL
+                firstValue: [6]
+                weight: 1.0
+            }]"#,
+            "[]",
+            0.5,
+        )
+        .await;
+        assert_eq!(
+            scores,
+            [
+                serde_json::json!([{ "policyId": "3", "score": 1.0 }]),
+                serde_json::Value::Null,
+            ]
+        );
     }
 }

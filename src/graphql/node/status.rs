@@ -489,7 +489,14 @@ mod tests {
                                     {
                                         "kind": "SEMI_SUPERVISED",
                                         "storedStatus": "ENABLED",
-                                        "config": "my_val=2",
+                                        // review-database completes the
+                                        // stored engine configuration with a
+                                        // section per detection model.
+                                        "config": review_database::complete_engine_document(
+                                            review_database::AgentKind::SemiSupervised,
+                                            "my_val=2",
+                                        )
+                                        .unwrap(),
                                         "draft": "my_val=2"
                                     }
                                 ],

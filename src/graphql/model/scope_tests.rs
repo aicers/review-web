@@ -581,7 +581,7 @@ async fn model_digest_returns_the_record() {
     }
     let res = schema
         .execute_as_system_admin(
-            "{ models { nodes { name method eventKind customerId trainedAt
+            "{ models { nodes { name method rawEventKind customerId trainedAt
                 instance { nodeId agentKey }
                 previousTrainingResult { trainedAt version clusterCount outlierCount } } } }",
         )
@@ -595,7 +595,7 @@ async fn model_digest_returns_the_record() {
             {
                 "name": "multi",
                 "method": "MULTIDIMENSION",
-                "eventKind": "http",
+                "rawEventKind": "http",
                 "customerId": "1",
                 "trainedAt": retrained_at.to_string(),
                 "instance": {
@@ -612,7 +612,7 @@ async fn model_digest_returns_the_record() {
             {
                 "name": "prefix",
                 "method": "PREFIX",
-                "eventKind": "http",
+                "rawEventKind": "http",
                 "customerId": "2",
                 "trainedAt": res_time(&schema, "prefix"),
                 "instance": {
@@ -624,7 +624,7 @@ async fn model_digest_returns_the_record() {
             {
                 "name": "timeseries",
                 "method": "TIMESERIES",
-                "eventKind": "http",
+                "rawEventKind": "http",
                 "customerId": "2",
                 "trainedAt": res_time(&schema, "timeseries"),
                 "instance": null,

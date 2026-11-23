@@ -11,7 +11,7 @@ use crate::graphql::sampling_test_support::{
 };
 
 const VALID: &str = r#"
-event_kind = "http"
+raw_event_kind = "http"
 method = "multidimension"
 sources = ["piglet.a.example.com"]
 window_start = "2026-10-14T00:00:00Z"
@@ -26,7 +26,7 @@ format = [{ data_type = "utf8", weight = 1.0, name = "host" }]
 "#;
 
 const PREFIX: &str = r#"
-event_kind = "log"
+raw_event_kind = "log"
 method = "prefix"
 sources = ["reproduce.a.example.com"]
 window_start = "2026-10-14T00:00:00+09:00"
@@ -38,7 +38,7 @@ server_name = "001.giganto.store.example.com"
 "#;
 
 const TIMESERIES: &str = r#"
-event_kind = "timeseries"
+raw_event_kind = "timeseries"
 method = "timeseries"
 sources = ["3", "5"]
 window_start = "2026-10-14T00:00:00Z"
@@ -95,7 +95,7 @@ fn valid_definitions_parse() {
 #[test]
 fn every_optional_key_of_the_schema_parses() {
     let text = r#"
-event_kind = "conn"
+raw_event_kind = "conn"
 method = "multidimension"
 sources = ["piglet.a.example.com", "piglet.b.example.com"]
 window_start = "2026-10-14T00:00:00Z"
@@ -149,7 +149,7 @@ fn a_serialization_keeps_the_window_text_and_drops_comments() {
 
 #[test]
 fn syntax_errors_and_missing_keys_are_invalid() {
-    assert_eq!(code("event_kind = "), "INVALID_DOCUMENT");
+    assert_eq!(code("raw_event_kind = "), "INVALID_DOCUMENT");
     let (code, field, _) = refused(&VALID.replace("window_end = \"2026-10-21T00:00:00Z\"\n", ""));
     assert_eq!(
         (code.as_str(), field.as_str()),
@@ -189,6 +189,25 @@ fn unknown_keys_are_refused_at_every_level() {
         assert_eq!(code, "UNKNOWN_FIELD", "{text}");
         assert_eq!(refused_field, field, "{text}");
     }
+}
+
+#[test]
+fn the_former_raw_event_kind_key_is_an_unknown_key() {
+    let former = "event_kind";
+    let line = format!("{former} = \"http\"");
+    for text in [
+        with(VALID, "raw_event_kind", &line),
+        VALID.replacen("raw_event_kind =", &format!("{line}\nraw_event_kind ="), 1),
+    ] {
+        let (code, field, _) = refused(&text);
+        assert_eq!(
+            (code.as_str(), field.as_str()),
+            ("UNKNOWN_FIELD", former),
+            "{text}"
+        );
+    }
+    let document = TrainingDocument::parse_and_validate(VALID).unwrap();
+    assert_eq!(document.raw_event_kind, "http");
 }
 
 #[test]
@@ -278,12 +297,12 @@ fn timeseries_takes_its_event_kind_and_no_csv() {
     for kind in ["conn", "log", "periodic_time_series", ""] {
         let text = with(
             TIMESERIES,
-            "event_kind",
-            &format!("event_kind = \"{kind}\""),
+            "raw_event_kind",
+            &format!("raw_event_kind = \"{kind}\""),
         );
         let (code, field, value) = refused(&text);
         assert_eq!(code, "EVENT_KIND_NOT_ALLOWED", "{kind}");
-        assert_eq!((field.as_str(), value.as_str()), ("event_kind", kind));
+        assert_eq!((field.as_str(), value.as_str()), ("raw_event_kind", kind));
     }
 
     let extra = format!("{TIMESERIES}\n[csv]\ntime_column = 0\n");
@@ -326,7 +345,11 @@ fn timeseries_refuses_each_prefix_only_field() {
 #[test]
 fn multidimension_takes_only_column_structured_kinds() {
     for kind in MULTIDIMENSION_EVENT_KINDS {
-        let text = with(VALID, "event_kind", &format!("event_kind = \"{kind}\""));
+        let text = with(
+            VALID,
+            "raw_event_kind",
+            &format!("raw_event_kind = \"{kind}\""),
+        );
         TrainingDocument::parse_and_validate(&text).expect(kind);
     }
     for kind in [
@@ -337,21 +360,33 @@ fn multidimension_takes_only_column_structured_kinds() {
         "dns_event",
         "",
     ] {
-        let text = with(VALID, "event_kind", &format!("event_kind = \"{kind}\""));
+        let text = with(
+            VALID,
+            "raw_event_kind",
+            &format!("raw_event_kind = \"{kind}\""),
+        );
         let (code, field, value) = refused(&text);
         assert_eq!(code, "EVENT_KIND_NOT_ALLOWED", "{kind}");
-        assert_eq!((field.as_str(), value.as_str()), ("event_kind", kind));
+        assert_eq!((field.as_str(), value.as_str()), ("raw_event_kind", kind));
     }
 }
 
 #[test]
 fn prefix_takes_only_log_kinds() {
     for kind in ["log", "syslog", "apache-access"] {
-        let text = with(PREFIX, "event_kind", &format!("event_kind = \"{kind}\""));
+        let text = with(
+            PREFIX,
+            "raw_event_kind",
+            &format!("raw_event_kind = \"{kind}\""),
+        );
         TrainingDocument::parse_and_validate(&text).expect(kind);
     }
     for kind in NAMED_EVENT_KINDS.iter().copied().chain([""]) {
-        let text = with(PREFIX, "event_kind", &format!("event_kind = \"{kind}\""));
+        let text = with(
+            PREFIX,
+            "raw_event_kind",
+            &format!("raw_event_kind = \"{kind}\""),
+        );
         assert_eq!(code(&text), "EVENT_KIND_NOT_ALLOWED", "{kind}");
     }
     for kind in ["dce rpc", "dns_event", "timeseries"] {

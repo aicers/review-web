@@ -741,7 +741,7 @@ server_name = "{server_name}"
 
     fn training_definition(server_name: &str) -> String {
         format!(
-            r#"event_kind = "http"
+            r#"raw_event_kind = "http"
 method = "multidimension"
 sources = ["piglet.b.example.com"]
 window_start = "2026-10-14T00:00:00Z"
@@ -813,7 +813,8 @@ format = [{{ data_type = "utf8", weight = 1.0 }}]
                     customer_id,
                     instance: insert_engine_node(&store, customer_id),
                     method: review_database::ModelMethod::Multidimension,
-                    event_kind: "http".to_string(),
+                    raw_event_kind: "http".to_string(),
+                    log_kind: None,
                     sources: vec!["piglet.b.example.com".to_string()],
                     indicator: None,
                     definition: training_definition(OWN),

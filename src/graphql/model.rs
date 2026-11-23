@@ -554,8 +554,8 @@ impl ModelDigest {
 
     /// The event kind the model was trained on, such as `http`, a Sysmon kind
     /// or a log kind.
-    async fn event_kind(&self) -> &str {
-        &self.inner.event_kind
+    async fn raw_event_kind(&self) -> &str {
+        &self.inner.raw_event_kind
     }
 
     /// The customer the model belongs to.

@@ -533,2636 +533,29 @@ type BindAddrProposals {
 	proposals: [BindAddrProposal!]!
 }
 
-type BlocklistBootp implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
+type BootpBody {
 	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
 	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
 	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
 	respPort: Int!
-	"""
-	Protocol Number
-	"""
 	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
+	startTime: StringNumber!
 	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
 	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
 	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
 	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
 	respL2Bytes: StringNumber!
-	"""
-	Operation Code
-	1: BOOTREQUEST, 2 = BOOTREPLY
-	"""
 	op: Int!
-	"""
-	Hardware Type
-	"""
 	htype: Int!
-	"""
-	Hop Count
-	"""
 	hops: Int!
-	"""
-	Transaction ID
-	"""
 	xid: StringNumber!
-	"""
-	Client IP Address
-	"""
 	ciaddr: String!
-	"""
-	Your IP (Address)
-	"""
 	yiaddr: String!
-	"""
-	Server IP (Address)
-	"""
 	siaddr: String!
-	"""
-	Gateway IP (Address)
-	"""
 	giaddr: String!
-	"""
-	Client Hardware IP (Address)
-	"""
-	chaddr: String!
-	"""
-	Server Hostname
-	"""
+	chaddr: [Int!]!
 	sname: String!
-	"""
-	Boot Filename
-	"""
 	file: String!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistConn implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Connection State
-	"""
-	connState: String!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Service Name
-	"""
-	service: String!
-	"""
-	Bytes Sent (by Source)
-	"""
-	origBytes: StringNumber!
-	"""
-	Bytes Received (by Destination)
-	"""
-	respBytes: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistDceRpc implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	DCE/RPC Context Entries
-	"""
-	context: [DceRpcContext!]!
-	"""
-	DCE/RPC Request Strings
-	"""
-	request: [String!]!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistDhcp implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Message Type
-	"""
-	msgType: Int!
-	"""
-	Client IP (Address)
-	"""
-	ciaddr: String!
-	"""
-	Your IP (Address)
-	"""
-	yiaddr: String!
-	"""
-	Server IP (Address)
-	"""
-	siaddr: String!
-	"""
-	Gateway IP (Address)
-	"""
-	giaddr: String!
-	"""
-	Subnet Mask
-	"""
-	subnetMask: String!
-	"""
-	Routers
-	"""
-	router: String!
-	"""
-	Domain Name Servers
-	"""
-	domainNameServer: String!
-	"""
-	Request IP (Address)
-	"""
-	reqIpAddr: String!
-	"""
-	Lease Time
-	"""
-	leaseTime: StringNumber!
-	"""
-	Server ID
-	"""
-	serverId: String!
-	"""
-	Parameter Request List
-	"""
-	paramReqList: String!
-	"""
-	Message
-	"""
-	message: String!
-	"""
-	Renewal Time
-	"""
-	renewalTime: StringNumber!
-	"""
-	Rebinding Time
-	"""
-	rebindingTime: StringNumber!
-	"""
-	Class ID List
-	"""
-	classId: String!
-	"""
-	Client ID Type
-	"""
-	clientIdType: Int!
-	"""
-	Client ID List
-	"""
-	clientId: String!
-	"""
-	DHCP Options
-	"""
-	options: [DhcpOption!]!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistDns implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Query
-	"""
-	query: String!
-	"""
-	Answer
-	"""
-	answer: [String!]!
-	"""
-	Transaction ID
-	"""
-	transId: Int!
-	"""
-	Round-Trip Time
-	"""
-	rtt: StringNumber!
-	"""
-	Query Class
-	"""
-	qclass: Int!
-	"""
-	Query Type
-	"""
-	qtype: Int!
-	"""
-	Response Code
-	"""
-	rcode: Int!
-	"""
-	Authoritative Answer Flag
-	"""
-	aaFlag: Boolean!
-	"""
-	Truncated Flag
-	"""
-	tcFlag: Boolean!
-	"""
-	Recursion Desired Flag
-	"""
-	rdFlag: Boolean!
-	"""
-	Recursion Available Flag
-	"""
-	raFlag: Boolean!
-	"""
-	Time to Live
-	"""
-	ttl: [Int!]!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistFtp implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Username
-	"""
-	user: String!
-	"""
-	Password
-	"""
-	password: String!
-	"""
-	Commands
-	"""
-	commands: [FtpCommand!]!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistHttp implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	HTTP Method
-	"""
-	method: String!
-	"""
-	Host
-	"""
-	host: String!
-	"""
-	URI
-	"""
-	uri: String!
-	"""
-	Referer
-	"""
-	referer: String!
-	"""
-	HTTP Version
-	"""
-	version: String!
-	"""
-	User Agent
-	"""
-	userAgent: String!
-	"""
-	Request Length
-	"""
-	requestLen: StringNumber!
-	"""
-	Response Length
-	"""
-	responseLen: StringNumber!
-	"""
-	Status Code
-	"""
-	statusCode: Int!
-	"""
-	Status Message
-	"""
-	statusMsg: String!
-	"""
-	Username
-	"""
-	username: String!
-	"""
-	Password
-	"""
-	password: String!
-	"""
-	Cookie
-	"""
-	cookie: String!
-	"""
-	Content Encoding
-	"""
-	contentEncoding: String!
-	"""
-	Content Type
-	"""
-	contentType: String!
-	"""
-	Cache Control
-	"""
-	cacheControl: String!
-	"""
-	Filenames
-	"""
-	filenames: [String!]!
-	"""
-	MIME Types
-	"""
-	mimeTypes: [String!]!
-	"""
-	Body
-	"""
-	body: [Int!]!
-	"""
-	Last State
-	"""
-	state: String!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-	"""
-	Learning Method
-	"""
-	learningMethod: LearningMethod!
-}
-
-type BlocklistKerberos implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Client Time
-	"""
-	clientTime: StringNumber!
-	"""
-	Server Time
-	"""
-	serverTime: StringNumber!
-	"""
-	Error Code
-	"""
-	errorCode: StringNumber!
-	"""
-	Client Realm
-	"""
-	clientRealm: String!
-	"""
-	Client Name Type
-	"""
-	cnameType: Int!
-	"""
-	Client Name
-	"""
-	cname: [String!]!
-	"""
-	Realm
-	"""
-	realm: String!
-	"""
-	Service Name Type
-	"""
-	snameType: Int!
-	"""
-	Service Name
-	"""
-	sname: [String!]!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistLdap implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Message ID
-	"""
-	messageId: ID!
-	"""
-	Version
-	"""
-	version: Int!
-	"""
-	Operation Code
-	"""
-	opcode: [String!]!
-	"""
-	Result Code
-	"""
-	result: [String!]!
-	"""
-	Diagnostic Message
-	"""
-	diagnosticMessage: [String!]!
-	"""
-	Object
-	"""
-	object: [String!]!
-	"""
-	Argument
-	"""
-	argument: [String!]!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistMalformedDns implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent by Source
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received by Destination
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent by Source
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received by Destination
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Transaction ID
-	"""
-	transId: Int!
-	"""
-	Flags
-	"""
-	flags: Int!
-	"""
-	Question Count
-	"""
-	questionCount: Int!
-	"""
-	Answer Count
-	"""
-	answerCount: Int!
-	"""
-	Authority Count
-	"""
-	authorityCount: Int!
-	"""
-	Additional Count
-	"""
-	additionalCount: Int!
-	"""
-	Query Count
-	"""
-	queryCount: StringNumber!
-	"""
-	Response Count
-	"""
-	respCount: StringNumber!
-	"""
-	Query Bytes
-	"""
-	queryBytes: StringNumber!
-	"""
-	Response Bytes
-	"""
-	respBytes: StringNumber!
-	"""
-	Query Body
-	"""
-	queryBody: [String!]!
-	"""
-	Response Body
-	"""
-	respBody: [String!]!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistMqtt implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	MQTT Protocol
-	"""
-	protocol: String!
-	"""
-	Version
-	"""
-	version: Int!
-	"""
-	Client ID
-	"""
-	clientId: String!
-	"""
-	Connection Acknowledgement Response
-	"""
-	connackReason: Int!
-	"""
-	Subscription
-	"""
-	subscribe: [String!]!
-	"""
-	Subscribe Acknowledgement Response
-	"""
-	subackReason: [Int!]!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistNfs implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Read Files
-	"""
-	readFiles: [String!]!
-	"""
-	Write Files
-	"""
-	writeFiles: [String!]!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistNtlm implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Transport Protocol
-	"""
-	protocol: String!
-	"""
-	Username
-	"""
-	username: String!
-	"""
-	Hostname
-	"""
-	hostname: String!
-	"""
-	Domain Name
-	"""
-	domainname: String!
-	"""
-	Authentication Success
-	"""
-	success: String!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistRadius implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	RADIUS packet identifier.
-	"""
-	packetId: Int!
-	"""
-	Code
-	"""
-	code: Int!
-	"""
-	Response Code
-	"""
-	respCode: Int!
-	"""
-	Authenticator
-	"""
-	auth: String!
-	"""
-	Response Authenticator
-	"""
-	respAuth: String!
-	"""
-	User Name
-	"""
-	userName: String!
-	"""
-	NAS IP Address
-	"""
-	nasIp: String!
-	"""
-	NAS Port
-	"""
-	nasPort: StringNumber!
-	"""
-	State
-	"""
-	state: String!
-	"""
-	NAS Identifier
-	"""
-	nasId: String!
-	"""
-	NAS Port Type
-	"""
-	nasPortType: StringNumber!
-	"""
-	Message
-	"""
-	message: String!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistRdp implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Cookie
-	"""
-	cookie: String!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistSmb implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Command
-	"""
-	command: Int!
-	"""
-	Path
-	"""
-	path: String!
-	"""
-	Service Name
-	"""
-	service: String!
-	"""
-	Filename
-	"""
-	fileName: String!
-	"""
-	File Size
-	"""
-	fileSize: StringNumber!
-	"""
-	Resource Type
-	"""
-	resourceType: Int!
-	"""
-	File ID
-	"""
-	fid: Int!
-	"""
-	Create Time
-	"""
-	createTime: Int!
-	"""
-	Access Time
-	"""
-	accessTime: Int!
-	"""
-	Write Time
-	"""
-	writeTime: Int!
-	"""
-	Change Time
-	"""
-	changeTime: Int!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistSmtp implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Mail From
-	"""
-	mailfrom: String!
-	"""
-	Date
-	"""
-	date: String!
-	"""
-	From
-	"""
-	from: String!
-	"""
-	To
-	"""
-	to: String!
-	"""
-	Subject
-	"""
-	subject: String!
-	"""
-	Agent
-	"""
-	agent: String!
-	"""
-	State
-	"""
-	state: String!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistSsh implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Client
-	"""
-	client: String!
-	"""
-	Server
-	"""
-	server: String!
-	"""
-	Cipher Algorithm
-	"""
-	cipherAlg: String!
-	"""
-	MAC Algorithms
-	"""
-	macAlg: String!
-	"""
-	Compression Algorithm
-	"""
-	compressionAlg: String!
-	"""
-	Key Exchange Algorithm
-	"""
-	kexAlg: String!
-	"""
-	Host Key Algorithm
-	"""
-	hostKeyAlg: String!
-	"""
-	HASSH Algorithms
-	"""
-	hasshAlgorithms: String!
-	"""
-	HASSH
-	"""
-	hassh: String!
-	"""
-	HASSH Server Algorithm
-	"""
-	hasshServerAlgorithms: String!
-	"""
-	HASSH Server
-	"""
-	hasshServer: String!
-	"""
-	Client Signed Host Key Algorithm
-	"""
-	clientShka: String!
-	"""
-	Server Signed Host Key Algorithm
-	"""
-	serverShka: String!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-}
-
-type BlocklistTls implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Server Name
-	"""
-	serverName: String!
-	"""
-	ALPN Protocol
-	"""
-	alpnProtocol: String!
-	"""
-	JA3 Fingerprint
-	"""
-	ja3: String!
-	"""
-	TLS Version
-	"""
-	version: String!
-	"""
-	Client Cipher Suites
-	"""
-	clientCipherSuites: [Int!]!
-	"""
-	Client Extensions
-	"""
-	clientExtensions: [Int!]!
-	"""
-	Cipher
-	"""
-	cipher: Int!
-	"""
-	Extensions
-	"""
-	extensions: [Int!]!
-	"""
-	JA3S Fingerprint
-	"""
-	ja3S: String!
-	"""
-	Certificate Serial Number
-	"""
-	serial: String!
-	"""
-	(Certificate) Subject Country
-	"""
-	subjectCountry: String!
-	"""
-	(Certificate) Subject Organization Name
-	"""
-	subjectOrgName: String!
-	"""
-	(Certificate) Common Name
-	"""
-	subjectCommonName: String!
-	"""
-	(Certificate) Validity Start
-	"""
-	validityNotBefore: StringNumber!
-	"""
-	(Certificate) Validity End
-	"""
-	validityNotAfter: StringNumber!
-	"""
-	(Certificate) Subject Alternative Name
-	"""
-	subjectAltName: String!
-	"""
-	(Certificate) Issuer Country
-	"""
-	issuerCountry: String!
-	"""
-	(Certificate) Issuer Organization Name
-	"""
-	issuerOrgName: String!
-	"""
-	(Certificate) Issuer Organization Unit Name
-	"""
-	issuerOrgUnitName: String!
-	"""
-	(Certificate) Issuer Common Name
-	"""
-	issuerCommonName: String!
-	"""
-	Last Alert Message
-	"""
-	lastAlert: Int!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
 }
 
 """
@@ -3358,6 +751,20 @@ type ClusterEdge {
 	cursor: String!
 }
 
+"""
+A cluster of a clustering model.
+"""
+type ClusterSubject {
+	"""
+	The clustering model the cluster belongs to.
+	"""
+	clusteringModel: ID!
+	"""
+	The cluster within its clustering model.
+	"""
+	clusterId: ID!
+}
+
 type ClusterTrend {
 	clusterId: ID!
 	series: [TimeCount!]!
@@ -3409,13 +816,6 @@ type ColumnTimeSeries {
 	seriesTrend: [TimeCount!]!
 }
 
-input ConfidenceInput {
-	threatCategory: ThreatCategory
-	threatKind: String!
-	confidence: Float!
-	weight: Float
-}
-
 """
 A named configuration template's metadata.
 """
@@ -3445,6 +845,24 @@ The target requires a configuration template. Choose a template.
 """
 type ConfigTemplateRequired {
 	target: String!
+}
+
+type ConnBody {
+	origAddr: String!
+	origPort: Int!
+	respAddr: String!
+	respPort: Int!
+	proto: Int!
+	connState: String!
+	startTime: StringNumber!
+	duration: StringNumber!
+	service: String!
+	origBytes: StringNumber!
+	respBytes: StringNumber!
+	origPkts: StringNumber!
+	respPkts: StringNumber!
+	origL2Bytes: StringNumber!
+	respL2Bytes: StringNumber!
 }
 
 """
@@ -3583,157 +1001,8 @@ type CoreComponent {
 	latestOperationAttempt: OperationAttempt
 }
 
-type CryptocurrencyMiningPool implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Query
-	"""
-	query: String!
-	"""
-	Answer
-	"""
-	answer: [String!]!
-	"""
-	Transaction ID
-	"""
-	transId: Int!
-	"""
-	Round-Trip Time
-	"""
-	rtt: StringNumber!
-	"""
-	Query Class
-	"""
-	qclass: Int!
-	"""
-	Query Type
-	"""
-	qtype: Int!
-	"""
-	Response Code
-	"""
-	rcode: Int!
-	"""
-	Authoritative Answer Flag
-	"""
-	aaFlag: Boolean!
-	"""
-	Truncated Flag
-	"""
-	tcFlag: Boolean!
-	"""
-	Recursion Desired Flag
-	"""
-	rdFlag: Boolean!
-	"""
-	Recursion Available Flag
-	"""
-	raFlag: Boolean!
-	"""
-	Time to Live
-	"""
-	ttl: [Int!]!
-	"""
-	Coin List
-	"""
+type CryptocurrencyMiningPoolDetail {
 	coins: [String!]!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
 }
 
 type CsvColumnExtraConfig {
@@ -3827,9 +1096,22 @@ input DataStoreInput {
 
 scalar DateTime @specifiedBy(url: "https://datatracker.ietf.org/doc/html/rfc3339")
 
-"""
-A single DCE/RPC context entry.
-"""
+type DceRpcBody {
+	origAddr: String!
+	origPort: Int!
+	respAddr: String!
+	respPort: Int!
+	proto: Int!
+	startTime: StringNumber!
+	duration: StringNumber!
+	origPkts: StringNumber!
+	respPkts: StringNumber!
+	origL2Bytes: StringNumber!
+	respL2Bytes: StringNumber!
+	context: [DceRpcContext!]!
+	request: [String!]!
+}
+
 type DceRpcContext {
 	id: Int!
 	abstractSyntax: StringNumber!
@@ -3860,6 +1142,156 @@ enum DeployDisposition {
 	true outcome is read from the operation later.
 	"""
 	ACCEPTED
+}
+
+"""
+What a detection model found, as its own detail.
+"""
+union Detail = WatchlistMatchDetail | CryptocurrencyMiningPoolDetail | LockyRansomwareDetail | SuspiciousTlsTrafficDetail | PortScanDetail | MultiHostPortScanDetail | ExternalDdosDetail | RdpBruteForceDetail | FtpBruteForceDetail | LdapBruteForceDetail | RepeatedHttpSessionsDetail | FtpPlainTextDetail | LdapPlainTextDetail | NonBrowserDetail | TorExitNodeDetail | DomainGenerationAlgorithmDetail | DnsCovertChannelDetail | UnusualDestinationPatternDetail
+
+type DetectionEvent {
+	"""
+	The opaque identifier of the event.
+	"""
+	id: ID!
+	"""
+	When the event happened.
+	"""
+	time: DateTime!
+	"""
+	The name of the sensor the event is about, or null if it was stored
+	without one.
+	"""
+	sensor: String
+	"""
+	The detection model that produced the event.
+	"""
+	detectionModel: DetectionModel!
+	"""
+	The kind of the raw event the event is about.
+	"""
+	rawEventKind: RawEventKind!
+	"""
+	The threat category of the event, or null if it has none.
+	"""
+	category: ThreatCategory
+	"""
+	What the event is about: a raw event, or a subject observed over a
+	time window.
+	"""
+	target: Target!
+	"""
+	The score the detection model gave the event.
+	"""
+	score: Float!
+	"""
+	What the detection model found.
+	"""
+	detail: Detail!
+	"""
+	The engine instance that sent the event.
+	"""
+	engineInstance: ModelInstance!
+	"""
+	The clustering model the event is about, if one.
+	"""
+	clusteringModelId: ID
+	"""
+	When the model that made the detection was trained, if known.
+	"""
+	trainedAt: DateTime
+	"""
+	The version of the engine installed when the event was received, or
+	null if neither its version nor its commit was recorded.
+	"""
+	engineVersion: EngineVersion
+	"""
+	The revision of the engine configuration applied to the engine
+	instance when the event was received, or null if none was applied.
+	
+	This is not necessarily the configuration the engine used to produce
+	the event.
+	"""
+	configRevision: StringNumber
+	"""
+	The country code stored for each endpoint address of the event.
+	
+	For a raw event, the body's originator address comes before its
+	responder address, and a body without both, such as a Sysmon body,
+	has none. For a subject, the IP of a host subject comes first, then
+	each related IP in order.
+	"""
+	endpointCountries: [EndpointCountry!]!
+	"""
+	The scores of the inline triage policies the event qualifies for, or
+	null if none was given or none qualifies.
+	"""
+	triageScores: [TriageScore!]
+}
+
+type DetectionEventConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [DetectionEventEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [DetectionEvent!]!
+	"""
+	The total number of events.
+	"""
+	totalCount: StringNumber!
+}
+
+"""
+An edge in a connection.
+"""
+type DetectionEventEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: DetectionEvent!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+The detection model that produced a detection event.
+
+A `detectionModels` filter matches an event exactly when its detection
+model is one of the listed values.
+"""
+enum DetectionModel {
+	WATCHLIST_MATCH
+	CRYPTOCURRENCY_MINING_POOL
+	LOCKY_RANSOMWARE
+	SUSPICIOUS_TLS_TRAFFIC
+	PORT_SCAN
+	MULTI_HOST_PORT_SCAN
+	EXTERNAL_DDOS
+	RDP_BRUTE_FORCE
+	FTP_BRUTE_FORCE
+	LDAP_BRUTE_FORCE
+	REPEATED_HTTP_SESSIONS
+	FTP_PLAIN_TEXT
+	LDAP_PLAIN_TEXT
+	NON_BROWSER
+	TOR_EXIT_NODE
+	DOMAIN_GENERATION_ALGORITHM
+	DNS_COVERT_CHANNEL
+	UNUSUAL_DESTINATION_PATTERN
+}
+
+type DetectionModelEventCounter {
+	values: [DetectionModel!]!
+	counts: [Int!]!
 }
 
 """
@@ -3947,347 +1379,103 @@ type DetectorStatus {
 	sourceDelivery: [SourceDelivery!]!
 }
 
+type DhcpBody {
+	origAddr: String!
+	origPort: Int!
+	respAddr: String!
+	respPort: Int!
+	proto: Int!
+	startTime: StringNumber!
+	duration: StringNumber!
+	origPkts: StringNumber!
+	respPkts: StringNumber!
+	origL2Bytes: StringNumber!
+	respL2Bytes: StringNumber!
+	msgType: Int!
+	ciaddr: String!
+	yiaddr: String!
+	siaddr: String!
+	giaddr: String!
+	subnetMask: String!
+	router: [String!]!
+	domainNameServer: [String!]!
+	reqIpAddr: String!
+	leaseTime: StringNumber!
+	serverId: String!
+	paramReqList: [Int!]!
+	message: String!
+	renewalTime: StringNumber!
+	rebindingTime: StringNumber!
+	classId: [Int!]!
+	clientIdType: Int!
+	clientId: [Int!]!
+	options: [DhcpOption!]!
+}
+
+"""
+A DHCP option, as the sensor recorded it.
+"""
 type DhcpOption {
+	"""
+	The option code.
+	"""
 	code: Int!
+	"""
+	The option payload, byte for byte.
+	"""
 	value: [Int!]!
 }
 
-type DnsCovertChannel implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
+type DnsBody {
 	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
 	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
 	respAddr: String!
-	"""
-	Responder Port (Number)
-	"""
 	respPort: Int!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Protocol Number
-	"""
 	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
+	startTime: StringNumber!
 	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
 	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
 	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
 	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
 	respL2Bytes: StringNumber!
-	"""
-	Query
-	"""
 	query: String!
-	"""
-	Answer
-	"""
 	answer: [String!]!
-	"""
-	Transaction ID
-	"""
 	transId: Int!
-	"""
-	Round-Trip Time
-	"""
 	rtt: StringNumber!
-	"""
-	Query Class
-	"""
 	qclass: Int!
-	"""
-	Query Type
-	"""
 	qtype: Int!
-	"""
-	Response Code
-	"""
 	rcode: Int!
-	"""
-	Authoritative Answer Flag
-	"""
 	aaFlag: Boolean!
-	"""
-	Truncated Flag
-	"""
 	tcFlag: Boolean!
-	"""
-	Recursion Desired Flag
-	"""
 	rdFlag: Boolean!
-	"""
-	Recursion Available Flag
-	"""
 	raFlag: Boolean!
-	"""
-	Time to Live
-	"""
 	ttl: [Int!]!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-	"""
-	Learning Method
-	"""
-	learningMethod: LearningMethod!
 }
 
-type DomainGenerationAlgorithm implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Host
-	"""
-	host: String!
-	"""
-	HTTP Method
-	"""
-	method: String!
-	"""
-	URI
-	"""
-	uri: String!
-	"""
-	Referer
-	"""
-	referer: String!
-	"""
-	HTTP Version
-	"""
-	version: String!
-	"""
-	User Agent
-	"""
-	userAgent: String!
-	"""
-	Request Length
-	"""
-	requestLen: StringNumber!
-	"""
-	Response Length
-	"""
-	responseLen: StringNumber!
-	"""
-	Status Code
-	"""
-	statusCode: Int!
-	"""
-	Status Message
-	"""
-	statusMsg: String!
-	"""
-	Username
-	"""
-	username: String!
-	"""
-	Password
-	"""
-	password: String!
-	"""
-	Cookie
-	"""
-	cookie: String!
-	"""
-	Content Encoding
-	"""
-	contentEncoding: String!
-	"""
-	Content Type
-	"""
-	contentType: String!
-	"""
-	Cache Control
-	"""
-	cacheControl: String!
-	"""
-	Filenames
-	"""
-	filenames: [String!]!
-	"""
-	MIME Types
-	"""
-	mimeTypes: [String!]!
-	"""
-	Body
-	"""
-	body: [Int!]!
-	"""
-	Last State
-	"""
-	state: String!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-	"""
-	Learning Method
-	"""
-	learningMethod: LearningMethod!
+type DnsCovertChannelDetail {
+	"""
+	The detection model, always `DNS_COVERT_CHANNEL`.
+	"""
+	detectionModel: DetectionModel!
+}
+
+type DnsQueryBody {
+	agentName: String!
+	agentId: String!
+	processGuid: String!
+	processId: StringNumber!
+	queryName: String!
+	queryStatus: StringNumber!
+	queryResults: [String!]!
+	image: String!
+	user: String!
+}
+
+type DomainGenerationAlgorithmDetail {
+	"""
+	The detection model, always `DOMAIN_GENERATION_ALGORITHM`.
+	"""
+	detectionModel: DetectionModel!
 }
 
 type ElementCount {
@@ -4296,6 +1484,19 @@ type ElementCount {
 	The count of element in string representable by a `i64`.
 	"""
 	count: StringNumber!
+}
+
+type EndpointCountry {
+	"""
+	The endpoint address.
+	"""
+	ip: String!
+	"""
+	The two-letter country code stored for the address. `"ZZ"` if the
+	country could not be determined, and `"XX"` if no country
+	information was recorded.
+	"""
+	country: String!
 }
 
 """
@@ -4307,6 +1508,14 @@ input EndpointInput {
 	direction: TrafficDirection
 	predefined: ID
 	custom: HostNetworkGroupInput
+}
+
+"""
+The side of the traffic an address was observed on.
+"""
+enum EndpointRole {
+	SOURCE
+	DESTINATION
 }
 
 """
@@ -4341,114 +1550,40 @@ type EngineInstance {
 }
 
 """
-Common interface for all event types.
+The version of the engine installed when an event was received.
 """
-interface Event {
-	id: ID!
-	time: DateTime!
-	sensor: String!
-	confidence: Float!
-	category: ThreatCategory
-	level: ThreatLevel!
-	triageScores: [TriageScore!]
-}
-
-type EventConnection {
+type EngineVersion {
 	"""
-	Information to aid in pagination.
+	The installed version, if recorded.
 	"""
-	pageInfo: PageInfo!
+	version: String
 	"""
-	A list of edges.
+	The installed commit, if recorded.
 	"""
-	edges: [EventEdge!]!
-	"""
-	A list of nodes.
-	"""
-	nodes: [Event!]!
-	"""
-	The total number of events.
-	"""
-	totalCount: StringNumber!
-}
-
-"""
-An edge in a connection.
-"""
-type EventEdge {
-	"""
-	The item at the end of the edge
-	"""
-	node: Event!
-	"""
-	A cursor for use in pagination
-	"""
-	cursor: String!
-}
-
-"""
-The kind of a detected event.
-
-A `kinds` filter matches an event exactly when its kind is one of the
-listed values.
-"""
-enum EventKind {
-	DNS_COVERT_CHANNEL
-	HTTP_THREAT
-	RDP_BRUTE_FORCE
-	REPEATED_HTTP_SESSIONS
-	EXTRA_THREAT
-	TOR_CONNECTION
-	DOMAIN_GENERATION_ALGORITHM
-	FTP_BRUTE_FORCE
-	FTP_PLAIN_TEXT
-	PORT_SCAN
-	MULTI_HOST_PORT_SCAN
-	NON_BROWSER
-	LDAP_BRUTE_FORCE
-	LDAP_PLAIN_TEXT
-	EXTERNAL_DDOS
-	CRYPTOCURRENCY_MINING_POOL
-	BLOCKLIST_CONN
-	BLOCKLIST_DNS
-	BLOCKLIST_DCE_RPC
-	BLOCKLIST_FTP
-	BLOCKLIST_HTTP
-	BLOCKLIST_KERBEROS
-	BLOCKLIST_LDAP
-	BLOCKLIST_MQTT
-	BLOCKLIST_NFS
-	BLOCKLIST_NTLM
-	BLOCKLIST_RDP
-	BLOCKLIST_SMB
-	BLOCKLIST_SMTP
-	BLOCKLIST_SSH
-	BLOCKLIST_TLS
-	WINDOWS_THREAT
-	NETWORK_THREAT
-	LOCKY_RANSOMWARE
-	SUSPICIOUS_TLS_TRAFFIC
-	BLOCKLIST_BOOTP
-	BLOCKLIST_DHCP
-	TOR_CONNECTION_CONN
-	BLOCKLIST_RADIUS
-	BLOCKLIST_MALFORMED_DNS
-	UNUSUAL_DESTINATION_PATTERN
-}
-
-type EventKindEventCounter {
-	values: [EventKind!]!
-	counts: [Int!]!
+	commit: String
 }
 
 input EventListFilterInput {
 	start: DateTime
 	end: DateTime
+	"""
+	Selects an event when some listed endpoint's network contains one of
+	its originator-side addresses (`FROM`), responder-side addresses
+	(`TO`), or either. The originator side is a raw event body's
+	originator address, or a subject's related IPs observed as the
+	source; the responder side is the body's responder address, or the
+	related IPs observed as the destination. A host subject's IP is on
+	both sides, and a body without both addresses has none.
+	"""
 	endpoints: [EndpointInput!]
 	directions: [FlowKind!]
 	source: String
 	destination: String
 	keywords: [String!]
+	"""
+	Selects only an event whose sensor is set and belongs to one of the
+	listed nodes.
+	"""
 	sensors: [ID!]
 	os: [ID!]
 	devices: [ID!]
@@ -4462,12 +1597,34 @@ input EventListFilterInput {
 	selects events recorded without country information.
 	"""
 	countries: [String!]
+	"""
+	Selects an event whose category is listed; a null entry selects an
+	event with no category.
+	"""
 	categories: [Int]
-	levels: [ThreatLevel!]
-	kinds: [EventKind!]
+	"""
+	Selects an event exactly when its detection model is listed, so an
+	empty list selects nothing.
+	"""
+	detectionModels: [DetectionModel!]
+	"""
+	Selects an event exactly when its raw event kind is listed, so an
+	empty list selects nothing.
+	"""
+	rawEventKinds: [RawEventKind!]
+	"""
+	Selects an event whose detection model has one of the listed learning
+	methods.
+	"""
 	learningMethods: [LearningMethod!]
-	confidenceMin: Float
-	confidenceMax: Float
+	"""
+	The inclusive lower bound on an event's score.
+	"""
+	scoreMin: Float
+	"""
+	The inclusive upper bound on an event's score.
+	"""
+	scoreMax: Float
 }
 
 """
@@ -4478,11 +1635,24 @@ separate `triage` argument as inline data.
 input EventStandardFilterInput {
 	start: DateTime
 	end: DateTime
+	"""
+	Selects an event when some listed endpoint's network contains one of
+	its originator-side addresses (`FROM`), responder-side addresses
+	(`TO`), or either. The originator side is a raw event body's
+	originator address, or a subject's related IPs observed as the
+	source; the responder side is the body's responder address, or the
+	related IPs observed as the destination. A host subject's IP is on
+	both sides, and a body without both addresses has none.
+	"""
 	endpoints: [EndpointInput!]
 	directions: [FlowKind!]
 	source: String
 	destination: String
 	keywords: [String!]
+	"""
+	Selects only an event whose sensor is set and belongs to one of the
+	listed nodes.
+	"""
 	sensors: [ID!]
 	os: [ID!]
 	devices: [ID!]
@@ -4496,21 +1666,42 @@ input EventStandardFilterInput {
 	selects events recorded without country information.
 	"""
 	countries: [String!]
+	"""
+	Selects an event whose category is listed; a null entry selects an
+	event with no category.
+	"""
 	categories: [Int]
-	levels: [ThreatLevel!]
-	kinds: [EventKind!]
+	"""
+	Selects an event exactly when its detection model is listed, so an
+	empty list selects nothing.
+	"""
+	detectionModels: [DetectionModel!]
+	"""
+	Selects an event exactly when its raw event kind is listed, so an
+	empty list selects nothing.
+	"""
+	rawEventKinds: [RawEventKind!]
+	"""
+	Selects an event whose detection model has one of the listed learning
+	methods.
+	"""
 	learningMethods: [LearningMethod!]
-	confidenceMin: Float
-	confidenceMax: Float
+	"""
+	The inclusive lower bound on an event's score.
+	"""
+	scoreMin: Float
+	"""
+	The inclusive upper bound on an event's score.
+	"""
+	scoreMax: Float
 }
 
 """
 Inline exclusion input for `eventListWithTriage`.
 
 All four fields are nullable at the schema level; an object with no
-populated field is rejected by the resolver. When more than one field is
-populated the object is flattened into independent `TriageExclusion`
-values that are OR-combined with the rest.
+populated field is rejected by the resolver. An exclusion is validated,
+but removes no event.
 """
 input EventTriageExclusionInput {
 	ipAddress: HostNetworkGroupInput
@@ -4521,6 +1712,10 @@ input EventTriageExclusionInput {
 
 input EventTriageInput {
 	policies: [EventTriagePolicyInput!]
+	"""
+	Inline exclusions. They are validated, but remove no event from the
+	connection or from `totalCount`.
+	"""
 	exclusions: [EventTriageExclusionInput!]
 }
 
@@ -4533,81 +1728,13 @@ back unchanged as `TriageScore.policyId`.
 input EventTriagePolicyInput {
 	id: Int!
 	packetAttr: [PacketAttrInput!]!
-	confidence: [ConfidenceInput!]!
+	score: [ScoreConditionInput!]!
 	response: [ResponseInput!]!
 }
 
-type ExternalDdos implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address) List
-	"""
-	origAddrs: [String!]!
-	"""
-	Originator Country List
-	
-	The two-letter country codes recorded for the originator IP addresses,
-	one per address in the same order. Each code is `"ZZ"` if the country
-	could not be determined for that address, or `"XX"` if no country
-	information was recorded for this event.
-	"""
-	origCountries: [String!]!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Protocol Number
-	"""
+type ExternalDdosDetail {
 	proto: Int!
-	"""
-	Session start time of the first raw event used for detection.
-	"""
-	firstEventStartTime: DateTime!
-	"""
-	Session start time of the last raw event used for detection.
-	"""
-	lastEventStartTime: DateTime!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	level: ThreatLevel!
+	truncatedRelatedIps: StringNumber!
 }
 
 type ExternalService {
@@ -4882,69 +2009,6 @@ enum ExternalServiceStatus {
 	UNKNOWN
 }
 
-type ExtraThreat implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Service Name
-	"""
-	service: String!
-	"""
-	Event Content
-	"""
-	content: String!
-	"""
-	Database Name
-	"""
-	dbName: String!
-	"""
-	Pattern ID
-	"""
-	ruleId: ID!
-	"""
-	Referenced Label
-	"""
-	matchedTo: String!
-	"""
-	Cluster ID
-	"""
-	clusterId: ID!
-	"""
-	Attack Kind
-	"""
-	attackKind: String!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-	"""
-	Learning Method
-	"""
-	learningMethod: LearningMethod!
-}
-
 """
 What an apply does with a host it could not finish.
 """
@@ -4959,6 +2023,67 @@ enum FailurePolicy {
 	HOLD
 }
 
+type FileCreateBody {
+	agentName: String!
+	agentId: String!
+	processGuid: String!
+	processId: StringNumber!
+	image: String!
+	targetFilename: String!
+	creationUtcTime: StringNumber!
+	user: String!
+}
+
+type FileCreateStreamHashBody {
+	agentName: String!
+	agentId: String!
+	processGuid: String!
+	processId: StringNumber!
+	image: String!
+	targetFilename: String!
+	creationUtcTime: StringNumber!
+	hash: [String!]!
+	contents: String!
+	user: String!
+}
+
+type FileCreateTimeBody {
+	agentName: String!
+	agentId: String!
+	processGuid: String!
+	processId: StringNumber!
+	image: String!
+	targetFilename: String!
+	creationUtcTime: StringNumber!
+	previousCreationUtcTime: StringNumber!
+	user: String!
+}
+
+type FileDeleteBody {
+	agentName: String!
+	agentId: String!
+	processGuid: String!
+	processId: StringNumber!
+	user: String!
+	image: String!
+	targetFilename: String!
+	hashes: [String!]!
+	isExecutable: Boolean!
+	archived: Boolean!
+}
+
+type FileDeleteDetectedBody {
+	agentName: String!
+	agentId: String!
+	processGuid: String!
+	processId: StringNumber!
+	user: String!
+	image: String!
+	targetFilename: String!
+	hashes: [String!]!
+	isExecutable: Boolean!
+}
+
 """
 Traffic flow direction.
 """
@@ -4968,247 +2093,48 @@ enum FlowKind {
 	INTERNAL
 }
 
-type FtpBruteForce implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
+type FtpBody {
 	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Responder IP (Address)
-	"""
+	origPort: Int!
 	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
 	respPort: Int!
-	"""
-	Protocol Number
-	"""
 	proto: Int!
-	"""
-	User List
-	"""
+	startTime: StringNumber!
+	duration: StringNumber!
+	origPkts: StringNumber!
+	respPkts: StringNumber!
+	origL2Bytes: StringNumber!
+	respL2Bytes: StringNumber!
+	user: String!
+	password: String!
+	commands: [FtpCommand!]!
+}
+
+type FtpBruteForceDetail {
+	respPort: Int!
+	proto: Int!
 	userList: [String!]!
-	"""
-	Session start time of the first raw event used for detection.
-	"""
-	firstEventStartTime: DateTime!
-	"""
-	Session start time of the last raw event used for detection.
-	"""
-	lastEventStartTime: DateTime!
-	"""
-	Is Internal
-	"""
 	isInternal: Boolean!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
 }
 
 type FtpCommand {
-	"""
-	Command
-	"""
 	command: String!
-	"""
-	Reply Code
-	"""
 	replyCode: String!
-	"""
-	Reply Message
-	"""
 	replyMsg: String!
-	"""
-	Passive Mode Flag
-	"""
 	dataPassive: Boolean!
-	"""
-	Data Channel Source IP (Address)
-	"""
 	dataOrigAddr: String!
-	"""
-	Data Channel Destination IP (Address)
-	"""
 	dataRespAddr: String!
-	"""
-	Data Channel Destination Port (Number)
-	"""
 	dataRespPort: Int!
-	"""
-	Filename
-	"""
 	file: String!
-	"""
-	File Size
-	"""
 	fileSize: StringNumber!
-	"""
-	File ID
-	"""
 	fileId: String!
 }
 
-type FtpPlainText implements Event {
+type FtpPlainTextDetail {
 	"""
-	Opaque event identifier.
+	The detection model, always `FTP_PLAIN_TEXT`.
 	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Username
-	"""
-	user: String!
-	"""
-	Password
-	"""
-	password: String!
-	"""
-	Commands
-	"""
-	commands: [FtpCommand!]!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
+	detectionModel: DetectionModel!
 }
 
 type HostNetworkGroup {
@@ -5295,213 +2221,86 @@ type HostPortOccupied {
 	port: Int!
 }
 
-type HttpThreat implements Event {
+type HostSubject {
 	"""
-	Opaque event identifier.
+	The IP address of the host.
 	"""
-	id: ID!
+	ip: String!
 	"""
-	Event Generation Time
+	The role the host plays in the threat.
 	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
+	role: ThreatRole!
+}
+
+type HttpBody {
 	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
 	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
 	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
 	respPort: Int!
-	"""
-	Protocol Number
-	"""
 	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
+	startTime: StringNumber!
 	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
 	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
 	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
 	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
 	respL2Bytes: StringNumber!
-	"""
-	HTTP Method
-	"""
 	method: String!
-	"""
-	Host
-	"""
 	host: String!
-	"""
-	Event Content
-	"""
-	content: String!
-	"""
-	URI
-	"""
 	uri: String!
-	"""
-	Referer
-	"""
 	referer: String!
-	"""
-	HTTP Version
-	"""
 	version: String!
-	"""
-	User Agent
-	"""
 	userAgent: String!
-	"""
-	Request Length
-	"""
 	requestLen: StringNumber!
-	"""
-	Response Length
-	"""
 	responseLen: StringNumber!
-	"""
-	Status Code
-	"""
 	statusCode: Int!
-	"""
-	Status Message
-	"""
 	statusMsg: String!
-	"""
-	Username
-	"""
 	username: String!
-	"""
-	Password
-	"""
 	password: String!
-	"""
-	Cookie
-	"""
 	cookie: String!
-	"""
-	Content Encoding
-	"""
 	contentEncoding: String!
-	"""
-	Content Type
-	"""
 	contentType: String!
-	"""
-	Cache Control
-	"""
 	cacheControl: String!
-	"""
-	Filenames
-	"""
 	filenames: [String!]!
-	"""
-	MIME Types
-	"""
 	mimeTypes: [String!]!
-	"""
-	Body
-	"""
 	body: [Int!]!
-	"""
-	Last State
-	"""
 	state: String!
-	"""
-	Database Name
-	"""
-	dbName: String!
-	"""
-	Pattern ID
-	"""
-	ruleId: ID!
-	"""
-	Referenced Label
-	"""
-	matchedTo: String!
-	"""
-	Cluster ID
-	"""
-	clusterId: ID!
-	"""
-	Attack Kind
-	"""
-	attackKind: String!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-	"""
-	Learning Method
-	"""
-	learningMethod: LearningMethod!
+}
+
+type IcmpBody {
+	origAddr: String!
+	respAddr: String!
+	proto: Int!
+	startTime: StringNumber!
+	duration: StringNumber!
+	origPkts: StringNumber!
+	respPkts: StringNumber!
+	origL2Bytes: StringNumber!
+	respL2Bytes: StringNumber!
+	icmpType: Int!
+	icmpCode: Int!
+	id: Int!
+	seqNum: Int!
+	dataLen: Int!
+	payload: [Int!]!
+}
+
+type ImageLoadBody {
+	agentName: String!
+	agentId: String!
+	processGuid: String!
+	processId: StringNumber!
+	image: String!
+	imageLoaded: String!
+	fileVersion: String!
+	description: String!
+	product: String!
+	company: String!
+	originalFileName: String!
+	hashes: [String!]!
+	signed: Boolean!
+	signature: String!
+	signatureStatus: String!
+	user: String!
 }
 
 """
@@ -5576,6 +2375,29 @@ A scalar that can represent any JSON value.
 """
 scalar JSON
 
+type KerberosBody {
+	origAddr: String!
+	origPort: Int!
+	respAddr: String!
+	respPort: Int!
+	proto: Int!
+	startTime: StringNumber!
+	duration: StringNumber!
+	origPkts: StringNumber!
+	respPkts: StringNumber!
+	origL2Bytes: StringNumber!
+	respL2Bytes: StringNumber!
+	clientTime: StringNumber!
+	serverTime: StringNumber!
+	errorCode: StringNumber!
+	clientRealm: String!
+	cnameType: Int!
+	cname: [String!]!
+	realm: String!
+	snameType: Int!
+	sname: [String!]!
+}
+
 enum Kind {
 	CONN
 	DNS
@@ -5643,216 +2465,52 @@ enum LabelDbRuleKind {
 	AGENT_SOFTWARE
 }
 
-type LdapBruteForce implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
+type LdapBody {
 	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Responder IP (Address)
-	"""
+	origPort: Int!
 	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
 	respPort: Int!
-	"""
-	Protocol Number
-	"""
 	proto: Int!
-	"""
-	User Password List
-	"""
-	userPwList: [String!]!
-	"""
-	Session start time of the first raw event used for detection.
-	"""
-	firstEventStartTime: DateTime!
-	"""
-	Session start time of the last raw event used for detection.
-	"""
-	lastEventStartTime: DateTime!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
+	startTime: StringNumber!
+	duration: StringNumber!
+	origPkts: StringNumber!
+	respPkts: StringNumber!
+	origL2Bytes: StringNumber!
+	respL2Bytes: StringNumber!
+	messageId: StringNumber!
+	version: Int!
+	opcode: [String!]!
+	result: [String!]!
+	diagnosticMessage: [String!]!
+	object: [String!]!
+	argument: [String!]!
 }
 
-type LdapPlainText implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
+type LdapBruteForceDetail {
 	respPort: Int!
-	"""
-	Protocol Number
-	"""
 	proto: Int!
+	userPwList: [LdapCredential!]!
+}
+
+"""
+A user name and password an LDAP brute-force attempt used.
+"""
+type LdapCredential {
 	"""
-	Start Time
+	The user name.
 	"""
-	startTime: DateTime!
+	user: String!
 	"""
-	Duration
-	
-	It is measured in nanoseconds.
+	The password.
 	"""
-	duration: StringNumber!
+	password: String!
+}
+
+type LdapPlainTextDetail {
 	"""
-	Packets Sent (by Source)
+	The detection model, always `LDAP_PLAIN_TEXT`.
 	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Message ID
-	"""
-	messageId: ID!
-	"""
-	Version
-	"""
-	version: Int!
-	"""
-	Operation Code
-	"""
-	opcode: [String!]!
-	"""
-	Result Code
-	"""
-	result: [String!]!
-	"""
-	Diagnostic Message
-	"""
-	diagnosticMessage: [String!]!
-	"""
-	Object
-	"""
-	object: [String!]!
-	"""
-	Argument
-	"""
-	argument: [String!]!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
+	detectionModel: DetectionModel!
 }
 
 """
@@ -5904,153 +2562,37 @@ type LocalizedText {
 	ko: String!
 }
 
-type LockyRansomware implements Event {
+type LockyRansomwareDetail {
 	"""
-	Opaque event identifier.
+	The detection model, always `LOCKY_RANSOMWARE`.
 	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
+	detectionModel: DetectionModel!
+}
+
+type MalformedDnsBody {
 	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
 	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
 	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
 	respPort: Int!
-	"""
-	Protocol Number
-	"""
 	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
+	startTime: StringNumber!
 	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
 	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
 	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
 	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
 	respL2Bytes: StringNumber!
-	"""
-	Query
-	"""
-	query: String!
-	"""
-	Answer
-	"""
-	answer: [String!]!
-	"""
-	Transaction ID
-	"""
 	transId: Int!
-	"""
-	Round-Trip Time
-	"""
-	rtt: StringNumber!
-	"""
-	Query Class
-	"""
-	qclass: Int!
-	"""
-	Query Type
-	"""
-	qtype: Int!
-	"""
-	Response Code
-	"""
-	rcode: Int!
-	"""
-	Authoritative Answer Flag
-	"""
-	aaFlag: Boolean!
-	"""
-	Truncated Flag
-	"""
-	tcFlag: Boolean!
-	"""
-	Recursion Desired Flag
-	"""
-	rdFlag: Boolean!
-	"""
-	Recursion Available Flag
-	"""
-	raFlag: Boolean!
-	"""
-	Time to Live
-	"""
-	ttl: [Int!]!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
+	flags: Int!
+	questionCount: Int!
+	answerCount: Int!
+	authorityCount: Int!
+	additionalCount: Int!
+	queryCount: StringNumber!
+	respCount: StringNumber!
+	queryBytes: StringNumber!
+	respBytes: StringNumber!
+	queryBody: [[Int!]!]!
+	respBody: [[Int!]!]!
 }
 
 """
@@ -6117,7 +2659,7 @@ type ModelDigest {
 	The event kind the model was trained on, such as `http`, a Sysmon kind
 	or a log kind.
 	"""
-	eventKind: String!
+	rawEventKind: String!
 	"""
 	The customer the model belongs to.
 	"""
@@ -6318,84 +2860,30 @@ enum ModelRunState {
 	CANCELLED
 }
 
-type MultiHostPortScan implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
+type MqttBody {
 	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Responder IP (Address) List
-	"""
-	respAddrs: [String!]!
-	"""
-	Responder Country List
-	
-	The two-letter country codes recorded for the responder IP addresses,
-	one per address in the same order. Each code is `"ZZ"` if the country
-	could not be determined for that address, or `"XX"` if no country
-	information was recorded for this event.
-	"""
-	respCountries: [String!]!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
+	origPort: Int!
+	respAddr: String!
 	respPort: Int!
-	"""
-	Protocol Number
-	"""
 	proto: Int!
-	"""
-	Session start time of the first raw event used for detection.
-	"""
-	firstEventStartTime: DateTime!
-	"""
-	Session start time of the last raw event used for detection.
-	"""
-	lastEventStartTime: DateTime!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
+	startTime: StringNumber!
+	duration: StringNumber!
+	origPkts: StringNumber!
+	respPkts: StringNumber!
+	origL2Bytes: StringNumber!
+	respL2Bytes: StringNumber!
+	protocol: String!
+	version: Int!
+	clientId: String!
+	connackReason: Int!
+	subscribe: [String!]!
+	subackReason: [Int!]!
+}
+
+type MultiHostPortScanDetail {
+	respPort: Int!
+	proto: Int!
+	truncatedRelatedIps: StringNumber!
 }
 
 """
@@ -7331,12 +3819,71 @@ type Mutation {
 	updateSystemLogCollector(host: String!, buildSelector: BuildSelectorInput!, onFailure: FailurePolicy! = ROLLBACK): UpdateSystemLogCollectorResult!
 }
 
+type Netflow5Body {
+	srcAddr: String!
+	dstAddr: String!
+	nextHop: String!
+	input: Int!
+	output: Int!
+	dPkts: StringNumber!
+	dOctets: StringNumber!
+	first: StringNumber!
+	last: StringNumber!
+	srcPort: Int!
+	dstPort: Int!
+	tcpFlags: Int!
+	prot: Int!
+	tos: Int!
+	srcAs: Int!
+	dstAs: Int!
+	srcMask: Int!
+	dstMask: Int!
+	sequence: StringNumber!
+	engineType: Int!
+	engineId: Int!
+	samplingMode: Int!
+	samplingRate: Int!
+}
+
+type Netflow9Body {
+	sequence: StringNumber!
+	sourceId: StringNumber!
+	templateId: Int!
+	origAddr: String!
+	origPort: Int!
+	respAddr: String!
+	respPort: Int!
+	proto: Int!
+	contents: String!
+}
+
 type Network {
 	id: ID!
 	name: String!
 	description: String!
 	networks: HostNetworkGroup!
 	creationTime: DateTime!
+}
+
+type NetworkConnectBody {
+	agentName: String!
+	agentId: String!
+	processGuid: String!
+	processId: StringNumber!
+	image: String!
+	user: String!
+	protocol: String!
+	initiated: Boolean!
+	sourceIsIpv6: Boolean!
+	sourceIp: String!
+	sourceHostname: String!
+	sourcePort: Int!
+	sourcePortName: String!
+	destinationIsIpv6: Boolean!
+	destinationIp: String!
+	destinationHostname: String!
+	destinationPort: Int!
+	destinationPortName: String!
 }
 
 type NetworkConnection {
@@ -7374,6 +3921,10 @@ type NetworkEdge {
 
 type NetworkListEntry {
 	"""
+	The writer's ID of the entry, unique within its list, as it was given.
+	"""
+	id: StringNumber!
+	"""
 	The name of the entry, unique within its list.
 	"""
 	name: String!
@@ -7384,6 +3935,11 @@ type NetworkListEntry {
 }
 
 input NetworkListEntryInput {
+	"""
+	The writer's ID of the entry, unique within its list and stored as
+	given. The same ID may appear in both the allowlist and the blocklist.
+	"""
+	id: StringNumber!
 	name: String!
 	networkGroup: HostNetworkGroupInput!
 }
@@ -7411,137 +3967,22 @@ type NetworkListSet {
 	updatedAt: DateTime!
 }
 
-type NetworkThreat implements Event {
+"""
+A network of a customer.
+"""
+type NetworkSubject {
 	"""
-	Opaque event identifier.
+	The customer the network belongs to.
 	"""
-	id: ID!
+	customer: ID!
 	"""
-	Event Generation Time
+	The name of the network.
 	"""
-	time: DateTime!
+	name: String!
 	"""
-	Sensor
+	The role the network plays in the threat.
 	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Service Name
-	"""
-	service: String!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Event Content
-	"""
-	content: String!
-	"""
-	Database Name
-	"""
-	dbName: String!
-	"""
-	Pattern ID
-	"""
-	ruleId: ID!
-	"""
-	Referenced Label
-	"""
-	matchedTo: String!
-	"""
-	Cluster ID
-	"""
-	clusterId: ID!
-	"""
-	Attack Kind
-	"""
-	attackKind: String!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-	"""
-	Learning Method
-	"""
-	learningMethod: LearningMethod!
+	role: ThreatRole!
 }
 
 enum NetworkType {
@@ -7554,6 +3995,22 @@ input NetworkUpdateInput {
 	name: String
 	description: String
 	networks: HostNetworkGroupInput
+}
+
+type NfsBody {
+	origAddr: String!
+	origPort: Int!
+	respAddr: String!
+	respPort: Int!
+	proto: Int!
+	startTime: StringNumber!
+	duration: StringNumber!
+	origPkts: StringNumber!
+	respPkts: StringNumber!
+	origL2Bytes: StringNumber!
+	respL2Bytes: StringNumber!
+	readFiles: [String!]!
+	writeFiles: [String!]!
 }
 
 type Node {
@@ -7746,189 +4203,30 @@ type NodeTimeSync {
 	offset: Float
 }
 
-type NonBrowser implements Event {
+type NonBrowserDetail {
 	"""
-	Opaque event identifier.
+	The detection model, always `NON_BROWSER`.
 	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
+	detectionModel: DetectionModel!
+}
+
+type NtlmBody {
 	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
 	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
 	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
 	respPort: Int!
-	"""
-	Protocol Number
-	"""
 	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
+	startTime: StringNumber!
 	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
 	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
 	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
 	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
 	respL2Bytes: StringNumber!
-	"""
-	Host
-	"""
-	host: String!
-	"""
-	HTTP Method
-	"""
-	method: String!
-	"""
-	URI
-	"""
-	uri: String!
-	"""
-	Referer
-	"""
-	referer: String!
-	"""
-	HTTP Version
-	"""
-	version: String!
-	"""
-	User Agent
-	"""
-	userAgent: String!
-	"""
-	Request Length
-	"""
-	requestLen: StringNumber!
-	"""
-	Response Length
-	"""
-	responseLen: StringNumber!
-	"""
-	Status Code
-	"""
-	statusCode: Int!
-	"""
-	Status Message
-	"""
-	statusMsg: String!
-	"""
-	Username
-	"""
+	protocol: String!
 	username: String!
-	"""
-	Password
-	"""
-	password: String!
-	"""
-	Cookie
-	"""
-	cookie: String!
-	"""
-	Content Encoding
-	"""
-	contentEncoding: String!
-	"""
-	Content Type
-	"""
-	contentType: String!
-	"""
-	Cache Control
-	"""
-	cacheControl: String!
-	"""
-	Filenames
-	"""
-	filenames: [String!]!
-	"""
-	MIME Types
-	"""
-	mimeTypes: [String!]!
-	"""
-	Body
-	"""
-	body: [Int!]!
-	"""
-	Last State
-	"""
-	state: String!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-	"""
-	Learning Method
-	"""
-	learningMethod: LearningMethod!
+	hostname: String!
+	domainname: String!
+	success: String!
 }
 
 """
@@ -8252,6 +4550,17 @@ enum Period {
 	ONE_DAY
 }
 
+type PipeEventBody {
+	agentName: String!
+	agentId: String!
+	eventType: String!
+	processGuid: String!
+	processId: StringNumber!
+	pipeName: String!
+	image: String!
+	user: String!
+}
+
 """
 Another instance already holds the address in the allocation table.
 
@@ -8282,83 +4591,9 @@ type PortAllocationConflict {
 	holder: BindAddrHolder!
 }
 
-type PortScan implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number) List
-	"""
+type PortScanDetail {
 	respPorts: [Int!]!
-	"""
-	Protocol Number
-	"""
 	proto: Int!
-	"""
-	Session start time of the first raw event used for detection.
-	"""
-	firstEventStartTime: DateTime!
-	"""
-	Session start time of the last raw event used for detection.
-	"""
-	lastEventStartTime: DateTime!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
 }
 
 input PreserveOutliersInput {
@@ -8405,6 +4640,56 @@ type PreviousTrainingResult {
 	The number of outliers in the previous result.
 	"""
 	outlierCount: StringNumber!
+}
+
+"""
+The subject a detection event is primarily about.
+"""
+union PrimarySubject = HostSubject | ClusterSubject | SensorSubject | NetworkSubject
+
+type ProcessCreateBody {
+	agentName: String!
+	agentId: String!
+	processGuid: String!
+	processId: StringNumber!
+	image: String!
+	fileVersion: String!
+	description: String!
+	product: String!
+	company: String!
+	originalFileName: String!
+	commandLine: String!
+	currentDirectory: String!
+	user: String!
+	logonGuid: String!
+	logonId: StringNumber!
+	terminalSessionId: StringNumber!
+	integrityLevel: String!
+	hashes: [String!]!
+	parentProcessGuid: String!
+	parentProcessId: StringNumber!
+	parentImage: String!
+	parentCommandLine: String!
+	parentUser: String!
+}
+
+type ProcessTamperBody {
+	agentName: String!
+	agentId: String!
+	processGuid: String!
+	processId: StringNumber!
+	image: String!
+	tamperType: String!
+	user: String!
+}
+
+type ProcessTerminateBody {
+	agentName: String!
+	agentId: String!
+	processGuid: String!
+	processId: StringNumber!
+	image: String!
+	user: String!
 }
 
 type Qualifier {
@@ -8527,10 +4812,10 @@ type Query {
 	"""
 	engineInstance(nodeId: ID!, agentKey: String!): EngineInstance!
 	"""
-	Looks up a single event by its opaque `id`.
+	Looks up a single detection event by its opaque `id`.
 	
-	`id` is the value previously returned from `Event.id`. Decoding the
-	`id` is internal; consumers must not parse it.
+	`id` is the value previously returned from `DetectionEvent.id`.
+	Decoding the `id` is internal; consumers must not parse it.
 	
 	Returns `null` when no event with the given `id` exists, or when the
 	caller's customer/sensor scope does not include the event. The same
@@ -8540,24 +4825,34 @@ type Query {
 	storage key format. Retention drop or a future key-format migration
 	may invalidate them.
 	"""
-	event(id: ID!): Event
+	event(id: ID!): DetectionEvent
 	"""
-	A list of events with timestamp on or after `start` and before `end`.
+	A list of detection events with timestamp on or after `start` and
+	before `end`.
 	"""
-	eventList(filter: EventListFilterInput!, after: String, before: String, first: Int, last: Int): EventConnection!
+	eventList(filter: EventListFilterInput!, after: String, before: String, first: Int, last: Int): DetectionEventConnection!
 	"""
-	A list of events that pass the standard filter, with optional inline
-	triage scoring and exclusions.
+	A list of detection events that pass the standard filter, with
+	optional inline triage scoring.
 	
 	Unlike `eventList`, this resolver returns every event passing the
 	standard filter regardless of whether any triage policy matched.
 	When `triage.policies` is supplied, matching policies attach their
 	scores via `triageScores`; events that score nothing keep
-	`triageScores: null` and remain in the connection. When
-	`triage.exclusions` is supplied, matching events are removed from
-	the connection. The cursor pagination contract matches `eventList`.
+	`triageScores: null` and remain in the connection. `triage.exclusions`
+	is validated but removes no event, from the connection or from
+	`totalCount`. The cursor pagination contract matches `eventList`.
 	"""
-	eventListWithTriage(filter: EventStandardFilterInput!, triage: EventTriageInput, after: String, before: String, first: Int, last: Int): EventConnection!
+	eventListWithTriage(filter: EventStandardFilterInput!, triage: EventTriageInput, after: String, before: String, first: Int, last: Int): DetectionEventConnection!
+	"""
+	Returns, for each raw event key and at its position, every detection
+	event, of any detection model, whose target is the raw event of that
+	kind, sensor and time.
+	
+	A key with no match, or whose sensor is outside the caller's sensor
+	scope, gets an empty list. More than 1000 keys is an error.
+	"""
+	detectionEventsByRawEventKeys(keys: [RawEventKeyInput!]!): [[DetectionEvent!]!]!
 	"""
 	The number of events for each category, with timestamp on or after
 	`start` and before `end`. An uncategorized event is counted in a bucket
@@ -8586,14 +4881,15 @@ type Query {
 	"""
 	eventCountsByIpAddressPair(filter: EventListFilterInput!, first: Int!): StringEventCounter!
 	"""
-	The number of events for each originator and responder IP address pair and
-	event kind, with timestamp on or after `start` and before `end`. Each
-	entry in `values` is a string representation of the originator and
-	responder IP address pair and kind. For example, a DNS covert channel
-	event with originator IP address 10.0.0.1, responder IP address 10.0.0.2
-	become "10.0.0.1-10.0.0.2-DNS Covert Channel".
+	The number of events for each originator and responder IP address pair
+	and detection model, with timestamp on or after `start` and before
+	`end`. Each entry in `values` is the originator address, the responder
+	address and the `DetectionModel` value, joined by `-`. For example, a
+	DNS covert channel event with originator IP address 10.0.0.1 and
+	responder IP address 10.0.0.2 becomes
+	"10.0.0.1-10.0.0.2-DNS_COVERT_CHANNEL".
 	"""
-	eventCountsByIpAddressPairAndKind(filter: EventListFilterInput!, first: Int!): StringEventCounter!
+	eventCountsByIpAddressPairAndDetectionModel(filter: EventListFilterInput!, first: Int!): StringEventCounter!
 	"""
 	The number of events for each originator IP address, with timestamp on or
 	after `start` and before `end`.
@@ -8605,16 +4901,12 @@ type Query {
 	"""
 	eventCountsByResponderIpAddress(filter: EventListFilterInput!, first: Int!): StringEventCounter!
 	"""
-	The number of events for each kind, with timestamp on or after `start`
-	and before `end`. Every kind has its own bucket, and each value can be
-	passed back in `kinds` to select the events counted under it.
+	The number of events for each detection model, with timestamp on or
+	after `start` and before `end`. Every detection model has its own
+	bucket, and each value can be passed back in `detectionModels` to
+	select the events counted under it.
 	"""
-	eventCountsByKind(filter: EventListFilterInput!, first: Int!): EventKindEventCounter!
-	"""
-	The number of events for each level, with timestamp on or after `start`
-	and before `end`.
-	"""
-	eventCountsByLevel(filter: EventListFilterInput!, first: Int!): ThreatLevelEventCounter!
+	eventCountsByDetectionModel(filter: EventListFilterInput!, first: Int!): DetectionModelEventCounter!
 	"""
 	The number of events for each network, with timestamp on or after
 	`start` and before `end`.
@@ -9086,6 +5378,34 @@ type Query {
 	systemLogCollectorList: [SystemLogCollector!]!
 }
 
+type RadiusBody {
+	origAddr: String!
+	origPort: Int!
+	respAddr: String!
+	respPort: Int!
+	proto: Int!
+	startTime: StringNumber!
+	duration: StringNumber!
+	origPkts: StringNumber!
+	respPkts: StringNumber!
+	origL2Bytes: StringNumber!
+	respL2Bytes: StringNumber!
+	id: Int!
+	code: Int!
+	respCode: Int!
+	auth: String!
+	respAuth: String!
+	userName: [Int!]!
+	userPasswd: [Int!]!
+	chapPasswd: [Int!]!
+	nasIp: String!
+	nasPort: StringNumber!
+	state: [Int!]!
+	nasId: [Int!]!
+	nasPortType: StringNumber!
+	message: String!
+}
+
 type RankedOutlier {
 	timestamp: Int!
 	rank: Int!
@@ -9129,100 +5449,100 @@ type RankedOutlierEdge {
 	cursor: String!
 }
 
-enum RawEventKind {
-	BOOTP
-	CONN
-	DHCP
-	DNS
-	FTP
-	HTTP
-	KERBEROS
-	LDAP
-	LOG
-	MQTT
-	NETWORK
-	NFS
-	NTLM
-	RADIUS
-	RDP
-	SMB
-	SMTP
-	SSH
-	TLS
-	WINDOW
-	DCE_RPC
-}
+"""
+The body of the raw event a detection event is about.
+"""
+union RawEventBody = ConnBody | DnsBody | HttpBody | RdpBody | SmtpBody | NtlmBody | KerberosBody | SshBody | DceRpcBody | FtpBody | MqttBody | LdapBody | TlsBody | SmbBody | NfsBody | BootpBody | DhcpBody | RadiusBody | MalformedDnsBody | IcmpBody | ProcessCreateBody | FileCreateTimeBody | NetworkConnectBody | ProcessTerminateBody | ImageLoadBody | FileCreateBody | RegistryValueSetBody | RegistryKeyRenameBody | FileCreateStreamHashBody | PipeEventBody | DnsQueryBody | FileDeleteBody | ProcessTamperBody | FileDeleteDetectedBody | Netflow5Body | Netflow9Body
 
-type RdpBruteForce implements Event {
+"""
+A raw event, named by its kind, the name of its sensor and its time.
+"""
+input RawEventKeyInput {
+	rawEventKind: RawEventKind!
 	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
+	The sensor name, as a detection event's `sensor` holds it.
 	"""
 	sensor: String!
 	"""
-	Originator IP (Address)
+	The time of the raw event, its Giganto key timestamp.
 	"""
+	time: DateTime!
+}
+
+"""
+The kind of the raw event a detection event is about.
+
+A `rawEventKinds` filter matches an event exactly when its raw event kind
+is one of the listed values.
+"""
+enum RawEventKind {
+	CONN
+	DNS
+	HTTP
+	RDP
+	SMTP
+	NTLM
+	KERBEROS
+	SSH
+	DCE_RPC
+	FTP
+	MQTT
+	LDAP
+	TLS
+	SMB
+	NFS
+	BOOTP
+	DHCP
+	RADIUS
+	MALFORMED_DNS
+	ICMP
+	PROCESS_CREATE
+	FILE_CREATE_TIME
+	NETWORK_CONNECT
+	PROCESS_TERMINATE
+	IMAGE_LOAD
+	FILE_CREATE
+	REGISTRY_VALUE_SET
+	REGISTRY_KEY_RENAME
+	FILE_CREATE_STREAM_HASH
+	PIPE_EVENT
+	DNS_QUERY
+	FILE_DELETE
+	PROCESS_TAMPER
+	FILE_DELETE_DETECTED
+	NETFLOW_5
+	NETFLOW_9
+}
+
+type RawEventTarget {
+	"""
+	The time of the raw event, its Giganto key timestamp.
+	"""
+	time: DateTime!
+	"""
+	The body of the raw event.
+	"""
+	body: RawEventBody!
+}
+
+type RdpBody {
 	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Responder IP (Address) List
-	"""
-	respAddrs: [String!]!
-	"""
-	Responder Country List
-	
-	The two-letter country codes recorded for the responder IP addresses,
-	one per address in the same order. Each code is `"ZZ"` if the country
-	could not be determined for that address, or `"XX"` if no country
-	information was recorded for this event.
-	"""
-	respCountries: [String!]!
-	"""
-	Protocol Number
-	"""
+	origPort: Int!
+	respAddr: String!
+	respPort: Int!
 	proto: Int!
-	"""
-	Session start time of the first raw event used for detection.
-	"""
-	firstEventStartTime: DateTime!
-	"""
-	Session start time of the last raw event used for detection.
-	"""
-	lastEventStartTime: DateTime!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
+	startTime: StringNumber!
+	duration: StringNumber!
+	origPkts: StringNumber!
+	respPkts: StringNumber!
+	origL2Bytes: StringNumber!
+	respL2Bytes: StringNumber!
+	cookie: String!
+}
+
+type RdpBruteForceDetail {
+	proto: Int!
+	truncatedRelatedIps: StringNumber!
 }
 
 """
@@ -9231,10 +5551,45 @@ reason the host's occupancy could not be read.
 """
 union RecommendBindAddrsResult = BindAddrProposals | HostOccupancyUnavailable
 
+type RegistryKeyRenameBody {
+	agentName: String!
+	agentId: String!
+	eventType: String!
+	processGuid: String!
+	processId: StringNumber!
+	image: String!
+	targetObject: String!
+	newName: String!
+	user: String!
+}
+
+type RegistryValueSetBody {
+	agentName: String!
+	agentId: String!
+	eventType: String!
+	processGuid: String!
+	processId: StringNumber!
+	image: String!
+	targetObject: String!
+	details: String!
+	user: String!
+}
+
 type Regression {
 	slope: Float!
 	intercept: Float!
 	rSquare: Float!
+}
+
+type RelatedIp {
+	"""
+	The address.
+	"""
+	ip: String!
+	"""
+	The side of the traffic the address was observed on.
+	"""
+	role: EndpointRole!
 }
 
 """
@@ -9257,91 +5612,10 @@ type RemoveServiceSuccess {
 	operationId: String!
 }
 
-type RepeatedHttpSessions implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Port (Number)
-	"""
+type RepeatedHttpSessionsDetail {
 	origPort: Int!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Port (Number)
-	"""
 	respPort: Int!
-	"""
-	Protocol Number
-	"""
 	proto: Int!
-	"""
-	Session start time of the first raw event used for detection.
-	"""
-	firstEventStartTime: DateTime!
-	"""
-	Session start time of the last raw event used for detection.
-	"""
-	lastEventStartTime: DateTime!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-	"""
-	Learning Method
-	"""
-	learningMethod: LearningMethod!
 }
 
 """
@@ -9710,6 +5984,22 @@ enum SamplingPolicyUseKind {
 	MODEL
 }
 
+"""
+A condition of an inline triage policy on a detection event's own score.
+
+The condition adds its `weight` to the policy's score of an event when the
+event's category is `threatCategory`, its detection model is
+`detectionModel`, and its score is at least `score`. A null
+`threatCategory` matches only an event with no category. An omitted
+`weight` counts as 1.0.
+"""
+input ScoreConditionInput {
+	threatCategory: ThreatCategory
+	detectionModel: DetectionModel!
+	score: Float!
+	weight: Float
+}
+
 input SearchFilterInput {
 	time: OutlierTimeRange
 	distance: OutlierDistanceRange
@@ -9776,6 +6066,17 @@ type SensorEdge {
 	cursor: String!
 }
 
+"""
+The sensor of the detection event.
+"""
+type SensorSubject {
+	"""
+	The sensor of the detection event, null only for an event stored
+	without one.
+	"""
+	sensor: String
+}
+
 enum SkipReason {
 	"""
 	The entry's stored configuration is `None`: `Agent.config`, or for a Giganto service
@@ -9795,6 +6096,52 @@ type SkippedAgent {
 	"""
 	agentKey: String!
 	reason: SkipReason!
+}
+
+type SmbBody {
+	origAddr: String!
+	origPort: Int!
+	respAddr: String!
+	respPort: Int!
+	proto: Int!
+	startTime: StringNumber!
+	duration: StringNumber!
+	origPkts: StringNumber!
+	respPkts: StringNumber!
+	origL2Bytes: StringNumber!
+	respL2Bytes: StringNumber!
+	command: Int!
+	path: String!
+	service: String!
+	fileName: String!
+	fileSize: StringNumber!
+	resourceType: Int!
+	fid: Int!
+	createTime: StringNumber!
+	accessTime: StringNumber!
+	writeTime: StringNumber!
+	changeTime: StringNumber!
+}
+
+type SmtpBody {
+	origAddr: String!
+	origPort: Int!
+	respAddr: String!
+	respPort: Int!
+	proto: Int!
+	startTime: StringNumber!
+	duration: StringNumber!
+	origPkts: StringNumber!
+	respPkts: StringNumber!
+	origL2Bytes: StringNumber!
+	respL2Bytes: StringNumber!
+	mailfrom: String!
+	date: String!
+	from: String!
+	to: String!
+	subject: String!
+	agent: String!
+	state: String!
 }
 
 """
@@ -9829,6 +6176,33 @@ enum SourceState {
 	Reading the source's events failed, which failed the round.
 	"""
 	FAILED
+}
+
+type SshBody {
+	origAddr: String!
+	origPort: Int!
+	respAddr: String!
+	respPort: Int!
+	proto: Int!
+	startTime: StringNumber!
+	duration: StringNumber!
+	origPkts: StringNumber!
+	respPkts: StringNumber!
+	origL2Bytes: StringNumber!
+	respL2Bytes: StringNumber!
+	client: String!
+	server: String!
+	cipherAlg: String!
+	macAlg: String!
+	compressionAlg: String!
+	kexAlg: String!
+	hostKeyAlg: String!
+	hasshAlgorithms: String!
+	hassh: String!
+	hasshServerAlgorithms: String!
+	hasshServer: String!
+	clientShka: String!
+	serverShka: String!
 }
 
 type Status {
@@ -9929,19 +6303,39 @@ type StructuredColumnType {
 	dataType: String!
 }
 
+type SubjectTarget {
+	"""
+	The subject the event is primarily about.
+	"""
+	primary: PrimarySubject!
+	"""
+	The other addresses involved, each with the side it was observed on.
+	"""
+	relatedIps: [RelatedIp!]!
+	"""
+	The time window the subject was observed over.
+	"""
+	window: TimeWindow!
+}
+
 """
 A set of subscription defined in the schema.
 """
 type Subscription {
 	"""
-	A stream of events with timestamp on.
+	A stream of detection events with timestamp on or after `start`.
+	
+	Each detection model is tracked on its own: a poll delivers, in key
+	order, every event whose time is at or after its model's next-delivery
+	time, and delivering an event moves only that model's time, to just
+	past the event's time.
 	"""
 	eventStream(		start: DateTime!,
 		"""
 		The fetch interval in seconds, from 1 to 86400 (one day) inclusive. Omitted or null values use 20 seconds.
 		"""
 		fetchInterval: Int,		eventStuckCheckInterval: Int
-	): Event!
+	): DetectionEvent!
 	"""
 	Streams the outliers stored from `start` on, of the models that belong
 	to the customers the caller had when the subscription started.
@@ -9956,189 +6350,11 @@ type Subscription {
 	): RankedOutlier!
 }
 
-type SuspiciousTlsTraffic implements Event {
+type SuspiciousTlsTrafficDetail {
 	"""
-	Opaque event identifier.
+	The detection model, always `SUSPICIOUS_TLS_TRAFFIC`.
 	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Server Name
-	"""
-	serverName: String!
-	"""
-	ALPN Protocol
-	"""
-	alpnProtocol: String!
-	"""
-	JA3 Fingerprint
-	"""
-	ja3: String!
-	"""
-	TLS Version
-	"""
-	version: String!
-	"""
-	Client Cipher Suites
-	"""
-	clientCipherSuites: [Int!]!
-	"""
-	Client Extensions
-	"""
-	clientExtensions: [Int!]!
-	"""
-	Cipher
-	"""
-	cipher: Int!
-	"""
-	Extensions
-	"""
-	extensions: [Int!]!
-	"""
-	JA3S Fingerprint
-	"""
-	ja3S: String!
-	"""
-	Certificate Serial Number
-	"""
-	serial: String!
-	"""
-	(Certificate) Subject Country
-	"""
-	subjectCountry: String!
-	"""
-	(Certificate) Subject Organization Name
-	"""
-	subjectOrgName: String!
-	"""
-	(Certificate) Common Name
-	"""
-	subjectCommonName: String!
-	"""
-	(Certificate) Validity Start
-	"""
-	validityNotBefore: StringNumber!
-	"""
-	(Certificate) Validity End
-	"""
-	validityNotAfter: StringNumber!
-	"""
-	(Certificate) Subject Alternative Name
-	"""
-	subjectAltName: String!
-	"""
-	(Certificate) Issuer Country
-	"""
-	issuerCountry: String!
-	"""
-	(Certificate) Issuer Organization Name
-	"""
-	issuerOrgName: String!
-	"""
-	(Certificate) Issuer Organization Unit Name
-	"""
-	issuerOrgUnitName: String!
-	"""
-	(Certificate) Issuer Common Name
-	"""
-	issuerCommonName: String!
-	"""
-	Last Alert Message
-	"""
-	lastAlert: Int!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
+	detectionModel: DetectionModel!
 }
 
 """
@@ -10224,6 +6440,11 @@ type Tag {
 	id: ID!
 }
 
+"""
+What a detection event is about.
+"""
+union Target = RawEventTarget | SubjectTarget
+
 union Template = StructuredClusteringTemplate | UnstructuredClusteringTemplate
 
 type TemplateConnection {
@@ -10277,19 +6498,11 @@ enum ThreatCategory {
 }
 
 """
-Threat level.
+The role a primary subject plays in a threat.
 """
-enum ThreatLevel {
-	VERY_LOW
-	LOW
-	MEDIUM
-	HIGH
-	VERY_HIGH
-}
-
-type ThreatLevelEventCounter {
-	values: [ThreatLevel!]!
-	counts: [Int!]!
+enum ThreatRole {
+	ACTOR
+	TARGET
 }
 
 type TimeCount {
@@ -10306,6 +6519,52 @@ type TimeSeriesResult {
 	earliest: DateTime
 	latest: DateTime
 	series: [ColumnTimeSeries!]!
+}
+
+type TimeWindow {
+	"""
+	The start of the window.
+	"""
+	start: DateTime!
+	"""
+	The end of the window.
+	"""
+	end: DateTime!
+}
+
+type TlsBody {
+	origAddr: String!
+	origPort: Int!
+	respAddr: String!
+	respPort: Int!
+	proto: Int!
+	startTime: StringNumber!
+	duration: StringNumber!
+	origPkts: StringNumber!
+	respPkts: StringNumber!
+	origL2Bytes: StringNumber!
+	respL2Bytes: StringNumber!
+	serverName: String!
+	alpnProtocol: String!
+	ja3: String!
+	version: String!
+	clientCipherSuites: [Int!]!
+	clientExtensions: [Int!]!
+	cipher: Int!
+	extensions: [Int!]!
+	ja3S: String!
+	serial: String!
+	subjectCountry: String!
+	subjectOrgName: String!
+	subjectCommonName: String!
+	validityNotBefore: StringNumber!
+	validityNotAfter: StringNumber!
+	subjectAltName: String!
+	issuerCountry: String!
+	issuerOrgName: String!
+	issuerOrgUnitName: String!
+	issuerCommonName: String!
+	lastAlert: Int!
 }
 
 type TopColumnsOfCluster {
@@ -10336,312 +6595,6 @@ type TopTrendsByColumn {
 	trends: [ClusterTrend!]!
 }
 
-type TorConnection implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	Host
-	"""
-	host: String!
-	"""
-	HTTP Method
-	"""
-	method: String!
-	"""
-	URI
-	"""
-	uri: String!
-	"""
-	Referer
-	"""
-	referer: String!
-	"""
-	HTTP Version
-	"""
-	version: String!
-	"""
-	User Agent
-	"""
-	userAgent: String!
-	"""
-	Request Length
-	"""
-	requestLen: StringNumber!
-	"""
-	Response Length
-	"""
-	responseLen: StringNumber!
-	"""
-	Status Code
-	"""
-	statusCode: Int!
-	"""
-	Status Message
-	"""
-	statusMsg: String!
-	"""
-	Username
-	"""
-	username: String!
-	"""
-	Password
-	"""
-	password: String!
-	"""
-	Cookie
-	"""
-	cookie: String!
-	"""
-	Content Encoding
-	"""
-	contentEncoding: String!
-	"""
-	Content Type
-	"""
-	contentType: String!
-	"""
-	Cache Control
-	"""
-	cacheControl: String!
-	"""
-	Filenames
-	"""
-	filenames: [String!]!
-	"""
-	MIME Types
-	"""
-	mimeTypes: [String!]!
-	"""
-	Body
-	"""
-	body: [Int!]!
-	"""
-	Last State
-	"""
-	state: String!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-	"""
-	Learning Method
-	"""
-	learningMethod: LearningMethod!
-}
-
-type TorConnectionConn implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Originator IP (Address)
-	"""
-	origAddr: String!
-	"""
-	Originator Country
-	
-	The two-letter country code recorded for the originator IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	origCountry: String!
-	"""
-	Originator Network
-	"""
-	origNetwork: Network
-	"""
-	Originator Port (Number)
-	"""
-	origPort: Int!
-	"""
-	Responder IP (Address)
-	"""
-	respAddr: String!
-	"""
-	Responder Country
-	
-	The two-letter country code recorded for the responder IP address.
-	`"ZZ"` if the country could not be determined for the address, and
-	`"XX"` if no country information was recorded for this event.
-	"""
-	respCountry: String!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Responder Port (Number)
-	"""
-	respPort: Int!
-	"""
-	Protocol Number
-	"""
-	proto: Int!
-	"""
-	Connection State
-	"""
-	connState: String!
-	"""
-	Start Time
-	"""
-	startTime: DateTime!
-	"""
-	Duration
-	
-	It is measured in nanoseconds.
-	"""
-	duration: StringNumber!
-	"""
-	Service Name
-	"""
-	service: String!
-	"""
-	Bytes Sent (by Source)
-	"""
-	origBytes: StringNumber!
-	"""
-	Bytes Received (by Destination)
-	"""
-	respBytes: StringNumber!
-	"""
-	Packets Sent (by Source)
-	"""
-	origPkts: StringNumber!
-	"""
-	Packets Received (by Destination)
-	"""
-	respPkts: StringNumber!
-	"""
-	Layer 2 Bytes Sent (by Source)
-	"""
-	origL2Bytes: StringNumber!
-	"""
-	Layer 2 Bytes Received (by Destination)
-	"""
-	respL2Bytes: StringNumber!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-	"""
-	Learning Method
-	"""
-	learningMethod: LearningMethod!
-}
-
 type TorExitNode {
 	ipAddress: String!
 	updatedAt: DateTime!
@@ -10664,6 +6617,13 @@ type TorExitNodeConnection {
 	The total number of edges.
 	"""
 	totalCount: StringNumber!
+}
+
+type TorExitNodeDetail {
+	"""
+	The detection model, always `TOR_EXIT_NODE`.
+	"""
+	detectionModel: DetectionModel!
 }
 
 """
@@ -10729,7 +6689,7 @@ type TrainingDefinition {
 	"""
 	The event kind the definition trains on.
 	"""
-	eventKind: String!
+	rawEventKind: String!
 	"""
 	The source names the definition reads events of; for the timeseries
 	method, the IDs of the sampling policies it reads the series of.
@@ -10981,81 +6941,12 @@ input UnstructuredClusteringTemplateInput {
 	minTokenLength: Int
 }
 
-type UnusualDestinationPattern implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Start boundary of the anomaly sampling window used for detection.
-	"""
-	samplingWindowStartTime: DateTime!
-	"""
-	End boundary of the anomaly sampling window used for detection.
-	"""
-	samplingWindowEndTime: DateTime!
-	"""
-	Responder IP (Address) List
-	"""
-	respAddrs: [String!]!
-	"""
-	Responder Country List
-	
-	The two-letter country codes recorded for the responder IP addresses,
-	one per address in the same order. Each code is `"ZZ"` if the country
-	could not be determined for that address, or `"XX"` if no country
-	information was recorded for this event.
-	"""
-	respCountries: [String!]!
-	"""
-	Responder Network
-	"""
-	respNetwork: Network
-	"""
-	Count of connections
-	"""
-	count: Int!
-	"""
-	Expected mean of connections
-	"""
+type UnusualDestinationPatternDetail {
+	count: StringNumber!
 	expectedMean: Float!
-	"""
-	Standard deviation of connections
-	"""
 	stdDeviation: Float!
-	"""
-	Z-score indicating how many standard deviations the count is from the
-	mean
-	"""
 	zScore: Float!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-	"""
-	Learning Method
-	"""
-	learningMethod: LearningMethod!
+	truncatedRelatedIps: StringNumber!
 }
 
 """
@@ -11131,91 +7022,12 @@ enum ValueKind {
 	BOOL
 }
 
-type WindowsThreat implements Event {
-	"""
-	Opaque event identifier.
-	"""
-	id: ID!
-	"""
-	Event Generation Time
-	"""
-	time: DateTime!
-	"""
-	Sensor
-	"""
-	sensor: String!
-	"""
-	Service Name
-	"""
-	service: String!
-	"""
-	Agent Name
-	"""
-	agentName: String!
-	"""
-	Agent ID
-	"""
-	agentId: String!
-	"""
-	Process GUID
-	"""
-	processGuid: String!
-	"""
-	Process ID
-	"""
-	processId: Int!
-	"""
-	Executable Path
-	"""
-	image: String!
-	"""
-	User
-	"""
-	user: String!
-	"""
-	Event Content
-	"""
-	content: String!
-	"""
-	Database Name
-	"""
-	dbName: String!
-	"""
-	Pattern ID
-	"""
-	ruleId: Int!
-	"""
-	Referenced Label
-	"""
-	matchedTo: String!
-	"""
-	Cluster ID
-	"""
-	clusterId: ID!
-	"""
-	Attack Kind
-	"""
-	attackKind: String!
-	"""
-	Confidence
-	"""
-	confidence: Float!
-	"""
-	MITRE Tactic
-	"""
-	category: ThreatCategory
-	"""
-	Triage Scores
-	"""
-	triageScores: [TriageScore!]
-	"""
-	Threat Level
-	"""
-	level: ThreatLevel!
-	"""
-	Learning Method
-	"""
-	learningMethod: LearningMethod!
+type WatchlistMatchDetail {
+	entryId: StringNumber!
+	matchedSide: EndpointRole!
+	rawEventCount: StringNumber!
+	truncatedRelatedIps: StringNumber!
+	closedEarly: Boolean!
 }
 
 """

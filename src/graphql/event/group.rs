@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
-use async_graphql::{Context, Object, OutputType, Result, SimpleObject};
+use async_graphql::{Context, Object, OutputType, Result, SimpleObject, resolver_utils::EnumType};
 use num_traits::ToPrimitive;
 use review_database::event::{Direction, EventFilter};
-use review_database::{Event, IndexedTable, Iterable};
+use review_database::{IndexedTable, Iterable, StoredDetectionEvent};
 
 use super::{
-    EventListFilterInput, ThreatLevel, earliest, empty_time_range, from_filter_input, latest,
-    readable_event, timestamp_nanos,
+    EventListFilterInput, earliest, empty_time_range, from_filter_input, latest, readable_event,
+    timestamp_nanos,
 };
-use crate::graphql::{Role, RoleGuard, filter::EventKind};
+use crate::graphql::{Role, RoleGuard, filter::DetectionModel};
 
 const MAX_EVENT_FREQUENCY_SERIES_BUCKETS: usize = 10_000;
 
@@ -31,7 +31,8 @@ impl EventGroupQuery {
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] first: i32,
     ) -> Result<EventCounts<Option<u8>>> {
-        let (values, counts) = count_events(ctx, &filter, Event::count_category, first).await?;
+        let (values, counts) =
+            count_events(ctx, &filter, StoredDetectionEvent::count_category, first).await?;
         let values = values
             .into_iter()
             .map(|category| category.and_then(|value| value.to_u8()))
@@ -54,7 +55,8 @@ impl EventGroupQuery {
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] first: i32,
     ) -> Result<EventCounts<String>> {
-        let (values, counts) = count_events(ctx, &filter, Event::count_country, first).await?;
+        let (values, counts) =
+            count_events(ctx, &filter, StoredDetectionEvent::count_country, first).await?;
         Ok(EventCounts { values, counts })
     }
 
@@ -70,7 +72,8 @@ impl EventGroupQuery {
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] first: i32,
     ) -> Result<EventCounts<String>> {
-        let (values, counts) = count_events(ctx, &filter, Event::count_ip_address, first).await?;
+        let (values, counts) =
+            count_events(ctx, &filter, StoredDetectionEvent::count_ip_address, first).await?;
         let values = values.into_iter().map(|v| v.to_string()).collect();
         Ok(EventCounts { values, counts })
     }
@@ -90,8 +93,13 @@ impl EventGroupQuery {
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] first: i32,
     ) -> Result<EventCounts<String>> {
-        let (values, counts) =
-            count_events(ctx, &filter, Event::count_ip_address_pair, first).await?;
+        let (values, counts) = count_events(
+            ctx,
+            &filter,
+            StoredDetectionEvent::count_ip_address_pair,
+            first,
+        )
+        .await?;
         let values = values
             .into_iter()
             .map(|(src, dst)| {
@@ -104,34 +112,33 @@ impl EventGroupQuery {
         Ok(EventCounts { values, counts })
     }
 
-    /// The number of events for each originator and responder IP address pair and
-    /// event kind, with timestamp on or after `start` and before `end`. Each
-    /// entry in `values` is a string representation of the originator and
-    /// responder IP address pair and kind. For example, a DNS covert channel
-    /// event with originator IP address 10.0.0.1, responder IP address 10.0.0.2
-    /// become "10.0.0.1-10.0.0.2-DNS Covert Channel".
+    /// The number of events for each originator and responder IP address pair
+    /// and detection model, with timestamp on or after `start` and before
+    /// `end`. Each entry in `values` is the originator address, the responder
+    /// address and the `DetectionModel` value, joined by `-`. For example, a
+    /// DNS covert channel event with originator IP address 10.0.0.1 and
+    /// responder IP address 10.0.0.2 becomes
+    /// "10.0.0.1-10.0.0.2-DNS_COVERT_CHANNEL".
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
-    async fn event_counts_by_ip_address_pair_and_kind(
+    async fn event_counts_by_ip_address_pair_and_detection_model(
         &self,
         ctx: &Context<'_>,
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] first: i32,
     ) -> Result<EventCounts<String>> {
-        let (values, counts) =
-            count_events(ctx, &filter, Event::count_ip_address_pair_and_kind, first).await?;
+        let (values, counts) = count_events(
+            ctx,
+            &filter,
+            StoredDetectionEvent::count_ip_address_pair_and_detection_model,
+            first,
+        )
+        .await?;
         let values = values
             .into_iter()
-            .map(|(src, dst, kind)| {
-                let mut value = src.to_string();
-                value.push('-');
-                value.push_str(&dst.to_string());
-                value.push('-');
-                value.push_str(kind);
-                value
-            })
+            .map(|(src, dst, model)| format!("{src}-{dst}-{}", detection_model_name(model.into())))
             .collect();
         Ok(EventCounts { values, counts })
     }
@@ -148,8 +155,13 @@ impl EventGroupQuery {
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] first: i32,
     ) -> Result<EventCounts<String>> {
-        let (values, counts) =
-            count_events(ctx, &filter, Event::count_originator_ip_address, first).await?;
+        let (values, counts) = count_events(
+            ctx,
+            &filter,
+            StoredDetectionEvent::count_originator_ip_address,
+            first,
+        )
+        .await?;
         let values = values.into_iter().map(|v| v.to_string()).collect();
         Ok(EventCounts { values, counts })
     }
@@ -166,46 +178,38 @@ impl EventGroupQuery {
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] first: i32,
     ) -> Result<EventCounts<String>> {
-        let (values, counts) =
-            count_events(ctx, &filter, Event::count_responder_ip_address, first).await?;
+        let (values, counts) = count_events(
+            ctx,
+            &filter,
+            StoredDetectionEvent::count_responder_ip_address,
+            first,
+        )
+        .await?;
         let values = values.into_iter().map(|v| v.to_string()).collect();
         Ok(EventCounts { values, counts })
     }
 
-    /// The number of events for each kind, with timestamp on or after `start`
-    /// and before `end`. Every kind has its own bucket, and each value can be
-    /// passed back in `kinds` to select the events counted under it.
+    /// The number of events for each detection model, with timestamp on or
+    /// after `start` and before `end`. Every detection model has its own
+    /// bucket, and each value can be passed back in `detectionModels` to
+    /// select the events counted under it.
     #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
         .or(RoleGuard::new(Role::SecurityAdministrator))
         .or(RoleGuard::new(Role::SecurityManager))
         .or(RoleGuard::new(Role::SecurityMonitor))")]
-    async fn event_counts_by_kind(
+    async fn event_counts_by_detection_model(
         &self,
         ctx: &Context<'_>,
         filter: EventListFilterInput,
         #[graphql(validator(minimum = 1))] first: i32,
-    ) -> Result<EventCounts<EventKind>> {
-        let (values, counts) = count_events(ctx, &filter, Event::count_kind, first).await?;
-        let values = values
-            .into_iter()
-            .map(EventKind::try_from)
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        Ok(EventCounts { values, counts })
-    }
-
-    /// The number of events for each level, with timestamp on or after `start`
-    /// and before `end`.
-    #[graphql(guard = "RoleGuard::new(Role::SystemAdministrator)
-        .or(RoleGuard::new(Role::SecurityAdministrator))
-        .or(RoleGuard::new(Role::SecurityManager))
-        .or(RoleGuard::new(Role::SecurityMonitor))")]
-    async fn event_counts_by_level(
-        &self,
-        ctx: &Context<'_>,
-        filter: EventListFilterInput,
-        #[graphql(validator(minimum = 1))] first: i32,
-    ) -> Result<EventCounts<ThreatLevel>> {
-        let (values, counts) = count_events(ctx, &filter, Event::count_level, first).await?;
+    ) -> Result<EventCounts<DetectionModel>> {
+        let (values, counts) = count_events(
+            ctx,
+            &filter,
+            StoredDetectionEvent::count_detection_model,
+            first,
+        )
+        .await?;
         let values = values.into_iter().map(Into::into).collect();
         Ok(EventCounts { values, counts })
     }
@@ -310,14 +314,22 @@ impl EventGroupQuery {
 #[derive(SimpleObject)]
 #[graphql(concrete(name = "StringEventCounter", params(String)))]
 #[graphql(concrete(name = "U8EventCounter", params("Option<u8>")))]
-#[graphql(concrete(name = "ThreatLevelEventCounter", params(ThreatLevel)))]
-#[graphql(concrete(name = "EventKindEventCounter", params(EventKind)))]
+#[graphql(concrete(name = "DetectionModelEventCounter", params(DetectionModel)))]
 struct EventCounts<T: OutputType> {
     values: Vec<T>,
     counts: Vec<usize>,
 }
 
-type EventCountFn<T> = fn(&Event, &mut HashMap<T, usize>, &EventFilter) -> anyhow::Result<()>;
+type EventCountFn<T> =
+    fn(&StoredDetectionEvent, &mut HashMap<T, usize>, &EventFilter) -> anyhow::Result<()>;
+
+/// Returns the `DetectionModel` GraphQL enum value of `model`.
+fn detection_model_name(model: DetectionModel) -> &'static str {
+    DetectionModel::items()
+        .iter()
+        .find(|item| item.value == model)
+        .map_or("", |item| item.name)
+}
 
 async fn count_events<T>(
     ctx: &Context<'_>,
@@ -421,19 +433,22 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use jiff::{SignedDuration, Timestamp};
-    use review_database::{
-        EventCategory, EventKind, EventMessage,
-        event::{DnsEventFields, ExternalDdosFields, MultiHostPortScanFields},
+    use review_protocol::types::{
+        Detail, DetectionEvent, EndpointRole, EventCategory, ExternalDdosDetail,
+        MultiHostPortScanDetail, PrimarySubject, ThreatRole,
     };
 
     use super::super::tests::{
-        event_country_locator, nanos, schema_with_country_filter_events, utc_micro,
+        event_country_locator, schema_with_country_filter_events, utc_micro,
     };
-    use crate::graphql::TestSchema;
+    use crate::graphql::{
+        TestSchema,
+        event_test_support::{PutEvent, dns_event, related, subject_event},
+    };
 
-    /// Creates an event message at `timestamp` with the given source and
+    /// Creates an event at `timestamp` with the given source and
     /// destination `IPv4` addresses.
-    fn event_message_at(timestamp: Timestamp, src: u32, dst: u32) -> EventMessage {
+    fn event_message_at(timestamp: Timestamp, src: u32, dst: u32) -> DetectionEvent {
         event_message_with_category(timestamp, src, dst, Some(EventCategory::CommandAndControl))
     }
 
@@ -442,40 +457,14 @@ mod tests {
         src: u32,
         dst: u32,
         category: Option<EventCategory>,
-    ) -> EventMessage {
-        let fields = DnsEventFields {
-            sensor: "sensor1".to_string(),
-            start_time: nanos(timestamp),
-            duration: 0,
-            orig_addr: Ipv4Addr::from(src).into(),
-            orig_port: 10000,
-            resp_addr: Ipv4Addr::from(dst).into(),
-            resp_port: 53,
-            proto: 17,
-            orig_pkts: 0,
-            resp_pkts: 0,
-            orig_l2_bytes: 0,
-            resp_l2_bytes: 0,
-            query: "domain".into(),
-            answer: Vec::new(),
-            trans_id: 0,
-            rtt: 0,
-            qclass: 0,
-            qtype: 0,
-            rcode: 0,
-            aa_flag: false,
-            tc_flag: false,
-            rd_flag: false,
-            ra_flag: false,
-            ttl: Vec::new(),
-            confidence: 0.8,
+    ) -> DetectionEvent {
+        dns_event(
+            timestamp,
+            Ipv4Addr::from(src).into(),
+            Ipv4Addr::from(dst).into(),
             category,
-        };
-        EventMessage {
-            time: timestamp,
-            kind: EventKind::DnsCovertChannel,
-            fields: bincode::serialize(&fields).expect("serializable"),
-        }
+            "sensor1",
+        )
     }
 
     #[tokio::test]
@@ -486,7 +475,7 @@ mod tests {
         let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
 
         for offset in 0..3 {
-            db.put(&event_message_with_category(
+            db.put_event(&event_message_with_category(
                 ts + SignedDuration::from_secs(offset),
                 1,
                 2,
@@ -495,7 +484,7 @@ mod tests {
             .unwrap();
         }
         for offset in 3..5 {
-            db.put(&event_message_with_category(
+            db.put_event(&event_message_with_category(
                 ts + SignedDuration::from_secs(offset),
                 3,
                 4,
@@ -561,8 +550,8 @@ mod tests {
         let epoch = Timestamp::UNIX_EPOCH;
         let store = schema.store();
         let db = store.events();
-        db.put(&event_message_at(epoch, 1, 2)).unwrap();
-        db.put(&event_message_at(
+        db.put_event(&event_message_at(epoch, 1, 2)).unwrap();
+        db.put_event(&event_message_at(
             epoch + SignedDuration::from_secs(1),
             3,
             4,
@@ -614,7 +603,7 @@ mod tests {
                 let store = schema.store();
                 store
                     .events()
-                    .put(&event_message_at(
+                    .put_event(&event_message_at(
                         Timestamp::from_second(9_999).unwrap(),
                         1,
                         2,
@@ -659,7 +648,7 @@ mod tests {
             for nanos in [-1_500_000_000, -500_000_000, 1_499_999_999, 1_500_000_000] {
                 store
                     .events()
-                    .put(&event_message_at(
+                    .put_event(&event_message_at(
                         Timestamp::from_nanosecond(i128::from(nanos)).unwrap(),
                         1,
                         2,
@@ -701,7 +690,7 @@ mod tests {
                 for _ in 0..count {
                     store
                         .events()
-                        .put(&event_message_at(
+                        .put_event(&event_message_at(
                             Timestamp::from_second(seconds).unwrap(),
                             1,
                             2,
@@ -724,7 +713,7 @@ mod tests {
             for nanos in [i64::MIN, i64::MIN + 1, -1, 0, i64::MAX - 1, i64::MAX] {
                 store
                     .events()
-                    .put(&event_message_at(
+                    .put_event(&event_message_at(
                         Timestamp::from_nanosecond(i128::from(nanos)).unwrap(),
                         1,
                         2,
@@ -844,9 +833,9 @@ mod tests {
         let store = schema.store();
         let db = store.events();
         let ts1 = utc_micro(2018, 1, 26, 18, 30, 9, 453_829);
-        db.put(&event_message_at(ts1, 1, 2)).unwrap();
+        db.put_event(&event_message_at(ts1, 1, 2)).unwrap();
         let ts2 = utc_micro(2018, 1, 27, 18, 30, 9, 453_829);
-        db.put(&event_message_at(ts2, 3, 4)).unwrap();
+        db.put_event(&event_message_at(ts2, 3, 4)).unwrap();
         let ts3 = utc_micro(2018, 1, 28, 18, 30, 9, 453_829);
 
         let res = schema
@@ -889,7 +878,7 @@ mod tests {
         let store = schema.store();
         let db = store.events();
         let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
-        db.put(&event_message_at(
+        db.put_event(&event_message_at(
             ts,
             u32::from(Ipv4Addr::new(1, 0, 0, 1)),
             u32::from(Ipv4Addr::new(2, 0, 0, 1)),
@@ -922,6 +911,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn event_counts_by_ip_address_and_address_pair() {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            let db = store.events();
+            let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
+            for (offset, src, dst) in [
+                (0, [1, 0, 0, 1], [2, 0, 0, 1]),
+                (1, [1, 0, 0, 1], [2, 0, 0, 1]),
+                (2, [1, 0, 0, 3], [2, 0, 0, 1]),
+            ] {
+                db.put_event(&event_message_at(
+                    ts + SignedDuration::from_secs(offset),
+                    u32::from(Ipv4Addr::from(src)),
+                    u32::from(Ipv4Addr::from(dst)),
+                ))
+                .unwrap();
+            }
+        }
+
+        let res = schema
+            .execute_as_system_admin(
+                r"{
+                    byIp: eventCountsByIpAddress(filter: {}, first: 10) {
+                        values
+                        counts
+                    }
+                    byPair: eventCountsByIpAddressPair(filter: {}, first: 10) {
+                        values
+                        counts
+                    }
+                    firstPair: eventCountsByIpAddressPair(filter: {}, first: 1) {
+                        values
+                        counts
+                    }
+                }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        // An event counts once for each of its distinct addresses, and a
+        // pair is written as the originator, a hyphen, then the responder.
+        assert_eq!(
+            res.data.into_json().unwrap(),
+            serde_json::json!({
+                "byIp": {
+                    "values": ["2.0.0.1", "1.0.0.1", "1.0.0.3"],
+                    "counts": [3, 2, 1],
+                },
+                "byPair": {
+                    "values": ["1.0.0.1-2.0.0.1", "1.0.0.3-2.0.0.1"],
+                    "counts": [2, 1],
+                },
+                "firstPair": { "values": ["1.0.0.1-2.0.0.1"], "counts": [2] },
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn event_counts_by_country_uses_stored_codes_without_locator() {
         let (_locator_dir, locator) = event_country_locator();
         let schema = TestSchema::new_with_event_country_locator(locator).await;
@@ -933,39 +980,38 @@ mod tests {
         // once because its originator and responder have the same code. The
         // third starts with US on both sides, so KR must come from a later
         // responder. Repeated codes within and across sides count only once.
-        db.put(&event_message_at(
+        db.put_event(&event_message_at(
             ts,
             u32::from(Ipv4Addr::new(1, 0, 0, 1)),
             u32::from(Ipv4Addr::new(2, 0, 0, 1)),
         ))
         .unwrap();
-        db.put(&event_message_at(
+        db.put_event(&event_message_at(
             ts + SignedDuration::from_secs(1),
             u32::from(Ipv4Addr::new(1, 0, 0, 2)),
             u32::from(Ipv4Addr::new(1, 0, 0, 3)),
         ))
         .unwrap();
-        let multi_host_fields = MultiHostPortScanFields {
-            sensor: "sensor1".to_string(),
-            orig_addr: Ipv4Addr::new(1, 0, 0, 4).into(),
-            resp_port: 443,
-            resp_addrs: vec![
-                Ipv4Addr::new(1, 0, 0, 5).into(),
-                Ipv4Addr::new(2, 0, 0, 2).into(),
-                Ipv4Addr::new(2, 0, 0, 3).into(),
+        let mut multi_host = subject_event(
+            ts + SignedDuration::from_secs(2),
+            Some("sensor1"),
+            PrimarySubject::Host {
+                ip: Ipv4Addr::new(1, 0, 0, 4).into(),
+                role: ThreatRole::Actor,
+            },
+            vec![
+                related("1.0.0.5", EndpointRole::Destination),
+                related("2.0.0.2", EndpointRole::Destination),
+                related("2.0.0.3", EndpointRole::Destination),
             ],
-            proto: 6,
-            first_event_start_time: nanos(ts + SignedDuration::from_secs(2)),
-            last_event_start_time: nanos(ts + SignedDuration::from_secs(2)),
-            confidence: 0.8,
-            category: Some(EventCategory::CommandAndControl),
-        };
-        db.put(&EventMessage {
-            time: ts + SignedDuration::from_secs(2),
-            kind: EventKind::MultiHostPortScan,
-            fields: bincode::serialize(&multi_host_fields).expect("serializable"),
-        })
-        .unwrap();
+            Detail::MultiHostPortScan(MultiHostPortScanDetail {
+                resp_port: 443,
+                proto: 6,
+                truncated_related_ips: 0,
+            }),
+        );
+        multi_host.category = Some(EventCategory::CommandAndControl);
+        db.put_event(&multi_host).unwrap();
         drop(store);
 
         let res = schema
@@ -996,27 +1042,26 @@ mod tests {
 
         // Both first endpoints are US. Only later originators carry KR, and
         // the repeated KR and the US on both sides must each count once.
-        let fields = ExternalDdosFields {
-            sensor: "sensor1".to_string(),
-            orig_addrs: vec![
-                Ipv4Addr::new(1, 0, 0, 1).into(),
-                Ipv4Addr::new(2, 0, 0, 1).into(),
-                Ipv4Addr::new(2, 0, 0, 2).into(),
+        let mut ddos = subject_event(
+            ts,
+            Some("sensor1"),
+            PrimarySubject::Host {
+                ip: Ipv4Addr::new(1, 0, 0, 2).into(),
+                role: ThreatRole::Target,
+            },
+            vec![
+                related("1.0.0.1", EndpointRole::Source),
+                related("2.0.0.1", EndpointRole::Source),
+                related("2.0.0.2", EndpointRole::Source),
             ],
-            resp_addr: Ipv4Addr::new(1, 0, 0, 2).into(),
-            proto: 17,
-            first_event_start_time: nanos(ts),
-            last_event_start_time: nanos(ts),
-            confidence: 0.8,
-            category: Some(EventCategory::Impact),
-        };
-        db.put(&EventMessage {
-            time: ts,
-            kind: EventKind::ExternalDdos,
-            fields: bincode::serialize(&fields).expect("serializable"),
-        })
-        .unwrap();
-        db.put(&event_message_at(
+            Detail::ExternalDdos(ExternalDdosDetail {
+                proto: 17,
+                truncated_related_ips: 0,
+            }),
+        );
+        ddos.category = Some(EventCategory::Impact);
+        db.put_event(&ddos).unwrap();
+        db.put_event(&event_message_at(
             ts + SignedDuration::from_secs(1),
             u32::from(Ipv4Addr::new(1, 0, 0, 3)),
             u32::from(Ipv4Addr::new(1, 0, 0, 4)),
@@ -1073,7 +1118,7 @@ mod tests {
         // second bucket contains only a KR-only event.
         let store = schema.store();
         let db = store.events();
-        db.put(&event_message_at(
+        db.put_event(&event_message_at(
             start + SignedDuration::from_secs(70),
             u32::from(Ipv4Addr::new(2, 0, 0, 4)),
             u32::from(Ipv4Addr::new(2, 0, 0, 5)),
@@ -1148,5 +1193,108 @@ mod tests {
             res.data.to_string(),
             r#"{withoutCountryFilter: {values: ["0"], counts: [2]}, withCountryFilter: {values: ["0"], counts: [1]}}"#
         );
+    }
+
+    #[tokio::test]
+    async fn event_counts_by_detection_model_and_address_pair_and_detection_model() {
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            let db = store.events();
+            let ts = utc_micro(2026, 1, 1, 0, 0, 0, 0);
+            for (offset, detail, src, dst) in [
+                (0, Detail::DnsCovertChannel, [10, 0, 0, 1], [10, 0, 0, 2]),
+                (1, Detail::DnsCovertChannel, [10, 0, 0, 1], [10, 0, 0, 2]),
+                (2, Detail::DnsCovertChannel, [10, 0, 0, 3], [10, 0, 0, 2]),
+                (3, Detail::LockyRansomware, [10, 0, 0, 1], [10, 0, 0, 2]),
+            ] {
+                let mut event = event_message_at(
+                    ts + SignedDuration::from_secs(offset),
+                    u32::from(Ipv4Addr::from(src)),
+                    u32::from(Ipv4Addr::from(dst)),
+                );
+                event.detection_model = detail.detection_model();
+                event.detail = detail;
+                db.put_event(&event).unwrap();
+            }
+        }
+
+        let res = schema
+            .execute_as_system_admin(
+                r"{
+                    byModel: eventCountsByDetectionModel(filter: {}, first: 10) {
+                        values
+                        counts
+                    }
+                    selected: eventCountsByDetectionModel(
+                        filter: { detectionModels: [LOCKY_RANSOMWARE] }
+                        first: 10
+                    ) {
+                        values
+                        counts
+                    }
+                    byPair: eventCountsByIpAddressPairAndDetectionModel(filter: {}, first: 10) {
+                        values
+                        counts
+                    }
+                }",
+            )
+            .await;
+        assert!(res.errors.is_empty(), "unexpected errors: {:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        assert_eq!(
+            data["byModel"],
+            serde_json::json!({
+                "values": ["DNS_COVERT_CHANNEL", "LOCKY_RANSOMWARE"],
+                "counts": [3, 1],
+            })
+        );
+        assert_eq!(
+            data["selected"],
+            serde_json::json!({ "values": ["LOCKY_RANSOMWARE"], "counts": [1] })
+        );
+        assert_eq!(data["byPair"]["counts"][0], 2);
+        assert_eq!(
+            data["byPair"]["values"][0],
+            "10.0.0.1-10.0.0.2-DNS_COVERT_CHANNEL"
+        );
+        let mut rest: Vec<_> = data["byPair"]["values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .skip(1)
+            .map(|value| value.as_str().unwrap())
+            .collect();
+        rest.sort_unstable();
+        assert_eq!(
+            rest,
+            [
+                "10.0.0.1-10.0.0.2-LOCKY_RANSOMWARE",
+                "10.0.0.3-10.0.0.2-DNS_COVERT_CHANNEL",
+            ]
+        );
+
+        // Each value of `eventCountsByDetectionModel` selects its events
+        // when passed back.
+        for (value, count) in [("DNS_COVERT_CHANNEL", "3"), ("LOCKY_RANSOMWARE", "1")] {
+            let res = schema
+                .execute_as_system_admin(&format!(
+                    "{{ eventList(filter: {{ detectionModels: [{value}] }}) {{ totalCount }} }}"
+                ))
+                .await;
+            assert_eq!(
+                res.data.into_json().unwrap()["eventList"]["totalCount"],
+                count
+            );
+        }
+
+        for removed in [
+            "{ eventCountsByKind(filter: {}, first: 10) { counts } }",
+            "{ eventCountsByLevel(filter: {}, first: 10) { counts } }",
+            "{ eventCountsByIpAddressPairAndKind(filter: {}, first: 10) { counts } }",
+        ] {
+            let res = schema.execute_as_system_admin(removed).await;
+            assert!(!res.errors.is_empty(), "{removed}");
+        }
     }
 }

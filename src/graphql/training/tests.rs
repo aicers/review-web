@@ -142,7 +142,7 @@ async fn fixture() -> Fixture {
 
 fn definition_text(sources: &[&str], server_name: &str, address: &str, extra: &str) -> String {
     format!(
-        r#"event_kind = "http"
+        r#"raw_event_kind = "http"
 method = "multidimension"
 sources = {sources}
 window_start = "2026-10-14T00:00:00Z"
@@ -262,7 +262,7 @@ fn complete_as(
     run_id: RunId,
     instance: &ModelInstance,
     name: &str,
-    (kind, event_kind): (&str, &str),
+    (kind, raw_event_kind): (&str, &str),
 ) {
     store
         .complete_run(
@@ -275,7 +275,7 @@ fn complete_as(
                 kind: kind.to_string(),
                 serialized_classifier: vec![1, 2, 3],
                 max_event_id_num: 25,
-                event_kind: event_kind.to_string(),
+                raw_event_kind: raw_event_kind.to_string(),
                 classification_id: 0,
                 batch_info: vec![],
                 scores: ModelScores::new(),
@@ -317,7 +317,8 @@ fn store_text(store: &Store, name: &str, text: &str) {
             name,
             TrainingDefinitionUpdate {
                 method: document.method.into(),
-                event_kind: document.event_kind.clone(),
+                raw_event_kind: document.raw_event_kind.clone(),
+                log_kind: None,
                 sources: document.sources.clone(),
                 indicator: document.suspicious_tokens.clone(),
                 definition: text.to_string(),
@@ -422,7 +423,7 @@ async fn insert_stores_the_parsed_fields_and_the_text() {
         definition.method,
         review_database::ModelMethod::Multidimension
     );
-    assert_eq!(definition.event_kind, "http");
+    assert_eq!(definition.raw_event_kind, "http");
     assert_eq!(definition.sources, [f.sensor_a.clone(), f.logs_a.clone()]);
     assert_eq!(definition.indicator.as_deref(), Some("ind-a"));
     assert_eq!(definition.definition, text);
@@ -430,7 +431,7 @@ async fn insert_stores_the_parsed_fields_and_the_text() {
     let res = f
         .sec(
             "{ trainingDefinition(name: \"def\") { name customerId instance { nodeId agentKey } \
-             method eventKind sources suspiciousTokens definition state model { name } \
+             method rawEventKind sources suspiciousTokens definition state model { name } \
              activeRun { id } lastRun { id } } }",
             &[A],
         )
@@ -442,7 +443,7 @@ async fn insert_stores_the_parsed_fields_and_the_text() {
             "customerId": A.to_string(),
             "instance": { "nodeId": f.engine_a.node_id.to_string(), "agentKey": ENGINE_KEY },
             "method": "MULTIDIMENSION",
-            "eventKind": "http",
+            "rawEventKind": "http",
             "sources": [f.sensor_a, f.logs_a],
             "suspiciousTokens": "ind-a",
             "definition": text,
@@ -466,7 +467,7 @@ async fn update_stores_the_parsed_fields_and_the_text() {
     let model_id = model_on(&f.store(), "host", A, &f.engine_a);
     insert_indicator(&f.store(), "ind-a", model_id);
     let text = definition_text(&[&f.logs_a], &f.server_name, OWN_ADDRESS, "")
-        .replace("event_kind = \"http\"", "event_kind = \"conn\"")
+        .replace("raw_event_kind = \"http\"", "raw_event_kind = \"conn\"")
         .replace(
             "window_end = \"2026-10-21T00:00:00Z\"",
             "window_end = \"2026-10-21T00:00:00Z\"\nsuspicious_tokens = \"ind-a\"",
@@ -475,7 +476,7 @@ async fn update_stores_the_parsed_fields_and_the_text() {
     assert_eq!(data(res), json!({ "updateTrainingDefinition": "def" }));
 
     let definition = stored(&f.store(), "def").expect("stored");
-    assert_eq!(definition.event_kind, "conn");
+    assert_eq!(definition.raw_event_kind, "conn");
     assert_eq!(definition.sources, std::slice::from_ref(&f.logs_a));
     assert_eq!(definition.indicator.as_deref(), Some("ind-a"));
     assert_eq!(definition.definition, text);
@@ -563,7 +564,7 @@ async fn a_timeseries_definition_reads_assigned_policies_and_shows_their_deliver
     assert_eq!(data(res), json!({ "insertTrainingDefinition": "series" }));
     let stored = stored(&f.store(), "series").expect("stored");
     assert_eq!(stored.method, review_database::ModelMethod::Timeseries);
-    assert_eq!(stored.event_kind, "timeseries");
+    assert_eq!(stored.raw_event_kind, "timeseries");
 
     let res = f
         .sec(
@@ -756,7 +757,7 @@ async fn a_timeseries_model_of_unknown_shape_cannot_be_cloned() {
                 kind: TIMESERIES_KIND.to_string(),
                 serialized_classifier: vec![1, 2, 3],
                 max_event_id_num: 25,
-                event_kind: "timeseries".to_string(),
+                raw_event_kind: "timeseries".to_string(),
                 classification_id: 0,
                 batch_info: vec![],
                 scores: ModelScores::new(),
@@ -770,6 +771,7 @@ async fn a_timeseries_model_of_unknown_shape_cannot_be_cloned() {
                 run_id: 1,
                 definition: text,
                 sources: Vec::new(),
+                log_kind: None,
             },
         )
         .unwrap();
@@ -1070,11 +1072,11 @@ async fn update_refusals_of_the_store() {
     );
     complete(&f.store(), run_id, &f.engine_a, "def");
 
-    let conn = text.replace("event_kind = \"http\"", "event_kind = \"conn\"");
+    let conn = text.replace("raw_event_kind = \"http\"", "raw_event_kind = \"conn\"");
     let res = f.sys(&update("def", &conn)).await;
     assert_eq!(
         refused(&res),
-        ("FIELD_FIXED".into(), "event_kind".into(), "conn".into())
+        ("FIELD_FIXED".into(), "raw_event_kind".into(), "conn".into())
     );
     let (_, extensions) = single_error(&res);
     assert_eq!(extensions["definition"], "def");
@@ -1365,7 +1367,8 @@ async fn train_refuses_a_stored_definition_that_does_not_parse() {
             "def",
             TrainingDefinitionUpdate {
                 method: document.method.into(),
-                event_kind: document.event_kind.clone(),
+                raw_event_kind: document.raw_event_kind.clone(),
+                log_kind: None,
                 sources: document.sources.clone(),
                 indicator: None,
                 definition: format!("unknown_key = 1\n{text}"),
@@ -2057,7 +2060,7 @@ fn store_refusals_map_to_their_codes() {
             "INVALID_DOCUMENT",
         ),
         (
-            TrainingError::EventKindMismatch {
+            TrainingError::RawEventKindMismatch {
                 name: "d".into(),
                 expected: "http".into(),
                 actual: "conn".into(),
