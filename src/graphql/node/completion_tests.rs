@@ -11,20 +11,21 @@ use std::{
 use async_graphql::Value as GqlValue;
 use async_trait::async_trait;
 use review_database::{
-    AgentKind, AgentStatus, DetectionModelsSectionError, Lifecycle, ModelInstance, Node,
-    NodeProfile, NodeUpdate, OperatorValueType, Store, complete_engine_document,
-    event::LearningMethod,
+    AgentKind, AgentStatus, ClusteringModelTypeRef, CompletionMode, DetectionModelsSectionError,
+    Lifecycle, ModelInstance, Node, NodeProfile, NodeUpdate, OperatorValueType, Store,
+    complete_engine_document, event::LearningMethod,
 };
 use review_protocol::types::ResourceUsage;
 use serde_json::json;
 
 use super::{
-    engine_write::detection_models_refusal,
+    engine_write::{completion_refusal, detection_models_refusal, unsupervised_refusal},
     test_support::{node_draft_input, node_input, stored_node},
 };
 use crate::graphql::{
     AgentManager, SharedAgentManager, TestSchema,
     customer::{NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair},
+    model_test_support::TestModel,
     sampling_test_support::{insert_generator_node, insert_policy, sensor_name},
 };
 
@@ -338,7 +339,13 @@ fn profile(customer_id: u32) -> NodeProfile {
 }
 
 fn completed(document: &str) -> String {
-    complete_engine_document(AgentKind::SemiSupervised, document).expect("completes")
+    complete_engine_document(
+        AgentKind::SemiSupervised,
+        document,
+        &|_| None,
+        CompletionMode::Apply,
+    )
+    .expect("completes")
 }
 
 fn lookup_key(key: &str) -> String {
@@ -783,4 +790,396 @@ async fn a_customer_change_still_broadcasts_and_tells_the_generators() {
             "{mutation}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Unsupervised Engine documents
+//
+// review-web's own engine document checker refuses a `detection_models`
+// table before the database write, so the completion errors of such
+// documents are produced here by completing real documents as the database
+// write does, and translated below the mutations.
+
+const ENGINE: &str = "001.reconverge";
+
+fn http_url_v1() -> ClusteringModelTypeRef {
+    ClusteringModelTypeRef::Catalog {
+        id: "http_url".to_string(),
+        version: 1,
+    }
+}
+
+/// The clustering model type of the models the documents below name: `m` is
+/// `http_url` version 1, `c` is custom, and no other model exists.
+fn model_type(name: &str) -> Option<ClusteringModelTypeRef> {
+    match name {
+        "m" => Some(http_url_v1()),
+        "c" => Some(ClusteringModelTypeRef::Custom),
+        _ => None,
+    }
+}
+
+/// Returns the completion error of the Unsupervised Engine document
+/// `document` as the database write returns it.
+fn unsupervised_error(document: &str) -> DetectionModelsSectionError {
+    complete_engine_document(
+        AgentKind::Unsupervised,
+        document,
+        &model_type,
+        CompletionMode::Apply,
+    )
+    .expect_err(document)
+}
+
+/// Returns `sections` under the `detection_models` of one detector running
+/// the model `model`.
+fn detector_of(model: &str, sections: &str) -> String {
+    format!("[[detectors]]\nid = 1\nmodel = \"{model}\"\n{sections}")
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // one case per completion error
+fn every_unsupervised_completion_error_maps_to_its_code_field_and_value() {
+    const SECTION: &str = "detectors[0].detection_models";
+    let label_db_match = |columns: &str| {
+        detector_of(
+            "m",
+            &format!("[detectors.detection_models.label_db_match]\ncolumns = {columns}\n"),
+        )
+    };
+    let far_outlier = |line: &str| {
+        detector_of(
+            "m",
+            &format!("[detectors.detection_models.far_outlier]\n{line}\n"),
+        )
+    };
+    let column = |cell: &str| format!("{SECTION}.label_db_match.columns[0].{cell}");
+    let cases: Vec<(String, (&str, String, &str))> = vec![
+        // INVALID_DOCUMENT
+        (
+            "[[detectors]\n".to_string(),
+            ("INVALID_DOCUMENT", String::new(), ""),
+        ),
+        (
+            "detectors = 1\n".to_string(),
+            ("INVALID_DOCUMENT", String::new(), ""),
+        ),
+        (
+            "[[detectors]]\nid = 1\n".to_string(),
+            ("INVALID_DOCUMENT", "detectors[0].model".to_string(), ""),
+        ),
+        (
+            "[[detectors]]\nmodel = 3\n".to_string(),
+            ("INVALID_DOCUMENT", "detectors[0].model".to_string(), "3"),
+        ),
+        (
+            detector_of("m", "detection_models = 1\n"),
+            ("INVALID_DOCUMENT", SECTION.to_string(), "1"),
+        ),
+        (
+            detector_of("m", "[detectors.detection_models]\nfar_outlier = 1\n"),
+            ("INVALID_DOCUMENT", format!("{SECTION}.far_outlier"), "1"),
+        ),
+        (
+            far_outlier("enabled = 1"),
+            (
+                "INVALID_DOCUMENT",
+                format!("{SECTION}.far_outlier.enabled"),
+                "1",
+            ),
+        ),
+        (
+            label_db_match("[1]"),
+            (
+                "INVALID_DOCUMENT",
+                format!("{SECTION}.label_db_match.columns[0]"),
+                "1",
+            ),
+        ),
+        (
+            label_db_match("[{ column_ids = [1], db = 3 }]"),
+            ("INVALID_DOCUMENT", column("db"), "3"),
+        ),
+        // UNKNOWN_FIELD
+        (
+            detector_of("m", "[detectors.detection_models.no_such_model]\n"),
+            ("UNKNOWN_FIELD", format!("{SECTION}.no_such_model"), ""),
+        ),
+        (
+            detector_of("m", "[detectors.detection_models.port_scan]\n"),
+            ("UNKNOWN_FIELD", format!("{SECTION}.port_scan"), ""),
+        ),
+        (
+            far_outlier("threshold = 1"),
+            (
+                "UNKNOWN_FIELD",
+                format!("{SECTION}.far_outlier.threshold"),
+                "",
+            ),
+        ),
+        (
+            label_db_match("[{ column_ids = [1], db = \"d\", extra = 1 }]"),
+            ("UNKNOWN_FIELD", column("extra"), ""),
+        ),
+        // FIELD_NOT_ALLOWED
+        (
+            detector_of("c", "[detectors.detection_models.far_outlier]\n"),
+            ("FIELD_NOT_ALLOWED", format!("{SECTION}.far_outlier"), ""),
+        ),
+        (
+            detector_of("x", "[detectors.detection_models.label_db_match]\n"),
+            ("FIELD_NOT_ALLOWED", format!("{SECTION}.label_db_match"), ""),
+        ),
+        (
+            label_db_match("[{ db = \"d\" }]"),
+            ("FIELD_NOT_ALLOWED", column("column_ids"), ""),
+        ),
+        (
+            label_db_match("[{ column_ids = [1] }]"),
+            ("FIELD_NOT_ALLOWED", column("db"), ""),
+        ),
+        // BOUND_VIOLATED
+        (
+            detector_of(
+                "m",
+                "[detectors.detection_models.label_db_match]\nevent_range = 0\n",
+            ),
+            (
+                "BOUND_VIOLATED",
+                format!("{SECTION}.label_db_match.event_range"),
+                "0",
+            ),
+        ),
+        (
+            label_db_match("[{ column_ids = [1], db = \"d\", min_score = 0.0 }]"),
+            ("BOUND_VIOLATED", column("min_score"), "0.0"),
+        ),
+        (
+            label_db_match("[{ column_ids = [-1], db = \"d\" }]"),
+            ("BOUND_VIOLATED", column("column_ids"), "-1"),
+        ),
+        (
+            label_db_match("[{ column_ids = [], db = \"d\" }]"),
+            ("BOUND_VIOLATED", column("column_ids"), "[]"),
+        ),
+        (
+            label_db_match("[{ column_ids = [1], db = \"\" }]"),
+            ("BOUND_VIOLATED", column("db"), "\"\""),
+        ),
+    ];
+    for (document, (code, field, value)) in cases {
+        let error = unsupervised_error(&document);
+        let mapped = unsupervised_refusal(&error, ENGINE);
+        assert_eq!(
+            refusal_of_error(&mapped),
+            refusal(&error.to_string(), code, &field, value, ENGINE),
+            "{document}"
+        );
+        // A Semi-supervised Engine document never yields these errors, and
+        // its translation passes them on unchanged.
+        if !matches!(
+            error,
+            DetectionModelsSectionError::InvalidToml(_)
+                | DetectionModelsSectionError::NotATable
+                | DetectionModelsSectionError::SectionNotATable { .. }
+                | DetectionModelsSectionError::TypeMismatch { .. }
+                | DetectionModelsSectionError::UnknownModel { .. }
+                | DetectionModelsSectionError::ModelOfAnotherEngine { .. }
+                | DetectionModelsSectionError::UnknownKey { .. }
+                | DetectionModelsSectionError::OutOfRange { .. }
+        ) {
+            assert_eq!(
+                refusal_of_error(&detection_models_refusal(&error, ENGINE, &document)),
+                refusal_of_error(&mapped),
+                "{document}"
+            );
+        }
+    }
+}
+
+#[test]
+fn synthetic_errors_of_every_variant_map_by_what_they_reject() {
+    use review_database::{CellError, CellErrorKind, DetectorError};
+
+    let cell = |kind: CellErrorKind| {
+        DetectionModelsSectionError::Cell(Box::new(CellError {
+            section: "label_db_match".to_string(),
+            key: "columns".to_string(),
+            index: 2,
+            cell: "db".to_string(),
+            kind,
+        }))
+    };
+    let detector = |error: DetectionModelsSectionError, value: Option<&str>| {
+        DetectionModelsSectionError::Detector(Box::new(DetectorError {
+            index: 3,
+            error,
+            value: value.map(ToString::to_string),
+        }))
+    };
+    let db = "detectors[3].detection_models.label_db_match.columns[2].db";
+    let cases = [
+        (
+            detector(
+                cell(CellErrorKind::TypeMismatch {
+                    expected: OperatorValueType::NonEmptyString,
+                }),
+                Some("3"),
+            ),
+            ("INVALID_DOCUMENT", db, "3"),
+        ),
+        (
+            detector(cell(CellErrorKind::Unknown), None),
+            ("UNKNOWN_FIELD", db, ""),
+        ),
+        (
+            detector(cell(CellErrorKind::Missing), None),
+            ("FIELD_NOT_ALLOWED", db, ""),
+        ),
+        (
+            detector(
+                cell(CellErrorKind::OutOfRange {
+                    value: "2".to_string(),
+                    min: "0".to_string(),
+                    max: "1".to_string(),
+                }),
+                Some("2"),
+            ),
+            ("BOUND_VIOLATED", db, "2"),
+        ),
+        (
+            detector(cell(CellErrorKind::Empty), Some("\"\"")),
+            ("BOUND_VIOLATED", db, "\"\""),
+        ),
+        (
+            detector(
+                DetectionModelsSectionError::DisallowedModel {
+                    section: "far_outlier".to_string(),
+                },
+                None,
+            ),
+            (
+                "FIELD_NOT_ALLOWED",
+                "detectors[3].detection_models.far_outlier",
+                "",
+            ),
+        ),
+        (
+            DetectionModelsSectionError::DetectorsNotAnArrayOfTables,
+            ("INVALID_DOCUMENT", "", ""),
+        ),
+        (
+            DetectionModelsSectionError::InvalidToml("expected `=`".to_string()),
+            ("INVALID_DOCUMENT", "", ""),
+        ),
+    ];
+    for (error, (code, field, value)) in cases {
+        assert_eq!(
+            refusal_of_error(&unsupervised_refusal(&error, ENGINE)),
+            refusal(&error.to_string(), code, field, value, ENGINE),
+            "{error:?}"
+        );
+    }
+}
+
+fn engine(key: &str, config: Option<&str>) -> review_database::Agent {
+    review_database::Agent {
+        kind: AgentKind::Unsupervised,
+        ..hog(key, config)
+    }
+}
+
+#[tokio::test]
+async fn the_refused_unsupervised_agent_is_found_with_the_stored_model_types() {
+    let f = Fixture::new(&[(FIRST, Some(APPLIED))]).await;
+    {
+        let store = f.schema.store();
+        for (name, model_type) in [("m", http_url_v1()), ("c", ClusteringModelTypeRef::Custom)] {
+            TestModel {
+                clustering_model_type: model_type,
+                ..TestModel::new(name, 1)
+            }
+            .replace(&store);
+        }
+        update_node(&store, f.node_id, |node| {
+            node.agents.push(engine(ENGINE, None));
+            node.agents.push(engine("002.reconverge", None));
+        });
+    }
+    let stored = f.node();
+    // `far_outlier` is allowed for `m`, so its wrong-type value is what the
+    // database write refuses; without the stored type the section itself
+    // would be refused, and no agent would be found.
+    let document = detector_of(
+        "m",
+        "[detectors.detection_models.far_outlier]\nenabled = 1\n",
+    );
+    let disallowed = detector_of("c", "[detectors.detection_models.far_outlier]\n");
+    for (agent_key, document, expected) in [
+        (
+            ENGINE,
+            &document,
+            (
+                "INVALID_DOCUMENT",
+                "detectors[0].detection_models.far_outlier.enabled",
+                "1",
+            ),
+        ),
+        (
+            "002.reconverge",
+            &disallowed,
+            (
+                "FIELD_NOT_ALLOWED",
+                "detectors[0].detection_models.far_outlier",
+                "",
+            ),
+        ),
+    ] {
+        let mut new = NodeUpdate::from(stored.clone());
+        for agent in &mut new.agents {
+            if agent.key == agent_key {
+                agent.config = Some(document.clone().try_into().expect("valid TOML"));
+            }
+        }
+        let refused = unsupervised_error(document);
+        let error = anyhow::Error::new(refused.clone())
+            .context(format!("cannot complete the document of agent {agent_key}"));
+        let store = f.schema.store();
+        let mapped = completion_refusal(&error, &store, &stored, &new).expect("the agent is found");
+        let (code, field, value) = expected;
+        assert_eq!(
+            refusal_of_error(&mapped),
+            refusal(&refused.to_string(), code, field, value, agent_key)
+        );
+    }
+
+    // A Semi-supervised Engine refusal is still found among the agents and
+    // translated as before, its wrong-type value read from the document.
+    let hog_document = "[detection_models.port_scan]\nenabled = \"yes\"\n";
+    let mut new = NodeUpdate::from(stored.clone());
+    for agent in &mut new.agents {
+        if agent.key == FIRST {
+            agent.config = Some(hog_document.to_string().try_into().expect("valid TOML"));
+        }
+    }
+    let refused = complete_engine_document(
+        AgentKind::SemiSupervised,
+        hog_document,
+        &|_| None,
+        CompletionMode::Apply,
+    )
+    .expect_err("a wrong-type value");
+    let error = anyhow::Error::new(refused.clone());
+    let store = f.schema.store();
+    let mapped = completion_refusal(&error, &store, &stored, &new).expect("the agent is found");
+    assert_eq!(
+        refusal_of_error(&mapped),
+        refusal(
+            &refused.to_string(),
+            "INVALID_DOCUMENT",
+            "detection_models.port_scan.enabled",
+            "\"yes\"",
+            FIRST,
+        )
+    );
 }

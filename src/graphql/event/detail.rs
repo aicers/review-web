@@ -32,6 +32,8 @@ pub(super) enum Detail<'a> {
     DomainGenerationAlgorithm(DomainGenerationAlgorithmDetail),
     DnsCovertChannel(DnsCovertChannelDetail),
     UnusualDestinationPattern(UnusualDestinationPatternDetail<'a>),
+    LabelDbMatch(LabelDbMatchDetail<'a>),
+    FarOutlier(FarOutlierDetail<'a>),
 }
 
 impl<'a> From<&'a protocol::Detail> for Detail<'a> {
@@ -78,6 +80,10 @@ impl<'a> From<&'a protocol::Detail> for Detail<'a> {
             protocol::Detail::UnusualDestinationPattern(detail) => {
                 Self::UnusualDestinationPattern(UnusualDestinationPatternDetail(detail))
             }
+            protocol::Detail::LabelDbMatch(detail) => {
+                Self::LabelDbMatch(LabelDbMatchDetail(detail))
+            }
+            protocol::Detail::FarOutlier(detail) => Self::FarOutlier(FarOutlierDetail(detail)),
         }
     }
 }
@@ -361,6 +367,138 @@ impl UnusualDestinationPatternDetail<'_> {
 
     async fn truncated_related_ips(&self) -> StringNumber<u64> {
         StringNumber(self.0.truncated_related_ips)
+    }
+}
+
+/// The detail of a `LabelDbMatch` detection event.
+pub(super) struct LabelDbMatchDetail<'a>(&'a protocol::LabelDbMatchDetail);
+
+/// The detail of a `LabelDbMatch` detection event: the label DB rule a raw
+/// event matched.
+#[Object]
+impl LabelDbMatchDetail<'_> {
+    /// The name of the label DB that holds the matched rule.
+    async fn label_db(&self) -> &str {
+        &self.0.label_db
+    }
+
+    /// The matched rule's id within `labelDb`.
+    async fn rule_id(&self) -> StringNumber<u32> {
+        StringNumber(self.0.rule_id)
+    }
+
+    /// The matched rule's name.
+    async fn rule_name(&self) -> &str {
+        &self.0.rule_name
+    }
+
+    /// The signature that matched.
+    async fn matched_to(&self) -> &str {
+        &self.0.matched_to
+    }
+
+    /// The cluster of the round that the raw event belongs to.
+    async fn cluster_id(&self) -> StringNumber<u32> {
+        StringNumber(self.0.cluster_id)
+    }
+
+    /// The rule's confidence, 0–1; null when the rule has none.
+    async fn rule_confidence(&self) -> Option<f32> {
+        self.0.rule_confidence
+    }
+
+    /// How well the rule matched, 0–1.
+    async fn match_score(&self) -> f32 {
+        self.0.match_score
+    }
+}
+
+/// The detail of a `FarOutlier` detection event, one field per form of the
+/// measure; exactly one is non-null.
+pub(super) struct FarOutlierDetail<'a>(&'a protocol::FarOutlierDetail);
+
+/// The detail of a `FarOutlier` detection event, one field per form of the
+/// measure; exactly one is non-null.
+#[Object]
+impl FarOutlierDetail<'_> {
+    /// The prefix-approach form; non-null exactly for that form.
+    async fn prefix(&self) -> Option<FarOutlierPrefixDetail<'_>> {
+        // No wildcard arm: a form added to review-protocol must be mapped.
+        match self.0 {
+            protocol::FarOutlierDetail::Prefix {
+                nearest_cluster_id,
+                nearest_signature,
+                matched_tokens,
+                prefix_len,
+                diverged_token,
+                pattern_count,
+                truncated_in_pattern,
+            } => Some(FarOutlierPrefixDetail {
+                nearest_cluster_id: *nearest_cluster_id,
+                nearest_signature: nearest_signature.as_deref(),
+                matched_tokens: *matched_tokens,
+                prefix_len: *prefix_len,
+                diverged_token: diverged_token.as_deref(),
+                pattern_count: *pattern_count,
+                truncated_in_pattern: *truncated_in_pattern,
+            }),
+        }
+    }
+}
+
+/// The prefix-approach form of a `FarOutlier` detail, measured against the
+/// best prefix.
+pub(super) struct FarOutlierPrefixDetail<'a> {
+    nearest_cluster_id: Option<u32>,
+    nearest_signature: Option<&'a str>,
+    matched_tokens: u32,
+    prefix_len: u32,
+    diverged_token: Option<&'a str>,
+    pattern_count: u64,
+    truncated_in_pattern: u64,
+}
+
+/// The prefix-approach form of a `FarOutlier` detail, measured against the
+/// best prefix.
+#[Object]
+impl FarOutlierPrefixDetail<'_> {
+    /// The cluster of the best prefix; null when there is no cluster prefix.
+    async fn nearest_cluster_id(&self) -> Option<StringNumber<u32>> {
+        self.nearest_cluster_id.map(StringNumber)
+    }
+
+    /// The signature of the best prefix's cluster; null when there is no
+    /// cluster prefix.
+    async fn nearest_signature(&self) -> Option<&str> {
+        self.nearest_signature
+    }
+
+    /// The number of leading tokens of the outlier's pattern equal to the
+    /// best prefix's, which is also the 0-based position where they diverge.
+    async fn matched_tokens(&self) -> StringNumber<u32> {
+        StringNumber(self.matched_tokens)
+    }
+
+    /// The best prefix's length in tokens.
+    async fn prefix_len(&self) -> StringNumber<u32> {
+        StringNumber(self.prefix_len)
+    }
+
+    /// The outlier's token at the position `matchedTokens` names; null when
+    /// the pattern has no token there.
+    async fn diverged_token(&self) -> Option<&str> {
+        self.diverged_token
+    }
+
+    /// The number of the round's raw events with this pattern.
+    async fn pattern_count(&self) -> StringNumber<u64> {
+        StringNumber(self.pattern_count)
+    }
+
+    /// The number of this pattern's detection events dropped by the
+    /// per-pattern cap.
+    async fn truncated_in_pattern(&self) -> StringNumber<u64> {
+        StringNumber(self.truncated_in_pattern)
     }
 }
 

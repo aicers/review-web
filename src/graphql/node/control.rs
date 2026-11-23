@@ -958,7 +958,7 @@ async fn update_db(
             &engine_write::document_writes(&documents, Slot::Config),
         )
         .map_err(|e| {
-            engine_write::completion_refusal(&e, &stored, &new)
+            engine_write::completion_refusal(&e, &store, &stored, &new)
                 .unwrap_or_else(|| engine_write::store_refusal(e, &old, &documents))
         })?;
     let completed_drafts = completed_empty_drafts(node, &stored, &updated);

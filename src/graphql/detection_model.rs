@@ -237,15 +237,50 @@ pub(super) enum OperatorValueType {
     Float,
     /// A list of strings.
     StringList,
+    /// A list of tables, each with the cells `cells` lists.
+    TableList,
 }
 
-impl From<database::OperatorValueType> for OperatorValueType {
-    fn from(value_type: database::OperatorValueType) -> Self {
-        match value_type {
-            database::OperatorValueType::Bool => Self::Boolean,
-            database::OperatorValueType::Integer => Self::Integer,
-            database::OperatorValueType::Float => Self::Float,
-            database::OperatorValueType::StringList => Self::StringList,
+impl From<&database::OperatorValueKind> for OperatorValueType {
+    fn from(kind: &database::OperatorValueKind) -> Self {
+        // No wildcard arm: a kind added to review-database must be mapped.
+        match kind {
+            database::OperatorValueKind::Bool { .. } => Self::Boolean,
+            database::OperatorValueKind::Integer { .. } => Self::Integer,
+            database::OperatorValueKind::Float { .. } => Self::Float,
+            database::OperatorValueKind::StringList { .. } => Self::StringList,
+            database::OperatorValueKind::TableList { .. } => Self::TableList,
+        }
+    }
+}
+
+/// The type of a cell of a `TABLE_LIST` operator value's entries.
+#[derive(Clone, Copy, Debug, Enum, Eq, PartialEq)]
+pub(super) enum OperatorValueCellType {
+    /// A boolean.
+    Boolean,
+    /// A 64-bit signed integer.
+    Integer,
+    /// A 64-bit float.
+    Float,
+    /// A list of strings.
+    StringList,
+    /// A non-empty list of 64-bit signed integers.
+    IntegerList,
+    /// A non-empty string.
+    NonEmptyString,
+}
+
+impl From<&database::CellKind> for OperatorValueCellType {
+    fn from(kind: &database::CellKind) -> Self {
+        // No wildcard arm: a kind added to review-database must be mapped.
+        match kind {
+            database::CellKind::Bool { .. } => Self::Boolean,
+            database::CellKind::Integer { .. } => Self::Integer,
+            database::CellKind::Float { .. } => Self::Float,
+            database::CellKind::StringList { .. } => Self::StringList,
+            database::CellKind::IntegerList { .. } => Self::IntegerList,
+            database::CellKind::NonEmptyString { .. } => Self::NonEmptyString,
         }
     }
 }
@@ -258,42 +293,133 @@ pub(super) struct OperatorValue {
     name: String,
     /// The type of the value.
     value_type: OperatorValueType,
-    /// The default, written as a TOML value.
+    /// The default, written as a TOML value; `[]` for a `TABLE_LIST`.
     default_value: String,
-    /// The inclusive lower bound, written as a TOML value; null unless the
-    /// value is a ranged integer or float.
+    /// The lower bound, written as a TOML value; null unless the value is a
+    /// ranged integer or float. It is inclusive unless `minExclusive` is
+    /// true.
     min: Option<String>,
     /// The inclusive upper bound, written as a TOML value; null unless the
     /// value is a ranged integer or float.
     max: Option<String>,
+    /// Whether `min` is excluded: true exactly for a float range that
+    /// excludes its lower bound.
+    min_exclusive: bool,
+    /// The cells of each entry; non-null exactly for a `TABLE_LIST`.
+    cells: Option<Vec<OperatorValueCell>>,
+}
+
+/// A cell of the entries of a `TABLE_LIST` operator value.
+#[derive(Clone, Debug, PartialEq, SimpleObject)]
+pub(super) struct OperatorValueCell {
+    /// The key of the cell in an entry.
+    name: String,
+    /// The type of the cell.
+    value_type: OperatorValueCellType,
+    /// The default, written as a TOML value; null when the cell has none, and
+    /// then every entry must hold the cell.
+    default_value: Option<String>,
+    /// The lower bound, written as a TOML value; null unless the cell is a
+    /// ranged integer, float or integer list. For an `INTEGER_LIST` it bounds
+    /// each element. It is inclusive unless `minExclusive` is true.
+    min: Option<String>,
+    /// The inclusive upper bound, written as a TOML value; null unless the
+    /// cell is a ranged integer, float or integer list. For an
+    /// `INTEGER_LIST` it bounds each element.
+    max: Option<String>,
+    /// Whether `min` is excluded: true exactly for a float range that
+    /// excludes its lower bound.
+    min_exclusive: bool,
+}
+
+/// Returns a list of strings as a TOML value.
+fn string_list(items: &[&str]) -> toml::Value {
+    toml::Value::Array(items.iter().map(|s| toml::Value::from(*s)).collect())
+}
+
+/// Returns a range as the TOML text of its bounds.
+fn bounds(
+    min: impl Into<toml::Value>,
+    max: impl Into<toml::Value>,
+) -> (Option<String>, Option<String>) {
+    (Some(min.into().to_string()), Some(max.into().to_string()))
 }
 
 impl From<&database::OperatorValueSpec> for OperatorValue {
     fn from(spec: &database::OperatorValueSpec) -> Self {
-        let (default_value, range) = match spec.kind {
-            database::OperatorValueKind::Bool { default } => (toml::Value::from(default), None),
-            database::OperatorValueKind::Integer { min, max, default } => (
-                toml::Value::from(default),
-                Some((toml::Value::from(min), toml::Value::from(max))),
-            ),
-            database::OperatorValueKind::Float { min, max, default } => (
-                toml::Value::from(default),
-                Some((toml::Value::from(min), toml::Value::from(max))),
-            ),
-            database::OperatorValueKind::StringList { default } => (
-                toml::Value::Array(default.iter().map(|s| toml::Value::from(*s)).collect()),
-                None,
-            ),
+        let mut min_exclusive = false;
+        let mut cells = None;
+        let (default_value, (min, max)) = match spec.kind {
+            database::OperatorValueKind::Bool { default } => {
+                (toml::Value::from(default), (None, None))
+            }
+            database::OperatorValueKind::Integer { min, max, default } => {
+                (toml::Value::from(default), bounds(min, max))
+            }
+            database::OperatorValueKind::Float {
+                min,
+                max,
+                min_exclusive: exclusive,
+                default,
+            } => {
+                min_exclusive = exclusive;
+                (toml::Value::from(default), bounds(min, max))
+            }
+            database::OperatorValueKind::StringList { default } => {
+                (string_list(default), (None, None))
+            }
+            database::OperatorValueKind::TableList { cells: specs } => {
+                cells = Some(specs.iter().map(OperatorValueCell::from).collect());
+                (toml::Value::Array(Vec::new()), (None, None))
+            }
         };
-        let (min, max) = range.map_or((None, None), |(min, max)| {
-            (Some(min.to_string()), Some(max.to_string()))
-        });
         Self {
             name: spec.name.to_string(),
-            value_type: spec.kind.value_type().into(),
+            value_type: (&spec.kind).into(),
             default_value: default_value.to_string(),
             min,
             max,
+            min_exclusive,
+            cells,
+        }
+    }
+}
+
+impl From<&database::CellSpec> for OperatorValueCell {
+    fn from(spec: &database::CellSpec) -> Self {
+        let mut min_exclusive = false;
+        let (default_value, (min, max)) = match spec.kind {
+            database::CellKind::Bool { default } => (default.map(toml::Value::from), (None, None)),
+            database::CellKind::Integer { min, max, default } => {
+                (default.map(toml::Value::from), bounds(min, max))
+            }
+            database::CellKind::Float {
+                min,
+                max,
+                min_exclusive: exclusive,
+                default,
+            } => {
+                min_exclusive = exclusive;
+                (default.map(toml::Value::from), bounds(min, max))
+            }
+            database::CellKind::StringList { default } => (default.map(string_list), (None, None)),
+            database::CellKind::IntegerList { min, max, default } => (
+                default.map(|items| {
+                    toml::Value::Array(items.iter().map(|i| toml::Value::from(*i)).collect())
+                }),
+                bounds(min, max),
+            ),
+            database::CellKind::NonEmptyString { default } => {
+                (default.map(toml::Value::from), (None, None))
+            }
+        };
+        Self {
+            name: spec.name.to_string(),
+            value_type: (&spec.kind).into(),
+            default_value: default_value.map(|value| value.to_string()),
+            min,
+            max,
+            min_exclusive,
         }
     }
 }
@@ -324,6 +450,8 @@ mod tests {
                 default_value: "true".to_string(),
                 min: None,
                 max: None,
+                min_exclusive: false,
+                cells: None,
             }
         );
         assert_eq!(
@@ -338,12 +466,15 @@ mod tests {
                 default_value: "5".to_string(),
                 min: Some("-3".to_string()),
                 max: Some("10".to_string()),
+                min_exclusive: false,
+                cells: None,
             }
         );
         assert_eq!(
             spec(database::OperatorValueKind::Float {
                 min: 0.0,
                 max: 1.0,
+                min_exclusive: false,
                 default: 0.5,
             }),
             OperatorValue {
@@ -352,7 +483,18 @@ mod tests {
                 default_value: "0.5".to_string(),
                 min: Some("0.0".to_string()),
                 max: Some("1.0".to_string()),
+                min_exclusive: false,
+                cells: None,
             }
+        );
+        assert!(
+            spec(database::OperatorValueKind::Float {
+                min: 0.0,
+                max: 1.0,
+                min_exclusive: true,
+                default: 0.5,
+            })
+            .min_exclusive
         );
         assert_eq!(
             spec(database::OperatorValueKind::StringList { default: &["a"] }),
@@ -362,11 +504,129 @@ mod tests {
                 default_value: r#"["a"]"#.to_string(),
                 min: None,
                 max: None,
+                min_exclusive: false,
+                cells: None,
             }
         );
         assert_eq!(
             spec(database::OperatorValueKind::StringList { default: &[] }).default_value,
             "[]"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)] // one cell per kind
+    fn cells_are_written_as_toml_values() {
+        const CELLS: &[database::CellSpec] = &[
+            database::CellSpec {
+                name: "b",
+                kind: database::CellKind::Bool {
+                    default: Some(false),
+                },
+            },
+            database::CellSpec {
+                name: "i",
+                kind: database::CellKind::Integer {
+                    min: -1,
+                    max: 9,
+                    default: None,
+                },
+            },
+            database::CellSpec {
+                name: "f",
+                kind: database::CellKind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    min_exclusive: true,
+                    default: Some(0.25),
+                },
+            },
+            database::CellSpec {
+                name: "s",
+                kind: database::CellKind::StringList {
+                    default: Some(&["x", "y"]),
+                },
+            },
+            database::CellSpec {
+                name: "l",
+                kind: database::CellKind::IntegerList {
+                    min: 0,
+                    max: i64::MAX,
+                    default: Some(&[14, 15]),
+                },
+            },
+            database::CellSpec {
+                name: "n",
+                kind: database::CellKind::NonEmptyString { default: None },
+            },
+        ];
+        let value = spec(database::OperatorValueKind::TableList { cells: CELLS });
+        let cell = |name: &str,
+                    value_type,
+                    default_value: Option<&str>,
+                    range: Option<(&str, &str)>,
+                    min_exclusive| OperatorValueCell {
+            name: name.to_string(),
+            value_type,
+            default_value: default_value.map(ToString::to_string),
+            min: range.map(|(min, _)| min.to_string()),
+            max: range.map(|(_, max)| max.to_string()),
+            min_exclusive,
+        };
+        assert_eq!(
+            value,
+            OperatorValue {
+                name: "v".to_string(),
+                value_type: OperatorValueType::TableList,
+                default_value: "[]".to_string(),
+                min: None,
+                max: None,
+                min_exclusive: false,
+                cells: Some(vec![
+                    cell(
+                        "b",
+                        OperatorValueCellType::Boolean,
+                        Some("false"),
+                        None,
+                        false
+                    ),
+                    cell(
+                        "i",
+                        OperatorValueCellType::Integer,
+                        None,
+                        Some(("-1", "9")),
+                        false
+                    ),
+                    cell(
+                        "f",
+                        OperatorValueCellType::Float,
+                        Some("0.25"),
+                        Some(("0.0", "1.0")),
+                        true,
+                    ),
+                    cell(
+                        "s",
+                        OperatorValueCellType::StringList,
+                        Some(r#"["x", "y"]"#),
+                        None,
+                        false,
+                    ),
+                    cell(
+                        "l",
+                        OperatorValueCellType::IntegerList,
+                        Some("[14, 15]"),
+                        Some(("0", "9223372036854775807")),
+                        false,
+                    ),
+                    cell(
+                        "n",
+                        OperatorValueCellType::NonEmptyString,
+                        None,
+                        None,
+                        false
+                    ),
+                ]),
+            }
         );
     }
 
@@ -422,17 +682,77 @@ mod tests {
 
     #[test]
     fn every_operator_value_type_maps() {
-        use database::OperatorValueType as Type;
+        use database::{CellKind as Cell, OperatorValueKind as Kind};
 
         let cases = [
-            (Type::Bool, OperatorValueType::Boolean),
-            (Type::Integer, OperatorValueType::Integer),
-            (Type::Float, OperatorValueType::Float),
-            (Type::StringList, OperatorValueType::StringList),
+            (Kind::Bool { default: true }, OperatorValueType::Boolean),
+            (
+                Kind::Integer {
+                    min: 0,
+                    max: 1,
+                    default: 0,
+                },
+                OperatorValueType::Integer,
+            ),
+            (
+                Kind::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    min_exclusive: false,
+                    default: 0.0,
+                },
+                OperatorValueType::Float,
+            ),
+            (
+                Kind::StringList { default: &[] },
+                OperatorValueType::StringList,
+            ),
+            (Kind::TableList { cells: &[] }, OperatorValueType::TableList),
         ];
         assert_eq!(cases.len(), OperatorValueType::items().len());
-        for (database, graphql) in cases {
-            assert_eq!(OperatorValueType::from(database), graphql);
+        for (kind, graphql) in cases {
+            assert_eq!(OperatorValueType::from(&kind), graphql);
+        }
+
+        let cases = [
+            (Cell::Bool { default: None }, OperatorValueCellType::Boolean),
+            (
+                Cell::Integer {
+                    min: 0,
+                    max: 1,
+                    default: None,
+                },
+                OperatorValueCellType::Integer,
+            ),
+            (
+                Cell::Float {
+                    min: 0.0,
+                    max: 1.0,
+                    min_exclusive: false,
+                    default: None,
+                },
+                OperatorValueCellType::Float,
+            ),
+            (
+                Cell::StringList { default: None },
+                OperatorValueCellType::StringList,
+            ),
+            (
+                Cell::IntegerList {
+                    min: 0,
+                    max: 1,
+                    default: None,
+                },
+                OperatorValueCellType::IntegerList,
+            ),
+            (
+                Cell::NonEmptyString { default: None },
+                OperatorValueCellType::NonEmptyString,
+            ),
+        ];
+        assert_eq!(cases.len(), OperatorValueCellType::items().len());
+        for (kind, graphql) in cases {
+            assert_eq!(OperatorValueCellType::from(&kind), graphql);
         }
     }
 
@@ -481,19 +801,30 @@ mod tests {
             .operator_values
             .iter()
             .map(|spec| {
-                let value_type = match spec.kind.value_type() {
-                    database::OperatorValueType::Bool => "BOOLEAN",
-                    database::OperatorValueType::Integer => "INTEGER",
-                    database::OperatorValueType::Float => "FLOAT",
-                    database::OperatorValueType::StringList => "STRING_LIST",
-                };
                 let value = OperatorValue::from(spec);
+                let cells = value.cells.as_ref().map(|cells| {
+                    cells
+                        .iter()
+                        .map(|cell| {
+                            serde_json::json!({
+                                "name": cell.name,
+                                "valueType": enum_name(cell.value_type.to_value()),
+                                "defaultValue": cell.default_value,
+                                "min": cell.min,
+                                "max": cell.max,
+                                "minExclusive": cell.min_exclusive,
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                });
                 serde_json::json!({
                     "name": spec.name,
-                    "valueType": value_type,
+                    "valueType": enum_name(value.value_type.to_value()),
                     "defaultValue": value.default_value,
                     "min": value.min,
                     "max": value.max,
+                    "minExclusive": value.min_exclusive,
+                    "cells": cells,
                 })
             })
             .collect();
@@ -529,7 +860,10 @@ mod tests {
             primarySubject { kind roleSource { kind role } }
             scoreMeaning
             requiresDeviceAccountIdentification
-            operatorValues { name valueType defaultValue min max }
+            operatorValues {
+                name valueType defaultValue min max minExclusive
+                cells { name valueType defaultValue min max minExclusive }
+            }
         }
     }";
 
@@ -550,23 +884,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_current_table_has_only_the_enabled_switch() {
+    async fn every_model_but_label_db_match_has_only_the_enabled_switch() {
         let res = schema()
             .execute(Request::new(QUERY).data(RoleGuard::Role(Role::SecurityManager)))
             .await;
         assert!(res.errors.is_empty(), "{:?}", res.errors);
         let data = res.data.into_json().unwrap();
         let entries = data["detectionModelProperties"].as_array().unwrap();
+        assert_eq!(entries.len(), 20);
+        let enabled = serde_json::json!({
+            "name": "enabled",
+            "valueType": "BOOLEAN",
+            "defaultValue": "true",
+            "min": null,
+            "max": null,
+            "minExclusive": false,
+            "cells": null,
+        });
         for entry in entries {
+            if entry["detectionModel"] == "LABEL_DB_MATCH" {
+                continue;
+            }
             assert_eq!(
                 entry["operatorValues"],
-                serde_json::json!([{
-                    "name": "enabled",
-                    "valueType": "BOOLEAN",
-                    "defaultValue": "true",
-                    "min": null,
-                    "max": null,
-                }]),
+                serde_json::json!([enabled]),
                 "{entry}"
             );
         }
@@ -577,6 +918,91 @@ mod tests {
             serde_json::json!({
                 "kind": "HOST",
                 "roleSource": { "kind": "PER_EVENT", "role": null },
+            })
+        );
+        let last: Vec<_> = entries
+            .iter()
+            .skip(18)
+            .map(|entry| {
+                (
+                    entry["detectionModel"].clone(),
+                    entry["rawEventKinds"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            last,
+            [
+                (
+                    serde_json::json!("LABEL_DB_MATCH"),
+                    serde_json::json!(["HTTP"])
+                ),
+                (
+                    serde_json::json!("FAR_OUTLIER"),
+                    serde_json::json!(["HTTP"])
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn label_db_match_columns_is_a_table_list_with_its_cells() {
+        let res = schema()
+            .execute(Request::new(QUERY).data(RoleGuard::Role(Role::SecurityMonitor)))
+            .await;
+        assert!(res.errors.is_empty(), "{:?}", res.errors);
+        let data = res.data.into_json().unwrap();
+        let entries = data["detectionModelProperties"].as_array().unwrap();
+        let label_db_match = entries
+            .iter()
+            .find(|entry| entry["detectionModel"] == "LABEL_DB_MATCH")
+            .unwrap();
+        let values = label_db_match["operatorValues"].as_array().unwrap();
+        for value in values {
+            assert_eq!(value["minExclusive"], false, "{value}");
+            if value["name"] != "columns" {
+                assert_eq!(value["cells"], serde_json::Value::Null, "{value}");
+            }
+        }
+        let columns = values
+            .iter()
+            .find(|value| value["name"] == "columns")
+            .unwrap();
+        assert_eq!(
+            *columns,
+            serde_json::json!({
+                "name": "columns",
+                "valueType": "TABLE_LIST",
+                "defaultValue": "[]",
+                "min": null,
+                "max": null,
+                "minExclusive": false,
+                "cells": [
+                    {
+                        "name": "column_ids",
+                        "valueType": "INTEGER_LIST",
+                        "defaultValue": null,
+                        "min": "0",
+                        "max": "9223372036854775807",
+                        "minExclusive": false,
+                    },
+                    {
+                        "name": "db",
+                        "valueType": "NON_EMPTY_STRING",
+                        "defaultValue": null,
+                        "min": null,
+                        "max": null,
+                        "minExclusive": false,
+                    },
+                    {
+                        "name": "min_score",
+                        "valueType": "FLOAT",
+                        "defaultValue": "0.7",
+                        "min": "0.0",
+                        "max": "1.0",
+                        "minExclusive": true,
+                    },
+                ],
             })
         );
     }

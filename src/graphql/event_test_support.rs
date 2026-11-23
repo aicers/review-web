@@ -37,6 +37,7 @@ pub(crate) fn stamp() -> DetectionEventStamp {
         installed_version: None,
         installed_commit: None,
         config_revision: None,
+        clustering_model_type: None,
     }
 }
 

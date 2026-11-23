@@ -5,6 +5,11 @@
 //! `TrainModelRequest::definition`, which is its single statement; the types
 //! here mirror it field for field. Every table refuses unknown keys, so no
 //! path field, nor any other key outside the schema, is accepted.
+//!
+//! The rules of the definition's clustering model type, of its method's key
+//! table and of a custom definition are review-database's
+//! [`check_training_definition`], which runs before the rules here; this
+//! module keeps no copy of them.
 
 use std::{
     collections::HashSet,
@@ -12,70 +17,32 @@ use std::{
 };
 
 use async_graphql::Result;
-use jiff::SignedDuration;
-use review_database::{ModelMethod, Store};
+use jiff::Timestamp;
+use review_database::{
+    ClusteringModelTypeRef, ModelMethod, Store, TrainingDefinitionRefusal,
+    TrainingDefinitionRefusalCode, check_training_definition,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::graphql::{
     customer_access::customer_source_names,
     refusal::{RefusalCode, refusal},
-    rfc3339::LeapAwareTime,
+    rfc3339::{self, LeapAwareTime},
     sampling::{ShapeReference, check_policy_sources},
     toml_refusal::parse_refusal,
-    unsupervised::{DataStore, check_data_store},
+    unsupervised::{DataStore, check_data_store, data_store_retention},
 };
 
-/// The most events a training reads.
-const MAX_BATCH_SIZE: usize = 5_000_000;
-/// The longest training window, in days.
-const MAX_WINDOW_DAYS: i64 = 90;
 /// The most event ids a cluster keeps.
 const MAX_EVENT_ID_NUM: u32 = 100;
-/// The engine's `min_token_length` when a definition sets none.
-const DEFAULT_MIN_TOKEN_LENGTH: usize = 3;
-/// The Giganto event kind a `timeseries` definition trains on.
+/// The Giganto event kind a `timeseries` definition names.
 const TIMESERIES_EVENT_KIND: &str = "timeseries";
-
-/// The Giganto event kinds a `multidimension` definition can train on: the
-/// column-structured kinds.
-const MULTIDIMENSION_EVENT_KINDS: [&str; 36] = [
-    "conn",
-    "dns",
-    "http",
-    "rdp",
-    "smtp",
-    "ntlm",
-    "kerberos",
-    "ssh",
-    "dce_rpc",
-    "ftp",
-    "mqtt",
-    "ldap",
-    "tls",
-    "smb",
-    "nfs",
-    "bootp",
-    "dhcp",
-    "radius",
-    "malformed_dns",
-    "icmp",
-    "netflow5",
-    "netflow9",
-    "process_create",
-    "file_create_time",
-    "network_connect",
-    "process_terminate",
-    "image_load",
-    "file_create",
-    "registry_value_set",
-    "registry_key_rename",
-    "file_create_stream_hash",
-    "pipe_event",
-    "dns_query",
-    "file_delete",
-    "process_tamper",
-    "file_delete_detected",
-];
+/// The raw event kind a `timeseries` definition's record stores: the Giganto
+/// canonical name the engine records a time-series model's kind as.
+const TIMESERIES_RECORD_KIND: &str = "periodic_time_series";
+/// The raw event kind of every `prefix` definition, which reads the log its
+/// `log_kind` names.
+const PREFIX_RAW_EVENT_KIND: &str = "log";
 
 /// The names giganto-client 0.28.0's `RawEventKind::from_str` maps to a kind
 /// other than `Log`, aliases included (`giganto-client` `src/lib.rs`,
@@ -133,7 +100,18 @@ const NAMED_EVENT_KINDS: [&str; 44] = [
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TrainingDocument {
+    /// The clustering model type: a catalog id or `custom`. Every definition
+    /// stored by an insert or update has it; one copied from a model trained
+    /// before types existed may not.
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub(crate) model_type: Option<String>,
+    /// The version of a catalog `type`; absent for `custom`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) type_version: Option<i64>,
     pub(crate) raw_event_kind: String,
+    /// The log a `prefix` definition reads; absent for every other method.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) log_kind: Option<String>,
     pub(crate) method: Method,
     pub(crate) sources: Vec<String>,
     /// RFC 3339 with an offset, kept as text so a re-serialization keeps it.
@@ -249,15 +227,30 @@ pub(crate) enum ColumnType {
 }
 
 impl TrainingDocument {
-    /// Parses `text` and checks every rule that needs nothing stored: the
-    /// schema, the method, the event kind, `[csv]`, the bounds and the
-    /// sources' shape.
+    /// Checks `text` against its clustering model type with
+    /// [`check_training_definition`], then parses it and checks every other
+    /// rule that needs nothing stored, as [`Self::parse_and_validate`] does.
+    /// Returns the definition and the clustering model type it names.
+    ///
+    /// # Errors
+    ///
+    /// Returns the refusal of [`check_training_definition`], with its key in
+    /// `field` and its value in `value`, or a refusal of
+    /// [`Self::parse_and_validate`].
+    pub(crate) fn check(text: &str) -> Result<(Self, ClusteringModelTypeRef)> {
+        let model_type = check_type(text)?;
+        let document = Self::parse_and_validate(text)?;
+        Ok((document, model_type))
+    }
+
+    /// Parses `text` and checks every rule that needs nothing stored and is
+    /// not [`check_training_definition`]'s: the schema, the event and log
+    /// kinds, the window's order, the bounds and the sources' shape.
     ///
     /// # Errors
     ///
     /// Returns a refusal with `INVALID_DOCUMENT`, `UNKNOWN_FIELD`,
-    /// `FIELD_NOT_ALLOWED`, `EVENT_KIND_NOT_ALLOWED`, `BOUND_VIOLATED` or
-    /// `DUPLICATE_ENTRY`.
+    /// `EVENT_KIND_NOT_ALLOWED`, `BOUND_VIOLATED` or `DUPLICATE_ENTRY`.
     pub(crate) fn parse_and_validate(text: &str) -> Result<Self> {
         let document = Self::parse(text)?;
         document.validate()?;
@@ -286,33 +279,40 @@ impl TrainingDocument {
             .map_err(|e| format!("cannot serialize a training definition: {e}").into())
     }
 
+    /// Returns the raw event kind and the log kind the definition's record
+    /// stores.
+    ///
+    /// A `prefix` definition reads the log `log_kind` names, so its record
+    /// stores `log` and that name. A `timeseries` definition's record stores
+    /// `periodic_time_series`, the Giganto name the engine records a
+    /// time-series model's kind as, while its text keeps `timeseries`:
+    /// review-database refuses a run's upload, or a clone, whose raw event
+    /// kind differs from the record's. A `multidimension` definition's record
+    /// stores its text's raw event kind. Only a `prefix` record has a log
+    /// kind.
+    #[must_use]
+    pub(crate) fn record_kinds(&self) -> (String, Option<String>) {
+        match self.method {
+            Method::Prefix => (PREFIX_RAW_EVENT_KIND.to_string(), self.log_kind.clone()),
+            Method::Multidimension => (self.raw_event_kind.clone(), None),
+            Method::Timeseries => (TIMESERIES_RECORD_KIND.to_string(), None),
+        }
+    }
+
     /// Checks every rule of the definition that needs nothing stored.
     fn validate(&self) -> Result<()> {
-        self.check_method()?;
+        self.check_kinds()?;
         self.check_window()?;
         self.check_bounds()?;
         self.check_source_list()
     }
 
-    fn check_method(&self) -> Result<()> {
+    /// Checks the event kind of a `timeseries` definition and the log kind of
+    /// a `prefix` one; [`check_training_definition`] checks the rest of the
+    /// kinds.
+    fn check_kinds(&self) -> Result<()> {
         match self.method {
             Method::Timeseries => {
-                if self.csv.is_some() {
-                    return Err(refusal(
-                        RefusalCode::FieldNotAllowed,
-                        "the timeseries method does not take [csv]",
-                        "csv",
-                        "",
-                    ));
-                }
-                if let Some(field) = self.prefix_only_field() {
-                    return Err(refusal(
-                        RefusalCode::FieldNotAllowed,
-                        format!("the timeseries method does not take {field}"),
-                        field,
-                        "",
-                    ));
-                }
                 if self.raw_event_kind != TIMESERIES_EVENT_KIND {
                     return Err(refusal(
                         RefusalCode::EventKindNotAllowed,
@@ -327,48 +327,22 @@ impl TrainingDocument {
                 }
                 Ok(())
             }
-            Method::Multidimension => {
-                if self.csv.is_none() {
-                    return Err(refusal(
-                        RefusalCode::FieldNotAllowed,
-                        "the multidimension method requires [csv]",
-                        "csv",
-                        "",
-                    ));
-                }
-                if !MULTIDIMENSION_EVENT_KINDS.contains(&self.raw_event_kind.as_str()) {
-                    return Err(refusal(
-                        RefusalCode::EventKindNotAllowed,
-                        format!(
-                            "the multidimension method does not take event kind {:?}",
-                            self.raw_event_kind
-                        ),
-                        "raw_event_kind",
-                        self.raw_event_kind.as_str(),
-                    ));
-                }
-                Ok(())
-            }
+            Method::Multidimension => Ok(()),
             Method::Prefix => {
-                if self.csv.is_some() {
+                let Some(log_kind) = self.log_kind.as_deref() else {
                     return Err(refusal(
                         RefusalCode::FieldNotAllowed,
-                        "the prefix method does not take [csv]",
-                        "csv",
+                        "the prefix method requires log_kind",
+                        "log_kind",
                         "",
                     ));
-                }
-                if self.raw_event_kind.is_empty()
-                    || NAMED_EVENT_KINDS.contains(&self.raw_event_kind.as_str())
-                {
+                };
+                if log_kind.is_empty() || NAMED_EVENT_KINDS.contains(&log_kind) {
                     return Err(refusal(
                         RefusalCode::EventKindNotAllowed,
-                        format!(
-                            "the prefix method takes a log kind, not {:?}",
-                            self.raw_event_kind
-                        ),
-                        "raw_event_kind",
-                        self.raw_event_kind.as_str(),
+                        format!("the prefix method takes a log kind, not {log_kind:?}"),
+                        "log_kind",
+                        log_kind,
                     ));
                 }
                 Ok(())
@@ -376,23 +350,9 @@ impl TrainingDocument {
         }
     }
 
-    /// Returns the first field set that only the prefix method reads, if
-    /// any.
-    fn prefix_only_field(&self) -> Option<&'static str> {
-        [
-            ("min_token_length", self.min_token_length.is_some()),
-            ("max_token_length", self.max_token_length.is_some()),
-            ("max_data_len", self.max_data_len.is_some()),
-            ("long_pattern_len", self.long_pattern_len.is_some()),
-            ("suspicious_tokens", self.suspicious_tokens.is_some()),
-        ]
-        .into_iter()
-        .find_map(|(field, set)| set.then_some(field))
-    }
-
     fn check_window(&self) -> Result<()> {
-        let start = rfc3339("window_start", &self.window_start)?;
-        let end = rfc3339("window_end", &self.window_end)?;
+        let start = leap_aware("window_start", &self.window_start)?;
+        let end = leap_aware("window_end", &self.window_end)?;
         if start >= end {
             return Err(refusal(
                 RefusalCode::BoundViolated,
@@ -401,28 +361,10 @@ impl TrainingDocument {
                 self.window_end.as_str(),
             ));
         }
-        if end.duration_since(start) > SignedDuration::from_hours(MAX_WINDOW_DAYS * 24) {
-            return Err(refusal(
-                RefusalCode::BoundViolated,
-                format!("the training window is longer than {MAX_WINDOW_DAYS} days"),
-                "window_end",
-                self.window_end.as_str(),
-            ));
-        }
         Ok(())
     }
 
     fn check_bounds(&self) -> Result<()> {
-        if let Some(batch_size) = self.batch_size
-            && batch_size > MAX_BATCH_SIZE
-        {
-            return Err(refusal(
-                RefusalCode::BoundViolated,
-                format!("batch_size is larger than {MAX_BATCH_SIZE}"),
-                "batch_size",
-                batch_size.to_string(),
-            ));
-        }
         if let Some(max_event_id_num) = self.max_event_id_num
             && max_event_id_num > MAX_EVENT_ID_NUM
         {
@@ -433,22 +375,21 @@ impl TrainingDocument {
                 max_event_id_num.to_string(),
             ));
         }
-        if let Some(max_token_length) = self.max_token_length {
-            let min_token_length = self.min_token_length.unwrap_or(DEFAULT_MIN_TOKEN_LENGTH);
-            if min_token_length
+        if let (Some(max_token_length), Some(min_token_length)) =
+            (self.max_token_length, self.min_token_length)
+            && min_token_length
                 .checked_mul(2)
                 .is_none_or(|least| max_token_length < least)
-            {
-                return Err(refusal(
-                    RefusalCode::BoundViolated,
-                    format!(
-                        "max_token_length must be at least twice min_token_length \
-                         ({min_token_length})"
-                    ),
-                    "max_token_length",
-                    max_token_length.to_string(),
-                ));
-            }
+        {
+            return Err(refusal(
+                RefusalCode::BoundViolated,
+                format!(
+                    "max_token_length must be at least twice min_token_length \
+                     ({min_token_length})"
+                ),
+                "max_token_length",
+                max_token_length.to_string(),
+            ));
         }
         Ok(())
     }
@@ -472,6 +413,58 @@ impl TrainingDocument {
                     source.as_str(),
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// Checks the window against how long the Data Store `[data_store]`
+    /// names keeps raw events, as [`data_store_retention`] reads it, at
+    /// `now`: a window longer than that is refused on `window_end`, and a
+    /// `window_start` earlier than `now` less that on `window_start`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a refusal with `INVALID_DOCUMENT` for a bound that is not RFC
+    /// 3339 with an offset or `BOUND_VIOLATED`, or an error if the store
+    /// cannot be read.
+    pub(crate) fn check_retention(&self, store: &Store, now: Timestamp) -> Result<()> {
+        let retention = data_store_retention(store, &self.data_store.server_name)?;
+        let start = leap_aware("window_start", &self.window_start)?;
+        let end = leap_aware("window_end", &self.window_end)?;
+        if end.duration_since(start) > retention {
+            return Err(refusal(
+                RefusalCode::BoundViolated,
+                format!(
+                    "the training window is longer than the {retention:#} Data Store {:?} keeps \
+                     raw events for",
+                    self.data_store.server_name
+                ),
+                "window_end",
+                self.window_end.as_str(),
+            ));
+        }
+        let start = rfc3339::parse(&self.window_start).map_err(|e| {
+            refusal(
+                RefusalCode::InvalidDocument,
+                format!("window_start is not RFC 3339 with an offset{}", e.detail()),
+                "window_start",
+                self.window_start.as_str(),
+            )
+        })?;
+        if now
+            .checked_sub(retention)
+            .is_ok_and(|earliest| start < earliest)
+        {
+            return Err(refusal(
+                RefusalCode::BoundViolated,
+                format!(
+                    "window_start is earlier than the {retention:#} Data Store {:?} keeps raw \
+                     events for",
+                    self.data_store.server_name
+                ),
+                "window_start",
+                self.window_start.as_str(),
+            ));
         }
         Ok(())
     }
@@ -613,8 +606,47 @@ pub(crate) fn sources_of(text: &str) -> Vec<String> {
     toml::from_str::<TrainingDocument>(text).map_or_default(|document| document.sources)
 }
 
+/// Checks `text` against its clustering model type with
+/// [`check_training_definition`], returning the type it names.
+///
+/// # Errors
+///
+/// Returns the refusal of [`check_training_definition`], with its key in
+/// `field` and its value in `value`.
+pub(crate) fn check_type(text: &str) -> Result<ClusteringModelTypeRef> {
+    check_training_definition(text).map_err(|refused| definition_refusal(&refused))
+}
+
+/// Returns the refusal of `refused`, with its key in `field` and its value in
+/// `value`.
+fn definition_refusal(refused: &TrainingDefinitionRefusal) -> async_graphql::Error {
+    refusal(
+        definition_refusal_code(refused.code),
+        refused.message.as_str(),
+        &refused.key,
+        refused.value.as_str(),
+    )
+}
+
+/// Returns the refusal code of a [`TrainingDefinitionRefusalCode`].
+fn definition_refusal_code(code: TrainingDefinitionRefusalCode) -> RefusalCode {
+    // No wildcard arm: a code added to review-database must be mapped.
+    match code {
+        TrainingDefinitionRefusalCode::InvalidDocument => RefusalCode::InvalidDocument,
+        TrainingDefinitionRefusalCode::UnknownField => RefusalCode::UnknownField,
+        TrainingDefinitionRefusalCode::UnknownModelType => RefusalCode::UnknownModelType,
+        TrainingDefinitionRefusalCode::ModelTypeVersionMismatch => {
+            RefusalCode::ModelTypeVersionMismatch
+        }
+        TrainingDefinitionRefusalCode::EventKindNotAllowed => RefusalCode::EventKindNotAllowed,
+        TrainingDefinitionRefusalCode::FieldFixed => RefusalCode::FieldFixed,
+        TrainingDefinitionRefusalCode::FieldNotAllowed => RefusalCode::FieldNotAllowed,
+        TrainingDefinitionRefusalCode::BoundViolated => RefusalCode::BoundViolated,
+    }
+}
+
 /// Checks that `value` is RFC 3339 with an offset.
-fn rfc3339(field: &str, value: &str) -> Result<LeapAwareTime> {
+fn leap_aware(field: &str, value: &str) -> Result<LeapAwareTime> {
     LeapAwareTime::parse(value).map_err(|e| {
         refusal(
             RefusalCode::InvalidDocument,

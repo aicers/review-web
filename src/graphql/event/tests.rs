@@ -2919,6 +2919,8 @@ mod detection_event {
             "DomainGenerationAlgorithm",
             "DnsCovertChannel",
             "UnusualDestinationPattern",
+            "LabelDbMatch",
+            "FarOutlier",
         ]
         .iter()
         .map(|model| format!("{model}Detail"))
@@ -3457,6 +3459,136 @@ mod detection_event {
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
+    async fn label_db_match_and_far_outlier_details_are_returned_exactly() {
+        use review_protocol::types::{FarOutlierDetail, LabelDbMatchDetail};
+
+        // Above 2^53, where a JSON number would lose precision.
+        const WIDE: u64 = (1 << 53) + 1;
+        const RULE_CONFIDENCE: f32 = 0.7;
+        const MATCH_SCORE: f32 = 0.3;
+
+        let schema = TestSchema::new().await;
+        {
+            let store = schema.store();
+            let events = store.events();
+            for (second, detail) in [
+                Detail::LabelDbMatch(LabelDbMatchDetail {
+                    label_db: "web-rules".to_string(),
+                    rule_id: u32::MAX,
+                    rule_name: "admin path probe".to_string(),
+                    matched_to: "GET /admin".to_string(),
+                    cluster_id: u32::MAX - 1,
+                    rule_confidence: Some(RULE_CONFIDENCE),
+                    match_score: MATCH_SCORE,
+                }),
+                Detail::LabelDbMatch(LabelDbMatchDetail {
+                    label_db: "url-rules".to_string(),
+                    rule_id: 0,
+                    rule_name: "exact".to_string(),
+                    matched_to: "example.com/x".to_string(),
+                    cluster_id: 3,
+                    rule_confidence: None,
+                    match_score: 1.0,
+                }),
+                Detail::FarOutlier(FarOutlierDetail::Prefix {
+                    nearest_cluster_id: Some(u32::MAX),
+                    nearest_signature: Some("GET /api".to_string()),
+                    matched_tokens: 2,
+                    prefix_len: u32::MAX,
+                    diverged_token: Some("v9".to_string()),
+                    pattern_count: WIDE,
+                    truncated_in_pattern: u64::MAX,
+                }),
+                Detail::FarOutlier(FarOutlierDetail::Prefix {
+                    nearest_cluster_id: None,
+                    nearest_signature: None,
+                    matched_tokens: 0,
+                    prefix_len: 0,
+                    diverged_token: None,
+                    pattern_count: 1,
+                    truncated_in_pattern: 0,
+                }),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let second = i64::try_from(second).unwrap();
+                let event = subject_event(
+                    at(second),
+                    Some("sensor1"),
+                    PrimarySubject::Sensor,
+                    Vec::new(),
+                    detail,
+                );
+                events.put_event(&event).unwrap();
+            }
+        }
+
+        let fields = "detectionModel detail {
+            __typename
+            ... on LabelDbMatchDetail {
+                labelDb ruleId ruleName matchedTo clusterId ruleConfidence matchScore
+            }
+            ... on FarOutlierDetail {
+                prefix {
+                    nearestClusterId nearestSignature matchedTokens prefixLen divergedToken
+                    patternCount truncatedInPattern
+                }
+            }
+        }";
+        assert_eq!(
+            nodes(&schema, fields).await,
+            [
+                json!({ "detectionModel": "LABEL_DB_MATCH", "detail": {
+                    "__typename": "LabelDbMatchDetail",
+                    "labelDb": "web-rules",
+                    "ruleId": u32::MAX.to_string(),
+                    "ruleName": "admin path probe",
+                    "matchedTo": "GET /admin",
+                    "clusterId": (u32::MAX - 1).to_string(),
+                    "ruleConfidence": f64::from(RULE_CONFIDENCE),
+                    "matchScore": f64::from(MATCH_SCORE),
+                } }),
+                json!({ "detectionModel": "LABEL_DB_MATCH", "detail": {
+                    "__typename": "LabelDbMatchDetail",
+                    "labelDb": "url-rules",
+                    "ruleId": "0",
+                    "ruleName": "exact",
+                    "matchedTo": "example.com/x",
+                    "clusterId": "3",
+                    "ruleConfidence": null,
+                    "matchScore": 1.0,
+                } }),
+                json!({ "detectionModel": "FAR_OUTLIER", "detail": {
+                    "__typename": "FarOutlierDetail",
+                    "prefix": {
+                        "nearestClusterId": u32::MAX.to_string(),
+                        "nearestSignature": "GET /api",
+                        "matchedTokens": "2",
+                        "prefixLen": u32::MAX.to_string(),
+                        "divergedToken": "v9",
+                        "patternCount": WIDE.to_string(),
+                        "truncatedInPattern": u64::MAX.to_string(),
+                    },
+                } }),
+                json!({ "detectionModel": "FAR_OUTLIER", "detail": {
+                    "__typename": "FarOutlierDetail",
+                    "prefix": {
+                        "nearestClusterId": null,
+                        "nearestSignature": null,
+                        "matchedTokens": "0",
+                        "prefixLen": "0",
+                        "divergedToken": null,
+                        "patternCount": "1",
+                        "truncatedInPattern": "0",
+                    },
+                } }),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn every_other_detail_is_returned_as_its_own_member() {
         use review_protocol::types::{
             CryptocurrencyMiningPoolDetail, ExternalDdosDetail, FtpBruteForceDetail,
@@ -3733,6 +3865,7 @@ mod detection_event {
                 installed_version: Some("1.2.3".to_string()),
                 installed_commit: None,
                 config_revision: Some(u64::MAX),
+                clustering_model_type: None,
             },
             DetectionEventStamp {
                 installed_commit: Some("0123abc".to_string()),
@@ -4008,8 +4141,8 @@ mod filter_conditions {
             selected(&schema, "categories: [1, null]").await,
             set(&["sysmon", "host", "sensor"])
         );
-        // Every detection model is semi-supervised in review-database's
-        // property table.
+        // The seeded events are all of semi-supervised models in
+        // review-database's property table.
         assert_eq!(
             selected(&schema, "learningMethods: [SEMI_SUPERVISED]").await,
             set(&["dns", "sysmon", "host", "sensor"])
@@ -4020,9 +4153,17 @@ mod filter_conditions {
         );
         assert_eq!(selected(&schema, "learningMethods: []").await, set(&[]));
         for model in (0..=u32::from(u8::MAX)).filter_map(|n| DetectionModel::try_from(n).ok()) {
+            let expected = if matches!(
+                model,
+                DetectionModel::LabelDbMatch | DetectionModel::FarOutlier
+            ) {
+                review_database::event::LearningMethod::Unsupervised
+            } else {
+                review_database::event::LearningMethod::SemiSupervised
+            };
             assert_eq!(
                 review_database::properties(model).learning_method,
-                review_database::event::LearningMethod::SemiSupervised,
+                expected,
                 "{model:?}"
             );
         }

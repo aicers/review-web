@@ -14,6 +14,7 @@ use std::{
 };
 
 use async_graphql::Context;
+use jiff::SignedDuration;
 use review_database::{ExternalServiceConfig, Store};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -26,6 +27,12 @@ use super::{
 
 /// The key of a Data Store configuration that holds its publish address.
 const PUBLISH_SRV_ADDR: &str = "publish_srv_addr";
+/// The key of a Data Store configuration that holds how long it keeps raw
+/// events, as `humantime` text such as `100d`.
+const RETENTION: &str = "retention";
+/// How long a Data Store is taken to keep raw events when its draft states
+/// no parsable retention.
+const DEFAULT_RETENTION: SignedDuration = SignedDuration::from_hours(90 * 24);
 
 /// The Data Store a model reads its events from: the definition's
 /// `[data_store]` and an engine document's `[detectors.data_store]`.
@@ -178,6 +185,38 @@ pub(crate) fn check_data_store(
     }
 }
 
+/// Returns how long the Data Store `server_name` keeps raw events: the
+/// top-level `retention` of its stored draft, as `humantime` text such as
+/// `100d`.
+///
+/// When no listed Data Store has the name, its draft is absent, or the draft
+/// has no `retention` that parses as a duration jiff can hold, it is 90 days.
+///
+/// # Errors
+///
+/// Returns an error if the store cannot be read.
+pub(crate) fn data_store_retention(
+    store: &Store,
+    server_name: &str,
+) -> anyhow::Result<SignedDuration> {
+    let rows = listed_rows(store)
+        .map_err(|e| anyhow::anyhow!("cannot list Data Stores: {}", e.message))?;
+    Ok(rows
+        .into_iter()
+        .find(|row| row.server_name() == server_name)
+        .and_then(|row| row.draft.as_ref().and_then(retention))
+        .unwrap_or(DEFAULT_RETENTION))
+}
+
+/// Returns the top-level `retention` of a Data Store's configuration, if it
+/// has one that parses as a duration jiff can hold.
+fn retention(config: &ExternalServiceConfig) -> Option<SignedDuration> {
+    let table = config.as_ref().parse::<toml::Table>().ok()?;
+    let text = table.get(RETENTION)?.as_str()?;
+    let duration = humantime::parse_duration(text).ok()?;
+    SignedDuration::try_from(duration).ok()
+}
+
 /// Returns the hostname and the instance number `server_name` names, if it is
 /// `<instance:03>.giganto.<hostname>`.
 fn parse_server_name(server_name: &str) -> Option<(&str, u32)> {
@@ -241,5 +280,27 @@ mod tests {
             None
         );
         assert_eq!(publish_port(&config("publish_srv_addr = 38371\n")), None);
+    }
+
+    #[test]
+    fn retention_reads_the_top_level_humantime_key() {
+        let config = |text: &str| ExternalServiceConfig::try_from(text.to_string()).unwrap();
+        assert_eq!(
+            retention(&config("retention = \"100d\"\n")),
+            Some(SignedDuration::from_hours(2400))
+        );
+        assert_eq!(
+            retention(&config("retention = \"36h 30m\"\n")),
+            Some(SignedDuration::from_mins(36 * 60 + 30))
+        );
+        for text in [
+            "",
+            "[nested]\nretention = \"100d\"\n",
+            "retention = \"a while\"\n",
+            "retention = 100\n",
+            "retention = \"100000000000000000000d\"\n",
+        ] {
+            assert_eq!(retention(&config(text)), None, "{text}");
+        }
     }
 }

@@ -11,6 +11,7 @@ mod logging_tests;
 mod category;
 mod cert;
 mod cluster;
+mod clustering_model_type;
 mod config_revision;
 mod core_component;
 mod customer_data_deletion {
@@ -65,6 +66,8 @@ mod tor_exit_node;
 mod traffic_filter;
 mod training;
 mod training_result;
+#[cfg(test)]
+pub(crate) mod training_test_support;
 mod triage;
 mod trusted_domain;
 mod trusted_user_agent;
@@ -196,6 +199,7 @@ pub struct Query(SubQueryOneA, SubQueryOneB, SubQueryTwoA, SubQueryTwoB);
 struct SubQueryOneA(
     category::CategoryQuery,
     cluster::ClusterQuery,
+    clustering_model_type::ClusteringModelTypeQuery,
     customer_data_deletion::CustomerDataDeletionQuery,
     db_management::DbManagementQuery,
     detection_model::DetectionModelQuery,
