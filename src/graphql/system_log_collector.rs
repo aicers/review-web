@@ -297,8 +297,8 @@ mod tests {
         },
         customer_data_deletion::CustomerDataDeletionTarget,
         graphql::{
-            NetworksTargetAgentLookupKeysPair, SharedAgentManager, SharedPackageDeployer,
-            TestSchema,
+            NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair,
+            SharedAgentManager, SharedPackageDeployer, TestSchema,
         },
     };
 
@@ -686,14 +686,14 @@ mod tests {
 
         async fn send_agent_specific_allow_networks(
             &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
+            _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             unimplemented!("this stub answers the capability read only")
         }
 
         async fn send_agent_specific_block_networks(
             &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
+            _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             unimplemented!("this stub answers the capability read only")
         }

@@ -16,7 +16,10 @@ use review_database::{
 };
 use tokio::sync::Notify;
 
-use super::{AgentManager, TestSchema, customer::NetworksTargetAgentLookupKeysPair};
+use super::{
+    AgentManager, TestSchema,
+    customer::{NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair},
+};
 use crate::backend::{DataStoreReadEndpoint, EngineRefused};
 
 /// The port of `publish_srv_addr` in every test Data Store's draft.
@@ -195,14 +198,14 @@ impl AgentManager for Relay {
 
     async fn send_agent_specific_allow_networks(
         &self,
-        _networks: &[NetworksTargetAgentLookupKeysPair],
+        _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         anyhow::bail!("not expected to be called")
     }
 
     async fn send_agent_specific_block_networks(
         &self,
-        _networks: &[NetworksTargetAgentLookupKeysPair],
+        _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         anyhow::bail!("not expected to be called")
     }

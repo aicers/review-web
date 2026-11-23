@@ -1137,8 +1137,9 @@ mod tests {
             PackageDeployer, RunningRoxydBuild as BackendRunningRoxydBuild, ServableBuild,
         },
         graphql::{
-            BoxedHostOnboarder, Mutation, NetworksTargetAgentLookupKeysPair, Query, RoleGuard,
-            Schema, SharedAgentManager, SharedPackageDeployer, Subscription, TestSchema,
+            BoxedHostOnboarder, Mutation, NetworkListItemsTargetAgentLookupKeysPair,
+            NetworksTargetAgentLookupKeysPair, Query, RoleGuard, Schema, SharedAgentManager,
+            SharedPackageDeployer, Subscription, TestSchema,
         },
     };
 
@@ -1844,14 +1845,14 @@ mod tests {
 
         async fn send_agent_specific_allow_networks(
             &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
+            _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             unimplemented!("this stub answers the capability read only")
         }
 
         async fn send_agent_specific_block_networks(
             &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
+            _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             unimplemented!("this stub answers the capability read only")
         }

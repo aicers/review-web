@@ -3,7 +3,10 @@ use std::{collections::HashMap, time::Duration};
 use async_trait::async_trait;
 use review_protocol::types::ResourceUsage;
 
-use crate::graphql::{AgentManager, customer::NetworksTargetAgentLookupKeysPair};
+use crate::graphql::{
+    AgentManager,
+    customer::{NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair},
+};
 
 pub(super) struct MockAgentManager {
     pub(super) online_apps_by_host_id: HashMap<String, Vec<(String, String)>>,
@@ -27,14 +30,14 @@ impl AgentManager for MockAgentManager {
 
     async fn send_agent_specific_allow_networks(
         &self,
-        _networks: &[NetworksTargetAgentLookupKeysPair],
+        _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         anyhow::bail!("not expected to be called")
     }
 
     async fn send_agent_specific_block_networks(
         &self,
-        _networks: &[NetworksTargetAgentLookupKeysPair],
+        _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         anyhow::bail!("not expected to be called")
     }

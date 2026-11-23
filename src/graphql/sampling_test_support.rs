@@ -18,7 +18,8 @@ use review_protocol::types::ResourceUsage;
 use tempfile::TempDir;
 
 use super::{
-    AgentManager, SharedAgentManager, customer::NetworksTargetAgentLookupKeysPair,
+    AgentManager, SharedAgentManager,
+    customer::{NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair},
     run_test_support::insert_data_store_node,
 };
 
@@ -323,14 +324,14 @@ impl AgentManager for DeliveryRecorder {
 
     async fn send_agent_specific_allow_networks(
         &self,
-        _networks: &[NetworksTargetAgentLookupKeysPair],
+        _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         anyhow::bail!("no agent is connected")
     }
 
     async fn send_agent_specific_block_networks(
         &self,
-        _networks: &[NetworksTargetAgentLookupKeysPair],
+        _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
         anyhow::bail!("no agent is connected")
     }

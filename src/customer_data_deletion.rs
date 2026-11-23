@@ -3503,10 +3503,12 @@ mod tests {
 
     use super::*;
     use crate::backend::{AgentManager, PackageDeployer, ResourceUsage};
-    use crate::graphql::NetworksTargetAgentLookupKeysPair;
     use crate::graphql::model_test_support::{
         TestModel, insert_definition, insert_engine_node, insert_indicator,
         name_in_applied_document,
+    };
+    use crate::graphql::{
+        NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair,
     };
 
     const RECOVERY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -3760,14 +3762,14 @@ mod tests {
 
         async fn send_agent_specific_allow_networks(
             &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
+            _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> anyhow::Result<Vec<String>> {
             Ok(Vec::new())
         }
 
         async fn send_agent_specific_block_networks(
             &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
+            _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> anyhow::Result<Vec<String>> {
             Ok(Vec::new())
         }

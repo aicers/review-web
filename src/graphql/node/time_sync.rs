@@ -155,7 +155,10 @@ mod tests {
 
     use super::*;
     use crate::graphql::node::test_support::insert_active_node;
-    use crate::graphql::{AgentManager, TestSchema, customer::NetworksTargetAgentLookupKeysPair};
+    use crate::graphql::{
+        AgentManager, TestSchema,
+        customer::{NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair},
+    };
 
     const FOLLOWER: &str = "follower.example.com";
     const SERVERS: [&str; 2] = ["192.0.2.10", "ntp.example.internal"];
@@ -227,14 +230,14 @@ mod tests {
 
         async fn send_agent_specific_allow_networks(
             &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
+            _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             anyhow::bail!("not expected to be called")
         }
 
         async fn send_agent_specific_block_networks(
             &self,
-            _networks: &[NetworksTargetAgentLookupKeysPair],
+            _networks: &[NetworkListItemsTargetAgentLookupKeysPair],
         ) -> Result<Vec<String>, anyhow::Error> {
             anyhow::bail!("not expected to be called")
         }

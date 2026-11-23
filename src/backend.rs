@@ -26,7 +26,9 @@ use review_protocol::types::node::{BootstrapMaterial, DeliveryMode, FailurePolic
 use crate::customer_data_deletion::{
     CustomerDataDeletionTarget, DataStoreDeletionTarget, DataStoreRequestAnswer,
 };
-use crate::graphql::customer::NetworksTargetAgentLookupKeysPair;
+use crate::graphql::customer::{
+    NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair,
+};
 pub use crate::graphql::{ParsedCertificate, SamplingPolicy};
 
 #[async_trait]
@@ -101,14 +103,28 @@ pub trait AgentManager: Send + Sync {
         networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error>;
 
+    /// Sends each pair's allowlist items, in their stored order, to the agents
+    /// of its target lookup keys, and returns the lookup keys of the agents
+    /// that received them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the items could not be sent.
     async fn send_agent_specific_allow_networks(
         &self,
-        networks: &[NetworksTargetAgentLookupKeysPair],
+        items: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error>;
 
+    /// Sends each pair's blocklist items, in their stored order, to the agents
+    /// of its target lookup keys, and returns the lookup keys of the agents
+    /// that received them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the items could not be sent.
     async fn send_agent_specific_block_networks(
         &self,
-        networks: &[NetworksTargetAgentLookupKeysPair],
+        items: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error>;
 
     async fn broadcast_trusted_user_agent_list(

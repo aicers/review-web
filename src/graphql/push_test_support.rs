@@ -9,23 +9,32 @@ use std::{
 
 use async_trait::async_trait;
 use review_database::{
-    Agent, AgentKind, AgentStatus, HostNetworkGroup, Lifecycle, Node, NodeProfile,
+    Agent, AgentKind, AgentStatus, HostNetworkGroup, Lifecycle, NetworkListEntry, Node, NodeProfile,
 };
 use tokio::sync::Notify;
 
 use super::{
-    AgentManager, SharedAgentManager, TestSchema, customer::NetworksTargetAgentLookupKeysPair,
+    AgentManager, SharedAgentManager, TestSchema,
+    customer::{NetworkListItemsTargetAgentLookupKeysPair, NetworksTargetAgentLookupKeysPair},
 };
 
-/// One push: the target lookup keys and the group of each pair it sent.
-pub(super) type Push = Vec<(Vec<String>, HostNetworkGroup)>;
+/// One push: the target lookup keys and the payload of each pair it sent.
+type Recorded<T> = Vec<(Vec<String>, T)>;
+
+/// One internal network push: the target lookup keys and the group of each
+/// pair it sent.
+pub(super) type Push = Recorded<HostNetworkGroup>;
+
+/// One allowlist or blocklist push: the target lookup keys and the items of
+/// each pair it sent.
+pub(super) type ItemsPush = Recorded<Vec<NetworkListEntry>>;
 
 /// The pushes a [`RecordingAgentManager`] received, by kind, in order.
 #[derive(Clone, Default)]
 pub(super) struct Pushes {
     internal: Arc<Mutex<Vec<Push>>>,
-    allow: Arc<Mutex<Vec<Push>>>,
-    block: Arc<Mutex<Vec<Push>>>,
+    allow: Arc<Mutex<Vec<ItemsPush>>>,
+    block: Arc<Mutex<Vec<ItemsPush>>>,
 }
 
 impl Pushes {
@@ -35,45 +44,46 @@ impl Pushes {
     }
 
     /// Returns the allowlist pushes.
-    pub(super) fn allow(&self) -> Vec<Push> {
+    pub(super) fn allow(&self) -> Vec<ItemsPush> {
         recorded(&self.allow)
     }
 
     /// Returns the blocklist pushes.
-    pub(super) fn block(&self) -> Vec<Push> {
+    pub(super) fn block(&self) -> Vec<ItemsPush> {
         recorded(&self.block)
     }
 }
 
-fn recorded(pushes: &Mutex<Vec<Push>>) -> Vec<Push> {
+fn recorded<T: Clone>(pushes: &Mutex<Vec<T>>) -> Vec<T> {
     pushes
         .lock()
         .expect("no test thread panics while holding the lock")
         .clone()
 }
 
-fn record(
-    pushes: &Mutex<Vec<Push>>,
-    networks: &[NetworksTargetAgentLookupKeysPair],
+/// Records one push of `pairs`, each read as its target lookup keys and its
+/// payload, and returns the lookup keys it was sent to.
+fn record<P, T>(
+    pushes: &Mutex<Vec<Recorded<T>>>,
+    pairs: &[P],
+    read: impl Fn(&P) -> (&[String], T),
 ) -> Vec<String> {
+    let push: Vec<_> = pairs
+        .iter()
+        .map(|pair| {
+            let (keys, payload) = read(pair);
+            (keys.to_vec(), payload)
+        })
+        .collect();
+    let sent = push
+        .iter()
+        .flat_map(|(keys, _)| keys.iter().cloned())
+        .collect();
     pushes
         .lock()
         .expect("no test thread panics while holding the lock")
-        .push(
-            networks
-                .iter()
-                .map(|pair| {
-                    (
-                        pair.target_agent_lookup_keys().to_vec(),
-                        pair.networks().clone(),
-                    )
-                })
-                .collect(),
-        );
-    networks
-        .iter()
-        .flat_map(|pair| pair.target_agent_lookup_keys().iter().cloned())
-        .collect()
+        .push(push);
+    sent
 }
 
 /// The kind of push a [`Pause`] holds.
@@ -120,12 +130,29 @@ impl RecordingAgentManager {
         (Arc::new(manager), pushes)
     }
 
-    fn record(
+    fn record_internal(
         &self,
-        pushes: &Mutex<Vec<Push>>,
         networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
-        let sent = record(pushes, networks);
+        let sent = record(&self.pushes.internal, networks, |pair| {
+            (pair.target_agent_lookup_keys(), pair.networks().clone())
+        });
+        self.result(sent)
+    }
+
+    fn record_items(
+        &self,
+        pushes: &Mutex<Vec<ItemsPush>>,
+        items: &[NetworkListItemsTargetAgentLookupKeysPair],
+    ) -> Result<Vec<String>, anyhow::Error> {
+        let sent = record(pushes, items, |pair| {
+            (pair.target_agent_lookup_keys(), pair.items().to_vec())
+        });
+        self.result(sent)
+    }
+
+    /// Returns `sent`, or an error if every push fails.
+    fn result(&self, sent: Vec<String>) -> Result<Vec<String>, anyhow::Error> {
         if self.failing {
             anyhow::bail!("{} agents are unreachable", sent.len());
         }
@@ -165,25 +192,25 @@ impl AgentManager for RecordingAgentManager {
         &self,
         networks: &[NetworksTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
-        let sent = self.record(&self.pushes.internal, networks);
+        let sent = self.record_internal(networks);
         self.hold(PushKind::Internal).await;
         sent
     }
 
     async fn send_agent_specific_allow_networks(
         &self,
-        networks: &[NetworksTargetAgentLookupKeysPair],
+        items: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
-        let sent = self.record(&self.pushes.allow, networks);
+        let sent = self.record_items(&self.pushes.allow, items);
         self.hold(PushKind::Allow).await;
         sent
     }
 
     async fn send_agent_specific_block_networks(
         &self,
-        networks: &[NetworksTargetAgentLookupKeysPair],
+        items: &[NetworkListItemsTargetAgentLookupKeysPair],
     ) -> Result<Vec<String>, anyhow::Error> {
-        self.record(&self.pushes.block, networks)
+        self.record_items(&self.pushes.block, items)
     }
 
     async fn online_apps_by_host_id(

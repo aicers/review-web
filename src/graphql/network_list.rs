@@ -13,7 +13,7 @@ use review_database::{self as database, NetworkListReplaceOutcome, Store};
 use tracing::{error, info};
 
 use super::customer::{
-    HostNetworkGroup, HostNetworkGroupInput, NetworksTargetAgentLookupKeysPair,
+    HostNetworkGroup, HostNetworkGroupInput, NetworkListItemsTargetAgentLookupKeysPair,
     send_agent_specific_allow_networks, send_agent_specific_block_networks,
 };
 use super::customer_access::check_customer_membership;
@@ -103,30 +103,24 @@ pub(super) async fn lock_network_lists<'a>(ctx: &Context<'a>) -> Result<NetworkL
     })
 }
 
-/// Returns the merged allowlist of a customer, or an empty group if none is
-/// stored for it.
+/// Returns the allowlist items of a customer, with their IDs, names and
+/// groups, in stored order, or an empty vector if none is stored for it.
 ///
 /// # Errors
 ///
 /// Returns an error if the stored row could not be read or decoded.
-pub fn get_allow_networks(db: &Store, customer_id: u32) -> Result<database::HostNetworkGroup> {
-    Ok(db
-        .network_lists_map()
-        .get(customer_id)?
-        .map_or_default(|set| set.merged_allowlist()))
+pub fn get_allow_networks(db: &Store, customer_id: u32) -> Result<Vec<database::NetworkListEntry>> {
+    Ok(db.network_lists_map().allowlist_items(customer_id)?)
 }
 
-/// Returns the merged blocklist of a customer, or an empty group if none is
-/// stored for it.
+/// Returns the blocklist items of a customer, with their IDs, names and
+/// groups, in stored order, or an empty vector if none is stored for it.
 ///
 /// # Errors
 ///
 /// Returns an error if the stored row could not be read or decoded.
-pub fn get_block_networks(db: &Store, customer_id: u32) -> Result<database::HostNetworkGroup> {
-    Ok(db
-        .network_lists_map()
-        .get(customer_id)?
-        .map_or_default(|set| set.merged_blocklist()))
+pub fn get_block_networks(db: &Store, customer_id: u32) -> Result<Vec<database::NetworkListEntry>> {
+    Ok(db.network_lists_map().blocklist_items(customer_id)?)
 }
 
 #[derive(Default)]
@@ -181,21 +175,14 @@ impl NetworkListMutation {
         let allowlist = validate_list(NetworkList::Allowlist, allowlist)?;
         let blocklist = validate_list(NetworkList::Blocklist, blocklist)?;
 
-        let set = database::NetworkListSet {
-            revision,
-            allowlist,
-            blocklist,
-            updated_at: jiff::Timestamp::now(),
-        };
-        let merged = (set.merged_allowlist(), set.merged_blocklist());
         let _lock = lock_network_lists(ctx).await?;
         let pushes = {
             let store = crate::graphql::get_store(ctx)?;
             let outcome = store.network_lists_map().replace(
                 customer_id,
                 revision,
-                set.allowlist,
-                set.blocklist,
+                allowlist.clone(),
+                blocklist.clone(),
             )?;
             let previous = match outcome {
                 NetworkListReplaceOutcome::Written { previous } => previous,
@@ -205,7 +192,13 @@ impl NetworkListMutation {
                 ctx,
                 "Network lists of customer {customer_id} have been replaced at revision {revision}"
             );
-            hog_pushes(ctx, &store, customer_id, previous.as_ref(), merged)
+            hog_pushes(
+                ctx,
+                &store,
+                customer_id,
+                previous.as_ref(),
+                (allowlist, blocklist),
+            )
         };
         send_pushes(ctx, customer_id, pushes).await;
 
@@ -376,29 +369,39 @@ fn validate_list(
         .collect()
 }
 
+/// The items of the allowlist and the blocklist, in that order.
+type ListItems = (
+    Vec<database::NetworkListEntry>,
+    Vec<database::NetworkListEntry>,
+);
+
 /// Returns the pushes that bring the customer's hog agents from `previous` to
-/// the merged `(allowlist, blocklist)` in `current`: one for each list whose
-/// merged group changed, to the hog agents of the customer's nodes.
+/// the `(allowlist, blocklist)` items in `current`: one for each list whose
+/// items changed, to the hog agents of the customer's nodes.
 ///
-/// An absent `previous` counts as two empty lists. A push only swaps hog's
-/// filter, so a list whose merged group is unchanged is skipped only because
-/// there is nothing to send.
+/// Items are compared by ID, name and group, in order, so a list whose entries
+/// were only renamed, renumbered or reordered is pushed too: hog names the
+/// entry it matched by its ID. An absent `previous` counts as two empty lists.
+/// A push carries the list's full items, so a list whose items are unchanged
+/// is skipped only because there is nothing to send.
 fn hog_pushes(
     ctx: &Context<'_>,
     store: &Store,
     customer_id: u32,
     previous: Option<&database::NetworkListSet>,
-    current: (database::HostNetworkGroup, database::HostNetworkGroup),
-) -> Vec<(NetworkList, NetworksTargetAgentLookupKeysPair)> {
-    let (previous_allowlist, previous_blocklist) =
-        previous.map_or_default(|set| (set.merged_allowlist(), set.merged_blocklist()));
+    current: ListItems,
+) -> Vec<(NetworkList, NetworkListItemsTargetAgentLookupKeysPair)> {
+    let no_items: &[database::NetworkListEntry] = &[];
+    let (previous_allowlist, previous_blocklist) = previous.map_or((no_items, no_items), |set| {
+        (set.allowlist.as_slice(), set.blocklist.as_slice())
+    });
     let (allowlist, blocklist) = current;
     let changed: Vec<_> = [
         (NetworkList::Allowlist, allowlist, previous_allowlist),
         (NetworkList::Blocklist, blocklist, previous_blocklist),
     ]
     .into_iter()
-    .filter(|(_, current, previous)| current != previous)
+    .filter(|(_, current, previous)| current.as_slice() != *previous)
     .map(|(list, current, _)| (list, current))
     .collect();
     if changed.is_empty() {
@@ -411,11 +414,11 @@ fn hog_pushes(
     };
     changed
         .into_iter()
-        .map(|(list, group)| {
+        .map(|(list, items)| {
             (
                 list,
-                NetworksTargetAgentLookupKeysPair::new(
-                    group,
+                NetworkListItemsTargetAgentLookupKeysPair::new(
+                    items,
                     agent_lookup_keys.clone(),
                     SEMI_SUPERVISED_AGENT,
                 ),
@@ -429,7 +432,7 @@ fn hog_pushes(
 async fn send_pushes(
     ctx: &Context<'_>,
     customer_id: u32,
-    pushes: Vec<(NetworkList, NetworksTargetAgentLookupKeysPair)>,
+    pushes: Vec<(NetworkList, NetworkListItemsTargetAgentLookupKeysPair)>,
 ) {
     for (list, push) in pushes {
         let sent = match list {
@@ -449,14 +452,15 @@ async fn send_pushes(
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use review_database::{HostNetworkGroup, NetworkListEntry};
+    use review_database::{HostNetworkGroup, NetworkListEntry, Store};
     use serde_json::{Value, json};
 
     use super::{get_allow_networks, get_block_networks};
     use crate::graphql::{
         Role, TestSchema,
         push_test_support::{
-            Push, PushKind, failing_schema, group, insert_node, paused_schema, recording_schema,
+            ItemsPush, Push, PushKind, failing_schema, group, insert_node, paused_schema,
+            recording_schema,
         },
     };
 
@@ -502,11 +506,23 @@ mod tests {
     const SCANNER: &str = r#"{ hosts: ["192.0.2.1"], networks: [], ranges: [] }"#;
 
     fn stored_entry(name: &str, group: HostNetworkGroup) -> NetworkListEntry {
+        stored_entry_with_id(entry_id(name), name, group)
+    }
+
+    fn stored_entry_with_id(id: u64, name: &str, group: HostNetworkGroup) -> NetworkListEntry {
         NetworkListEntry {
-            id: entry_id(name),
+            id,
             name: name.to_string(),
             group,
         }
+    }
+
+    fn office() -> HostNetworkGroup {
+        group(&[], &["10.0.0.0/8"], &[])
+    }
+
+    fn scanner() -> HostNetworkGroup {
+        group(&["192.0.2.1"], &[], &[])
     }
 
     fn data(res: async_graphql::Response) -> Value {
@@ -796,8 +812,8 @@ mod tests {
             error_message(&res),
             "allowlist entry name must not be empty"
         );
-        assert_eq!(pushes.allow(), Vec::<Push>::new());
-        assert_eq!(pushes.block(), Vec::<Push>::new());
+        assert_eq!(pushes.allow(), Vec::<ItemsPush>::new());
+        assert_eq!(pushes.block(), Vec::<ItemsPush>::new());
 
         // The limits themselves are accepted, and a name may be in both lists.
         let max_entries = (0..256)
@@ -881,16 +897,23 @@ mod tests {
             )
             .await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "1" }));
-        let merged = group(
-            &["192.168.0.1"],
-            &["10.0.0.0/8", "2001:db8::/32"],
-            &[("172.16.0.1", "172.16.0.9")],
-        );
-        assert_eq!(pushes.allow(), vec![vec![(n7.clone(), merged)]]);
-        assert_eq!(pushes.block(), Vec::<Push>::new());
+        let items = vec![
+            stored_entry("office", office()),
+            stored_entry(
+                "edge",
+                group(
+                    &["192.168.0.1"],
+                    &["2001:db8::/32"],
+                    &[("172.16.0.1", "172.16.0.9")],
+                ),
+            ),
+        ];
+        assert_eq!(pushes.allow(), vec![vec![(n7.clone(), items)]]);
+        assert_eq!(pushes.block(), Vec::<ItemsPush>::new());
         assert_eq!(pushes.internal(), Vec::<Push>::new());
 
-        // Renaming the entries and splitting them differently pushes nothing.
+        // Renaming the entries and splitting them differently covers the same
+        // addresses, but hog names the entry it matched, so it is pushed.
         let renamed = [
             entry(
                 "a",
@@ -906,23 +929,38 @@ mod tests {
             .execute_as_system_admin(&replace("7", "2", &renamed, ""))
             .await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "2" }));
-        assert_eq!((pushes.allow().len(), pushes.block().len()), (1, 0));
+        let renamed_items = vec![
+            stored_entry("a", group(&["192.168.0.1"], &["10.0.0.0/8"], &[])),
+            stored_entry(
+                "b",
+                group(
+                    &[],
+                    &["2001:db8::/32", "10.0.0.0/8"],
+                    &[("172.16.0.1", "172.16.0.9")],
+                ),
+            ),
+        ];
+        assert_eq!(
+            pushes.allow().get(1),
+            Some(&vec![(n7.clone(), renamed_items)])
+        );
+        assert_eq!((pushes.allow().len(), pushes.block().len()), (2, 0));
 
         // A blocklist change pushes only the blocklist.
         let res = schema
             .execute_as_system_admin(&replace("7", "3", &renamed, &entry("scanner", SCANNER)))
             .await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "3" }));
-        assert_eq!(pushes.allow().len(), 1);
+        assert_eq!(pushes.allow().len(), 2);
         assert_eq!(
             pushes.block(),
-            vec![vec![(n7.clone(), group(&["192.0.2.1"], &[], &[]))]]
+            vec![vec![(n7.clone(), vec![stored_entry("scanner", scanner())])]]
         );
         assert_eq!(pushes.internal(), Vec::<Push>::new());
     }
 
     #[tokio::test]
-    async fn remove_pushes_empty_groups_for_non_empty_lists() {
+    async fn remove_pushes_empty_item_lists_for_non_empty_lists() {
         let (schema, pushes) = recording_schema().await;
         insert_node(&schema, 7, "n7.example.com");
         insert_node(&schema, 8, "n8.example.com");
@@ -950,11 +988,8 @@ mod tests {
 
         let res = schema.execute_as_system_admin(&remove("7")).await;
         assert_eq!(data(res), json!({ "removeNetworkLists": true }));
-        assert_eq!(
-            pushes.allow(),
-            vec![vec![(n7.clone(), HostNetworkGroup::default())]]
-        );
-        assert_eq!(pushes.block(), Vec::<Push>::new());
+        assert_eq!(pushes.allow(), vec![vec![(n7.clone(), Vec::new())]]);
+        assert_eq!(pushes.block(), Vec::<ItemsPush>::new());
 
         // Nothing was removed, so nothing is pushed.
         let res = schema.execute_as_system_admin(&remove("7")).await;
@@ -965,14 +1000,8 @@ mod tests {
         let res = schema.execute_as_system_admin(&remove("8")).await;
         assert_eq!(data(res), json!({ "removeNetworkLists": true }));
         let n8 = vec!["001.hog.n8.example.com".to_string()];
-        assert_eq!(
-            pushes.allow()[1],
-            vec![(n8.clone(), HostNetworkGroup::default())]
-        );
-        assert_eq!(
-            pushes.block(),
-            vec![vec![(n8, HostNetworkGroup::default())]]
-        );
+        assert_eq!(pushes.allow().get(1), Some(&vec![(n8.clone(), Vec::new())]));
+        assert_eq!(pushes.block(), vec![vec![(n8, Vec::new())]]);
         assert_eq!(pushes.internal(), Vec::<Push>::new());
     }
 
@@ -990,10 +1019,20 @@ mod tests {
             ))
             .await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "1" }));
+        // A changing replacement does not push either.
+        let res = schema
+            .execute_as_system_admin(&replace(
+                "7",
+                "2",
+                &entry("partner", SCANNER),
+                &entry("botnet", OFFICE),
+            ))
+            .await;
+        assert_eq!(data(res), json!({ "replaceNetworkLists": "2" }));
         let res = schema.execute_as_system_admin(&remove("7")).await;
         assert_eq!(data(res), json!({ "removeNetworkLists": true }));
-        assert_eq!(pushes.allow(), Vec::<Push>::new());
-        assert_eq!(pushes.block(), Vec::<Push>::new());
+        assert_eq!(pushes.allow(), Vec::<ItemsPush>::new());
+        assert_eq!(pushes.block(), Vec::<ItemsPush>::new());
     }
 
     #[tokio::test]
@@ -1025,8 +1064,10 @@ mod tests {
         let (schema, pushes, pause) = paused_schema(PushKind::Allow).await;
         insert_node(&schema, CUSTOMER, "n.example.com");
         let target = vec!["001.hog.n.example.com".to_string()];
-        let office = group(&[], &["10.0.0.0/8"], &[]);
-        let scanner = group(&["192.0.2.1"], &[], &[]);
+        let older_allowlist = vec![stored_entry("a", office())];
+        let older_blocklist = vec![stored_entry("b", scanner())];
+        let newer_allowlist = vec![stored_entry("a", scanner())];
+        let newer_blocklist = vec![stored_entry("b", office())];
         let id = CUSTOMER.to_string();
         let older = replace(&id, "5", &entry("a", OFFICE), &entry("b", SCANNER));
         let newer = replace(&id, "6", &entry("a", SCANNER), &entry("b", OFFICE));
@@ -1047,8 +1088,11 @@ mod tests {
                 while schema.network_lists_lock_users() < 2 && !newer_done.load(Ordering::SeqCst) {
                     tokio::task::yield_now().await;
                 }
-                assert_eq!(pushes.allow(), vec![vec![(target.clone(), office.clone())]]);
-                assert_eq!(pushes.block(), Vec::<Push>::new());
+                assert_eq!(
+                    pushes.allow(),
+                    vec![vec![(target.clone(), older_allowlist.clone())]]
+                );
+                assert_eq!(pushes.block(), Vec::<ItemsPush>::new());
                 pause.release.notify_one();
             },
         );
@@ -1058,13 +1102,16 @@ mod tests {
         assert_eq!(
             pushes.allow(),
             vec![
-                vec![(target.clone(), office.clone())],
-                vec![(target.clone(), scanner.clone())],
+                vec![(target.clone(), older_allowlist)],
+                vec![(target.clone(), newer_allowlist)],
             ]
         );
         assert_eq!(
             pushes.block(),
-            vec![vec![(target.clone(), scanner)], vec![(target, office)]]
+            vec![
+                vec![(target.clone(), older_blocklist)],
+                vec![(target, newer_blocklist)],
+            ]
         );
         let stored = schema.store().network_lists_map().get(CUSTOMER).unwrap();
         assert_eq!(stored.map(|set| set.revision), Some(6));
@@ -1073,7 +1120,10 @@ mod tests {
 
     /// Returns what `get_allow_networks` and `get_block_networks` return for
     /// the customer.
-    fn served(schema: &TestSchema, customer_id: u32) -> (HostNetworkGroup, HostNetworkGroup) {
+    fn served(
+        schema: &TestSchema,
+        customer_id: u32,
+    ) -> (Vec<NetworkListEntry>, Vec<NetworkListEntry>) {
         let store = schema.store();
         (
             get_allow_networks(&store, customer_id).unwrap(),
@@ -1098,18 +1148,48 @@ mod tests {
             .execute_as_system_admin(&replace("0", "1", &allowlist, &entry("scanner", SCANNER)))
             .await;
         assert_eq!(data(res), json!({ "replaceNetworkLists": "1" }));
+        // Each reader returns the items of its own list, in stored order.
         assert_eq!(
             served(&schema, 0),
             (
-                group(
-                    &["192.168.0.1"],
-                    &["172.16.0.0/12"],
-                    &[("10.1.0.1", "10.1.0.9")]
-                ),
-                group(&["192.0.2.1"], &[], &[]),
+                vec![
+                    stored_entry("office", group(&["192.168.0.1"], &[], &[])),
+                    stored_entry(
+                        "partner",
+                        group(&[], &["172.16.0.0/12"], &[("10.1.0.1", "10.1.0.9")]),
+                    ),
+                ],
+                vec![stored_entry("scanner", scanner())],
             )
         );
         assert_eq!(served(&schema, 1), Default::default());
+
+        // The order is the replacement's, not a sorted one.
+        let reordered = [
+            entry(
+                "partner",
+                r#"{ hosts: [], networks: ["172.16.0.0/12"], ranges: [] }"#,
+            ),
+            entry(
+                "office",
+                r#"{ hosts: ["192.168.0.1"], networks: [], ranges: [] }"#,
+            ),
+        ]
+        .join(", ");
+        let res = schema
+            .execute_as_system_admin(&replace("0", "2", "", &reordered))
+            .await;
+        assert_eq!(data(res), json!({ "replaceNetworkLists": "2" }));
+        assert_eq!(
+            served(&schema, 0),
+            (
+                Vec::new(),
+                vec![
+                    stored_entry("partner", group(&[], &["172.16.0.0/12"], &[])),
+                    stored_entry("office", group(&["192.168.0.1"], &[], &[])),
+                ],
+            )
+        );
 
         let res = schema.execute_as_system_admin(&remove("0")).await;
         assert_eq!(data(res), json!({ "removeNetworkLists": true }));
@@ -1207,5 +1287,194 @@ mod tests {
                 "blocklist": [{ "id": WIDE_ID.to_string(), "name": "scanner" }],
             } })
         );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // one step per kind of item change
+    async fn replace_pushes_a_list_whose_items_change_in_name_id_or_order_only() {
+        let (schema, pushes) = recording_schema().await;
+        insert_node(&schema, 7, "n7.example.com");
+        let n7 = vec!["001.hog.n7.example.com".to_string()];
+        let blocklist = entry_with_id(3, "scanner", SCANNER);
+        let send = |revision: &'static str, allowlist: String, blocklist: String| {
+            let schema = &schema;
+            async move {
+                schema
+                    .execute_as_system_admin(&replace("7", revision, &allowlist, &blocklist))
+                    .await
+            }
+        };
+
+        let res = send(
+            "1",
+            [
+                entry_with_id(1, "office", OFFICE),
+                entry_with_id(2, "partner", SCANNER),
+            ]
+            .join(", "),
+            blocklist.clone(),
+        )
+        .await;
+        assert_eq!(data(res), json!({ "replaceNetworkLists": "1" }));
+        assert_eq!((pushes.allow().len(), pushes.block().len()), (1, 1));
+
+        // Only a name changes.
+        let res = send(
+            "2",
+            [
+                entry_with_id(1, "main office", OFFICE),
+                entry_with_id(2, "partner", SCANNER),
+            ]
+            .join(", "),
+            blocklist.clone(),
+        )
+        .await;
+        assert_eq!(data(res), json!({ "replaceNetworkLists": "2" }));
+        assert_eq!(
+            pushes.allow().last(),
+            Some(&vec![(
+                n7.clone(),
+                vec![
+                    stored_entry_with_id(1, "main office", office()),
+                    stored_entry_with_id(2, "partner", scanner()),
+                ]
+            )])
+        );
+        assert_eq!((pushes.allow().len(), pushes.block().len()), (2, 1));
+
+        // Only an ID changes.
+        let res = send(
+            "3",
+            [
+                entry_with_id(10, "main office", OFFICE),
+                entry_with_id(2, "partner", SCANNER),
+            ]
+            .join(", "),
+            blocklist.clone(),
+        )
+        .await;
+        assert_eq!(data(res), json!({ "replaceNetworkLists": "3" }));
+        assert_eq!(
+            pushes.allow().last(),
+            Some(&vec![(
+                n7.clone(),
+                vec![
+                    stored_entry_with_id(10, "main office", office()),
+                    stored_entry_with_id(2, "partner", scanner()),
+                ]
+            )])
+        );
+        assert_eq!((pushes.allow().len(), pushes.block().len()), (3, 1));
+
+        // Only the order changes.
+        let reordered = [
+            entry_with_id(2, "partner", SCANNER),
+            entry_with_id(10, "main office", OFFICE),
+        ]
+        .join(", ");
+        let res = send("4", reordered.clone(), blocklist.clone()).await;
+        assert_eq!(data(res), json!({ "replaceNetworkLists": "4" }));
+        assert_eq!(
+            pushes.allow().last(),
+            Some(&vec![(
+                n7.clone(),
+                vec![
+                    stored_entry_with_id(2, "partner", scanner()),
+                    stored_entry_with_id(10, "main office", office()),
+                ]
+            )])
+        );
+        assert_eq!((pushes.allow().len(), pushes.block().len()), (4, 1));
+
+        // Identical items in the same order push nothing, even at a new
+        // revision.
+        let res = send("5", reordered.clone(), blocklist.clone()).await;
+        assert_eq!(data(res), json!({ "replaceNetworkLists": "5" }));
+        assert_eq!((pushes.allow().len(), pushes.block().len()), (4, 1));
+
+        // A change to the blocklist alone pushes only the blocklist.
+        let res = send(
+            "6",
+            reordered.clone(),
+            entry_with_id(3, "scanners", SCANNER),
+        )
+        .await;
+        assert_eq!(data(res), json!({ "replaceNetworkLists": "6" }));
+        assert_eq!(
+            pushes.block().last(),
+            Some(&vec![(
+                n7.clone(),
+                vec![stored_entry_with_id(3, "scanners", scanner())]
+            )])
+        );
+        assert_eq!((pushes.allow().len(), pushes.block().len()), (4, 2));
+
+        // A stale replacement that would change both lists pushes nothing.
+        let res = send("5", entry_with_id(4, "other", OFFICE), String::new()).await;
+        assert_eq!(error_message(&res), "stale revision");
+        assert_eq!((pushes.allow().len(), pushes.block().len()), (4, 2));
+    }
+
+    #[tokio::test]
+    async fn pushed_ids_are_the_ids_given() {
+        // Above 2^53, where a JSON number would lose precision.
+        const WIDE_ID: u64 = (1 << 53) + 1;
+
+        let (schema, pushes) = recording_schema().await;
+        insert_node(&schema, 7, "n7.example.com");
+        let allowlist = [
+            entry_with_id(WIDE_ID, "office", OFFICE),
+            entry_with_id(u64::MAX, "partner", SCANNER),
+        ]
+        .join(", ");
+        let blocklist = entry_with_id(WIDE_ID, "scanner", SCANNER);
+        let res = schema
+            .execute_as_system_admin(&replace("7", "1", &allowlist, &blocklist))
+            .await;
+        assert_eq!(data(res), json!({ "replaceNetworkLists": "1" }));
+
+        let ids = |pushes: Vec<ItemsPush>| -> Vec<Vec<u64>> {
+            pushes
+                .into_iter()
+                .flatten()
+                .map(|(_, items)| items.into_iter().map(|item| item.id).collect())
+                .collect()
+        };
+        assert_eq!(ids(pushes.allow()), vec![vec![WIDE_ID, u64::MAX]]);
+        assert_eq!(ids(pushes.block()), vec![vec![WIDE_ID]]);
+    }
+
+    #[test]
+    fn get_allow_and_block_networks_fail_on_an_undecodable_row() {
+        const CUSTOMER_ID: u32 = 7;
+        const STATES_DIRECTORY: &str = "states.db";
+        const NETWORK_LISTS_COLUMN_FAMILY: &str = "network lists";
+
+        let db_dir = tempfile::tempdir().unwrap();
+        let backup_dir = tempfile::tempdir().unwrap();
+        {
+            // Match review-database's layout and write an undecodable row.
+            // Close the raw database before Store opens it and creates the
+            // remaining tables.
+            let mut options = rocksdb::Options::default();
+            options.create_if_missing(true);
+            options.create_missing_column_families(true);
+            let db = rocksdb::OptimisticTransactionDB::<rocksdb::SingleThreaded>::open_cf(
+                &options,
+                db_dir.path().join(STATES_DIRECTORY),
+                [NETWORK_LISTS_COLUMN_FAMILY],
+            )
+            .unwrap();
+            let column_family = db.cf_handle(NETWORK_LISTS_COLUMN_FAMILY).unwrap();
+            db.put_cf(column_family, CUSTOMER_ID.to_be_bytes(), [0xff])
+                .unwrap();
+        }
+        let store = Store::new(db_dir.path(), backup_dir.path(), None).unwrap();
+
+        assert!(get_allow_networks(&store, CUSTOMER_ID).is_err());
+        assert!(get_block_networks(&store, CUSTOMER_ID).is_err());
+        // Another customer's row is not read.
+        assert_eq!(get_allow_networks(&store, CUSTOMER_ID + 1).unwrap(), []);
+        assert_eq!(get_block_networks(&store, CUSTOMER_ID + 1).unwrap(), []);
     }
 }
