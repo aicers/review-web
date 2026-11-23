@@ -1934,35 +1934,36 @@ fn inline_detectors(document: &str) -> String {
 }
 
 #[tokio::test]
-async fn a_completion_refusal_of_an_unsupervised_document_refuses_the_whole_apply() {
+async fn an_inline_array_of_detectors_is_refused_as_the_database_write_refuses_it() {
     let f = fixture().await;
-    // review-web's own checker takes an inline array of detectors, which the
-    // database write's completion refuses.
-    let document = inline_detectors(&f.valid());
-    for mutation in ["applyNode", "applyNodeDraft"] {
+    // The database write's completion refuses an inline array of detectors as
+    // a whole, checking none of its sections, so the checker refuses it first,
+    // with the message, code, `field` and `value` the completion refusal
+    // mapper gives the same refusal.
+    let document = inline_detectors(&f.doc(
+        "model-a",
+        &[&f.sensor_a],
+        "detection_models = { far_outlier = {} }",
+    ));
+    let expected = json!({
+        "code": "INVALID_DOCUMENT",
+        "field": "",
+        "value": "",
+    });
+    let res = f.save(&f.engine_a, Some(&document)).await;
+    let (message, extensions) = single_error(&res);
+    assert_eq!(message, "`detectors` is not an array of tables");
+    assert_eq!(extensions, expected);
+    assert_eq!(f.agent(&f.engine_a).draft, None);
+    for mutation in MUTATIONS {
         f.seed(&f.engine_a, Some(&document));
-        let node = f.node(f.engine_a.node_id);
-        let query = if mutation == "applyNode" {
-            apply(&node)
-        } else {
-            apply_draft(&node)
-        };
-        let res = f.sec(&query, &[A]).await;
+        let res = f.apply_through(mutation).await;
         let (message, extensions) = single_error(&res);
         assert_eq!(
             message, "`detectors` is not an array of tables",
             "{mutation}"
         );
-        assert_eq!(
-            extensions,
-            json!({
-                "code": "INVALID_DOCUMENT",
-                "field": "",
-                "value": "",
-                "agentKey": ENGINE_KEY,
-            }),
-            "{mutation}"
-        );
+        assert_eq!(extensions, expected, "{mutation}");
         assert_eq!(f.agent(&f.engine_a).config, None, "{mutation}");
         assert_eq!(f.refs(&f.engine_a), Default::default(), "{mutation}");
         assert_eq!(

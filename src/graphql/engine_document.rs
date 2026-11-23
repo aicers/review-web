@@ -136,8 +136,9 @@ pub(crate) struct DocumentTarget<'a> {
 
 impl EngineDocument {
     /// Parses `text` and checks every rule that needs nothing stored, in this
-    /// order: the schema, a non-empty source list included, the bounds, and
-    /// repeated ids, models and sources.
+    /// order: the schema, `detectors` written as the database write takes
+    /// them, a non-empty source list included, the bounds, and repeated ids,
+    /// models and sources.
     ///
     /// # Errors
     ///
@@ -145,6 +146,7 @@ impl EngineDocument {
     /// `BOUND_VIOLATED` or `DUPLICATE_ENTRY`.
     pub(crate) fn parse_and_validate(text: &str) -> Result<Self> {
         let document = Self::parse(text)?;
+        check_detectors_shape(text)?;
         document.check_sources_present()?;
         document.check_bounds()?;
         document.check_repeats()?;
@@ -292,8 +294,9 @@ impl EngineDocument {
     /// a default, and a detector any section its model's type allows, since
     /// the write fills them. A refusal of that completion for a detector is
     /// returned only when the checks reach it, after its model check, so no
-    /// model of another instance decides one; a refusal of the document as a
-    /// whole is left to the database write. Then each `columns` entry of
+    /// model of another instance decides one; [`Self::parse_and_validate`]
+    /// has already refused a document the completion refuses as a whole.
+    /// Then each `columns` entry of
     /// `label_db_match` must name, in `column_ids`, indices into the `format`
     /// of the `[csv]` table of the model's trained definition (none if it has
     /// no such list), and, in `db`, a stored label DB.
@@ -430,7 +433,7 @@ impl EngineDocument {
     /// a detector whose model is not of the instance is never returned before
     /// that detector's model check. A document whose `detectors` the parse
     /// takes but the completion does not, such as an inline array of tables,
-    /// is left to the database write, which refuses it on Apply.
+    /// has already been refused by [`check_detectors_shape`].
     fn completion_refusal(
         &self,
         text: &str,
@@ -454,6 +457,32 @@ impl EngineDocument {
         )
         .err()
         .filter(|refused| matches!(refused, DetectionModelsSectionError::Detector(_))))
+    }
+}
+
+/// Refuses `text` if the database write's completion refuses it as a whole
+/// although the schema parses it: its `detectors` are not written with
+/// `[[detectors]]` headers, as an inline array of tables is not.
+///
+/// The completion checks no detection model section of such a document, so
+/// without this a draft could be saved with sections no Apply would accept.
+/// The code, `field` and `value` are those [`completion_parts`] gives the same
+/// refusal of the database write, so the refusal does not depend on which
+/// layer reports it.
+fn check_detectors_shape(text: &str) -> Result<()> {
+    // The shape is checked before any detector is, so no model type is needed.
+    let no_type = |_: &str| None;
+    match complete_engine_document(
+        AgentKind::Unsupervised,
+        text,
+        &no_type,
+        CompletionMode::Apply,
+    ) {
+        Err(refused @ DetectionModelsSectionError::DetectorsNotAnArrayOfTables) => {
+            let (code, field, value) = completion_parts(&refused);
+            Err(refusal(code, refused.to_string(), &field, value))
+        }
+        _ => Ok(()),
     }
 }
 

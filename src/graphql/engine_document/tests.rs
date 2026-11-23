@@ -1329,27 +1329,47 @@ fn a_later_detector_section_waits_for_the_checks_to_reach_it() {
 }
 
 #[test]
-fn detectors_not_written_as_an_array_of_tables_are_left_to_the_database_write() {
+fn detectors_not_written_as_an_array_of_tables_are_refused() {
     let f = sections_fixture();
-    // The completion refuses the document as a whole, which the database
-    // write does on Apply; the checker still checks what it parsed.
-    let text = |model: &str, columns: &str| {
+    // The database write's completion refuses such a document as a whole and
+    // checks none of its sections, so the checker refuses it before any
+    // section could slip past a draft save, as the completion refusal mapper
+    // refuses it on Apply.
+    let text = |model: &str, sections: &str| {
         format!(
             "detectors = [{{ id = 7, enabled = true, model = \"{model}\", sources = \
              [{source:?}], period = \"15m\", start = \"2026-10-21T00:00:00Z\", batch_size = \
              1000, read_lag = \"1m\", stats = false, timeseries = false, data_store = {{ \
-             address = \"{OWN_ADDRESS}\", server_name = \"{}\" }}, detection_models = {{ \
-             label_db_match = {{ columns = {columns} }} }} }}]\n",
+             address = \"{OWN_ADDRESS}\", server_name = \"{}\" }}{sections} }}]\n",
             f.policies.server_name,
             source = sensor_name("gen-a.example.com"),
         )
     };
-    f.check(&text(URL_MODEL, "[]")).unwrap();
-    assert_refused(
-        &f,
-        &text(URL_MODEL, &column("[33]", "")),
-        "BOUND_VIOLATED",
-        &format!("{SECTIONS}.label_db_match.columns[0].column_ids"),
-        "33",
-    );
+    for document in [
+        text(URL_MODEL, ""),
+        text(
+            URL_MODEL,
+            ", detection_models = { label_db_match = { columns = [] } }",
+        ),
+        text(CUSTOM_MODEL, ", detection_models = { far_outlier = {} }"),
+        text(URL_MODEL, ", detection_models = { foo = {} }"),
+        text(
+            URL_MODEL,
+            ", detection_models = { far_outlier = { enabled = 1 } }",
+        ),
+    ] {
+        for (code, field, value, detector_id) in [
+            refused(&document),
+            parts(&f.check(&document).expect_err(&document)),
+        ] {
+            assert_eq!(
+                (code.as_str(), field.as_str(), value.as_str()),
+                ("INVALID_DOCUMENT", "", ""),
+                "{document}"
+            );
+            assert_eq!(detector_id, Value::Null, "{document}");
+        }
+    }
+    // An empty inline array holds no detector, which the completion takes.
+    f.check("detectors = []\n").unwrap();
 }
